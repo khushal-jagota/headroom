@@ -23,7 +23,7 @@ def _subject_route(edge: AttentionEdge) -> str:
         return f"/#/workspace/{edge.subject.id}"
     if edge.subject.kind is PrincipalKind.chief:
         return "/#/agents/chief-of-staff"
-    if edge.subject.kind is PrincipalKind.sprint_item:
+    if edge.subject.kind is PrincipalKind.manager:
         return f"/#/workspace/item/{edge.subject.id}"
     raise ValueError(f"unknown notification subject kind: {edge.subject.kind.value}")
 
@@ -46,7 +46,7 @@ def decide_notification(edge: AttentionEdge, *, enabled: bool) -> NotificationIn
     if edge.subject.kind not in {
         PrincipalKind.ticket,
         PrincipalKind.chief,
-        PrincipalKind.sprint_item,
+        PrincipalKind.manager,
     }:
         raise ValueError(f"unknown notification subject kind: {edge.subject.kind.value}")
     if not enabled:

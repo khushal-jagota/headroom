@@ -33,7 +33,7 @@ from planner.core.transaction_guards import register_transaction_guard
 def require_owner() -> None:
     if os.environ.get("PLAN_ACTOR", "").strip() not in {"", "owner"} or any(
         os.environ.get(key, "").strip()
-        for key in ("PLAN_TICKET_ID", "PLAN_SPRINT_ITEM_ID", "PLAN_AGENT_KEY")
+        for key in ("PLAN_TICKET_ID", "PLAN_MANAGER_ID", "PLAN_AGENT_KEY")
     ):
         raise RuntimeError("Diagnostic maintenance requires the owner")
 
@@ -76,7 +76,7 @@ def _require_no_backend_activity(
                     for name in (
                         b"PLAN_ACTOR",
                         b"PLAN_TICKET_ID",
-                        b"PLAN_SPRINT_ITEM_ID",
+                        b"PLAN_MANAGER_ID",
                         b"PLAN_AGENT_KEY",
                         b"PLAN_SERVER_URL",
                     )

@@ -62,9 +62,11 @@ def generate() -> str:
                 declarations.append(f"export type {key} = {ts};")
     navigation = importlib.import_module("planner.navigation.contracts")
     delivery = importlib.import_module("planner.navigation.delivery_contracts")
+    views = importlib.import_module("planner.navigation.views.contracts")
     constants = (
         f"export const WIRE_VERSION = {delivery.WIRE_VERSION};\n"
-        "export const VIEW_WIRE_VERSION = 3;\n"
+        f"export const VIEW_WIRE_VERSION = {views.VIEW_WIRE_VERSION};\n"
+        f"export const VIEW_PROJECTION_VERSION = {views.VIEW_PROJECTION_VERSION};\n"
         f"export const SCHEMA_VERSION = {navigation.SCHEMA_VERSION};\n"
         f"export const SUPPORTED_SEMANTICS = {json.dumps(navigation.SUPPORTED_SEMANTICS)};\n"
     )

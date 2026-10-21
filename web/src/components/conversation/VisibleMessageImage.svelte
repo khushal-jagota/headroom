@@ -1,22 +1,17 @@
 <script lang="ts">
-  import { observeVisibleContent } from '../../lib/visibleContent';
+  import { observeVisibleContent, resetVisibleContentHeight } from '../../lib/visibleContent';
   let { src, alt, outgoing }: { src: () => string; alt: string; outgoing: boolean } = $props();
   let visible = $state(false);
-  let loaded = $state(false);
-  let height = $state(160);
-  function visibility(element: HTMLElement) {
-    return { destroy: observeVisibleContent(element, (next, measured) => {
-      if (!next && measured > 0) height = measured;
-      if (!next) loaded = false;
-      visible = next;
-    }) };
+  function visibility(element: HTMLElement, _identity: () => string) {
+    const stop = observeVisibleContent(element, next => { visible = next; });
+    return { destroy: stop, update() { resetVisibleContentHeight(element); } };
   }
 </script>
-<div data-conversation-image-slot use:visibility style:min-height={!visible || !loaded ? `${height}px` : undefined}>
+<div data-conversation-image-slot use:visibility={src}>
   {#if visible}
     <img class="c2-piece-image" data-conversation-piece="image"
       data-conversation-piece-outgoing={outgoing ? "true" : undefined}
-      src={src()} {alt} decoding="async" onload={() => { loaded = true; }} />
+      src={src()} {alt} decoding="async" />
   {/if}
 </div>
 <style>

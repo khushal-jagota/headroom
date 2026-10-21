@@ -19,8 +19,8 @@ from planner.core.authctx import request_context
 from planner.core.authority import require_above_or_self
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files.catalog.config import PAGE_MAX_BYTES, PAGE_SIZE
+from planner.managers.data import manager_agent_key
 from planner.resource_versions.data import source_revision
-from planner.sprints.data import supervisor_agent_key
 
 router = APIRouter()
 
@@ -48,9 +48,9 @@ def _read(
     conn = request.app.state.conn_factory()
     try:
         conn.execute("BEGIN")
-        if kind == "sprint_item":
+        if kind == "manager":
             require_above_or_self(
-                conn, request_context(request).principal, authority.outcome(owner_id)
+                conn, request_context(request).principal, authority.manager(owner_id)
             )
         elif conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {})
@@ -58,7 +58,7 @@ def _read(
             "SELECT conversation_id FROM tickets WHERE id=?"
             if kind == "ticket"
             else "SELECT conversation_id FROM agents WHERE agent_key=?",
-            (owner_id if kind == "ticket" else supervisor_agent_key(owner_id),),
+            (owner_id if kind == "ticket" else manager_agent_key(owner_id, conn),),
         ).fetchone()
         current_id = current_row[0] if current_row else None
         args = (kind, owner_id, current_id)
@@ -149,7 +149,7 @@ def _read(
 @router.get("/conversation-history/{kind}/{owner_id}")
 async def history_page(
     request: Request,
-    kind: HistoryOwnerKind,
+    kind: str,
     owner_id: str,
     offset: int = 0,
     limit: int = PAGE_SIZE,
@@ -159,6 +159,23 @@ async def history_page(
     locale: str = "en-US",
     timezone: str = "UTC",
 ) -> ConversationHistoryPage:
+    canonical: HistoryOwnerKind
+    if kind == "ticket":
+        canonical = "ticket"
+    elif kind in {"manager", "sprint_item", "orchestrator"}:
+        canonical = "manager"
+    else:
+        raise PlannerError(ErrorCode.validation, "unknown conversation history owner kind", {})
     return await anyio.to_thread.run_sync(
-        _read, request, kind, owner_id, offset, limit, selected, prefix, after, locale, timezone
+        _read,
+        request,
+        canonical,
+        owner_id,
+        offset,
+        limit,
+        selected,
+        prefix,
+        after,
+        locale,
+        timezone,
     )

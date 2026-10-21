@@ -37,15 +37,17 @@ COMMAND_ROUTES = (
         "Worker launch binding may change navigation source facts",
         "/tickets/{ticket_id}/employee-configuration",
     ),
-    *_routes("POST", "Orchestrator and project creation", "/items", "/projects"),
+    *_routes("POST", "Manager and project creation", "/managers", "/items", "/projects"),
     *_routes(
         "PATCH",
-        "Orchestrator and project metadata",
+        "Manager and project metadata",
+        "/managers/{item_id}",
+        "/managers/{item_id}/settled",
         "/items/{item_id}",
         "/items/{item_id}/settled",
         "/projects/{project_id}",
     ),
-    *_routes("DELETE", "Orchestrator removal", "/items/{item_id}"),
+    *_routes("DELETE", "Manager removal", "/managers/{item_id}", "/items/{item_id}"),
     *_routes(
         "PUT",
         "Navigation collection membership",
@@ -63,6 +65,8 @@ COMMAND_ROUTES = (
         "/chief/conversation/reset",
         "/tickets/{ticket_id}/conversation/send",
         "/tickets/{ticket_id}/conversation/reset",
+        "/managers/{item_id}/conversation/send",
+        "/managers/{item_id}/conversation/reset",
         "/items/{item_id}/conversation/send",
         "/items/{item_id}/conversation/reset",
         "/messages/send",
@@ -87,7 +91,8 @@ COMMAND_ROUTES = (
     ),
     *_routes("POST", "Worker definition registry", "/worker-types"),
     *_routes(
-        "POST", "Corrections of existing navigation-affecting launch bindings",
+        "POST",
+        "Corrections of existing navigation-affecting launch bindings",
         "/conversation/model-corrections/apply",
     ),
     *_routes(
@@ -173,14 +178,25 @@ EXCLUDED_COMMAND_ROUTES = (
         "/workers/{worker_type}/skill",
         "/workers/chief-of-staff/skill",
     ),
+    *_routes("POST", "Skill text is not a navigation source fact", "/skills/apply"),
     CommandRoute(
         "PUT",
-        "/files/sprint-items/{sprint_item_id}/{file_path:path}",
+        "/files/managers/{manager_id}/{file_path:path}",
         "Managed files are outside navigation records",
     ),
     CommandRoute(
         "DELETE",
-        "/files/sprint-items/{sprint_item_id}/{file_path:path}",
+        "/files/managers/{manager_id}/{file_path:path}",
+        "Managed files are outside navigation records",
+    ),
+    CommandRoute(
+        "PUT",
+        "/files/sprint-items/{manager_id}/{file_path:path}",
+        "Managed files are outside navigation records",
+    ),
+    CommandRoute(
+        "DELETE",
+        "/files/sprint-items/{manager_id}/{file_path:path}",
         "Managed files are outside navigation records",
     ),
 )

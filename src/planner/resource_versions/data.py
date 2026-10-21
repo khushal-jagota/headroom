@@ -19,7 +19,19 @@ def install_source_triggers(
     conn: sqlite3.Connection, triggers: tuple[ResourceSourceTrigger, ...]
 ) -> None:
     """Install trusted domain declarations, never request-supplied SQL."""
+    historical = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone() is not None
+    )
     for trigger in triggers:
+        if historical:
+            from dataclasses import replace
+
+            trigger = replace(
+                trigger,
+                table=trigger.table.replace("managers", "sprint_items"),
+                name=trigger.name.replace("manager", "orchestrator"),
+                source_kind=trigger.source_kind.replace("manager", "orchestrator"),
+            )
         if trigger.operation not in {"INSERT", "UPDATE", "DELETE"}:
             raise ValueError("invalid source trigger operation")
         # Names and SQL fragments come from reviewed domain registration only.

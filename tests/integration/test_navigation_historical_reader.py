@@ -1,8 +1,10 @@
-"""Exact old-source ingress and selected reader reversal versus lossy restoration.
+"""Exact old-source ingress and matched-backup restoration across a structural rename.
 
 Risk: a current migration fixture cannot prove compatibility with real retained
 source or its canonical readers. One subprocess-backed case crosses that missing
-boundary; existing runtime proofs own obsolete cursors and lost command witnesses.
+boundary. The Manager rename is forward-only and makes old direct Ticket readers
+unavailable. A matched backup restores their schema and their original facts.
+Existing runtime proofs own obsolete cursors and lost command witnesses.
 All databases, homes, skill files and producer leases stay under tmp_path.
 """
 
@@ -27,6 +29,8 @@ from tests.support.navigation_historical_source import (
 from tests.unit.test_db import head_revision
 
 from planner.navigation import snapshot
+from planner.projects.data import list_projects
+from planner.tickets.data import read_ticket
 
 
 def _copy_closed_database(source: Path, target: Path) -> None:
@@ -36,19 +40,8 @@ def _copy_closed_database(source: Path, target: Path) -> None:
             reader.backup(writer)
 
 
-def _expected_reader_values(
-    result: dict[str, Any],
-    *,
-    expected_tip: str,
-    later: bool = False,
-) -> None:
-    assert result["tip"] == expected_tip
-    assert result["foreign_keys"] == []
-    assert result["denied_writes"] == 2
-    assert result["projects"]["project_historical"] == (
-        "Later fixture project" if later else "Historical project"
-    )
-    assert result["ticket"] == {
+def _expected_ticket_values(*, later: bool = False) -> dict[str, Any]:
+    return {
         "title": "Later fixture Ticket" if later else "Historical Ticket",
         "stage": "needs_plan",
         "claim": "out",
@@ -65,6 +58,21 @@ def _expected_reader_values(
         "proposal": "Proposed plan α",
         "proposal_revision": 3,
     }
+
+
+def _expected_reader_values(
+    result: dict[str, Any],
+    *,
+    expected_tip: str,
+    later: bool = False,
+) -> None:
+    assert result["tip"] == expected_tip
+    assert result["foreign_keys"] == []
+    assert result["denied_writes"] == 2
+    assert result["projects"]["project_historical"] == (
+        "Later fixture project" if later else "Historical project"
+    )
+    assert result["ticket"] == _expected_ticket_values(later=later)
     source = result["source"]
     assert source["aliases"] == [["c_current", "t_historical"], ["c_history", "t_historical"]]
     assert source["conversations"] == [["c_current", 2, 1, 0], ["c_history", 2, 1, 0]]
@@ -77,6 +85,28 @@ def _expected_reader_values(
     ]
     for _, _, _, payload, _ in source["events"]:
         assert json.loads(payload)["text"] == "Synthetic receipt α\nKeep exact bytes."
+
+
+def _assert_current_reader(connection: sqlite3.Connection, *, later: bool = False) -> None:
+    ticket = read_ticket(connection, "t_historical")
+    assert ticket.pending_proposal is not None
+    # This fact projection compares the same identity through both reader generations.
+    assert {
+        "title": ticket.title,
+        "stage": ticket.stage,
+        "claim": ticket.worker_step_claim.value,
+        "backlog": ticket.is_backlogged,
+        "status": ticket.ticket_status.value,
+        "project": ticket.project_id,
+        "orchestrator": ticket.manager_id,
+        "conversation": ticket.conversation_id,
+        "fields": dict(ticket.field_values),
+        "proposal": ticket.pending_proposal.body,
+        "proposal_revision": ticket.pending_proposal_revision,
+    } == _expected_ticket_values(later=later)
+    assert {project.id: project.name for project in list_projects(connection)}[
+        "project_historical"
+    ] == ("Later fixture project" if later else "Historical project")
 
 
 @pytest.mark.parametrize("expected_tip", [HISTORICAL_TIP, CURRENT_STAGING_TIP], ids=["595", "86"])
@@ -96,9 +126,10 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
 
     with current_navigation_database(candidate) as connection:
         current = snapshot(connection)
-        assert current["schema_version"] == 6
+        assert current["schema_version"] == 8
         initial_epoch = current["epoch"]
         facts = source_facts(connection)
+        _assert_current_reader(connection)
         # Asked for rather than written down: spelling the head out made this fail for
         # whichever Ticket next added a migration, which had already happened once.
         assert facts["heads"] == [[head_revision()]]
@@ -129,11 +160,17 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
         )
         connection.commit()
         later_facts = source_facts(connection)
+        _assert_current_reader(connection, later=True)
 
     # Stop every candidate owner before invoking bounded legacy read-only readers.
     contents = candidate.read_bytes()
-    after = run_historical(source, candidate, "read", expected_tip=expected_tip)
-    _expected_reader_values(after, expected_tip=expected_tip, later=True)
+    after = run_historical(source, candidate, "read_unavailable", expected_tip=expected_tip)
+    assert after["tip"] == expected_tip
+    assert after["unavailable"] == "structural_manager_rename"
+    assert set(after["failures"]) == {"ticket"}
+    assert after["projects"]["project_historical"] == "Later fixture project"
+    assert after["denied_writes"] == 2
+    assert after["foreign_keys"] == []
     assert after["source"] == later_facts
     assert candidate.read_bytes() == contents
 
@@ -154,7 +191,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     assert reopened["source"] == before["source"]
     with current_navigation_database(restored) as connection:
         restored_snapshot = snapshot(connection)
-        assert restored_snapshot["schema_version"] == 6
+        assert restored_snapshot["schema_version"] == 8
         assert restored_snapshot["epoch"] != initial_epoch
         ticket = next(
             row
@@ -168,14 +205,17 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
         )
         assert ticket["value"]["title"] == "Historical Ticket"
         assert project["value"]["name"] == "Historical project"
+        _assert_current_reader(connection)
         facts = source_facts(connection)
         assert facts["events"] == before["source"]["events"]
         assert facts["conversations"] == before["source"]["conversations"]
         assert facts["aliases"] == before["source"]["aliases"]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     # The original upgraded fixture retains the deliberately discarded later writes.
-    retained = run_historical(source, candidate, "read", expected_tip=expected_tip)
-    assert retained["ticket"]["title"] == "Later fixture Ticket"
+    with current_navigation_database(candidate) as connection:
+        _assert_current_reader(connection, later=True)
+        assert source_facts(connection) == later_facts
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     print(
         json.dumps(
             {
@@ -185,7 +225,8 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
                 "python_prefix": before["python_prefix"],
                 "migration_sha256": before["migration"],
                 "scope": (
-                    "projects.list_projects, tickets.read_ticket, bounded raw transcript SQL only"
+                    "historical Ticket reader unavailable after structural rename, "
+                    "matched-backup old reader, current Ticket reader, exact raw source facts"
                 ),
             }
         )

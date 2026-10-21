@@ -47,9 +47,22 @@ def identity_values(identity_json: str) -> dict[str, str]:
         ):
             raise ValueError("malformed identity pair")
         key, value = pair
-        if key in values or key not in {"PLAN_ACTOR", "PLAN_TICKET_ID", "PLAN_SPRINT_ITEM_ID"}:
+        if key in values or key not in {
+            "PLAN_ACTOR",
+            "PLAN_TICKET_ID",
+            "PLAN_MANAGER_ID",
+            "PLAN_SPRINT_ITEM_ID",
+        }:
             raise ValueError("unknown or duplicate identity key")
         values[key] = value
+    manager_id = values.get("PLAN_MANAGER_ID")
+    legacy_id = values.pop("PLAN_SPRINT_ITEM_ID", None)
+    if manager_id and legacy_id and manager_id != legacy_id:
+        raise ValueError("conflicting Manager identities")
+    if legacy_id:
+        values["PLAN_MANAGER_ID"] = legacy_id
+    if values.get("PLAN_ACTOR") == "sprint_item_supervisor":
+        values["PLAN_ACTOR"] = "manager"
     return values
 
 
@@ -95,7 +108,7 @@ def classify_conversation(
         reasons.add("unknown_identity")
     actor = identity.get("PLAN_ACTOR")
     ticket_ids = {ticket.ticket_id for ticket in source.tickets}
-    orchestrator_ids = {owner.orchestrator_id for owner in source.orchestrators}
+    manager_ids = {owner.manager_id for owner in source.managers}
     if identity:
         if actor == "chief":
             reasons.add("chief")
@@ -106,28 +119,30 @@ def classify_conversation(
                 or identity["PLAN_TICKET_ID"] not in source.linked_ticket_ids
             ):
                 reasons.add("conflicting_ownership")
-        elif actor == "sprint_item_supervisor":
+        elif actor == "manager":
             if (
-                set(identity) != {"PLAN_ACTOR", "PLAN_SPRINT_ITEM_ID"}
-                or identity["PLAN_SPRINT_ITEM_ID"] not in orchestrator_ids
+                set(identity) != {"PLAN_ACTOR", "PLAN_MANAGER_ID"}
+                or identity["PLAN_MANAGER_ID"] not in manager_ids
             ):
                 reasons.add("conflicting_ownership")
         else:
             reasons.add("unknown_identity")
-    if not source.tickets and not source.orchestrators:
+    if not source.tickets and not source.managers:
         reasons.add("unknown_ownership")
     if any(ticket.stage != "done" for ticket in source.tickets):
         reasons.add("unfinished_ticket")
     if any(ticket.worker_step_claim != "none" for ticket in source.tickets):
         reasons.add("worker_claim")
-    if any(not owner.settled for owner in source.orchestrators):
-        reasons.add("unsettled_orchestrator")
+    if any(not owner.settled for owner in source.managers):
+        reasons.add("unsettled_manager")
     for key in source.agent_keys:
         if key == "chief_of_staff":
             reasons.add("chief")
         elif not (
-            key.startswith("sprint_item_supervisor_")
-            and key.removeprefix("sprint_item_supervisor_") in orchestrator_ids
+            any(
+                key.startswith(prefix) and key.removeprefix(prefix) in manager_ids
+                for prefix in ("manager_", "sprint_item_supervisor_")
+            )
         ):
             reasons.add("unknown_agent_owner")
 
@@ -141,6 +156,13 @@ def classify_conversation(
             canonical = json.loads(conversation_event_payload_to_canonical_json(decoded))
             for field, value in stored.items():
                 if field == "mode" and value == "run_when_free" and canonical.get(field) == "queue":
+                    continue
+                if (
+                    field == "sender"
+                    and isinstance(value, dict)
+                    and value.get("kind") == "sprint_item"
+                    and {**value, "kind": "manager"} == canonical.get(field)
+                ):
                     continue
                 if field not in canonical or value != canonical[field]:
                     raise ValueError("unfamiliar or malformed payload fields")

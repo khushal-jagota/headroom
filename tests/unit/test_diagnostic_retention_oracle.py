@@ -24,7 +24,7 @@ def archive() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(":memory:")
     connection.executescript("""
         CREATE TABLE tickets(id,stage,worker_step_claim,conversation_id);
-        CREATE TABLE sprint_items(id,settled);
+        CREATE TABLE managers(id,settled);
         CREATE TABLE ticket_conversations(ticket_id,conversation_id);
         CREATE TABLE agents(agent_key,conversation_id);
         CREATE TABLE conversation_lifecycle_facts(conversation_id,kind,status);

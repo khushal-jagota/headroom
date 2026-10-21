@@ -17,7 +17,7 @@ export function isWorkspaceUtility(value: string): value is WorkspaceUtility {
 /** An address for a position inside a screen, built from wherever that screen is mounted.
  *
  * A screen cannot be handed a string prefix to concatenate, because the pane's root can
- * end in `?view=items` and a query has to stay last. It is handed this instead, so the
+ * end in `?view=managers` and a query has to stay last. It is handed this instead, so the
  * root it lives under decides the whole address and the screen only says where it wants
  * to go.
  */

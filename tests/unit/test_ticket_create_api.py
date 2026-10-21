@@ -52,12 +52,6 @@ def _snapshot(db_path: Path) -> tuple[str, ...]:
         return tuple(conn.iterdump())
 
 
-
-
-
-
-
-
 @pytest.mark.parametrize("ceiling", [None, "needs_implementation"])
 def test_brief_persists_as_a_proposal_or_settled_field_for_the_creation_ceiling(
     create_api: tuple[TestClient, Path], ceiling: str | None
@@ -85,8 +79,6 @@ def test_brief_persists_as_a_proposal_or_settled_field_for_the_creation_ceiling(
         assert stored.field_values["brief"] == brief
         assert stored.pending_proposal is None
         assert created["field_values"]["brief"] == brief
-
-
 
 
 def test_create_accepts_and_preserves_the_supported_optional_keys(
@@ -130,7 +122,7 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
         "deadline": "2026-12-31",
         "project": "Vylo",
         "project_id": "project_vylo",
-        "orchestrator": {"kind": "chief", "id": "chief"},
+        "manager": {"kind": "chief", "id": "chief"},
         "blocked_by_ticket_ids": [blocker.json()["id"]],
         "ceiling": "needs_implementation",
         "ceiling_holder": {"kind": "chief", "id": "chief"},
@@ -147,7 +139,7 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
         "title",
         "deadline",
         "project_id",
-        "orchestrator",
+        "manager",
         "ceiling",
         "ceiling_holder",
         "locale",
@@ -165,8 +157,6 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
     with connect(str(db_path)) as conn:
         stored = tickets_data.read_ticket(conn, created["id"])
     assert stored.field_values["brief"] == body["brief"]
-
-
 
 
 @pytest.fixture
@@ -202,3 +192,57 @@ def effort_catalogue(create_api: tuple[TestClient, Path], monkeypatch: pytest.Mo
         "snapshot",
         snapshot,
     )
+
+
+def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
+    create_api: tuple[TestClient, Path],
+) -> None:
+    client, db_path = create_api
+    project = client.post("/api/projects", json={"name": "Compatibility"}).json()
+    manager = client.post(
+        "/api/managers", json={"title": "Retained Manager", "project_id": project["id"]}
+    ).json()
+    assignment = {"kind": "manager", "id": manager["id"]}
+    issued = {"kind": "sprint_item", "id": manager["id"]}
+    created = client.post(
+        "/api/tickets",
+        json={
+            "title": "Issued input",
+            "worker_type": "coding",
+            "orchestrator": issued,
+            "ceiling_holder": assignment,
+        },
+    )
+    assert created.status_code == 200, created.text
+    ticket = created.json()
+    assert ticket["manager"] == assignment
+    assert ticket["manager_id"] == manager["id"]
+    assert ticket["ceiling_holder"] == assignment
+    assert not {"orchestrator", "sprint_item_id", "orchestrator_kind"} & ticket.keys()
+    listed = client.get(
+        "/api/tickets",
+        params={
+            "detail": "summary",
+            "orchestrator_kind": "sprint_item",
+            "orchestrator_id": manager["id"],
+        },
+    ).json()
+    assert [row["id"] for row in listed["tickets"]] == [ticket["id"]]
+    compatible = client.patch(
+        f"/api/tickets/{ticket['id']}", json={"manager": assignment, "orchestrator": issued}
+    )
+    assert compatible.status_code == 200, compatible.text
+    before = _snapshot(db_path)
+    conflict = {"manager": assignment, "orchestrator": {"kind": "chief", "id": "chief"}}
+    for endpoint, body in (
+        ("/api/tickets", {**conflict, "title": "Conflict", "worker_type": "coding"}),
+        (
+            "/api/schedules",
+            {**conflict, "title": "Conflict", "worker_type": "coding", "local_time": "09:00"},
+        ),
+    ):
+        response = client.post(endpoint, json=body)
+        assert response.status_code == 400, response.text
+    response = client.patch(f"/api/tickets/{ticket['id']}", json=conflict)
+    assert response.status_code == 400, response.text
+    assert _snapshot(db_path) == before

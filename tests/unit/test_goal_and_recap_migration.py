@@ -45,10 +45,10 @@ def test_occupied_orchestrators_keep_their_text_as_goal_with_an_empty_recap(
 
         db.create_schema(conn)
 
-        stored = dict(conn.execute("SELECT id, goal FROM sprint_items").fetchall())
+        stored = dict(conn.execute("SELECT id, goal FROM managers").fetchall())
         assert stored == {item_id: body for item_id, _, body in _ITEMS}
-        assert {row[0] for row in conn.execute("SELECT DISTINCT recap FROM sprint_items")} == {""}
-        columns = [row[1] for row in conn.execute("PRAGMA table_info(sprint_items)")]
+        assert {row[0] for row in conn.execute("SELECT DISTINCT recap FROM managers")} == {""}
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(managers)")]
         assert "body" not in columns
 
     # The navigation projection is written earlier in this chain, from the only column
@@ -59,7 +59,7 @@ def test_occupied_orchestrators_keep_their_text_as_goal_with_an_empty_recap(
         projected = {
             str(row[0]): json.loads(str(row[1]))
             for row in installed.execute(
-                "SELECT id, value FROM navigation_records WHERE kind = 'orchestrator'"
+                "SELECT id, value FROM navigation_records WHERE kind = 'manager'"
             )
         }
     assert set(projected) == {item_id for item_id, _, _ in _ITEMS}

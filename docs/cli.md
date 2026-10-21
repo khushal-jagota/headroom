@@ -7,10 +7,8 @@ Ordinary help exposes these roots:
 
 - `send-message` sends text to an existing Panels conversation.
 - `project` reads and changes Projects.
-- `day` reads historical Days.
 - `ticket` reads and changes Tickets.
-- `orchestrator` reads and changes ordinary orchestrators.
-- `sprint` retains historical reads and the stable `sprint item` alias.
+- `manager` reads and changes ordinary Managers.
 
 The command name does not grant authority. Each request carries the principal from the
 runtime context. The server admits or refuses that principal through the existing
@@ -40,17 +38,24 @@ If a save fails after the row commits, the error states whether the file also ch
 Read the current skill before retry. An incomplete save does not undo the committed row.
 See [Worker types](worker-types.md#skills-and-the-config-page) for publication behavior.
 
+`panels skill apply --input-json MANIFEST.json` applies an owner-reviewed batch.
+Each entry names `name`, full `source_text`, and `expected_sha256`.
+Use an explicit null hash only when the row must be absent.
+The server validates every entry before one atomic row update.
+Only the owner can call this operation. The Chief cannot bypass that restriction.
+If publication fails, retry the same complete manifest to publish its exact saved rows.
+A changed source refuses its stale hash. Immutable versions and Worker bindings remain intact.
+
+
 ## Record reads
 
-`project show`, `day show`, `ticket show`, `sprint show`, and `sprint item show` return a
+`project show`, `ticket show`, and `manager show` return a
 header and a part manifest. Add one comma-separated part list to expand selected values.
 
 ```sh
 panels ticket show t_example success_condition,what_changes --json
 panels ticket show brief --json
-panels sprint show current primary_bet,kickoff --json
-panels sprint item show si_example goal,recap --json
-panels day show 2026-08-10 focus,watchout --json
+panels manager show si_example goal,recap --json
 ```
 
 `ticket show` with no Ticket ID reads the authenticated Worker's Ticket through the
@@ -60,12 +65,12 @@ history` when that record is necessary.
 
 Settled Ticket fields carry an inline approval label in text output, both in the manifest
 and beside an expanded value. Explicit approval names Khushal, Chief, or the approving
-orchestrator's title. `Auto-accepted` and `Approval unknown` remain distinct. Unsettled
+manager's title. `Auto-accepted` and `Approval unknown` remain distinct. Unsettled
 fields carry no approval label. JSON includes an `approval` object on each settled field
 with `method`, `principal` (kind and ID), and `display_label`. Principal IDs appear in
 JSON only. These reads do not add approval information to `ticket history`.
 
-List commands return bounded summaries. `ticket list`, `sprint list`, `sprint item list`,
+List commands return bounded summaries. `ticket list`, `manager list`,
 and `project list` use pages of 30 by default. Every result reports omissions and the
 next offset. Ticket list no longer filters live work by Day or Sprint.
 
@@ -99,7 +104,7 @@ panels ticket create --input-json - <<'JSON'
   "title": "Clear outcome title",
   "worker_type": "coding",
   "project_id": "project_panels",
-  "orchestrator": {"kind": "chief", "id": "chief"},
+  "manager": {"kind": "chief", "id": "chief"},
   "brief": "Faithful intake context"
 }
 JSON
@@ -179,7 +184,7 @@ The administrative `model-corrections` commands repair saved models within their
 variant. Preview accepts explicit targets. Repeat target flags to inspect several records.
 
 ```sh
-panels model-corrections preview --ticket t_example --orchestrator si_example --chief --worker-default coding > corrections.json
+panels model-corrections preview --ticket t_example --manager si_example --chief --worker-default coding > corrections.json
 panels model-corrections apply < corrections.json
 ```
 
@@ -227,48 +232,57 @@ The human output reports the uncertainty without a restart success claim. Panels
 not enforce a delay. Use one explicit `ticket restart-worker` call when it is safe to try
 again.
 
-## Orchestrator assignment and settlement
+## Manager assignment and settlement
 
-`orchestrator create/list/show/set/workspace` keeps the existing Item identity and
-conversation. `sprint item` remains an alias. `set` takes `goal`, `recap`, `title`,
+`manager create/list/show/set/workspace` keeps the existing Item identity and
+conversation. Legacy `orchestrator` and `sprint item` commands remain hidden aliases. `set` takes `goal`, `recap`, `title`,
 `project` and `project-id`. There is no `body` field: a stale `set <item> body` fails
 rather than writing the wrong one. Artifact operations keep their existing
-managed roots. `send-message --sprint-item` keeps its stable recipient address.
-`orchestrator create --goal-file <goal-file>` starts the supervisor with the exact goal
+managed roots. `send-message --manager` emits the canonical recipient address. The exact issued `--sprint-item` reply target remains executable.
+`manager create --goal-file <goal-file>` starts the Manager with the exact goal
 as a queued message from Panels. It requires no explicit reply to the creator and creates
-no Focus-visible `explicit_reply_missing` signal if the supervisor sends no reply.
+no Focus-visible `explicit_reply_missing` signal if the Manager sends no reply.
 No replacement signal detects a clean delivery followed by silent inaction.
 Full shows the goal under Panels. The CLI exposes no system attribution override.
-A blank or absent goal leaves it idle. The result reports the saved orchestrator and
-startup outcome. Refused, failed, or uncertain startup still leaves the orchestrator saved.
-Inspect it and recover on that same orchestrator instead of creating another one.
+A blank or absent goal leaves it idle. The result reports the saved manager and
+startup outcome. Refused, failed, or uncertain startup still leaves the manager saved.
+Inspect it and recover on that same manager instead of creating another one.
 Uncertain startup gets no automatic replay. For failed or uncertain startup, check the
 conversation before any resend.
 `--json` preserves the complete creation response, including `startup`. As with message
 sends, a successful HTTP response exits zero. Check the startup fate for delivery success.
 
-Existing ordinary orchestrator supervisors can use it to coordinate with one another.
+Existing ordinary Managers can use it to coordinate with one another.
 The permission sends a message; approvals, ceilings, assignments, and other writes
 keep their existing authority requirements. Workers cannot use it to address an
-unrelated supervisor.
+unrelated Manager.
 
-`ticket assign <ticket> --chief` assigns to Chief. `--orchestrator <item>` assigns to
-an ordinary orchestrator. Structured create and edit use the same explicit `orchestrator`
+`ticket assign <ticket> --chief` assigns to Chief. `--manager <item>` assigns to
+an ordinary Manager. Structured create and edit use the same explicit `manager`
 reference. Assignment and the ceiling holder are independent.
 
-`orchestrator settle <item>` is owner-only. Add `--active` to return it to active.
-Chief cannot settle. Day edits, Sprint edits, commitments, and carry-forward are retired.
-Historical `day show` and `sprint list/show/list-items` remain readable.
+`manager list` labels each row active or settled. With no state flag, it includes both.
+Use `--active` or `--settled` to filter before pagination. The flags are mutually exclusive
+and combine with search and Project filters. JSON summaries and `show` headers carry
+the boolean `settled`, including selected-part reads. An absent field does not establish
+that a Manager is active. Legacy aliases use the same behavior.
+
+Settled Managers are finished destinations. Choose an active Manager for new
+work before Ticket creation or assignment. This guidance does not change permissions
+or prevent an existing Worker from continuing.
+
+`manager settle <item>` is owner-only. Add `--active` to return it to active.
+Chief cannot settle. Day and date-range Sprint commands are removed.
+Legacy command aliases continue to address the same Managers.
 
 ## Compatibility and errors
 
-Hidden aliases retain Worker, Ticket edit, proposal, historical Day list, and Item
+Hidden aliases retain Worker, Ticket edit, proposal, and Item
 conversation paths. No alias restores retired calendar writes.
 
 `ticket restart-worker` also recovers an older rejected Ticket only when it is
 Worker-owned, Empty, claim-free, attached to a conversation, and holds matching revision
-feedback. Recovery keeps that conversation and refuses launch overrides. Historical Day
-membership does not affect ordinary continuation.
+feedback. Recovery keeps that conversation and refuses launch overrides.
 
 Human errors use one cause line and, when a valid recovery exists, one exact command
 shape. JSON errors keep the existing envelope and exit code. Authority refusals do not

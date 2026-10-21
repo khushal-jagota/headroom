@@ -38,9 +38,7 @@ def test_schedule_persists_resolved_locale_and_occurrences_keep_it(
     edited = actions.update_schedule(tmp_db, schedule.id, {"title": "Changed title"}, now=2)
     assert edited.template.locale is TicketLocale.macos
     now = datetime.fromisoformat("2026-10-16T14:30:00").astimezone()
-    occurrence = actions.run_current_slot(
-        tmp_db, planning_now=now, now=int(now.timestamp()), boundary_hour=5
-    )[0]
+    occurrence = actions.run_current_slot(tmp_db, local_now=now, now=int(now.timestamp()))[0]
     assert occurrence.outcome is OccurrenceOutcome.created
     assert occurrence.ticket_id is not None
     assert tickets_data.read_ticket(tmp_db, occurrence.ticket_id).locale is TicketLocale.macos

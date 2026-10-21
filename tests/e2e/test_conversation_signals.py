@@ -58,9 +58,9 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     project = api.direct_post(server, "/api/projects", {"name": "Signal proof"})
     item = api.direct_post(
         server,
-        "/api/items",
+        "/api/managers",
         {
-            "title": "Signal orchestrator",
+            "title": "Signal manager",
             "project_id": project["id"],
         },
     )
@@ -71,7 +71,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             "title": "Signal Worker",
             "worker_type": "coding",
             "brief": "Agreed brief.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     api.direct_post(
@@ -92,9 +92,9 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     identities = {
         "proof-worker": {"kind": "ticket", "id": ticket["id"], "label": "Signal Worker"},
         "proof-supervisor": {
-            "kind": "sprint_item",
+            "kind": "manager",
             "id": item["id"],
-            "label": "Signal orchestrator",
+            "label": "Signal manager",
         },
         "proof-chief": {"kind": "chief", "id": "chief", "label": "Chief of Staff"},
     }
@@ -108,7 +108,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
     page.set_viewport_size({"width": 1440 if layout == "desktop" else 560, "height": 1000})
     worker = page.locator(f'.board-workspace-left [data-ticket-id="{ticket["id"]}"]')
-    supervisor = page.locator(f'[data-sprint-item="{item["id"]}"] .item-head')
+    supervisor = page.locator(f'[data-manager="{item["id"]}"] .item-head')
     chief = page.locator("[data-chief-destination]")
     rows = {"proof-worker": worker, "proof-supervisor": supervisor, "proof-chief": chief}
     presence = page.locator("[data-shell-presence]")

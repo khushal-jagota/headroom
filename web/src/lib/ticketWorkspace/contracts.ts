@@ -39,14 +39,12 @@ export interface WorkspaceTicket {
   blocker_summary: WorkspaceBlockers;
   ceiling: string;
   ceiling_holder: Principal;
-  orchestrator: Principal;
+  manager: Principal;
   deadline: string | null;
   project_id: string | null;
   project: string | null;
-  sprint_id: string | null;
-  effective_sprint_id: string | null;
-  sprint_item_id: string | null;
-  sprint_item_title: string | null;
+  manager_id: string | null;
+  manager_title: string | null;
   conversation_id: string | null;
   recap: string;
   record_sha256: string;
@@ -59,7 +57,7 @@ export interface WorkspaceTicket {
 }
 
 export interface Principal {
-  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  kind: "owner" | "chief" | "manager" | "ticket";
   id: string;
 }
 

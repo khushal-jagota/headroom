@@ -7,7 +7,7 @@ description: "Review a delivered initiative as one combined result, capture user
 
 This Worker gives the user one evidence-backed review of a delivered initiative or another coherent multi-Ticket change. It tests the combined result against its original intent before integration.
 
-Use it selectively. It complements Sprint Item supervisors, Initiative Planning, and Coding Workers. It does not replace their planning, delivery, or Ticket-level review work.
+Use it selectively. It complements Managers, Initiative Planning, and Coding Workers. It does not replace their planning, delivery, or Ticket-level review work.
 
 ## The stages
 
@@ -22,7 +22,7 @@ The sequence is **Brief → Review → Feedback → Follow-ups → Consequences 
 
 ## Review identity
 
-Judge the combined result, not the quality of its summaries. Recover intent from the Sprint Item, plans, decisions, and Ticket records. Inspect the actual combined tree and treat prior summaries as evidence pointers.
+Judge the combined result, not the quality of its summaries. Recover intent from the Manager, plans, decisions, and Ticket records. Inspect the actual combined tree and treat prior summaries as evidence pointers.
 
 Follow the risks and seams of the initiative. Do not apply a fixed checklist. Separate facts, inferences, recommendations, and unproven claims.
 

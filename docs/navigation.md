@@ -2,7 +2,7 @@
 
 Navigation is a derived view of canonical database facts. It does not own Ticket or conversation state.
 
-The public contract uses schema 6 and `attention-knowledge-v6-recap` semantics. It contains Ticket metadata, canonical status, assignment, approval references, orchestrator metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+The public contract uses schema 6 and `attention-knowledge-v6-recap` semantics. It contains Ticket metadata, canonical status, assignment, approval references, manager metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
 
 Conversation attention comes from the accepted Signal producer. Each conversation carries complete current attention or explicitly unavailable runtime knowledge, plus independently durable message and failure facts. Raw lifecycle counters, read positions, and Ticket status never substitute for that source. Consumer adoption is in progress. Complete production parity, render proof, recovery, and performance acceptance remain open.
 
@@ -35,7 +35,7 @@ The original navigation migration creates six tables and four indexes plus sourc
 migrations remain unchanged. Chief recap stays a separate editable content query;
 no new Chief navigation field or recap writer exists.
 
-The source shape must agree across Projects, orchestrators, Tickets and schedule
+The source shape must agree across Projects, managers, Tickets and schedule
 configuration: either all four tables still contain historical priority columns,
 or none do. Mixed shapes fail before projection conversion. On old source,
 historical navigation schemas1–4 retain their priority fields and semantics. When
@@ -64,8 +64,8 @@ All records have `kind`, `id`, and `value`. `navigation/contracts.py` declares a
 
 | Tag | Value fields |
 | --- | --- |
-| `ticket` | `title`, `recap`, `recap_preview`, `worker_type`, `stage`, `ticket_status`, `deadline`, effective `project_id`, `orchestrator_kind`, `sprint_item_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `created_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `gating_field`, `terminal`, `locale` |
-| `orchestrator` | `title`, `recap`, `recap_preview`, `created_at`, `project_id`, `settled`, current `conversation_id` |
+| `ticket` | `title`, `recap`, `recap_preview`, `worker_type`, `stage`, `ticket_status`, `deadline`, effective `project_id`, `manager_kind`, `manager_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `created_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `gating_field`, `terminal`, `locale` |
+| `manager` | `title`, `recap`, `recap_preview`, `created_at`, `project_id`, `settled`, current `conversation_id` |
 | `chief` | `label`, current `conversation_id` |
 | `project` | `name` |
 | `conversation` | raw `latest_sequence`, `owner_read_through_sequence`, `latest_agent_activity_sequence`, `latest_agent_activity_at`, `error_acknowledged_through_sequence`, `lifecycle_summary`, `attention` |
@@ -74,15 +74,15 @@ All records have `kind`, `id`, and `value`. `navigation/contracts.py` declares a
 
 Ticket status uses the canonical pure status rule. Stage ownership, terminal state, and `gating_field` use the stored Worker definition from the same database transaction. The required nullable gate comes from `definition.gating_field` for the exact Ticket stage. Null means that the stage has no gate. A manifest never supplies category authority. Gating-only definition changes publish affected Ticket records without changing status or ownership. This field was introduced in schema4 and remains in schema6; historical schema1/2/3 layouts stay unchanged. Approval data contains the field, revision, creation time, and holder. It excludes the proposal body and field values.
 
-Ticket and orchestrator `recap_preview` are required strings introduced in schema4 and retained in schema6. They use the unchanged canonical helper over `tickets.recap` and `sprint_items.recap`. The helper compacts whitespace and applies the configured 160-character bound and ellipsis. Row, title, and preview enter the same publication. Chief retains its existing list-count fallback. No browser truncation or separate preview writer supplies these values. Historical schema1/2/3 shapes stay unchanged.
+Ticket and manager `recap_preview` are required strings introduced in schema4 and retained in schema6. They use the unchanged canonical helper over `tickets.recap` and `managers.recap`. The helper compacts whitespace and applies the configured 160-character bound and ellipsis. Row, title, and preview enter the same publication. Chief retains its existing list-count fallback. No browser truncation or separate preview writer supplies these values. Historical schema1/2/3 shapes stay unchanged.
 
-Current Ticket and orchestrator records also contain required full `recap` text from the same sources. Rail popovers use this text and apply a visual limit of five lines, or fewer when available space requires it. Dense rows retain `recap_preview`. Historical schema1–4 shapes stay unchanged. Startup installation rebuilds stored records before public delivery, so existing schema6 records acquire the full text. The recap semantics identify the changed wire shape and reject older cursors.
+Current Ticket and manager records also contain required full `recap` text from the same sources. Rail popovers use this text and apply a visual limit of five lines, or fewer when available space requires it. Dense rows retain `recap_preview`. Historical schema1–4 shapes stay unchanged. Startup installation rebuilds stored records before public delivery, so existing schema6 records acquire the full text. The recap semantics identify the changed wire shape and reject older cursors.
 
 The character bound is not a byte or memory bound. UTF-8 and JSON escaping change the encoded cost. Initial full-payload cost, removed preview requests, recurring-update savings, and browser memory require separate matched-candidate evidence. Final cost acceptance remains open.
 
 Ticket `created_at` comes from exact stored `tickets.created_at`. This required integer was introduced in schema4 and remains in schema6. Existing Chief children use filtered creation-time/identity order before their 30-row page and grouping. Navigation does not substitute update time or conversation activity for that order.
 
-Schema 3 introduced six required source facts. Orchestrator `priority` and `created_at` come from the corresponding `sprint_items` columns. Ticket `updated_at` comes from its stored timestamp. `proposal_created_at` comes from the strict canonical proposal decoder and is null exactly when no proposal exists. `worker_step_claim_out` is true exactly when the stored claim is `out`. Summing that flag across all Ticket records matches the existing unfiltered Worker claim count, including terminal, blocked, and backlogged Tickets. Schema6 removes the priority fields to match current staging. Orchestrators retain creation-time/identity ordering. Grouped child rows retain activity/title/identity ordering; the Chief child page retains creation-time/identity ordering. Ticket update time and proposal creation time remain independent. Conversation activity never substitutes for these values.
+Schema 3 introduced six required source facts. Manager `priority` and `created_at` come from the corresponding `managers` columns. Ticket `updated_at` comes from its stored timestamp. `proposal_created_at` comes from the strict canonical proposal decoder and is null exactly when no proposal exists. `worker_step_claim_out` is true exactly when the stored claim is `out`. Summing that flag across all Ticket records matches the existing unfiltered Worker claim count, including terminal, blocked, and backlogged Tickets. Schema6 removes the priority fields to match current staging. Managers retain creation-time/identity ordering. Grouped child rows retain activity/title/identity ordering; the Chief child page retains creation-time/identity ordering. Ticket update time and proposal creation time remain independent. Conversation activity never substitutes for these values.
 
 Ticket `blocked` is the canonical live-blocker predicate, independently of status precedence. A proposal, an outstanding claim, or an errored claim can mask the blocked status without clearing this fact. Existing dependency capture handles edge changes and blocker completion, reopening, or deletion in the same source transaction. No blocker identities or names enter navigation.
 
@@ -94,7 +94,7 @@ The current joined migration prepares schema5 without conversation attention. Co
 
 Conversation lifecycle entries contain the compact raw summary described below. They preserve uncertainty. They do not imply provider capability, active public Signal state, or automatic recovery. Detailed lifecycle identities remain in the canonical source, outside navigation.
 
-Address IDs are canonical JSON arrays of owner kind, owner ID, and conversation ID. Owner kind is `ticket`, `orchestrator`, or `chief`. A Ticket address follows canonical Ticket history and the current pointer. An orchestrator address also follows durable supervisor identity metadata. Parent membership follows the Ticket's current assignment. One conversation can have multiple addresses. Distinct totals count its identity once per scope. Totals IDs are `workspace`, `chief:chief`, and `orchestrator:<id>`. Chief's record ID is `chief`.
+Address IDs are canonical JSON arrays of owner kind, owner ID, and conversation ID. Owner kind is `ticket`, `manager`, or `chief`. A Ticket address follows canonical Ticket history and the current pointer. A Manager address also follows durable Manager identity metadata. Parent membership follows the Ticket's current assignment. One conversation can have multiple addresses. Distinct totals count its identity once per scope. Totals IDs are `workspace`, `chief:chief`, and `manager:<id>`. Chief's record ID is `chief`.
 
 ## Snapshots and replay
 
@@ -120,9 +120,9 @@ Tests use synthetic SQLite files in temporary directories. The old-head migratio
 
 Focused tests assert rollback, savepoint rollback, source failure, alias counts, historical discovery, repeated parent moves, deletes, blocker dependencies, same-transaction definitions, read facts, exact migration backfill, migration failure rollback, repeated schema opens, snapshot isolation, journal gaps, and epoch reset. Additional actual-producer fixtures prove attention-only publication, deletion, rollback, physical preparation, failed activation, and complete installation. Delivery and browser fixtures cover current/degraded knowledge and authority loss. These bounded results do not establish final consumer parity, actual DOM boundaries, or complete-path performance.
 
-Composition enables SQLite recursive triggers. `REPLACE` performs an implicit deletion, and SQLite otherwise skips its deletion triggers. This setting lets old dependency capture remove the replaced identity. Current source triggers contain immutable-history and assignment guards. Legacy supervisor mutation triggers disappear in the earlier table rebuild. Navigation triggers write only the dirty table, so they do not recurse into canonical source writes. A raw connection without module composition cannot change relevant source rows because it lacks the guard function.
+Composition enables SQLite recursive triggers. `REPLACE` performs an implicit deletion, and SQLite otherwise skips its deletion triggers. This setting lets old dependency capture remove the replaced identity. Current source triggers contain immutable-history and assignment guards. Legacy Manager mutation triggers disappear in the earlier table rebuild. Navigation triggers write only the dirty table, so they do not recurse into canonical source writes. A raw connection without module composition cannot change relevant source rows because it lacks the guard function.
 
-Project names belong to separate Project records. Priority no longer exists in current canonical storage or navigation. A Project rename updates only its Project record. Ticket records contain the effective Project identity and do not depend on Project display metadata. An orchestrator's Project reassignment still updates each affected child's effective identity.
+Project names belong to separate Project records. Priority no longer exists in current canonical storage or navigation. A Project rename updates only its Project record. Ticket records contain the effective Project identity and do not depend on Project display metadata. A Manager's Project reassignment still updates each affected child's effective identity.
 
 Update capture names actual navigation inputs. Current Project updates capture `id` and `name`. Worker type updates capture `worker_type` and `definition_json`. Chief settings updates capture `employee_id` and `label`. Excluded column-only updates create no navigation batch. Examples include timestamps and Chief launch columns. Worker launch defaults reside in `definition_json`, so an update to those defaults still captures referencing Tickets. An actual Worker definition update derives each referencing Ticket's ownership and terminal facts from the same transaction. It does not derive their conversations or parent totals because those counts do not depend on Worker definitions. A captured update with equal public values still creates an empty batch.
 
@@ -190,7 +190,7 @@ Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/
 
 ## Browser synchronization boundary
 
-The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary orchestrator headers and children, Chief child pagination, Review queue, shell work count, Ticket masthead and current-stage section, and Chief conversation pointer use it. Ordinary orchestrator content and exact-identity proposal bodies remain separate detail reads.
+The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary Manager headers and children, Chief child pagination, Review queue, shell work count, Ticket masthead and current-stage section, and Chief conversation pointer use it. Ordinary manager content and exact-identity proposal bodies remain separate detail reads.
 
 One presentation result belongs to each effective view identity. Shared indexes supply parent membership, identity joins, addresses, and Review facts. Knowledge changes invalidate the result even without a new publication. Feature modules own DOM assertions and dependency checks. The application captures relevant mounted observers before each command and retains bounded visibility evidence independently of the domain result.
 
@@ -198,7 +198,7 @@ The current-stage section admits detail only when public identity, control facts
 
 Ticket masthead Project names follow the existing parent-or-own Project rule. The masthead never rewrites the full detail object used by actions, fields, proposals, blockers, and configuration. Missing source membership cannot credit a retained masthead as current. Shared read errors appear once in a composed workspace. Distinct failed content or detail reads retain their own error lines.
 
-The Review and shell count deduplicates current Ticket, Chief, and existing orchestrator conversation pointers. Historical-only and unlinked conversations do not contribute. The exact unfiltered Worker out-claim count remains a separate fact. Unknown runtime count is null and omits the runtime mark or count line. Known zero preserves the existing behavior.
+The Review and shell count deduplicates current Ticket, Chief, and existing manager conversation pointers. Historical-only and unlinked conversations do not contribute. The exact unfiltered Worker out-claim count remains a separate fact. Unknown runtime count is null and omits the runtime mark or count line. Known zero preserves the existing behavior.
 
 ```text
 complete snapshot / revision batches
@@ -318,14 +318,14 @@ require a manual reload. The uncached root document selects the current bundle,
 which creates a fresh navigation owner. There is no version 1 response path.
 Canonical schema 6 and physical view-index version 1 stay unchanged.
 
-Settled-only orchestrator records carry title, creation time, settled state, and
+Settled-only manager records carry title, creation time, settled state, and
 conversation identity. Their conversation dependency preserves exact signals.
 They omit recap text, preview, body reference, Project identity, and Project closure.
-The browser keeps lean rail rows separate from full orchestrator indexes.
+The browser keeps lean rail rows separate from full manager indexes.
 
 Only explicit selection, an admitted active rail member, the current parent of an
-admitted Ticket, or the orchestrator owner of an admitted unread address requires
-a full orchestrator record. Settled membership, viewport visibility, and count-only
+admitted Ticket, or the manager owner of an admitted unread address requires
+a full manager record. Settled membership, viewport visibility, and count-only
 windows do not. Full demand promotes exactly that key, regardless of window order.
 Admission charges replacement bytes and dependencies atomically within existing budgets.
 A failed promotion does not admit an incomplete dependent row.

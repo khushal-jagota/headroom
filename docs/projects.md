@@ -5,8 +5,8 @@ display name, an optional folder path, and a summary. New rows can be added with
 changing code.
 
 ```
-Project ──► Ticket ──► optional Sprint Item classification
-   └─────► Sprint Item
+Project ──► Ticket ──► optional Manager classification
+   └─────► Manager
    └─────► Idea
 ```
 
@@ -19,19 +19,19 @@ for humans and agents: what the project is, what matters about it, and any repo 
 file locations worth remembering. A repository can be one item inside the Project
 folder. Panels does not define or manage the folder contents.
 
-Sprint Items, ideas, and standalone Tickets store `project_id`. A parented Ticket derives
-its Project from its Sprint Item. API responses
+Managers, ideas, and standalone Tickets store `project_id`. A parented Ticket derives
+its Project from its Manager. API responses
 also include the legacy `project` field as the display name so older callers can keep
 reading it. Placement and categorization writes accept either `project_id` or the
 legacy project name. If both are sent and they point to different rows, the server
 rejects the request.
 
-A Ticket has an effective Project and an optional Sprint. When it names a Sprint Item,
-the Item owns its Project classification. Moving a Sprint Item changes each child Ticket's
-effective Project and updates schedule templates, without changing any Sprint placement.
+A Ticket has an effective Project. When it names a Manager,
+the Item owns its Project classification. Moving a Manager changes each child Ticket's
+effective Project and updates schedule templates.
 
-Workspace groups Tickets by their assigned Chief or ordinary orchestrator. Project facts
-remain visible on individual Ticket and orchestrator pages as text. The removed global
+Workspace groups Tickets by their assigned Chief or ordinary Manager. Project facts
+remain visible on individual Ticket and manager pages as text. The removed global
 Workers page no longer supplies a project-filtered list.
 
 ## Surfaces
@@ -55,7 +55,7 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 
 ## Handoffs
 
-- **Sprints** (`sprints.md`) — Tickets and Sprint Items use Projects in sprint tracking.
+- **Managers** (`managers.md`) — shared context and Project classification.
 - **Tickets & the gates** (`tickets-and-gates.md`) — Tickets expose effective Project
   placement.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — both capture surfaces use the catalog.

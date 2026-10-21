@@ -13,7 +13,7 @@
   import type { RenderObserver } from "../lib/navigation/visibility";
   import type { NavigationPublication } from "../lib/navigation/collection";
   import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
-  import { workspaceRailImpact, workspaceHoverImpact, orchestratorSettleImpact } from "../lib/workspaceNavigationImpact";
+  import { workspaceRailImpact, workspaceHoverImpact, managerSettleImpact } from "../lib/workspaceNavigationImpact";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -35,7 +35,8 @@
   import WorkspaceRailCard from "../components/WorkspaceRailCard.svelte";
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
-  let { address, onDismissed = () => undefined }: { address: WorkspaceAddress; onDismissed?: (noteId: string) => void } = $props();
+  import type { Snippet } from "svelte";
+  let { address, externalPane, railFoot, onDismissed = () => undefined }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; onDismissed?: (noteId: string) => void } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
@@ -58,11 +59,10 @@
     const view=navigation.state.effective;return workspaceRailImpact(impact,view ? navigation.presentationFor(view) : undefined,rail,settledOpen);
   });
   onDestroy(() => navigation.disposeRenderBoundary(railObserver));
-  const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
   const selectedPaneModule = $derived.by(() => {
     if (opening.markedTicketId) return cachedImport("./TicketRoute.svelte", () => import("./TicketRoute.svelte"));
-    if (opening.openItemId) return cachedImport("../components/SprintItemWorkspace.svelte", () => import("../components/SprintItemWorkspace.svelte"));
+    if (opening.openManagerId) return cachedImport("../components/ManagerWorkspace.svelte", () => import("../components/ManagerWorkspace.svelte"));
     switch (opening.markedUtility) {
       case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
@@ -85,22 +85,22 @@
   function utilityHref(utility: WorkspaceUtility): UtilityHref {
     return segments => workspaceAddress({ kind: "utility", utility, path: segments }, opening.view);
   }
-  // A link of the shape #/workspace/<id> is read as a Ticket, and an orchestrator id of
+  // A link of the shape #/workspace/<id> is read as a Ticket, and a manager id of
   // that shape used to open the Ticket page saying "ticket not found". The publication
-  // knows which ids are orchestrators, so the address is corrected here, where that is
+  // knows which ids are managers, so the address is corrected here, where that is
   // known. replace() rather than assignment: the broken address was never a place the
   // reader chose to be, so it does not earn an entry in their history.
-  let orchestratorIds = $derived(
+  let managerIds = $derived(
     new Set([
-      ...(workspace?.orchestrators ?? []).map((item) => item.id),
-      ...(workspace?.settledOrchestrators ?? []).map((item) => item.id)
+      ...(workspace?.managers ?? []).map((item) => item.id),
+      ...(workspace?.settledManagers ?? []).map((item) => item.id)
     ])
   );
   $effect(() => {
-    const corrected = correctedWorkspaceAddress(address, (id) => orchestratorIds.has(id));
+    const corrected = correctedWorkspaceAddress(address, (id) => managerIds.has(id));
     if (corrected !== null) window.location.replace(corrected);
   });
-  const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspaceContent(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
+  const selectedItemWorkspace = createQuery(() => ({ ...queries.managerWorkspaceContent(opening.openManagerId ?? ""), enabled: opening.openManagerId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
   let visibleItems=$state<string[]>([]);
   let railWindows=$state<Record<string,{anchor:string;direction:'before'|'after'}>>({});
@@ -110,11 +110,11 @@
   let settledWindow=$derived(navigationWindow(workspace,'settled'));
   let chiefWindow=$derived(navigationWindow(workspace,'rail_tickets',{kind:'chief',id:'chief'}));
   let desiredRail = $derived.by(()=>{
-    if(!workspace?.globalCounts)return buildWorkspaceRail(allCards,[...(workspace?.orchestrators ?? []),...(workspace?.settledOrchestrators ?? [])]);
+    if(!workspace?.globalCounts)return buildWorkspaceRail(allCards,[...(workspace?.managers ?? []),...(workspace?.settledManagers ?? [])]);
     const parents=new Set([...(parentWindow?.members ?? []),...(settledWindow?.members ?? [])].map(key=>key.id));
     const childIds=new Set(workspace.viewWindows.filter(window=>window.request.section==='rail_tickets').flatMap(window=>window.members.map(key=>key.id)));
     const cards=allCards.filter(card=>childIds.has(card.id));
-    return buildWorkspaceRail(cards,[...workspace.orchestrators,...workspace.settledOrchestrators].filter(item=>parents.has(item.id)).map(item=>({...item,tickets:item.tickets.filter(ticket=>childIds.has(ticket.id))})));
+    return buildWorkspaceRail(cards,[...workspace.managers,...workspace.settledManagers].filter(item=>parents.has(item.id)).map(item=>({...item,tickets:item.tickets.filter(ticket=>childIds.has(ticket.id))})));
   });
   let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false, settledMessages:{}});
   let rail = $derived(presentation.rail);
@@ -122,13 +122,13 @@
   let requestedSettledOpen = $state(false);
   $effect(()=>{
     const windows:ViewWindowRequest[]=[viewWindow('rail_parents',null,{limit:60,...railWindows.parents}),viewWindow('rail_tickets',{kind:'chief',id:'chief'},{...railWindows.chief})];
-    for(const id of visibleItems)windows.push(viewWindow('rail_tickets',{kind:'orchestrator',id},{limit:60,...railWindows[id]}));
+    for(const id of visibleItems)windows.push(viewWindow('rail_tickets',{kind:'manager',id},{limit:60,...railWindows[id]}));
     if(requestedSettledOpen)windows.push(viewWindow('settled',null,{limit:60,...railWindows.settled}));
     navigation.owner.setDemand('workspace-rail',{windows});
   });
   onDestroy(()=>navigation.owner.setDemand('workspace-rail',undefined));
   let messages = $derived(workspace?.messages ?? []);
-  let itemPane = $derived(opening.markedItemId !== null);
+  let itemPane = $derived(opening.markedManagerId !== null);
   let railElement = $state<HTMLElement | null>(null);
   const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next);
   $effect(() => {
@@ -169,8 +169,8 @@
   const hoverBody=selectedRecap(()=>rawHoverWorker?.recap_reference ?? hoveredItem?.recap_reference,()=>hoverVisible);
   let hoverWorker=$derived(rawHoverWorker && hoverBody.body!==undefined?{...rawHoverWorker,recap:hoverBody.body}:rawHoverWorker);
   let hoveredItem = $derived.by(()=>{
-    // Only a full consumer can supply an orchestrator popover, including unread owners.
-    const full=hoverItemId ? workspace?.orchestratorsById.get(hoverItemId) : undefined;
+    // Only a full consumer can supply a manager popover, including unread owners.
+    const full=hoverItemId ? workspace?.managersById.get(hoverItemId) : undefined;
     if(!full)return undefined;
     const projected=buildWorkspaceRail([], [full]);
     return [...projected.items,...projected.settledItems][0];
@@ -181,10 +181,10 @@
     : hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverConversationIdOverride ?? (hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId));
   // Every agent the panel can show keeps a recap, so every one of them can be asked.
-  let hoverRecapTarget = $derived<{ kind: "ticket" | "sprint_item" | "chief"; id: string } | null>(
+  let hoverRecapTarget = $derived<{ kind: "ticket" | "manager" | "chief"; id: string } | null>(
     hoverWorker ? { kind: "ticket", id: hoverWorker.id }
       : hoverChief ? { kind: "chief", id: "chief" }
-      : hoveredItem ? { kind: "sprint_item", id: hoveredItem.id } : null);
+      : hoveredItem ? { kind: "manager", id: hoveredItem.id } : null);
   let currentHoverTitle = $derived(hoverWorker?.title ?? (hoverChief ? workspace?.chief?.label : hoveredItem?.title) ?? hoverTitle);
   let currentHoverKicker = $derived.by(() => {
     if (!hoverWorker) return hoverKicker;
@@ -192,7 +192,7 @@
       .find((item) => item.tickets.some((ticket) => ticket.id === hoverWorker.id));
     if (parent) return parent.title;
     const card = allCards.find((ticket) => ticket.id === hoverWorker.id);
-    return card && (card.orchestrator?.kind === "chief" || (!card.orchestrator && !card.sprint_item_id))
+    return card && (card.manager?.kind === "chief" || (!card.manager && !card.manager_id))
       ? workspace?.chief?.label ?? "Chief of Staff" : "Worker";
   });
   const hover = createRailHoverController<{ target: HTMLElement; title: string; kicker: string; worker?: WorkItemTicketFacts; itemId?: string; chief?: boolean; conversationId?:string }>((value, instant) => {
@@ -242,19 +242,19 @@
     window.location.hash = workspaceAddress(address.selection, address.view, file);
   }
   function selectCard(id: string, insideItemId: string | null): void {
-    window.location.hash = workspaceAddress(insideItemId ? { kind: "ticket", id, openedFromItemId: insideItemId } : { kind: "ticket", id }, opening.view);
+    window.location.hash = workspaceAddress(insideItemId ? { kind: "ticket", id, openedFromManagerId: insideItemId } : { kind: "ticket", id }, opening.view);
   }
-  function selectItem(id: string): void { window.location.hash = workspaceAddress({ kind: "item", id }); }
+  function selectItem(id: string): void { window.location.hash = workspaceAddress({ kind: "manager", id }); }
   function hoverItem(target: HTMLElement, item: WorkspaceRailItem, immediate = false): void {
     if(item.settled)return;
-    hover.enter({ target, title:item.title, kicker:item.project ?? "Orchestrator", itemId:item.id }, immediate);
+    hover.enter({ target, title:item.title, kicker:item.project ?? "Manager", itemId:item.id }, immediate);
   }
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts, immediate = false): void {
     hover.enter({ target, title:worker.title, kicker:"Worker", worker }, immediate);
   }
   function hoverMessageRow(target: HTMLElement, message: WorkspaceMessageConversation, immediate = false): void {
     if (message.kind === "chief") { hover.enter({target,title:message.title,kicker:"Chief of Staff",chief:true,conversationId:message.conversationId}, immediate); return; }
-    if (message.kind === "sprint_item" && workspace?.orchestratorsById.has(message.id)) { hover.enter({target,title:message.title,kicker:"Orchestrator",itemId:message.id,conversationId:message.conversationId}, immediate); return; }
+    if (message.kind === "manager" && workspace?.managersById.has(message.id)) { hover.enter({target,title:message.title,kicker:"Manager",itemId:message.id,conversationId:message.conversationId}, immediate); return; }
     const worker = allCards.find((card) => card.id === message.id)
       ?? [...desiredRail.items, ...desiredRail.settledItems].flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
     if (worker) {
@@ -284,11 +284,11 @@
   $effect(() => {
     if (!hoverVisible || !hoverElement) return;
     const observer = navigation.registerRenderBoundary(`workspace-hover:${crypto.randomUUID()}`,impact => {
-      const kind=hoverWorkerId ? 'ticket' : hoverItemId ? 'orchestrator' : 'chief';
+      const kind=hoverWorkerId ? 'ticket' : hoverItemId ? 'manager' : 'chief';
       const id=hoverWorkerId ?? hoverItemId ?? 'chief';
       const view=navigation.state.effective;
       return workspaceHoverImpact(impact,kind,id,hoverWorker?.conversation_id ?? hoverConversationId,view ? navigation.presentationFor(view) : undefined,
-        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recap?.trim());
+        kind==='chief' || kind==='manager' && !hoveredItem?.recap?.trim());
     });
     hoverObserver = observer;
     return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
@@ -300,7 +300,7 @@
     const root = hoverElement;
     const observer = hoverObserver;
     const target = hoverTarget;
-    const sourceKind = hoverWorkerId ? 'ticket' : hoverItemId ? 'orchestrator' : hoverChief ? 'chief' : null;
+    const sourceKind = hoverWorkerId ? 'ticket' : hoverItemId ? 'manager' : hoverChief ? 'chief' : null;
     const sourceId = hoverWorkerId ?? hoverItemId;
     const sourceExists = sourceKind !== null && publication?.records.some(record => record.kind === sourceKind && (sourceKind === 'chief' || record.id === sourceId));
     const worker = hoverWorker;
@@ -323,25 +323,25 @@
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
     busyItem = item.id; settleError = ""; hoverVisible = false; hover.leave();
     try {
-      await navigation.runCommand(orchestratorSettleImpact(item.id),responseMetadata =>
-        mutateJson(`/api/items/${encodeURIComponent(item.id)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set orchestrator settled");
+      await navigation.runCommand(managerSettleImpact(item.id),responseMetadata =>
+        mutateJson(`/api/managers/${encodeURIComponent(item.id)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set manager settled");
     }
-    catch (error) { settleError = error instanceof Error ? error.message : "The orchestrator could not be updated."; }
+    catch (error) { settleError = error instanceof Error ? error.message : "The manager could not be updated."; }
     finally { busyItem = null; }
   }
 </script>
 
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
-      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
-        <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
+      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
+        <section bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
-            <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:parentWindow,activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.orchestrator-card:not(.chief)',key:node=>node.dataset.sprintItem ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={() => hover.leave()}>
+            <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:parentWindow,activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={() => hover.leave()}>
             <WorkspaceRailCard navigationWindow={chiefWindow} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => hover.enter({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
             {#each rail.items as item (item.id)}
-              <WorkspaceRailCard onVisibility={itemVisibility} navigationWindow={navigationWindow(workspace,'rail_tickets',{kind:'orchestrator',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedItemId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
+              <WorkspaceRailCard onVisibility={itemVisibility} navigationWindow={navigationWindow(workspace,'rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
@@ -364,25 +364,23 @@
           </div>
           </ResourceState>
           </div>
-          <nav class="rail-utilities" aria-label="Workspace utilities">
-            <a href={workspaceAddress({kind:"utility",utility:"usage",path:[]}, opening.view)} aria-current={opening.markedUtility === "usage" ? "page" : undefined} aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"settings",path:[]}, opening.view)} aria-current={opening.markedUtility === "settings" ? "page" : undefined} aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"ideas",path:[]}, opening.view)} aria-current={opening.markedUtility === "ideas" ? "page" : undefined} aria-label="Ideas" title="Ideas"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 14h6m-5 3h4M6 10a5 5 0 1 1 8 0l-1 2H7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"feedback",path:[]}, opening.view)} aria-current={opening.markedUtility === "feedback" ? "page" : undefined} aria-label="Feedback" title="Feedback"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4h14v10H8l-5 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>{#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}</a>
-          </nav>
+          {#if railFoot}{@render railFoot()}{/if}
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
         <div tabindex="0" class="rail-grip" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={RAIL_MIN_WIDTH} aria-valuemax={RAIL_MAX_WIDTH} aria-valuenow={Math.round(measuredRailWidth)} onpointerdown={resizePointer} onpointermove={resizeMove} onpointerup={() => resizing = false} onpointercancel={() => resizing = false} onlostpointercapture={() => resizing = false} onkeydown={resizeKey} ondblclick={() => setWidth(null)} style:left={`${measuredRailWidth}px`}></div>
         <section
+          class:board-workspace-right--destination={Boolean(externalPane)}
           class:board-workspace-right--ticket={Boolean(opening.markedTicketId)}
           class:board-workspace-right--chief={opening.chiefMarked}
           class:board-workspace-right--item={itemPane}
           class:board-workspace-right--utility={opening.markedUtility !== null}
           class="board-workspace-right"
-          aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Orchestrator workspace" : "Workspace inspector"}
+          aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Manager workspace" : "Workspace inspector"}
         >
-          {#if opening.chiefMarked}
+          {#if externalPane}
+            {@render externalPane()}
+          {:else if opening.chiefMarked}
             <ChiefConversation showRequestErrorLine={false} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
@@ -433,13 +431,13 @@
 <ErrorLine {error} />
 {/await}
             {/key}
-          {:else if itemPane && opening.openItemId}
-            {#key opening.openItemId}
-              {#await import("../components/SprintItemWorkspace.svelte") then view}
+          {:else if itemPane && opening.openManagerId}
+            {#key opening.openManagerId}
+              {#await import("../components/ManagerWorkspace.svelte") then view}
 <view.default
                 navigationErrorHandledByParent
-                itemId={opening.openItemId}
-                sprintName="Workspace"
+                itemId={opening.openManagerId}
+                workspaceName="Workspace"
                 backHref="#/workspace"
                 workspaceResource={{
                   data: selectedItemWorkspace.data,
@@ -455,7 +453,7 @@
           </LazyRegion>
           {:else}
             <div class="board-workspace-empty-inspector">
-              <span>Select an orchestrator or Worker to inspect it.</span>
+              <span>Select a manager or Worker to inspect it.</span>
             </div>
           {/if}
         </section>
@@ -488,12 +486,6 @@
   .settled-count { position:relative; display:inline-block; }
   .settled-chevron { width:16px; height:16px; flex:none; }
   .settled--open .settled-chevron { transform:rotate(180deg); }
-  .rail-utilities { display:flex; flex:none; align-items:center; gap:var(--space-1); padding-top:var(--space-2); border-top:var(--border-hairline) solid var(--border-color); }
-  .rail-utilities a { display:flex; align-items:center; justify-content:center; width:32px; height:32px; color:var(--text-faintest); border:var(--border-hairline) solid transparent; border-radius:var(--radius-sm); }
-  .rail-utilities a[aria-current="page"], .rail-utilities a[aria-current="page"]:hover, .rail-utilities a[aria-current="page"]:focus-within { border-color:var(--accent-bright); }
-  .rail-utilities a:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .rail-utilities svg { width:18px; height:18px; }
-  .rail-utilities a:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
   .rule { flex:1; height:var(--border-hairline); background:var(--border-color); }
   .count { flex:none; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
   .settled-item + .settled-item { margin-top:var(--space-3); }
@@ -505,11 +497,13 @@
   .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
-  @media(max-width:960px) {
+  @media(max-width:720px) {
     .approved-rail-shell { grid-template-columns:1fr; }
     .rail-grip { display:none; }
     .board-workspace-shell--chief .approved-rail,
     .board-workspace-shell--item .approved-rail,
-    .board-workspace-shell--ticket .approved-rail { display:none; }
+    .board-workspace-shell--ticket .approved-rail,
+    .board-workspace-shell--destination .approved-rail { display:none; }
+    .board-workspace-right--destination { display:flex; padding:0; }
   }
 </style>

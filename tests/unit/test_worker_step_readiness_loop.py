@@ -35,7 +35,6 @@ from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
@@ -79,7 +78,6 @@ class _World:
         brief: str = "Agreed brief.",
         worker_type: str = "coding",
         conversation_id: str | None = None,
-        on_today: bool = True,
         next_ceiling: str = "none",
     ) -> str:
         with closing(self.connect()) as conn:
@@ -106,8 +104,6 @@ class _World:
                     "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                     (conversation_id, ticket.id),
                 )
-            if on_today:
-                days_data.add_day_ticket(conn, TODAY_DAY_ID, ticket.id, 0)
         return ticket.id
 
     def record_compacted_conversation(
@@ -137,13 +133,6 @@ class _World:
                     last_worker_step_sequence,
                     '{"sender_message_id": "worker_step_message_earlier"}',
                 ),
-            )
-
-    def remove_from_today(self, ticket_id: str) -> None:
-        with self.connect() as conn:
-            conn.execute(
-                "DELETE FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
-                (TODAY_DAY_ID, ticket_id),
             )
 
     def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
@@ -232,10 +221,6 @@ def world(tmp_path: Path) -> _World:
     return _World(tmp_path)
 
 
-
-
-
-
 # --- the claim -----------------------------------------------------------------
 
 
@@ -243,7 +228,7 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
     tmp_path: Path,
 ) -> None:
     world = _World(tmp_path)
-    ticket_id = world.ready_ticket(on_today=False)
+    ticket_id = world.ready_ticket()
     barrier = threading.Barrier(2)
     outcomes: list[bool] = []
     outcomes_lock = threading.Lock()
@@ -689,8 +674,6 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     assert world.pending_revision_feedback(ticket_id) is False
 
 
-
-
 def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
     ticket_id = world.ready_ticket(
         worker_type="new_worker",
@@ -822,10 +805,6 @@ class _QueueingConversationSystem:
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
-
-
-
-
 def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_a_wake(
     world: _World,
 ) -> None:
@@ -862,7 +841,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 
 
 def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy", on_today=False)
+    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy")
     world.start_conversation("conv-busy")
     assert world.start_step(ticket_id).started is True
     # The turn runs on, so anything sent now queues behind it and writes no event row.
@@ -884,10 +863,6 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
         asyncio_loop.close()
 
     assert len(world.held_prompts("conv-busy")) == 1
-
-
-
-
 
 
 # --- the polling loop ----------------------------------------------------------
@@ -929,7 +904,7 @@ def _waited_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
 def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World) -> None:
     ready_one = world.ready_ticket(title="One")
     ready_two = world.ready_ticket(title="Two")
-    off_day = world.ready_ticket(title="No Day membership", on_today=False)
+    off_day = world.ready_ticket(title="No Day membership")
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
     try:
         scheduled = readiness_loop.poll_once()
@@ -985,27 +960,26 @@ def test_a_ticket_deleted_between_the_candidate_select_and_its_read_is_skipped(
         asyncio_loop.close()
 
 
-
-
-
-
-
 def test_memory_loss_notice_cannot_start_a_worker_on_the_wrong_machine(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Remote", conversation_id="conv-remote")
     world.start_conversation("conv-remote")
     world.record_compacted_conversation(
-        "conv-remote", last_worker_step_sequence=4, compacted_through=9,
+        "conv-remote",
+        last_worker_step_sequence=4,
+        compacted_through=9,
     )
     with world.connect() as conn:
         conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
         conn.commit()
-    assert not asyncio.run(tell_a_worker_it_lost_its_memory(
-        ticket_id,
-        connect_database=world.connect,
-        conversation_system=world.conversations,
-        worker_type_registry=configured_worker_type_registry(),
-        now=world.clock.now_unix,
-    ))
+    assert not asyncio.run(
+        tell_a_worker_it_lost_its_memory(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=world.conversations,
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
+    )
     assert world.conversations.backend_prompt_writes("conv-remote") == ()
 
 

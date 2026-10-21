@@ -36,10 +36,10 @@ def values(conn: sqlite3.Connection) -> dict[tuple[str, str], dict[str, Any]]:
 def add_ticket(conn: sqlite3.Connection, identity: str, parent: str | None = None) -> None:
     conn.execute(
         "INSERT INTO tickets(id,title,worker_type,employee_backend,ceiling,field_values,"
-        "created_at,updated_at,stage,orchestrator_kind,sprint_item_id) "
+        "created_at,updated_at,stage,manager_kind,manager_id) "
         "VALUES(?,?,'coding','codex','needs_implementation','{}',0,0,"
         "'needs_implementation',?,?)",
-        (identity, identity, "chief" if parent is None else "sprint_item", parent),
+        (identity, identity, "chief" if parent is None else "manager", parent),
     )
 
 
@@ -319,7 +319,7 @@ def add_parent(conn: sqlite3.Connection, identity: str) -> None:
         "VALUES('project_panels','Synthetic Panels',0,0)"
     )
     conn.execute(
-        "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+        "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
         "created_at,updated_at) VALUES(?,?,'project_panels','codex','synthetic',0,0)",
         (identity, identity),
     )
@@ -341,13 +341,13 @@ def test_rebuild_refreshes_ownership_within_transaction_and_preserves_incrementa
         conn.execute("INSERT INTO ticket_conversations VALUES('old','t')")
         conn.execute(
             "UPDATE conversations SET identity_environment_variables=? WHERE conversation_id='old'",
-            ('[["PLAN_ACTOR","sprint_item_supervisor"],["PLAN_SPRINT_ITEM_ID","a"]]',),
+            ('[["PLAN_ACTOR","manager"],["PLAN_SPRINT_ITEM_ID","a"]]',),
         )
-        conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_a','old')")
+        conn.execute("INSERT INTO agents VALUES('manager_a','old')")
         rebuild(conn)
         first = values(conn)
         assert first["address", '["ticket","t","old"]']["parent_id"] == "a"
-        conn.execute("UPDATE tickets SET sprint_item_id='b',conversation_id='current' WHERE id='t'")
+        conn.execute("UPDATE tickets SET manager_id='b',conversation_id='current' WHERE id='t'")
         add_ticket(conn, "shared")
         conn.execute("UPDATE tickets SET conversation_id='current' WHERE id='shared'")
         rebuild(conn)
@@ -358,14 +358,14 @@ def test_rebuild_refreshes_ownership_within_transaction_and_preserves_incrementa
             "owner_id": "t",
             "conversation_id": "old",
             "current": False,
-            "parent_kind": "orchestrator",
+            "parent_kind": "manager",
             "parent_id": "b",
         }
         assert actual["address", '["ticket","t","current"]']["current"] is True
         assert actual["address", '["ticket","shared","current"]']["parent_kind"] == "chief"
-        assert actual["totals", "orchestrator:a"]["distinct_conversation_count"] == 1
-        assert actual["totals", "orchestrator:b"]["distinct_conversation_count"] == 2
-        assert actual["address", '["orchestrator","a","old"]']["current"] is True
+        assert actual["totals", "manager:a"]["distinct_conversation_count"] == 1
+        assert actual["totals", "manager:b"]["distinct_conversation_count"] == 2
+        assert actual["address", '["manager","a","old"]']["current"] is True
         assert not any(
             key[0] == "address" and value["conversation_id"] == "unowned"
             for key, value in actual.items()
@@ -400,7 +400,7 @@ def test_rebuild_refreshes_ownership_within_transaction_and_preserves_incrementa
         conn.execute("BEGIN")
         conn.execute("DELETE FROM tickets WHERE id='t'")
         conn.execute(
-            "UPDATE agents SET conversation_id=NULL WHERE agent_key='sprint_item_supervisor_a'"
+            "UPDATE agents SET conversation_id=NULL WHERE agent_key='manager_a'"
         )
         conn.commit()
         assert_rebuild_preserves_projection(conn)
@@ -410,9 +410,9 @@ def test_rebuild_refreshes_ownership_within_transaction_and_preserves_incrementa
             key[0] == "address" and value["owner_kind"] == "ticket" and value["owner_id"] == "t"
             for key, value in actual.items()
         )
-        assert actual["address", '["orchestrator","a","old"]']["current"] is False
-        assert actual["totals", "orchestrator:a"]["distinct_conversation_count"] == 1
-        assert actual["totals", "orchestrator:b"]["distinct_conversation_count"] == 0
+        assert actual["address", '["manager","a","old"]']["current"] is False
+        assert actual["totals", "manager:a"]["distinct_conversation_count"] == 1
+        assert actual["totals", "manager:b"]["distinct_conversation_count"] == 0
         assert actual["totals", "workspace"]["distinct_conversation_count"] == 2
 
 
@@ -445,7 +445,7 @@ def test_rebuild_ticket_ownership_reads_are_constant_as_conversations_grow(tmp_p
                 conn.set_trace_callback(None)
             assert (
                 sum(
-                    query == "SELECT id,sprint_item_id,conversation_id FROM tickets"
+                    query == "SELECT id,manager_id,conversation_id FROM tickets"
                     for query in traced
                 )
                 == 1

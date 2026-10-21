@@ -24,6 +24,16 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 
   import MarkdownBlock from "../src/components/MarkdownBlock.svelte";
   import FilePreview from "../src/components/FilePreview.svelte";
+  import FileDocument from "../src/components/FileDocument.svelte";
+  import VisibleMessageImage from "../src/components/conversation/VisibleMessageImage.svelte";
+  import { VISIBLE_CONTENT_INACTIVE_LIMIT } from "../src/lib/visibleContent/config";
+  (window as any).__inactiveLimit=VISIBLE_CONTENT_INACTIVE_LIMIT;
+  let retainedKind=$state('preview');
+  let retainedTarget=$state('/files/tickets/t_preview/retained.html');
+  let retainedReload=$state(0);
+  (window as any).__retained=(kind:string,target='/files/tickets/t_preview/retained.html',reload=0)=>{
+    previewMode='retained';retainedKind=kind;retainedTarget=target;retainedReload=reload;
+  };
   import { targetFromHref } from "../src/lib/filePreview";
   const previewsOnly=new URLSearchParams(window.location.search).has("previews");
   let previewMode=$state("media");
@@ -40,7 +50,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let catalogSelected=$state<string|null>(null);
   let catalogOwner=$state("t_catalog");
   (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
-  import OrchestratorWorkspace from "../src/components/OrchestratorWorkspace.svelte";
+  import ManagerHeader from "../src/components/ManagerHeader.svelte";
+  import InlineEdit from "../src/components/InlineEdit.svelte";
+  import { workspaceHeaderDomMatches } from "../src/lib/managerWorkspaceDom";
+  const managerLayoutOnly=new URLSearchParams(window.location.search).has("manager-layout");
+  let layoutRecap=$state("The recap belongs below the title.");
+  const headerFacts={project:"Panels",title:"Workspace clarity",settled:false,conversation_id:null};
+  (window as any).__layoutUpdate=(recap:string)=>{layoutRecap=recap;};
+  (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
+  import ManagerFrame from "../src/components/ManagerFrame.svelte";
   import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
@@ -127,7 +145,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   }
 
   // The Ticket layout uses the same production predicate as TicketRoute. The
-  // orchestrator below mounts its actual production workspace and handlers.
+  // manager below mounts its actual production workspace and handlers.
   function dismissTicketOnPointerDown(event: PointerEvent): void {
     if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
   }
@@ -495,7 +513,16 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-{#if readerOnly}
+{#if managerLayoutOnly}
+<QueryClientProvider client={catalogClient}>
+  <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
+    <ManagerHeader recap={layoutRecap} onSaveRecap={async(value)=>{layoutRecap=value;}}>
+      {#snippet eyebrow()}<div class="page-eyebrow"><span>Panels</span><button class="page-settle" aria-label="Settle Workspace clarity">Settle</button></div>{/snippet}
+      {#snippet title()}<InlineEdit value={headerFacts.title} ariaLabel="Manager title" onSave={async()=>{}} />{/snippet}
+    </ManagerHeader>
+  </main>
+</QueryClientProvider>
+{:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
   </div>
@@ -518,9 +545,22 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     </div>
   {:else if previewMode === "containers"}
     <MarkdownBlock text={containerMarkdown+'\n\nRevision '+containerRevision} />
+  {:else if previewMode === "retained"}
+    <section data-retention-content>
+      {#if retainedKind === 'preview' || retainedKind === 'nested'}
+        <FilePreview target={targetFromHref(retainedTarget)} />
+      {:else if retainedKind === 'document'}
+        <div style="height:500px"><FileDocument target={targetFromHref(retainedTarget)} reloadSignal={retainedReload} /></div>
+      {:else if retainedKind === 'image'}
+        <VisibleMessageImage src={()=>retainedTarget} alt="Retained image" outgoing={false} />
+      {:else}
+        <MarkdownBlock text={largeMarkdown} />
+      {/if}
+    </section>
+    <div style="height:1200px" data-retention-away>Scroll destination</div>
   {:else if previewMode === "media"}
     {#each Array.from({length:24},(_,index)=>index) as index}
-      <div style="min-height:340px">
+      <div style="min-height:340px" data-preview-index={index}>
         <FilePreview target={targetFromHref('/files/tickets/t_preview/preview'+index+'.html')} />
         <FilePreview target={targetFromHref('/files/tickets/t_preview/image'+index+'.png')} />
       </div>
@@ -585,10 +625,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       <div class="conversation-column">{@render conversationPane()}</div>
     </section>
   {:else}
-    <OrchestratorWorkspace bind:conversationState>
+    <ManagerFrame bind:conversationState>
       <button type="button" data-ticket-behind>Ticket content</button>
       {#snippet conversation()}{@render conversationPane()}{/snippet}
-    </OrchestratorWorkspace>
+    </ManagerFrame>
   {/if}
 </div>
 

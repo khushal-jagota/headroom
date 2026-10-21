@@ -29,6 +29,7 @@ def command_app(tmp_path: Path) -> FastAPI:
     )
     conn.commit()
     conn.close()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Physical preparation is not public authority. Reuse the actual producer
@@ -63,14 +64,14 @@ def test_observation_failure_and_overflow_never_change_success(
 ) -> None:
     app = command_app(tmp_path)
 
-    @app.post("/api/tickets")
+    @app.post("/api/managers")
     async def tickets() -> dict[str, bool]:
         for value in range(1, 67):
             write(tmp_path, value)
         return {"accepted": True}
 
     with TestClient(app) as client:
-        response = client.post("/api/tickets")
+        response = client.post("/api/managers")
         assert response.status_code == 200
         assert response.json() == {"accepted": True}
         assert fence(response)["coverage"] == "unknown"
@@ -80,7 +81,7 @@ def test_observation_failure_and_overflow_never_change_success(
             raise RuntimeError("synthetic fence observer failure")
 
         monkeypatch.setattr(proof, "response_fence", fail)
-        response = client.post("/api/tickets")
+        response = client.post("/api/managers")
         assert response.status_code == 200
         assert response.json() == {"accepted": True}
         assert response.headers["panels-navigation-coverage"] == "unknown"
@@ -121,9 +122,11 @@ def test_real_application_command_families_and_store_writes(
         )
         accepted(client.patch(f"/api/projects/{project['id']}", json={"name": "Renamed"}))
         item = accepted(
-            client.post("/api/items", json={"title": "Orchestrator", "project_id": project["id"]})
+            client.post(
+                "/api/managers", json={"title": "Orchestrator", "project_id": project["id"]}
+            )
         )
-        accepted(client.patch(f"/api/items/{item['id']}/settled", json={"settled": True}))
+        accepted(client.patch(f"/api/managers/{item['id']}/settled", json={"settled": True}))
         ticket = accepted(
             client.post(
                 "/api/tickets",
@@ -131,7 +134,7 @@ def test_real_application_command_families_and_store_writes(
                     "title": "Capture this command",
                     "worker_type": "coding",
                     "brief": "Synthetic",
-                    "orchestrator": {"kind": "chief", "id": "chief"},
+                    "manager": {"kind": "chief", "id": "chief"},
                 },
             )
         )
@@ -140,7 +143,7 @@ def test_real_application_command_families_and_store_writes(
             client.patch(
                 f"/api/tickets/{ticket['id']}",
                 json={
-                    "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+                    "manager": {"kind": "manager", "id": item["id"]},
                 },
             )
         )
@@ -151,15 +154,23 @@ def test_real_application_command_families_and_store_writes(
                 headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
             )
         )
-        other = accepted(client.post(
-            "/api/items", json={"title": "Other orchestrator", "project_id": project["id"]},
-        ))
+        other = accepted(
+            client.post(
+                "/api/managers",
+                json={"title": "Other manager", "project_id": project["id"]},
+            )
+        )
 
         def park_for_original_holder() -> dict[str, Any]:
-            return accepted(client.patch(f"/api/tickets/{ticket['id']}", json={
-                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-                "ceiling_holder": {"kind": "sprint_item", "id": item["id"]},
-            }))
+            return accepted(
+                client.patch(
+                    f"/api/tickets/{ticket['id']}",
+                    json={
+                        "manager": {"kind": "manager", "id": item["id"]},
+                        "ceiling_holder": {"kind": "manager", "id": item["id"]},
+                    },
+                )
+            )
 
         def owner_release(response: Any, previous: dict[str, Any], parent: str | None) -> None:
             accepted(response)
@@ -168,35 +179,57 @@ def test_real_application_command_families_and_store_writes(
             moved = detail.json()
             assert moved["ceiling_holder"] == {"kind": "owner", "id": "owner"}
             assert moved["pending_proposal"] == previous["pending_proposal"]
-            projected = client.get("/api/navigation/snapshot", params={
-                "fence": response.headers[FENCE_HEADER.decode()],
-            })
+            projected = client.get(
+                "/api/navigation/snapshot",
+                params={
+                    "fence": response.headers[FENCE_HEADER.decode()],
+                },
+            )
             assert projected.status_code == 200, projected.text
             body = projected.json()
             assert body["proof"]["status"] == "included"
-            value = next(record["value"] for record in body["snapshot"]["records"]
-                         if record["kind"] == "ticket" and record["id"] == ticket["id"])
+            value = next(
+                record["value"]
+                for record in body["snapshot"]["records"]
+                if record["kind"] == "ticket" and record["id"] == ticket["id"]
+            )
             assert value["ceiling_holder"] == moved["ceiling_holder"]
-            assert value["sprint_item_id"] == parent
+            assert value["manager_id"] == parent
             assert value["ticket_status"] == "awaiting_approval"
             assert value["proposal_revision"] == previous["pending_proposal"]["revision"]
 
         # Existing routes now prove the domain move and its owner-release publication
         # together, rather than publishing only a move whose holder already is owner.
         parked = park_for_original_holder()
-        owner_release(client.patch(f"/api/tickets/{ticket['id']}", json={
-            "orchestrator": {"kind": "sprint_item", "id": other["id"]},
-        }), parked, other["id"])
+        owner_release(
+            client.patch(
+                f"/api/tickets/{ticket['id']}",
+                json={
+                    "manager": {"kind": "manager", "id": other["id"]},
+                },
+            ),
+            parked,
+            other["id"],
+        )
         parked = park_for_original_holder()
-        owner_release(client.delete(
-            f"/api/collections/outcome_tickets/{item['id']}/{ticket['id']}",
-        ), parked, None)
+        owner_release(
+            client.delete(
+                f"/api/collections/manager_tickets/{item['id']}/{ticket['id']}",
+            ),
+            parked,
+            None,
+        )
         parked = park_for_original_holder()
-        owner_release(client.put(
-            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}",
-        ), parked, other["id"])
+        owner_release(
+            client.put(
+                f"/api/collections/manager_tickets/{other['id']}/{ticket['id']}",
+            ),
+            parked,
+            other["id"],
+        )
         proposal = client.get(
-            "/api/tickets", params={"detail": "full", "id": ticket["id"]},
+            "/api/tickets",
+            params={"detail": "full", "id": ticket["id"]},
         ).json()
         accepted(
             client.post(
@@ -262,3 +295,21 @@ def test_real_application_command_families_and_store_writes(
         )
         assert refused.status_code >= 400
         assert FENCE_HEADER.decode() not in refused.headers
+
+
+def test_manager_mutations_remain_in_the_navigation_command_inventory() -> None:
+    from fastapi.routing import APIRoute
+
+    from planner.managers.api import legacy_router, router
+    from planner.navigation.commands import EXCLUDED_COMMAND_ROUTES, is_navigation_command
+
+    for manager_router in (router, legacy_router):
+        for route in manager_router.routes:
+            if isinstance(route, APIRoute):
+                assert route.methods is not None
+                for method in route.methods & {"POST", "PATCH", "PUT", "DELETE"}:
+                    assert is_navigation_command(method, "/api" + route.path), route.path
+    excluded = {(route.method, route.path) for route in EXCLUDED_COMMAND_ROUTES}
+    assert ("POST", "/api/skills/apply") in excluded
+    for method in ("PUT", "DELETE"):
+        assert (method, "/files/managers/{manager_id}/{file_path:path}") in excluded

@@ -16,8 +16,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import data as days_data
-from planner.sprints import data as sprints_data
+from planner.managers import data as managers_data
 from planner.tickets import data, revision_feedback, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
 
@@ -59,10 +58,6 @@ def _park(
     return parked
 
 
-
-
-
-
 def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
     self_principal = Principal(PrincipalKind.ticket, ticket.id)
@@ -92,19 +87,12 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
     assert forbidden.value.code is ErrorCode.agent_forbidden
 
 
-
-
 def test_review_lists_only_owner_addressed_proposals(tmp_db: Connection) -> None:
     owner_ticket = _park(tmp_db, OWNER_PRINCIPAL, 10)
-    chief_ticket = _park(tmp_db, CHIEF_PRINCIPAL, 20)
-    day_id = "day_2026-09-15"
-    days_data.add_day_ticket(tmp_db, day_id, owner_ticket.id, 30)
-    days_data.add_day_ticket(tmp_db, day_id, chief_ticket.id, 30)
+    _park(tmp_db, CHIEF_PRINCIPAL, 20)
 
     review = views.review_view(tmp_db)
     assert [item["ticket_id"] for item in review["items"]] == [owner_ticket.id]
-
-
 
 
 def test_rejection_rolls_back_feedback_proposal_and_claim_together(
@@ -134,11 +122,6 @@ def test_rejection_rolls_back_feedback_proposal_and_claim_together(
     assert unchanged.pending_proposal == ticket.pending_proposal
     assert unchanged.worker_step_claim.value == "none"
     assert revision_feedback.snapshot(tmp_db, ticket.id) is None
-    assert days_data.list_day_tickets(tmp_db, "day_2026-07-04") == []
-
-
-
-
 
 
 def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
@@ -166,10 +149,6 @@ def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
         data.delete_ticket(tmp_db, holder.id, principal=OWNER_PRINCIPAL, now=12)
 
 
-
-
-
-
 def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None:
     ticket = _park(tmp_db, CHIEF_PRINCIPAL)
     assert ticket.pending_proposal is not None
@@ -187,32 +166,28 @@ def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None
     assert handed.pending_proposal == ticket.pending_proposal
 
 
-
-
-
-
-
-
 # --- a move that leaves the holder below the Ticket -----------------------------
 
 
-def _outcome(conn: Connection, title: str, clock: Clock) -> str:
-    return sprints_data.create_item(conn, title=title, project_id="project_vylo", clock=clock).id
+def _manager(conn: Connection, title: str, clock: Clock) -> str:
+    return managers_data.create_manager(
+        conn, title=title, project_id="project_vylo", clock=clock
+    ).id
 
 
-def _park_under(conn: Connection, outcome_id: str, *, now: int = 10) -> Ticket:
-    """A Ticket under an Outcome, with a proposal parked for that same Outcome."""
-    holder = Principal(PrincipalKind.sprint_item, outcome_id)
+def _park_under(conn: Connection, manager_id: str, *, now: int = 10) -> Ticket:
+    """A Ticket under a Manager, with a proposal parked for that same Manager."""
+    holder = Principal(PrincipalKind.manager, manager_id)
     ticket = data.create_ticket(
         conn,
-        title="Addressed to its Outcome",
+        title="Addressed to its Manager",
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Agreed kickoff",
         stated_ceiling="needs_success_condition",
-        sprint_item_id=outcome_id,
+        manager_id=manager_id,
         stated_holder=holder,
     )
     return data.file_current_proposal(
@@ -228,26 +203,31 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     tmp_db: Connection, fake_clock: Clock
 ) -> None:
     """The whole complaint, end to end: parked, moved, and nobody coming."""
-    left = _outcome(tmp_db, "Inbox triage", fake_clock)
-    joined = _outcome(tmp_db, "Sprint hygiene", fake_clock)
+    left = _manager(tmp_db, "Inbox triage", fake_clock)
+    joined = _manager(tmp_db, "Sprint hygiene", fake_clock)
     ticket = _park_under(tmp_db, left)
-    day_id = "day_2026-09-21"
-    days_data.add_day_ticket(tmp_db, day_id, ticket.id, 20)
     assert views.review_view(tmp_db)["items"] == []
 
     tmp_db.execute(
         "UPDATE tickets SET guidance=? WHERE id=?", ("Historical move text λ", ticket.id)
     )
-    before = hashlib.sha256(tmp_db.execute(
-        "SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket.id,)
-    ).fetchone()[0]).hexdigest()
+    before = hashlib.sha256(
+        tmp_db.execute(
+            "SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket.id,)
+        ).fetchone()[0]
+    ).hexdigest()
 
     def deny_guidance(
-        action: int, table: str | None, column: str | None, _db: str | None, _trigger: str | None,
+        action: int,
+        table: str | None,
+        column: str | None,
+        _db: str | None,
+        _trigger: str | None,
     ) -> int:
-        if action in (sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE) and (
-            table, column
-        ) == ("tickets", "guidance"):
+        if action in (sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE) and (table, column) == (
+            "tickets",
+            "guidance",
+        ):
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -255,7 +235,7 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     data.edit_ticket(
         tmp_db,
         ticket.id,
-        edit=TicketEdit(sprint_item_id=joined),
+        edit=TicketEdit(manager_id=joined),
         title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=30,
@@ -268,9 +248,11 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     review = views.review_view(tmp_db)
     assert [item["ticket_id"] for item in review["items"]] == [ticket.id]
     tmp_db.set_authorizer(None)
-    after = hashlib.sha256(tmp_db.execute(
-        "SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket.id,)
-    ).fetchone()[0]).hexdigest()
+    after = hashlib.sha256(
+        tmp_db.execute(
+            "SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket.id,)
+        ).fetchone()[0]
+    ).hexdigest()
     assert before == after
 
 

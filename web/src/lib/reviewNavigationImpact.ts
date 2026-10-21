@@ -11,6 +11,6 @@ export function reviewProposalImpact(impact:RecordImpact,id:string):boolean {
   return impact.kind==='ticket' && impact.id===id && touches(impact,['title','stage','ceiling','ceiling_holder','gating_field','proposal_field','proposal_created_at','proposal_revision']);
 }
 export function runtimeCountImpact(impact:RecordImpact,presentation:NavigationPresentation | undefined):boolean {
-  if(impact.kind==='ticket' || impact.kind==='chief' || impact.kind==='orchestrator') return touches(impact,['conversation_id']);
+  if(impact.kind==='ticket' || impact.kind==='chief' || impact.kind==='manager') return touches(impact,['conversation_id']);
   return impact.kind==='conversation' && Boolean(presentation?.globalCounts || presentation?.review.currentConversationIds.has(impact.id)) && touches(impact,['attention']);
 }

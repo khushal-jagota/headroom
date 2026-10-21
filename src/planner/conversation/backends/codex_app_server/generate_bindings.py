@@ -132,12 +132,12 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     # What the thread has cost so far, every time codex recounts it.
     (_V2_NAMESPACE, "ThreadTokenUsageUpdatedNotification"),
     # The composer catalogue and the two invalidations Codex publishes for it. Apps use
-    # both surfaces: app/list owns metadata, while app/installed owns current callability.
+    # targeted metadata and app/installed runtime callability.
     (_V2_NAMESPACE, "SkillsListParams"),
     (_V2_NAMESPACE, "SkillsListResponse"),
     (_V2_NAMESPACE, "SkillsChangedNotification"),
-    (_V2_NAMESPACE, "AppsListParams"),
-    (_V2_NAMESPACE, "AppsListResponse"),
+    (_V2_NAMESPACE, "AppsReadParams"),
+    (_V2_NAMESPACE, "AppsReadResponse"),
     (_V2_NAMESPACE, "AppsInstalledParams"),
     (_V2_NAMESPACE, "AppsInstalledResponse"),
     (_V2_NAMESPACE, "AppListUpdatedNotification"),
@@ -233,9 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
     try:
-        generate_bindings(
-            codex_executable=arguments.codex_executable, bundle_name=arguments.bundle
-        )
+        generate_bindings(codex_executable=arguments.codex_executable, bundle_name=arguments.bundle)
     except BindingGenerationFailed as failed:
         print(f"bindings not regenerated: {failed}", file=sys.stderr)
         return 1
@@ -244,8 +242,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def generate_bindings(*, codex_executable: str = "codex", bundle_name: str = "all") -> None:
     """Ask each selected bundle's pinned binary for its schema, vendor it, write models."""
-    selected = BUNDLES if bundle_name == "all" else tuple(
-        bundle for bundle in BUNDLES if bundle.name == bundle_name
+    selected = (
+        BUNDLES
+        if bundle_name == "all"
+        else tuple(bundle for bundle in BUNDLES if bundle.name == bundle_name)
     )
     if not selected:
         raise BindingGenerationFailed(f"no bundle named {bundle_name!r}")

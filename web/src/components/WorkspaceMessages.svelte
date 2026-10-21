@@ -7,7 +7,7 @@
   import { createRailPreviewInput } from "../lib/workspaceRailInteraction";
   import type { WorkspaceMessageConversation } from "../lib/types";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import SprintTicketRow from "./SprintTicketRow.svelte";
+  import WorkerRow from "./WorkerRow.svelte";
   let { parentId=undefined, conversations, motionPrefix = undefined, onHover = () => undefined, onLeave = () => undefined }: {
     parentId?:string;
     conversations: readonly WorkspaceMessageConversation[];
@@ -21,10 +21,10 @@
   let anchor=$state<string|null>(null);
   let direction=$state<'before'|'after'>('after');
   let presentation=$derived(navigation?.state.effective ? navigation.presentationFor(navigation.state.effective) : undefined);
-  let scopedWindow=$derived(parentId?navigationWindow(presentation,'unread',{kind:'orchestrator',id:parentId}):undefined);
+  let scopedWindow=$derived(parentId?navigationWindow(presentation,'unread',{kind:'manager',id:parentId}):undefined);
   let scopedConversationIds=$derived(scopedWindow ? presentation?.unreadConversationIdsByWindow.get(scopedWindow.window_id) : undefined);
   let scopedConversations=$derived(scopedWindow?conversations.filter(row=>scopedConversationIds?.has(row.conversationId)):conversations);
-  $effect(()=>{if(parentId&&visible)navigation?.owner.setDemand(demand,{windows:[viewWindow('unread',{kind:'orchestrator',id:parentId},{limit:60,anchor,direction})]});else navigation?.owner.setDemand(demand,undefined);});
+  $effect(()=>{if(parentId&&visible)navigation?.owner.setDemand(demand,{windows:[viewWindow('unread',{kind:'manager',id:parentId},{limit:60,anchor,direction})]});else navigation?.owner.setDemand(demand,undefined);});
   onDestroy(()=>navigation?.owner.setDemand(demand,undefined));
   function visibility(node:HTMLElement){const observer=new IntersectionObserver(entries=>visible=entries[0].isIntersecting,{root:node.closest('[data-settled-scroll]'),rootMargin:'200px'});observer.observe(node);return{destroy(){observer.disconnect();}};}
   const inputs = new Map<string, ReturnType<typeof createRailPreviewInput>>();
@@ -50,8 +50,8 @@
   <div class="bucket workspace-ticket-bucket" data-workspace-messages>
     <div class="bucket-label" data-rail-motion={motionPrefix ? `settled-heading:${motionPrefix}` : undefined}>Messages{#if scopedWindow} <span class="count">({scopedWindow.total})</span>{/if}</div>
     {#each scopedConversations as conversation (conversation.conversationId)}
-      <SprintTicketRow title={conversation.title} signal={conversation.conversationSignal} conversationId={conversation.conversationId} class="worker-row"
-        href={workspaceAddress(conversation.kind === "chief" ? {kind:"chief"} : conversation.kind === "sprint_item" ? {kind:"item",id:conversation.id} : conversation.parentId && conversation.parentId !== "chief" ? {kind:"ticket",id:conversation.id,openedFromItemId:conversation.parentId} : {kind:"ticket",id:conversation.id})}
+      <WorkerRow title={conversation.title} signal={conversation.conversationSignal} conversationId={conversation.conversationId} class="worker-row"
+        href={workspaceAddress(conversation.kind === "chief" ? {kind:"chief"} : conversation.kind === "manager" ? {kind:"manager",id:conversation.id} : conversation.parentId && conversation.parentId !== "chief" ? {kind:"ticket",id:conversation.id,openedFromManagerId:conversation.parentId} : {kind:"ticket",id:conversation.id})}
         data-rail-motion={motionPrefix ? `settled-message:${motionPrefix}:${conversation.conversationId}` : undefined} data-message-conversation={conversation.conversationId} data-message-kind={conversation.kind}
         onpointerenter={(event: PointerEvent) => input(conversation).pointerEnter(event)} onpointerleave={onLeave}
         onpointerdown={(event: PointerEvent) => input(conversation).down(event)} onpointermove={(event: PointerEvent) => input(conversation).move(event)}

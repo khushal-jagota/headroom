@@ -32,7 +32,7 @@ def _sources(table: str, kind: str, identity: str) -> tuple[ResourceSourceTrigge
 SOURCE_TRIGGERS = (
     *_sources("tickets", "ticket", "ROW.id"),
     *_sources("projects", "project", "ROW.id"),
-    *_sources("sprint_items", "orchestrator", "ROW.id"),
+    *_sources("managers", "manager", "ROW.id"),
     *_sources("ticket_blocks", "blockers", "ROW.blocked_ticket_id"),
 )
 _PATH = re.compile(r"^/api/tickets/([^/?]+)/workspace(?:/fields/([^/?]+))?$")
@@ -51,18 +51,18 @@ class TicketWorkspaceResources:
             revision = field_revision(conn, ticket_id, field)
             return ResourceSnapshot(revision, lambda: workspace_field(conn, ticket_id, field))
         row = conn.execute(
-            "SELECT tickets.sprint_item_id,"
-            "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
+            "SELECT tickets.manager_id,"
+            "CASE WHEN tickets.manager_id IS NOT NULL THEN managers.project_id "
             "ELSE tickets.project_id END project_id "
-            "FROM tickets LEFT JOIN sprint_items ON sprint_items.id=tickets.sprint_item_id "
+            "FROM tickets LEFT JOIN managers ON managers.id=tickets.manager_id "
             "WHERE tickets.id=?",
             (ticket_id,),
         ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
         dependencies = [("ticket", ticket_id), ("blockers", ticket_id)]
-        if row["sprint_item_id"] is not None:
-            dependencies.append(("orchestrator", str(row["sprint_item_id"])))
+        if row["manager_id"] is not None:
+            dependencies.append(("manager", str(row["manager_id"])))
         if row["project_id"] is not None:
             dependencies.append(("project", str(row["project_id"])))
         dependencies.extend(

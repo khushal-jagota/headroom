@@ -15,11 +15,11 @@
   import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
   import { actualMark, expectedMark } from "../lib/conversationSignalDom";
   import { createQuery } from "@tanstack/svelte-query";
-  import OrchestratorHeader from "./OrchestratorHeader.svelte";
-  import OrchestratorWorkspace from "./OrchestratorWorkspace.svelte";
+  import ManagerHeader from "./ManagerHeader.svelte";
+  import ManagerFrame from "./ManagerFrame.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import ErrorLine from "./ErrorLine.svelte";
-  import OrchestratorChildren from "./OrchestratorChildren.svelte";
+  import ManagerChildren from "./ManagerChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -80,7 +80,7 @@
         || navigation.state.generation !== generation || conversationId !== source.conversation_id) return;
       const pane = element.querySelector('[data-conversation-pane]');
       if (pane?.getAttribute('data-conversation-id') !== (source.conversation_id ?? '')) return;
-      const region=element.querySelector('.sprint-workspace-title');
+      const region=element.querySelector('.manager-workspace-title');
       if(JSON.stringify(region ? actualMark(region) : [null,null]) !== JSON.stringify(expectedMark(source.conversation_signal,source.conversation_id))) return;
       observer.acknowledgeRender(publication,observation);
     });
@@ -114,13 +114,13 @@
 </script>
 
 <div class="chief-workspace-host" bind:this={root}>
-<OrchestratorWorkspace class="chief-workspace" bind:conversationState>
-  <OrchestratorHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
+<ManagerFrame class="chief-workspace" bind:conversationState>
+  <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
-  </OrchestratorHeader>
-  <section class="orchestrator-workers" aria-label="Workers">
-    <OrchestratorChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
+  </ManagerHeader>
+  <section class="manager-workers" aria-label="Workers">
+    <ManagerChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
   </section>
   {#snippet conversation()}
 <!-- A failed read is a line next to the conversation, not a screen in place of it.
@@ -153,9 +153,9 @@
   />
 
   {/snippet}
-</OrchestratorWorkspace>
+</ManagerFrame>
 </div>
 <style>
   .chief-workspace-host { display:contents; }
-  .orchestrator-workers { margin-top:var(--space-5); }
+  .manager-workers { margin-top:var(--space-5); }
 </style>

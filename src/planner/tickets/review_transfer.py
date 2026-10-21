@@ -13,9 +13,9 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.managers import data as managers_data
+from planner.managers import service as managers_service
 from planner.runtime import conversation_start
-from planner.sprints import data as sprints_data
-from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import ReviewTransferNotice
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -118,25 +118,25 @@ async def _deliver(
                 reply_requested=False,
                 now=now,
             )
-    elif target.kind is PrincipalKind.sprint_item:
-        async with sprints_service.supervisor_lifecycle_lock(target.id):
-            item = sprints_data.read_item(conn, target.id).item
+    elif target.kind is PrincipalKind.manager:
+        async with managers_service.manager_lifecycle_lock(target.id):
+            item = managers_data.read_manager(conn, target.id).item
             async with conversation_start.conversation_link_lock(
-                f"agent:{item.supervisor_agent_key}"
+                f"agent:{item.manager_agent_key}"
             ):
                 delivered = await conversation_start.send_to_agent_conversation(
                     system,
                     conn,
-                    item.supervisor_agent_key,
+                    item.manager_agent_key,
                     content,
-                    conversation_start.sprint_item_supervisor_resolve(item),
+                    conversation_start.manager_resolve(item),
                     conversation_id=conversation_start.read_agent_conversation(
-                        conn, item.supervisor_agent_key
+                        conn, item.manager_agent_key
                     ),
                     sender_label="Panels",
                     mode=PromptDeliveryMode.queue,
                     reply_requested=False,
-                    required_sprint_item_id=item.id,
+                    required_manager_id=item.id,
                 )
     else:
         async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):

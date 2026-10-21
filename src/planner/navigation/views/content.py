@@ -11,7 +11,7 @@ from planner.navigation.views.projection import record
 
 
 def recap(path: Path, kind: str, identity: str, version: str) -> str:
-    if kind not in ("ticket", "orchestrator") or len(identity) > 256 or len(version) != 64:
+    if kind not in ("ticket", "manager") or len(identity) > 256 or len(version) != 64:
         raise ValueError("invalid recap reference")
     with contextlib.closing(_read_connection(path)) as conn:
         conn.execute("BEGIN")

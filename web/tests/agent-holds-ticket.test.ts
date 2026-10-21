@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   feedbackLabel,
-  homeTiles,
-  sprintItemHeading,
-  sprintItemWord,
+  managerHeading,
   ticketFacts,
   ticketPageMark,
   workspaceHeading
@@ -19,10 +17,8 @@ describe("a worker that holds the claim but is between turns", () => {
 
   it("still reads as the agent's on every screen", () => {
     expect(workspaceHeading(held)).toBe("Agent");
-    expect(sprintItemHeading(held)).toBe("Agent");
-    expect(sprintItemWord(held)).toBe("agent");
+    expect(managerHeading(held)).toBe("Agent");
     expect(feedbackLabel(held)).toBe("Agent");
-    expect(homeTiles(held)).toEqual([]);
   });
 
   it("does not read as an untouched Stage on its own page", () => {
@@ -35,9 +31,7 @@ describe("a live turn with no claim behind it", () => {
 
   it("reads the same, so neither fact alone is the carrier", () => {
     expect(workspaceHeading(running)).toBe("Agent");
-    expect(sprintItemWord(running)).toBe("agent");
     expect(feedbackLabel(running)).toBe("Agent");
-    expect(homeTiles(running)).toEqual(["Working 1"]);
     expect(ticketPageMark(running)).toBe("current-running");
   });
 });
@@ -47,9 +41,7 @@ describe("a Ticket no worker has", () => {
 
   it("is named as the agent's nowhere", () => {
     expect(workspaceHeading(untouched)).toBe("Empty");
-    expect(sprintItemWord(untouched)).toBe("empty");
     expect(feedbackLabel(untouched)).not.toBe("Agent");
-    expect(homeTiles(untouched)).toEqual([]);
     expect(ticketPageMark(untouched)).toBe("current-waiting");
   });
 });

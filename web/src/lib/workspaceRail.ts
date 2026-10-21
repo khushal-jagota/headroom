@@ -2,7 +2,7 @@ import type { Lifecycle } from "./lifecycle";
 import { workspaceChildMessageConversations, workspaceMessageIndex, type WorkspaceMessageIndex } from "./workspaceMessageDiscovery";
 import type {
   BoardCard,
-  BoardSprintItem,
+  BoardManager,
   WorkspaceMessageConversation,
 } from "./types";
 import {
@@ -14,15 +14,15 @@ import {
 
 
 /** Only fields the workspace presentation reads, independent of detail/config responses. */
-export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'orchestrator' | 'sprint_item_id' | 'sprint_item_title'>;
-export type WorkspaceOrchestrator = Pick<BoardSprintItem,
+export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'manager' | 'manager_id' | 'manager_title'>;
+export type WorkspaceManager = Pick<BoardManager,
   'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap' | 'recap_preview' | 'conversation_id'>
   & WorkItemAttentionFacts & {recap_reference?:import("./navigation/contracts").ViewContentReference|null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
 /** Settled-only membership never fabricates full recap or Project facts. */
-export type WorkspaceSettledOrchestrator = Pick<WorkspaceOrchestrator,
+export type WorkspaceSettledManager = Pick<WorkspaceManager,
   'id' | 'title' | 'created_at' | 'conversation_id' | 'conversation_signal' | 'tickets'>
   & WorkItemAttentionFacts & {settled:true};
-export type WorkspaceRailOrchestrator = WorkspaceOrchestrator | WorkspaceSettledOrchestrator;
+export type WorkspaceRailManager = WorkspaceManager | WorkspaceSettledManager;
 export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
   & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
 
@@ -37,7 +37,7 @@ export type WorkspaceRailItem = {
   id: string;
   title: string;
   createdAt: number;
-  conversationSignal: WorkspaceOrchestrator["conversation_signal"];
+  conversationSignal: WorkspaceManager["conversation_signal"];
   conversationId: string | null;
   groups: WorkspaceTicketGroup[];
   rested: boolean;
@@ -150,7 +150,7 @@ export function workspaceListRecap(recap = ""): string {
 /** Sidebar visibility stays separate from the durable unread conversation index. */
 export function workspaceRailChildMessageConversations(
   rows: readonly WorkspaceMessageConversation[],
-  parent: Pick<WorkspaceOrchestrator, "id" | "title" | "settled"> & { tickets: readonly WorkItemTicketFacts[] },
+  parent: Pick<WorkspaceManager, "id" | "title" | "settled"> & { tickets: readonly WorkItemTicketFacts[] },
   cards: readonly WorkspaceTicket[] = [],
   index:WorkspaceMessageIndex=workspaceMessageIndex(rows,cards)
 ): WorkspaceMessageConversation[] {
@@ -165,10 +165,10 @@ export function workspaceRailChildMessageConversations(
 
 export function buildWorkspaceRail(
   cards: readonly WorkspaceTicket[],
-  sprintItems: readonly WorkspaceRailOrchestrator[] = []
+  managers: readonly WorkspaceRailManager[] = []
 ): WorkspaceRail {
-  // Complete children come from each orchestrator, never the currently open pane.
-  const items = sprintItems.map((item) => ({
+  // Complete children come from each manager, never the currently open pane.
+  const items = managers.map((item) => ({
     id: item.id,
     title: item.title,
     createdAt: item.created_at,
@@ -188,8 +188,8 @@ export function buildWorkspaceRail(
       left.id.localeCompare(right.id)
   );
   const chiefTickets = cards.filter((card) =>
-    card.orchestrator?.kind === "chief" ||
-    (card.orchestrator == null && card.sprint_item_id == null)
+    card.manager?.kind === "chief" ||
+    (card.manager == null && card.manager_id == null)
   );
   return {
     // Legacy projection remains available to references outside the new rail.

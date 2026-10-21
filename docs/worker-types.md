@@ -267,6 +267,17 @@ _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 
 ## Skills and the Config page
 
+The owner can apply a reviewed skill batch with `POST /api/skills/apply`.
+The CLI exposes it as `panels skill apply --input-json MANIFEST.json`.
+Each entry supplies a name, full source text, and the expected current SHA-256 hash.
+An explicit null hash requires an absent row. Every entry passes validation before any row changes.
+All row changes share one transaction and the existing publication lock.
+File publication follows that transaction and reports the existing incomplete-save diagnostic.
+The same complete manifest can retry publication when all rows already match its exact targets.
+This operation preserves existing immutable versions and Worker bindings.
+The Chief and all agents receive a refusal from this owner-only operation.
+
+
 Every managed skill's text is a row in `managed_skills`, and that row is the authority.
 `data/skills/<name>/SKILL.md` is a copy Panels writes from it, because an agent reads a
 file rather than a table, and each agent home links to that file. Opening a database
@@ -329,7 +340,7 @@ arrow. The index does not show structural ids, skill names, launch settings, Sta
 counts, or configuration labels, and it keeps the same one-column order on narrow
 screens.
 
-- **Config** contains Chief of Staff, the Sprint Item supervisor, and the shared Worker
+- **Config** contains Chief of Staff, the Manager, and the shared Worker
   role skill. Chief
   opens at `#/settings/config/chief-of-staff` with one picker for its launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
@@ -337,9 +348,9 @@ screens.
   role because it guides every Ticket worker, although it is not an independent
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
-  or Stage controls. Sprint Item supervisor opens at
-  `#/settings/config/sprint-item-supervisor`. It uses the same canonical skill editor and has no
-  global launch or Stage controls. Each Sprint Item owns its supervisor launch snapshot.
+  or Stage controls. Manager opens at
+  `#/settings/config/manager`. It uses the same canonical skill editor and has no
+  global launch or Stage controls. Each Manager owns its Manager launch snapshot.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
   `#/settings/config/workers/<worker-type>` with its launch defaults, read-only Stage ownership
@@ -427,7 +438,7 @@ picker value visible and offers a retry.
 
 The stored backend, model and reasoning preserve the Ticket's selected variant and effort.
 Each turn resolves the current enabled model within that variant. Chief and ordinary
-orchestrators use the same rule, including after a server restart. Catalogue failures use
+managers use the same rule, including after a server restart. Catalogue failures use
 the last known-good resolution when one exists. See
 [current models within a variant](conversation-system.md#current-models-within-a-variant).
 

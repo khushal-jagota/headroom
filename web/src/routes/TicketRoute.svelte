@@ -77,8 +77,8 @@
   const mastheadObserver=navigation.registerRenderBoundary(`ticket-masthead:${crypto.randomUUID()}`,impact=>{
     const mapped=currentView ? navigation.presentationFor(currentView) : undefined;
     const row=mapped?.rawTicketsById.get(stableId);
-    const parent=row?.value.sprint_item_id ?? null;
-    const project=parent===null ? row?.value.project_id ?? null : mapped?.rawOrchestratorsById.get(parent)?.value.project_id ?? null;
+    const parent=row?.value.manager_id ?? null;
+    const project=parent===null ? row?.value.project_id ?? null : mapped?.rawManagersById.get(parent)?.value.project_id ?? null;
     return ticketMastheadImpact(impact,row,parent,project);
   });
   onDestroy(()=>navigation.disposeRenderBoundary(mastheadObserver));
@@ -155,19 +155,19 @@
     observedPointer=key;
     conversationId=canonicalTicket.value.conversation_id;
   });
-  // The one Sprint Item this Ticket's ceiling can be handed to, named as Khushal names
+  // The one Manager this Ticket's ceiling can be handed to, named as Khushal names
   // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
-  let ticketSprintItem = $derived(
-    section?.detail.sprint_item_id
+  let ticketManager = $derived(
+    section?.detail.manager_id
       ? {
-          id: section.detail.sprint_item_id,
-          title: section.detail.sprint_item_title || "Sprint Item"
+          id: section.detail.manager_id,
+          title: section.detail.manager_title || "Manager"
         }
       : null
   );
 
   function pageHolderLabel(holder: import("../lib/types").Principal | null): string {
-    return holderLabelFor(ticketSprintItem, holder);
+    return holderLabelFor(ticketManager, holder);
   }
 
   const emptyTicketFieldText = "Not written yet.";
@@ -582,13 +582,13 @@
             {@const currentField = section.record.value.gating_field}
             {@const history = workerPageHistory(lc, detail)}
             {@const completedFields = history.completed}
-            {@const occurredFields = history.fields}
+            {@const stepFields = history.fields}
             {#if currentField}
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
                     <WorkerProposalCard proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
-                      ceiling={detail.ceiling} holder={detail.ceiling_holder} sprintItem={ticketSprintItem} canReturn={Boolean(detail.conversation_id)}
+                      ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
                       onAccept={(payload) => acceptField(currentField, payload)}
                       onScope={updateScope}
                       onReturn={returnProposal}
@@ -600,7 +600,7 @@
                     <div class="worker-ceiling-line" data-leash>
                       <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
                         triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}
-                        holderLabel={pageHolderLabel} sprintItem={ticketSprintItem} below onComplete={(change) => void updateScope(change.ceiling === undefined
+                        holderLabel={pageHolderLabel} manager={ticketManager} below onComplete={(change) => void updateScope(change.ceiling === undefined
                           ? { ceiling_holder:change.holder } : { ceiling:change.ceiling, ceiling_holder:change.holder }).catch(() => undefined)} />
                     </div>
                   {/if}
@@ -619,7 +619,7 @@
                 <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.length} done</span></summary>
                 {#if stepsOpen}
                 <div class="worker-step-rows">
-                  {#each occurredFields as name (`${detail.id}:${name}`)}
+                  {#each stepFields as name (`${detail.id}:${name}`)}
                     {@const stageState = ticketSectionFieldState(section,currentView,name)}
                     <TicketStageSection {name} ticketId={stableId} draft={fieldDraft(name)} value={detail.field_values[name]}
                       approval={detail.field_approvals?.[name]}

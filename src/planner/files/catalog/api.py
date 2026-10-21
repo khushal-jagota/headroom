@@ -10,6 +10,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote, unquote, urlsplit
 
 import anyio.to_thread
@@ -37,7 +38,7 @@ from planner.files.logic.listing import fold_directory
 from planner.files.logic.paths import (
     _validate_relative_path,
     _validate_safe_id,
-    sprint_item_files_root,
+    manager_files_root,
     ticket_files_root,
 )
 from planner.resource_versions.data import source_revision
@@ -195,18 +196,18 @@ def _read(
     conn = request.app.state.conn_factory()
     try:
         conn.execute("BEGIN")
-        if kind == "sprint_item":
+        if kind == "manager":
             require_above_or_self(
-                conn, request_context(request).principal, authority.outcome(owner_id)
+                conn, request_context(request).principal, authority.manager(owner_id)
             )
         else:
             if conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
                 raise PlannerError(ErrorCode.not_found, "ticket not found", {})
         db_path = request.app.state.config.db_path
         root = (
-            ticket_files_root(db_path) if kind == "ticket" else sprint_item_files_root(db_path)
+            ticket_files_root(db_path) if kind == "ticket" else manager_files_root(db_path)
         ) / owner_id
-        prefix = f"/files/{'tickets' if kind == 'ticket' else 'sprint-items'}/{owner_id}/"
+        prefix = f"/files/{'tickets' if kind == 'ticket' else 'managers'}/{owner_id}/"
         inventory = _inventory(root, prefix)
         rows = inventory.directories.get(directory, [])
         total = len(rows)
@@ -251,10 +252,13 @@ def _read(
 @router.get("/artifact-catalog/{kind}/{owner_id}")
 async def artifact_catalog(
     request: Request,
-    kind: ArtifactOwnerKind,
+    kind: ArtifactOwnerKind | Literal["sprint_item"],
     owner_id: str,
     directory: str = "",
     offset: int = 0,
     limit: int = PAGE_SIZE,
 ) -> ArtifactDirectoryPage:
-    return await anyio.to_thread.run_sync(_read, request, kind, owner_id, directory, offset, limit)
+    canonical_kind: ArtifactOwnerKind = "manager" if kind == "sprint_item" else kind
+    return await anyio.to_thread.run_sync(
+        _read, request, canonical_kind, owner_id, directory, offset, limit
+    )

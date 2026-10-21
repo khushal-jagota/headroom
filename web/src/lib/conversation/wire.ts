@@ -82,7 +82,7 @@ export type MessageContent = MessagePiece[];
 export type StoredMessageContent = { text: string } | { content: MessagePiece[] };
 
 export type Principal = {
-  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  kind: "owner" | "chief" | "manager" | "ticket";
   id: string;
 };
 

@@ -33,12 +33,12 @@
     bodyAriaLabel: string;
     bodyPlaceholder: string;
   }> = {
-    "panels-sprint-item-supervisor": {
-      label: "Sprint Item supervisor",
+    "panels-manager": {
+      label: "Manager",
       fact: "Role skill",
-      descriptionAriaLabel: "Sprint Item supervisor skill description",
-      bodyAriaLabel: "Sprint Item supervisor skill Markdown body",
-      bodyPlaceholder: "Write the complete Sprint Item supervisor skill body..."
+      descriptionAriaLabel: "Manager skill description",
+      bodyAriaLabel: "Manager skill Markdown body",
+      bodyPlaceholder: "Write the complete Manager skill body..."
     },
     "panels-worker": {
       label: "Worker skill",
@@ -87,8 +87,9 @@
     new Map((supportedWorkerTypes.data?.worker_types || []).map((item) => [item.worker_type, item]))
   );
   let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
-  let supervisorSkill = $derived(indexedSkills.get("panels-sprint-item-supervisor"));
-  let roleSkill = $derived(stableRoleId ? indexedSkills.get(stableRoleId) : undefined);
+  // The canonical role can use the retained row until the owner applies the skill manifest.
+  let managerSkill = $derived(indexedSkills.get("panels-manager") ?? indexedSkills.get("panels-sprint-item-supervisor"));
+  let roleSkill = $derived(stableRoleId === "panels-manager" ? managerSkill : stableRoleId ? indexedSkills.get(stableRoleId) : undefined);
   let roleSkillProfile = $derived(
     stableRoleId ? roleSkillProfiles[stableRoleId] : undefined
   );
@@ -215,15 +216,15 @@
                 </span>
                 <span class="agents-destination-arrow" aria-hidden="true">→</span>
               </a>
-              {#if supervisorSkill}
+              {#if managerSkill}
                 <a
                   class="agents-destination"
-                  href={href(["sprint-item-supervisor"])}
+                  href={href(["manager"])}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>
-                      Sprint Item supervisor
+                      Manager
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>

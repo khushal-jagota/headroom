@@ -3,7 +3,6 @@ import type { ConversationSignal } from "../../src/lib/conversationSignal";
 //
 // Each helper returns the words or the mark a reader actually sees, so a test here
 // fails when a screen changes what it says — not when a function is renamed.
-import { dayActionTiles, dayVisualTicket } from "../../src/lib/dayPresentation";
 import { feedbackTicketStateLabel } from "../../src/lib/feedback";
 import {
   buildLifecycle,
@@ -11,12 +10,11 @@ import {
   gatingFieldFor,
   type WorkerTypeManifest
 } from "../../src/lib/lifecycle";
-import { sprintTicketCondition } from "../../src/lib/sprintPresentation";
 import {
   WORK_ITEM_TICKET_GROUPS,
   workItemTicketGroupKey
 } from "../../src/lib/workItemPresentation";
-import type { AgentState, BoardCard, DayTicket, Principal, TicketDetail } from "../../src/lib/types";
+import type { AgentState, BoardCard, Principal, TicketDetail } from "../../src/lib/types";
 import type { FieldStageVisualState } from "../../src/lib/ui";
 import { workspaceGroups } from "../../src/lib/workspaceRail";
 
@@ -115,27 +113,8 @@ function boardCard(facts: TicketFacts): BoardCard {
     blocked: facts.ticket_status === "blocked",
     conversation_id: "c_reading",
     waiting_to_closeout: facts.waiting_to_closeout,
-    sprint_item_id: null,
-    sprint_item_title: null,
-    awaiting_reply: facts.awaiting_reply,
-    awaiting_answer: facts.awaiting_answer,
-    awaiting_approval: facts.awaiting_approval,
-    awaiting_agent_approval: facts.awaiting_agent_approval,
-    assigned: facts.assigned,
-    agent_state: facts.agent_state
-  };
-}
-
-function dayTicket(facts: TicketFacts): DayTicket {
-  return {
-    id: "t_reading",
-    title: "One Ticket",
-    stage: facts.stage,
-    ticket_status: facts.ticket_status,
-    conversation_id: "c_reading",
-    is_done: facts.is_done,
-    waiting_to_closeout: facts.waiting_to_closeout,
-    gating_field: facts.gating_field,
+    manager_id: null,
+    manager_title: null,
     awaiting_reply: facts.awaiting_reply,
     awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
@@ -157,7 +136,7 @@ function ticketDetail(facts: TicketFacts): TicketDetail {
     stage: facts.stage,
     ceiling: "needs_plan",
     ceiling_holder: OWNER,
-    sprint_item_title: null,
+    manager_title: null,
     ticket_status: facts.ticket_status,
     conversation_id: "c_reading",
     conversation_history: [],
@@ -177,13 +156,8 @@ export function workspaceHeading(facts: TicketFacts): string {
   return workspaceGroups([boardCard(facts)])[0].label;
 }
 
-/** The word on the Ticket's row on the Sprint Item page. */
-export function sprintItemWord(facts: TicketFacts): string {
-  return sprintTicketCondition(facts).word;
-}
-
-/** The heading the Ticket sits under on the Sprint Item page. */
-export function sprintItemHeading(facts: TicketFacts): string {
+/** The heading the Ticket sits under on the Manager page. */
+export function managerHeading(facts: TicketFacts): string {
   const key = workItemTicketGroupKey({ id: "", title: "", ...facts });
   return WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
 }
@@ -202,13 +176,6 @@ export function feedbackLabel(facts: TicketFacts): string {
     assigned: facts.assigned,
     agent_state: facts.agent_state
   });
-}
-
-/** The tiles Home shows for a Day holding this one Ticket, as "Label count". */
-export function homeTiles(facts: TicketFacts): string[] {
-  return dayActionTiles([dayVisualTicket(dayTicket(facts))]).map(
-    (tile) => `${tile.label} ${tile.count}`
-  );
 }
 
 /** The mark on the Ticket's own page, against the field its Stage is gated on. */

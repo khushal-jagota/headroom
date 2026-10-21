@@ -76,9 +76,8 @@ def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
     assert (
         schedule_actions.run_current_slot(
             tmp_db,
-            planning_now=datetime.fromisoformat("2026-10-16T14:30:00").astimezone(),
+            local_now=datetime.fromisoformat("2026-10-16T14:30:00").astimezone(),
             now=3,
-            boundary_hour=5,
         )
         == []
     )

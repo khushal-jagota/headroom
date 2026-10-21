@@ -106,7 +106,7 @@ _RAW_PAYLOAD_FIELDS = {
 def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int) -> set[EventKey]:
     """Calculate permitted keys directly from raw archive tables, without policy imports."""
     tickets = {row["id"]: row for row in _rows(connection, "tickets")}
-    orchestrators = {row["id"]: row for row in _rows(connection, "sprint_items")}
+    managers = {row["id"]: row for row in _rows(connection, "managers")}
     ownership: dict[str, set[str]] = {}
     for ticket in tickets.values():
         if ticket["conversation_id"]:
@@ -127,9 +127,18 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
         try:
             pairs = json.loads(conversation["identity_environment_variables"])
             environment = dict(pairs)
-            if len(environment) != len(pairs) or set(environment) not in (
+            if len(environment) != len(pairs):
+                continue
+            legacy_id = environment.pop("PLAN_SPRINT_ITEM_ID", None)
+            if legacy_id:
+                if environment.get("PLAN_MANAGER_ID", legacy_id) != legacy_id:
+                    continue
+                environment["PLAN_MANAGER_ID"] = legacy_id
+            if environment.get("PLAN_ACTOR") == "sprint_item_supervisor":
+                environment["PLAN_ACTOR"] = "manager"
+            if set(environment) not in (
                 {"PLAN_ACTOR", "PLAN_TICKET_ID"},
-                {"PLAN_ACTOR", "PLAN_SPRINT_ITEM_ID"},
+                {"PLAN_ACTOR", "PLAN_MANAGER_ID"},
             ):
                 continue
         except (ValueError, TypeError):
@@ -137,22 +146,24 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
         role = environment.get("PLAN_ACTOR")
         linked_ticket_ids = ownership.get(identity, set())
         owners = set(linked_ticket_ids)
-        supervisors: set[str] = set()
+        manager_ids: set[str] = set()
         if role == "worker" and environment.get("PLAN_TICKET_ID"):
             if environment["PLAN_TICKET_ID"] not in linked_ticket_ids:
                 continue
             owners.add(environment["PLAN_TICKET_ID"])
-        elif role == "sprint_item_supervisor" and environment.get("PLAN_SPRINT_ITEM_ID"):
-            supervisors.add(environment["PLAN_SPRINT_ITEM_ID"])
+        elif role == "manager" and environment.get("PLAN_MANAGER_ID"):
+            manager_ids.add(environment["PLAN_MANAGER_ID"])
         else:
             continue
         unknown_agent = False
         for key in agents.get(identity, set()):
-            if key.startswith("sprint_item_supervisor_"):
-                supervisors.add(key.removeprefix("sprint_item_supervisor_"))
+            if key.startswith("manager_"):
+                manager_ids.add(key.removeprefix("manager_"))
+            elif key.startswith("sprint_item_supervisor_"):
+                manager_ids.add(key.removeprefix("sprint_item_supervisor_"))
             else:
                 unknown_agent = True
-        if unknown_agent or not (owners or supervisors):
+        if unknown_agent or not (owners or manager_ids):
             continue
         if any(
             owner not in tickets
@@ -162,8 +173,8 @@ def independent_removal_oracle(connection: sqlite3.Connection, cutoff_unix: int)
         ):
             continue
         if any(
-            owner not in orchestrators or not orchestrators[owner]["settled"]
-            for owner in supervisors
+            owner not in managers or not managers[owner]["settled"]
+            for owner in manager_ids
         ):
             continue
         terminal = {

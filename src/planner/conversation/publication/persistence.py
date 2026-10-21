@@ -54,6 +54,14 @@ def decode_publication(value: str) -> ConversationSignalPublicationV1:
     return ConversationSignalPublicationV1(**data, attention=ConversationAttention(**attention))
 
 
+def decode_association(value: str) -> SignalAssociationEffect:
+    """Normalize historical structured kinds without altering stored receipt bytes."""
+    data = json.loads(value)
+    if data.get("owner_kind") == "orchestrator":
+        data["owner_kind"] = "manager"
+    return SignalAssociationEffect(**data)
+
+
 def values(connection: sqlite3.Connection) -> tuple[ConversationSignalPublicationV1, ...]:
     return tuple(
         decode_publication(str(row[0]))
@@ -95,13 +103,21 @@ def _association_capture(
     before: str,
     after: str,
     condition: str,
+    *,
+    current: bool,
 ) -> str:
     if table == "agents":
         key = f"{alias}.agent_key"
-        kind = f"CASE WHEN {key}='chief_of_staff' THEN 'chief' ELSE 'orchestrator' END"
-        owner = f"CASE WHEN {key}='chief_of_staff' THEN 'chief' ELSE substr({key},24) END"
+        manager_kind = "manager" if current else "orchestrator"
+        kind = f"CASE WHEN {key}='chief_of_staff' THEN 'chief' ELSE '{manager_kind}' END"
+        owner = (
+            f"CASE WHEN {key}='chief_of_staff' THEN 'chief' "
+            f"WHEN substr({key},1,8)='manager_' THEN substr({key},9) "
+            f"ELSE substr({key},24) END"
+        )
         condition += (
-            f" AND ({key}='chief_of_staff' OR substr({key},1,23)='sprint_item_supervisor_')"
+            f" AND ({key}='chief_of_staff' OR substr({key},1,8)='manager_' "
+            f"OR substr({key},1,23)='sprint_item_supervisor_')"
         )
     else:
         kind = "'ticket'"
@@ -115,7 +131,7 @@ def _association_capture(
     )
 
 
-def install_source_triggers(connection: sqlite3.Connection) -> None:
+def _install_source_triggers(connection: sqlite3.Connection, *, require_admission: bool) -> None:
     """Install only during admitted bootstrap, after connection functions attach.
 
     This is intentionally separate from the schema-only migration. A database with
@@ -123,7 +139,10 @@ def install_source_triggers(connection: sqlite3.Connection) -> None:
     """
     if not connection.in_transaction:
         raise RuntimeError("Signal triggers require bootstrap transaction")
-    if connection.execute("SELECT signal_publication_admitted()").fetchone()[0] != 1:
+    if (
+        require_admission
+        and connection.execute("SELECT signal_publication_admitted()").fetchone()[0] != 1
+    ):
         raise RuntimeError("Signal trigger installation requires admitted authority")
     connection.execute("PRAGMA recursive_triggers=ON")
     for table in ("meta", "values", "operations", "batches", "dirty", "associations"):
@@ -139,6 +158,12 @@ def install_source_triggers(connection: sqlite3.Connection) -> None:
                 f"SELECT CASE WHEN NOT ({check}) THEN "
                 "RAISE(ABORT,'Signal private phase is closed') END; END"
             )
+    current = (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sprint_items'"
+        ).fetchone()
+        is None
+    )
     sources = {
         "conversations": "conversation_id",
         "conversation_events": "conversation_id",
@@ -176,14 +201,49 @@ def install_source_triggers(connection: sqlite3.Connection) -> None:
                     table
                 ]
                 condition = f"OLD.{key} IS NEW.{key}" if operation == "UPDATE" else "1"
-                body += _association_capture(table, alias, old, new, condition)
+                body += _association_capture(table, alias, old, new, condition, current=current)
                 if operation == "UPDATE":
                     changed = f"OLD.{key} IS NOT NEW.{key}"
-                    body += _association_capture(table, "OLD", old, "NULL", changed)
-                    body += _association_capture(table, "NEW", "NULL", new, changed)
+                    body += _association_capture(
+                        table, "OLD", old, "NULL", changed, current=current
+                    )
+                    body += _association_capture(
+                        table, "NEW", "NULL", new, changed, current=current
+                    )
             # Capture OLD before cascading deletes and unique REPLACE destruction.
             timing = "AFTER" if operation == "INSERT" else "BEFORE"
             connection.execute(
                 f"CREATE TRIGGER IF NOT EXISTS signal_source_{table}_{operation.lower()} "
                 f"{timing} {operation} ON {table} BEGIN {body} END"
             )
+
+
+def install_source_triggers(connection: sqlite3.Connection) -> None:
+    """Install source declarations through admitted runtime bootstrap."""
+    _install_source_triggers(connection, require_admission=True)
+
+
+def install_migration_source_triggers(connection: sqlite3.Connection) -> None:
+    """Reinstall declarations inside the offline schema migration transaction.
+
+    Migration connections have no producer runtime. Trigger bodies retain the exact
+    runtime authority guards. Only declaration installation bypasses its runtime check.
+    """
+    if not connection.in_transaction:
+        raise RuntimeError("Signal migration triggers require a migration transaction")
+    if (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='signal_publication_meta'"
+        ).fetchone()
+        is None
+    ):
+        return
+    names = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'signal_source_%'"
+        )
+    ]
+    for name in names:
+        connection.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
+    _install_source_triggers(connection, require_admission=False)

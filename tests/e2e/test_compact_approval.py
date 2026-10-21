@@ -56,7 +56,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     )
     ticket_id = str(ticket["id"])
     owner = {"kind": "owner", "id": "owner"}
-    orchestrator = {"kind": "sprint_item", "id": item["id"]}
+    manager = {"kind": "manager", "id": item["id"]}
     api.direct_post(
         server,
         f"/api/tickets/{ticket_id}/accept/brief",
@@ -82,7 +82,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
         panel.locator(f'[data-scope-holder="{item["id"]}"]').click()
     assert reroute.value.ok, reroute.value.text()
     rerouted = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-    assert rerouted["ceiling_holder"] == orchestrator
+    assert rerouted["ceiling_holder"] == manager
     assert rerouted["stage"] == original["stage"]
     assert rerouted["ceiling"] == original["ceiling"]
     assert rerouted["pending_proposal"]["body"] == BODY

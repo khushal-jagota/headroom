@@ -10,8 +10,8 @@ const lifecycle = buildLifecycle({ worker_type:"coding", label:"Coding", stages:
 ], fields:[{ id:"brief", label:"Brief" },{ id:"plan", label:"Plan" },{ id:"implementation", label:"Implementation" }], advance:{}, ceiling_range:[], default_ceiling:"needs_plan", worker_profile_id:"coding", default_backend:"codex", default_model:null, default_reasoning_effort:null });
 const ticket = (stage:string, field_values:Record<string,string> = {}): TicketDetail => ({ stage, field_values } as TicketDetail);
 describe("Worker page occurred steps", () => {
-  it("includes completed/current steps and excludes future steps", () => {
-    expect(workerPageHistory(lifecycle,ticket("needs_plan"))).toEqual({ fields:["brief","plan"], completed:["brief"] });
+  it("includes all lifecycle steps and counts only completed steps", () => {
+    expect(workerPageHistory(lifecycle,ticket("needs_plan"))).toEqual({ fields:["brief","plan","implementation"], completed:["brief"] });
   });
   it("retains every completed step when the Ticket is done", () => {
     expect(workerPageHistory(lifecycle,ticket("done", { obsolete_step: "Preserved historical text" }))).toEqual({ fields:["brief","plan","implementation"], completed:["brief","plan","implementation"] });

@@ -2,6 +2,7 @@ import multiprocessing
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tests.support.skill_publication import publication_process
@@ -50,7 +51,7 @@ def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
 
     service.save_skill(
         database,
-        "panels-sprint-item-supervisor",
+        "panels-manager",
         {
             "description": "Future conversations read this revision",
             "markdown_body": "# Supervisor\n\nUse canonical context.\n",
@@ -59,9 +60,9 @@ def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
         database_parent=tmp_path,
     )
 
-    canonical = managed / "panels-sprint-item-supervisor"
+    canonical = managed / "panels-manager"
     for home in homes.values():
-        exposed = home / "skills" / "panels-sprint-item-supervisor"
+        exposed = home / "skills" / "panels-manager"
         assert exposed.resolve() == canonical.resolve()
         assert "Future conversations read this revision" in (exposed / "SKILL.md").read_text(
             encoding="utf-8"
@@ -341,3 +342,101 @@ def test_file_failure_reports_saved_state_and_startup_repairs_the_copy(
     )
     assert repaired.description == "saved despite file failure"
     assert path.read_text() == repaired.source_text
+
+
+def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
+    tmp_path: Path, database: sqlite3.Connection
+) -> None:
+    import hashlib
+
+    reconcile_managed_skill_versions(database)
+    before = read_skill_source(database, "panels")
+    original_versions = list(database.execute("SELECT id,content FROM managed_skill_versions"))
+    target = before + "\nOwner custom text remains exact.\n"
+    created = "---\nname: reviewed-manager\ndescription: New role\n---\n\nFull source.\n"
+    batch: dict[str, Any] = {
+        "skills": [
+            {
+                "name": "panels",
+                "source_text": target,
+                "expected_sha256": hashlib.sha256(before.encode()).hexdigest(),
+            },
+            {"name": "reviewed-manager", "source_text": created, "expected_sha256": "0" * 64},
+        ]
+    }
+    with pytest.raises(PlannerError, match="hash changed"):
+        service.apply_skills(database, batch, now=21, database_parent=tmp_path)
+    assert read_skill_source(database, "panels") == before
+    assert not database.execute(
+        "SELECT 1 FROM managed_skills WHERE skill_name='reviewed-manager'"
+    ).fetchone()
+    batch["skills"][1]["expected_sha256"] = None
+    service.apply_skills(database, batch, now=21, database_parent=tmp_path)
+    assert read_skill_source(database, "panels") == target
+    assert (tmp_path / "skills/reviewed-manager/SKILL.md").read_text() == created
+    for row in original_versions:
+        assert (
+            database.execute(
+                "SELECT content FROM managed_skill_versions WHERE id=?", (row[0],)
+            ).fetchone()[0]
+            == row[1]
+        )
+
+
+def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
+    tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    before = read_skill_source(database, "panels")
+    target = before + "\nReviewed source.\n"
+    batch: dict[str, Any] = {
+        "skills": [
+            {
+                "name": "panels",
+                "source_text": target,
+                "expected_sha256": hashlib.sha256(before.encode()).hexdigest(),
+            }
+        ]
+    }
+    writer = atomic_replace_text
+
+    def fail_publication(*args: object) -> None:
+        raise OSError("publication unavailable")
+
+    monkeypatch.setattr(service, "atomic_replace_text", fail_publication)
+    with pytest.raises(PlannerError) as failed:
+        service.apply_skills(database, batch, now=21, database_parent=tmp_path)
+    assert failed.value.code is ErrorCode.skill_save_incomplete
+    monkeypatch.setattr(service, "atomic_replace_text", writer)
+    service.apply_skills(database, batch, now=22, database_parent=tmp_path)
+    assert (
+        database.execute(
+            "SELECT updated_at FROM managed_skills WHERE skill_name='panels'"
+        ).fetchone()[0]
+        == 21
+    )
+    assert (tmp_path / "skills/panels/SKILL.md").read_text() == target
+    service.save_skill(
+        database,
+        "panels",
+        {"markdown_body": "Later owner decision."},
+        now=23,
+        database_parent=tmp_path,
+    )
+    with pytest.raises(PlannerError, match="hash changed"):
+        service.apply_skills(database, batch, now=24, database_parent=tmp_path)
+
+
+def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
+    from planner.managed_skills import PACKAGED_SKILLS_ROOT
+    from planner.runtime.logic.conversation_start_resolution import manager_role_materials
+
+    role = manager_role_materials("si_contract")
+    identity = dict(role.identity_environment_variables)
+    assert identity == {"PLAN_ACTOR": "manager", "PLAN_MANAGER_ID": "si_contract"}
+    source = (PACKAGED_SKILLS_ROOT / "panels-manager/SKILL.md").read_text()
+    primary = next(line for line in source.splitlines() if line.startswith("You supervise"))
+    assert "PLAN_MANAGER_ID" in primary
+    assert "PLAN_SPRINT_ITEM_ID" not in primary and "PLAN\\_SPRINT" not in primary
+    assert "If `PLAN_MANAGER_ID` is absent" in source

@@ -8,21 +8,17 @@ import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
   ChiefManagementSettings,
-  OrchestratorPrincipal,
-  OrchestratorChildFilter,
-  CurrentSprintResponse,
-  DayResponse,
+  ManagerPrincipal,
+  ManagerChildFilter,
   DeploymentStatus,
   IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
   SchedulesResponse,
   SkillsHomeResponse,
-  SprintsResponse,
-  SprintItemsResponse,
-  SprintItemWorkspace,
-  SprintItemWorkspaceContent,
-  SprintTrackingBody,
+  ManagersResponse,
+  ManagerWorkspace,
+  ManagerWorkspaceContent,
   TicketDetail,
   TicketSummariesResponse,
   VpsStatusSummary,
@@ -67,11 +63,10 @@ export const queries = {
   vpsStatusSummary: () =>
     jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
-  todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
-  orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
+  managerTicketSummaries: (principal: ManagerPrincipal, filter: ManagerChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
-      ["tickets", "orchestrator", { principal, filter, offset, limit }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
+      ["tickets", "manager", { principal, filter, offset, limit }],
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&manager_kind=${principal.kind}${principal.kind === "manager" ? `&manager_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),
@@ -79,29 +74,21 @@ export const queries = {
     versionedJsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),
-  sprintSummaries: () => jsonQuery<SprintsResponse>(["sprints"], "/api/sprints?detail=full"),
-  sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items?detail=full"),
-  currentSprint: () =>
-    jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
-  sprintTracking: (sprintId: string) =>
-    jsonQuery<SprintTrackingBody>(
-      ["sprint", sprintId, "tracking"],
-      `/api/sprints/${encodeURIComponent(sprintId)}/tracking`
+  managers: () => jsonQuery<ManagersResponse>(["managers"], "/api/managers?detail=full"),
+  managerWorkspaceContent: (itemId: string) =>
+    versionedJsonQuery<ManagerWorkspaceContent>(
+      ["manager", itemId, "workspace-content"],
+      `/api/managers/${encodeURIComponent(itemId)}/workspace-content`
     ),
-  sprintItemWorkspaceContent: (itemId: string) =>
-    versionedJsonQuery<SprintItemWorkspaceContent>(
-      ["sprint-item", itemId, "workspace-content"],
-      `/api/items/${encodeURIComponent(itemId)}/workspace-content`
+  managerWorkspace: (itemId: string) =>
+    jsonQuery<ManagerWorkspace>(
+      ["manager", itemId, "workspace"],
+      `/api/managers/${encodeURIComponent(itemId)}/workspace`
     ),
-  sprintItemWorkspace: (itemId: string) =>
-    jsonQuery<SprintItemWorkspace>(
-      ["sprint-item", itemId, "workspace"],
-      `/api/items/${encodeURIComponent(itemId)}/workspace`
-    ),
-  sprintItemConversationStartValues: (itemId: string) =>
+  managerConversationStartValues: (itemId: string) =>
     jsonQuery<ConversationStartValues>(
-      ["sprint-item", itemId, "conversation-start-values"],
-      `/api/items/${encodeURIComponent(itemId)}/conversation/start-values`
+      ["manager", itemId, "conversation-start-values"],
+      `/api/managers/${encodeURIComponent(itemId)}/conversation/start-values`
     ),
   workspaceTicket: (ticketId: string) =>
     versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceTicket>(["ticket", ticketId, "workspace"], `/api/tickets/${encodeURIComponent(ticketId)}/workspace`),

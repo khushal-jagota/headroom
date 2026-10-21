@@ -15,7 +15,7 @@ Workspace, including old project-filtered links. There is no global project/type
 or browser New Ticket form. API and CLI creation remain available. A request to Chief
 still follows the ordinary Ticket workflow.
 
-Chief shows only its own children beside its conversation. Ordinary orchestrators retain
+Chief shows only its own children beside its conversation. Ordinary managers retain
 their own children, including settled work. Scoped filters provide Active, Backlogged,
 and Done views. Chief results remain bounded and paginated. Each row
 opens the existing individual Ticket. Review and direct-message discovery remain separate.
@@ -34,7 +34,7 @@ manual fold choices during page refreshes, like other unfinished groups.
 The existing discovery filters remain intact. Active and Backlogged exclude terminal
 Tickets. Done exposes completed work. The sidebar excludes all backlogged Tickets, including hover details and nested
 Messages under Settled. Its other existing filters remain intact. Exact unread conversation
-discovery remains independent of sidebar visibility and these grouped lists. Historical Day counts and Feedback
+discovery remains independent of sidebar visibility and these grouped lists. Feedback
 labels keep their separate rules.
 
 ## Ideas
@@ -42,20 +42,19 @@ labels keep their separate rules.
 The opposite: its whole job is to catch a thought before you lose it, so the box to
 write one is always open at the very top and is the biggest thing on the page. Type a
 title and press Enter and it is saved; a longer note and a project are optional.
-The project list is the same data-backed catalog used by Tickets, Sprint Items, and
+The project list is the same data-backed catalog used by Tickets, Managers, and
 ideas.
 Below, the ideas are listed newest first. An idea with no note is one line. An idea
 with a note gets a small arrow that opens its detail.
 
 _Code paths:_ `web/src/components/ChiefConversation.svelte`,
-`web/src/components/SprintItemWorkspace.svelte`, `web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Sprint Items hold shared context independently of Sprint commitments. Sprint Items and ideas
-live in `src/planner/sprints/`.
+`web/src/components/ManagerWorkspace.svelte`, `web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Managers hold shared context and supervise their Tickets. Managers and ideas
+live in `src/planner/ideas/`.
 
 ## Handoffs
 
 - **Feedback** (`feedback.md`) — the loose capture path available from every page.
-- **Days** (`days.md`) — historical Day records.
-- **Orchestrators** (`sprints.md`) — assignment and independent settlement.
+- **Managers** (`managers.md`) — assignment and independent settlement.
 - **Projects** (`projects.md`) — where the project list comes from.
 
 ## Deferred

@@ -5,6 +5,40 @@
 def run(browser, urls):
     page = browser.new_page(viewport={"width": 900, "height": 700})
     page.set_default_timeout(5000)
+    # Arm before each trigger: polling a locator first could consume the entrance.
+    page.add_init_script("""window.__armReadyFrame = text => {
+      window.__readyFrame = null;
+      const sample = () => {
+        const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node=walker.nextNode())) {
+          if (node.textContent.trim() !== text) continue;
+          const painted=node.parentElement;
+          if (!painted.closest('[data-conversation-thread]') || !painted.getClientRects().length) continue;
+          const ancestors=[];
+          for (let element=painted;element;element=element.parentElement) {
+            const style=getComputedStyle(element);
+            ancestors.push({tag:element.tagName,classes:element.className,
+              opacity:+style.opacity,transform:style.transform,
+              animations:element.getAnimations().filter(a=>a.playState!=='finished').map(a=>a.animationName || 'script')});
+          }
+          window.__readyFrame={text,ancestors}; return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    };""")
+
+    def arm_ready(text):
+        page.evaluate("text=>window.__armReadyFrame(text)", text)
+
+    def assert_ready():
+        page.wait_for_function("window.__readyFrame !== null")
+        frame = page.evaluate("window.__readyFrame")
+        assert frame['ancestors'], frame
+        assert all(node['opacity'] == 1 and node['transform'] == 'none' and not node['animations']
+                   for node in frame['ancestors']), frame
+
     page.goto([__file__, *urls][1], wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
     page.wait_for_function("window.__navigation?.state.connection === 'subscribed'")
@@ -41,15 +75,21 @@ def run(browser, urls):
     assert page.get_by_text("stale A row", exact=True).count() == 0
     assert page.evaluate("window.__ownerReads") == []
     assert page.evaluate("window.__navigationSnapshots") == 1
+    arm_ready("current B reply")
     page.evaluate(
         "window.__emitConversationRow('conversation-b', {\n      conversation_id: 'conversation-b',\n      sequence: 4,\n      kind: 'message_to_owner',\n      payload: {\n        text: 'current B reply',\n        sender_label: 'Ticket B',\n        sender: { kind: 'ticket', id: 'b' },\n        recipient: { kind: 'owner', id: 'owner' }\n      },\n      created_at: 10\n    })"
     )
+    assert_ready()
     page.get_by_text("current B reply", exact=True).wait_for()
     page.wait_for_function("window.__ownerReads.length === 1")
     assert page.evaluate("window.__ownerReads") == [
         {"conversationId": "conversation-b", "sequence": 4}
     ]
-    full_choice.click()
+    page.evaluate("""() => {
+      window.__armReadyFrame('current B reply');
+      document.querySelector('[data-conversation-lens-choice="full"]').click();
+    }""")
+    assert_ready()
     assert full_choice.get_attribute("aria-pressed") == "true"
     page.evaluate(
         "window.__emitConversationRow('conversation-b', {\n      conversation_id: 'conversation-b',\n      sequence: 5,\n      kind: 'message_to_owner',\n      payload: {\n        text: 'current B full reply',\n        sender_label: 'Ticket B',\n        sender: { kind: 'ticket', id: 'b' },\n        recipient: { kind: 'owner', id: 'owner' }\n      },\n      created_at: 11\n    })"
@@ -63,7 +103,11 @@ def run(browser, urls):
     page.evaluate("window.__delayNextASnapshot()")
     page.evaluate("window.__switchConversation('conversation-a')")
     page.wait_for_function("window.__delayedASnapshotRequested()")
-    page.evaluate("window.__switchConversation('conversation-b')")
+    page.evaluate("""() => {
+      window.__armReadyFrame('current B reply');
+      window.__switchConversation('conversation-b');
+    }""")
+    assert_ready()
     page.get_by_text("current B reply", exact=True).wait_for()
     page.evaluate("window.__releaseDelayedASnapshot()")
     page.wait_for_timeout(150)
@@ -85,7 +129,9 @@ def run(browser, urls):
     emit_message(6)
     page.wait_for_function("document.querySelector('[data-conversation-mark=reply]')")
     assert len(page.evaluate("window.__ownerReads")) == 2
+    arm_ready("B message 6")
     page.evaluate("window.__setConversationState('peeked')")
+    assert_ready()
     page.wait_for_function("window.__ownerReads.length === 3")
     assert page.evaluate("window.__ownerReads.at(-1).sequence") == 6
     for focused, visible, sequence in [(False, True, 7), (True, False, 8)]:
@@ -97,7 +143,11 @@ def run(browser, urls):
             # Hidden pages keep authoritative rest facts and release transcript bodies.
             assert page.get_by_text("B message " + str(sequence), exact=True).count() == 0
         assert page.evaluate("window.__ownerReads.at(-1).sequence") == sequence - 1
-        page.evaluate("window.__setAttention(true,true)")
+        page.evaluate("""sequence => {
+          window.__armReadyFrame('B message ' + sequence);
+          window.__setAttention(true,true);
+        }""", sequence)
+        assert_ready()
         page.wait_for_function(
             "sequence => window.__ownerReads.at(-1).sequence === sequence", arg=sequence
         )
@@ -110,7 +160,9 @@ def run(browser, urls):
     page.evaluate("window.__releaseRead()")
     page.wait_for_function("document.querySelector('[data-conversation-mark=reply]')")
     assert page.evaluate("window.__ownerReads.at(-1).sequence") == 9
+    arm_ready("B message 10")
     page.evaluate("window.__setConversationState('opened')")
+    assert_ready()
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 10")
     page.wait_for_function("window.__readRefreshes === 7")
     page.wait_for_function("window.__navigationSnapshots === 8")

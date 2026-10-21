@@ -90,9 +90,9 @@ class BoardCardSource(TypedDict):
     blocked: bool
     conversation_id: str | None
     waiting_to_closeout: bool
-    sprint_item_id: str | None
-    sprint_item_title: str | None
-    orchestrator: JsonDict
+    manager_id: str | None
+    manager_title: str | None
+    manager: JsonDict
 
 
 class BoardCard(BoardCardSource, WorkAttention):
@@ -101,10 +101,10 @@ class BoardCard(BoardCardSource, WorkAttention):
     conversation_signal: ConversationSignal
 
 
-class BoardSprintItemSource(TypedDict):
-    """A represented Sprint Item and its complete children before live attention.
+class BoardManagerSource(TypedDict):
+    """A represented Manager and its complete children before live attention.
 
-    The shared attention projection adds each child's facts, the Item's own supervisor
+    The shared attention projection adds each child's facts, the Item's own Manager
     state, and a separate child rollup after this database read.
     """
 
@@ -120,8 +120,8 @@ class BoardSprintItemSource(TypedDict):
     settled: bool
 
 
-class BoardSprintItem(BoardSprintItemSource, WorkAttention):
-    """The complete Sprint Item projection returned to the Workspace rail."""
+class BoardManager(BoardManagerSource, WorkAttention):
+    """The complete Manager projection returned to the Workspace rail."""
 
     conversation_signal: ConversationSignal
     ticket_rollup: WorkAttention
@@ -129,7 +129,7 @@ class BoardSprintItem(BoardSprintItemSource, WorkAttention):
 
 @dataclass(frozen=True, slots=True)
 class TicketListFilters:
-    orchestrator: Principal | None = None
+    manager: Principal | None = None
     stages: tuple[str, ...] = ()
     excluded_stages: tuple[str, ...] = ()
     ticket_statuses: tuple[TicketStatus, ...] = ()
@@ -201,7 +201,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     deadline: str | None  # ISO date
     project: str | None  # legacy project name
     project_id: str | None
-    orchestrator: object  # explicit chief or sprint_item Principal reference
+    manager: object  # explicit chief or manager Principal reference
     blocked_by_ticket_ids: list[str]
     # Scope stated at creation by whoever has the authority to grant it. A creator that
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
@@ -234,9 +234,8 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     title: str
     deadline: str | None
     project_id: str | None
-    sprint_id: str | None
-    sprint_item_id: str | None
-    orchestrator: Principal
+    manager_id: str | None
+    manager: Principal
     recap: str
     field_values: Mapping[str, str]  # settled values only, by field id
     ceiling: str  # pending same/lower scope is editable; raising past the stage uses accept
@@ -288,11 +287,9 @@ class Ticket:  # §3.3 — column names match exactly
     deadline: str | None  # ISO date
     project_id: str | None  # effective Project placement, derived from the parent when present
     project_name: str | None
-    sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
-    sprint_item_id: str | None
-    orchestrator_kind: str = field(default="chief", kw_only=True)
-    sprint_item_title: str | None
-    effective_sprint_id: str | None  # historical Sprint association
+    manager_id: str | None
+    manager_kind: str = field(default="chief", kw_only=True)
+    manager_title: str | None
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     # An address, not an authority. It says which principal a parked proposal is for, so
@@ -349,9 +346,7 @@ class TicketDeletion:
 
     ticket_id: str
     title: str
-    day_ids: tuple[str, ...]
-    sprint_item_ids: tuple[str, ...]
-    sprint_ids: tuple[str, ...]
+    manager_ids: tuple[str, ...]
     linked_ticket_ids: tuple[str, ...]
 
 

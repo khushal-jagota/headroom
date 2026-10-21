@@ -1,5 +1,5 @@
 import type { WorkspaceMessageConversation } from "./types";
-import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from "./workspaceRail";
+import type { WorkspaceTicket, WorkspaceManager, WorkspaceChief } from "./workspaceRail";
 import type { WorkItemTicketFacts } from "./workItemPresentation";
 
 /** Count conversations, not rows or messages. An ask without an unread reply adds none. */
@@ -12,7 +12,7 @@ export function workspaceUnreadConversationCount(
 
 export function workspaceSettledUnreadCount(
   rows: readonly WorkspaceMessageConversation[],
-  items: readonly WorkspaceOrchestrator[] = []
+  items: readonly WorkspaceManager[] = []
 ): number {
   // One conversation can have more than one served reference. Its primary row need
   // not belong to the settled parent, so count membership before discarding aliases.
@@ -56,7 +56,7 @@ export function workspaceMessageIndex(rows:readonly WorkspaceMessageConversation
 /** Retain each parent's real child access before deduplicating within that parent. */
 export function workspaceChildMessageConversations(
   rows: readonly WorkspaceMessageConversation[],
-  parent: Pick<WorkspaceOrchestrator, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
+  parent: Pick<WorkspaceManager, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
   cards: readonly WorkspaceTicket[] = [],
   index:WorkspaceMessageIndex=workspaceMessageIndex(rows,cards)
 ): WorkspaceMessageConversation[] {
@@ -82,15 +82,15 @@ export function workspaceChildMessageConversations(
 }
 
 function ticketParentId(card: WorkspaceTicket): string {
-  return card.orchestrator?.kind === "chief" ? "chief"
-    : card.orchestrator?.kind === "sprint_item" ? card.orchestrator.id
-    : card.sprint_item_id ?? "chief";
+  return card.manager?.kind === "chief" ? "chief"
+    : card.manager?.kind === "manager" ? card.manager.id
+    : card.manager_id ?? "chief";
 }
 
 /** Existing durable unread facts form this index; settlement never limits discovery. */
 export function workspaceMessageConversations(
   cards: readonly WorkspaceTicket[],
-  items: readonly WorkspaceOrchestrator[],
+  items: readonly WorkspaceManager[],
   chief?: WorkspaceChief | null
 ): WorkspaceMessageConversation[] {
   const byItem = new Map(items.map((item) => [item.id, item]));
@@ -108,7 +108,7 @@ export function workspaceMessageConversations(
       conversationSignal: card.conversation_signal,
       kind: "ticket", id: card.id, title: card.title, conversationId: card.conversation_id,
       parentId, parentTitle: parentId === "chief" ? chief?.label ?? "Chief of Staff"
-        : parent?.title ?? card.sprint_item_title,
+        : parent?.title ?? card.manager_title,
       settled: parentId !== "chief" && parent?.settled === true
     });
   }
@@ -124,7 +124,7 @@ export function workspaceMessageConversations(
     }
     if (item.awaiting_reply && item.conversation_id) add({
       conversationSignal: item.conversation_signal,
-      kind: "sprint_item", id: item.id, title: item.title, conversationId: item.conversation_id,
+      kind: "manager", id: item.id, title: item.title, conversationId: item.conversation_id,
       parentId: null, parentTitle: null, settled: item.settled === true
     });
   }

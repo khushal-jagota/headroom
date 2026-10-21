@@ -43,8 +43,11 @@ from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.web_assets import WebAssets
-from planner.days.api import router as days_router
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.vps_metrics.api import router as vps_metrics_router
+from planner.environments.vps_metrics.config import load_config as load_metrics_config
+from planner.environments.vps_metrics.config import store_path
+from planner.environments.vps_metrics.runtime import MetricsRuntime
 from planner.environments.vps_status import (
     VpsStatusSnapshot,
     VpsStatusSummary,
@@ -54,6 +57,9 @@ from planner.environments.vps_status import (
 from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
+from planner.ideas.api import router as ideas_router
+from planner.managers.api import legacy_router as legacy_managers_router
+from planner.managers.api import router as managers_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
@@ -68,7 +74,6 @@ from planner.skill_versions import (
     reconcile_managed_skill_versions,
     reconcile_provisional_worker_step_bindings,
 )
-from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -166,9 +171,11 @@ def create_app(
 
         lifecycle_observer: asyncio.Task[None] | None = None
         loops: Any = None
+        metrics: MetricsRuntime | None = None
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
+            deadline = _monotonic() + float(config.shutdown_grace_seconds)
             try:
                 try:
                     try:
@@ -176,9 +183,13 @@ def create_app(
                     finally:
                         await navigation_delivery.close()
                 finally:
-                    if loops is not None:
-                        deadline = _monotonic() + float(config.shutdown_grace_seconds)
-                        await _stop_runtime_with_deadline(loops, deadline)
+                    try:
+                        if metrics is not None:
+                            await metrics.stop(deadline=deadline)
+                    finally:
+                        app.state.vps_metrics = None
+                        if loops is not None:
+                            await _stop_runtime_with_deadline(loops, deadline)
             finally:
                 if lifecycle_observer is not None:
                     lifecycle_observer.cancel()
@@ -232,6 +243,19 @@ def create_app(
                     asyncio_loop=asyncio.get_running_loop(),
                 )
 
+            from planner.environments.vps_metrics.collectors import LinuxCollector
+            from planner.environments.vps_metrics.data import Store
+
+            metrics_config = load_metrics_config()
+            metrics_path = store_path(config.db_path)
+            metrics = MetricsRuntime(
+                metrics_path,
+                Store(metrics_path, metrics_config),
+                None if config.test_mode else LinuxCollector(metrics_config),
+                metrics_config,
+            )
+            app.state.vps_metrics = metrics
+            metrics.start()
             await navigation_delivery.start()
             await scoped_navigation.start()
             await conversation.system.start_idle_child_janitor()
@@ -262,6 +286,7 @@ def create_app(
         pricing=UsagePricingService(conn_factory, now=clock.now),
     )
     app.state.conversation = None
+    app.state.vps_metrics = None
     # The conversation system is the running one, so it belongs to the lifespan that
     # starts and stops it. Outside that window there is none.
     app.state.conversation_system = None
@@ -299,14 +324,16 @@ def create_app(
         artifact_catalog_router,
         conversation_history_router,
         projects_router,
-        sprints_router,
-        days_router,
+        managers_router,
+        legacy_managers_router,
+        ideas_router,
         scheduled_tickets_router,
         notifications_router,
         feedback_router,
         worker_settings_router,
         message_delivery_router,
         membership_router,
+        vps_metrics_router,
     ):
         include_router(domain_router, prefix="/api")
     include_router(navigation_delivery.router)

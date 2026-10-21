@@ -1,7 +1,7 @@
 <script lang="ts">
   import SkeletonRegion from "./SkeletonRegion.svelte";
   import { onDestroy } from "svelte";
-  import { observeVisibleContent } from "../lib/visibleContent";
+  import { observeVisibleContent, resetVisibleContentHeight } from "../lib/visibleContent";
   import type { FilePreviewTarget } from "../lib/filePreview";
   import {
     MANAGED_HTML_PREVIEW_SANDBOX,
@@ -28,12 +28,9 @@
   const MEDIA_FETCH_FAILED = "file fetch failed";
 
   let visible = $state(false);
-  let heldHeight = $state(160);
-  function visibility(element: HTMLElement) {
-    return { destroy: observeVisibleContent(element, (next, height) => {
-      if (!next && height > 0) heldHeight = height;
-      visible = next;
-    }) };
+  function visibility(element: HTMLElement, _identity: string) {
+    const stop = observeVisibleContent(element, next => { visible = next; }, { canRetain: () => !error });
+    return { destroy: stop, update() { resetVisibleContentHeight(element); } };
   }
 
   let text = $state<string | null>(null);
@@ -111,8 +108,8 @@
   class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}${resolved.target.kind !== "external-link" ? " file-preview--managed" : ""}`}
   data-file-preview
   data-file-preview-kind={resolved.kind}
-  use:visibility
-  style:min-height={!visible && !inline ? `${heldHeight}px` : undefined}
+  use:visibility={resolved.href}
+  data-visible-content-failed={Boolean(error) || undefined}
 >
   {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind !== "external-link" && resolved.previewHref}
     {@render nameLink(resolved.previewHref)}

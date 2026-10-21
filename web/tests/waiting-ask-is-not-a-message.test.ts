@@ -12,21 +12,8 @@ import { describe, expect, it } from "vitest";
 
 import { workItemTicketGroups } from "../src/lib/workItemPresentation";
 import { conversationSignalReading } from "./support/conversationSignalReading";
-import { dayActionTiles, dayPageState, dayVisualTicket } from "../src/lib/dayPresentation";
 import { feedbackTicketStateLabel } from "../src/lib/feedback";
-import { sprintTicketCondition } from "../src/lib/sprintPresentation";
-import type { BoardCard, DayTicket } from "../src/lib/types";
-
-function dayTicket(values: Partial<DayTicket>): DayTicket {
-  return {
-    id: "t_1",
-    title: "A Ticket",
-    stage: "needs_implementation",
-    ticket_status: "agent",
-    agent_state: "working",
-    ...values
-  } as DayTicket;
-}
+import type { BoardCard } from "../src/lib/types";
 
 const quiet = {
   id: "t_1",
@@ -80,10 +67,8 @@ describe("a worker waiting on an answer", () => {
     ]);
   });
 
-  it("is not called a message on the Sprint Item page", () => {
-    expect(sprintTicketCondition({ ...quiet, awaiting_answer: true })).toEqual({
-      word: "needs your answer"
-    });
+  it("is not called a message on the Manager page", () => {
+    expect(workItemTicketGroups([{ ...quiet, awaiting_answer: true }])[0].label).toBe("Needs your answer");
   });
 
   it("is not called a message in the Feedback inbox", () => {
@@ -96,7 +81,7 @@ describe("an unread message", () => {
   it("is still a message on every screen, and keeps its own mark", () => {
     const withAMessage = boardCard({ awaiting_reply: true, conversation_signal: {working:false,message_for_owner:true} });
     expect(conversationSignalReading(withAMessage)).toContain('data-conversation-signal="message"');
-    expect(sprintTicketCondition({ ...quiet, awaiting_reply: true }).word).toBe("messages");
+    expect(workItemTicketGroups([{ ...quiet, awaiting_reply: true }])[0].label).toBe("Messages");
     expect(feedbackTicketStateLabel({ ...quiet, awaiting_reply: true })).toBe("Messages");
   });
 
@@ -107,28 +92,7 @@ describe("an unread message", () => {
 
   it("still sits below a proposal the owner holds", () => {
     expect(
-      sprintTicketCondition({ ...quiet, awaiting_answer: true, awaiting_approval: true }).word
-    ).toBe("needs your approval");
-  });
-});
-
-describe("the Day", () => {
-  it("counts both a waiting answer and an unread message under Need you", () => {
-    const tickets = [
-      dayTicket({ id: "t_answer", awaiting_answer: true }),
-      dayTicket({ id: "t_message", awaiting_reply: true }),
-      dayTicket({ id: "t_quiet" })
-    ].map(dayVisualTicket);
-
-    const needYou = dayActionTiles(tickets).find((tile) => tile.key === "needs-me");
-    expect(needYou?.count).toBe(2);
-    expect(dayPageState(tickets)).toBe("populated");
-  });
-
-  it("gives only the unread message a dot", () => {
-    const waiting = dayVisualTicket(dayTicket({ awaiting_answer:true }));
-    const message = dayVisualTicket(dayTicket({ conversation_signal:{working:false,message_for_owner:true} }));
-    expect(conversationSignalReading(waiting.ticket)).not.toContain("data-conversation-signal");
-    expect(conversationSignalReading(message.ticket)).toContain('data-conversation-signal="message"');
+      workItemTicketGroups([{ ...quiet, awaiting_answer: true, awaiting_approval: true }])[0].label
+    ).toBe("Needs your approval");
   });
 });

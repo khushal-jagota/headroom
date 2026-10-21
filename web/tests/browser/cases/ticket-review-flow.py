@@ -24,9 +24,8 @@ def run(browser, urls):
     ticket = dict(
         project_id="project_one",
         project="One",
-        sprint_id="sp_old",
-        sprint_item_id="outcome_kept",
-        sprint_item_title="Kept outcome",
+        manager_id="outcome_kept",
+        manager_title="Kept outcome",
         id="t_review",
         title="Review ticket",
         worker_type="coding",
@@ -40,7 +39,6 @@ def run(browser, urls):
         ceiling_holder={"kind": "chief", "id": "chief"},
         conversation_id=None,
         conversation_history=[],
-        day_ids=[],
         blocked=False,
         is_backlogged=False,
         blocker_summary={"blocked_by": []},
@@ -195,11 +193,11 @@ def run(browser, urls):
                     {"conversation_id": "artifact-conversation", "created_at": 2},
                 ],
                 "field_values": {
-                    "brief": "Saved [HTML plan](/files/sprint-items/si_artifacts/artifacts/plan.html?mode=read#summary). [Ticket document](/files/tickets/t_artifacts/artifacts/plan.md) [Receipt](/files/tickets/t_artifacts/artifacts/receipt.json) [Raw receipt](/files/sprint-items/si_artifacts/artifacts/receipt.json) [Unsupported](/files/sprint-items/si_artifacts/artifacts/archive.zip) [External](https://example.test/files/sprint-items/si_artifacts/plan.html) [Dev preview](/dev/tickets/t_artifacts/8791/) [Malformed](/files/sprint-items/si_artifacts/artifacts/%252e%252e/plan.html) [Explicit receipt](#/preview?source=ticket&ticket=t_artifacts&path=artifacts%2Freceipt.json)"
+                    "brief": "Saved [HTML plan](/files/managers/si_artifacts/artifacts/plan.html?mode=read#summary). [Ticket document](/files/tickets/t_artifacts/artifacts/plan.md) [Receipt](/files/tickets/t_artifacts/artifacts/receipt.json) [Raw receipt](/files/managers/si_artifacts/artifacts/receipt.json) [Unsupported](/files/managers/si_artifacts/artifacts/archive.zip) [External](https://example.test/files/managers/si_artifacts/plan.html) [Dev preview](/dev/tickets/t_artifacts/8791/) [Malformed](/files/managers/si_artifacts/artifacts/%252e%252e/plan.html) [Explicit receipt](#/preview?source=ticket&ticket=t_artifacts&path=artifacts%2Freceipt.json)"
                 },
                 "pending_proposal": {
                     "field": "success_condition",
-                    "body": "Proposed [Markdown plan](/files/sprint-items/si_artifacts/artifacts/plan.md).",
+                    "body": "Proposed [Markdown plan](/files/managers/si_artifacts/artifacts/plan.md).",
                     "proposed_by": "agent",
                     "created_at": 1,
                     "revision": 1,
@@ -224,8 +222,8 @@ def run(browser, urls):
                 "stage": "needs_brief",
                 "ceiling": "needs_brief",
                 "ceiling_holder": {"kind": "chief", "id": "chief"},
-                "sprint_item_id": None,
-                "sprint_item_title": None,
+                "manager_id": None,
+                "manager_title": None,
                 "pending_proposal": {
                     "field": "brief",
                     "body": "Opened for somebody else",
@@ -284,7 +282,7 @@ def run(browser, urls):
             "tickets": [],
         }
         response = navigation_response(
-            {"columns": [{"cards": source}], "sprint_items": [parent]},
+            {"columns": [{"cards": source}], "managers": [parent]},
             {"chief_of_staff": {"label": "Chief of Staff", "conversation_id": None}},
         )
         rows = {row["id"]: row for row in source}
@@ -341,7 +339,6 @@ def run(browser, urls):
                 result = {**result, "field_values": {name: value for name, value in fields.items() if name == stage["gating_field"]},
                     "field_summaries": {name: {"revision": value, "byte_count": len(value.encode())} for name, value in fields.items()}}
                 result.pop("conversation_history", None)
-                result.pop("day_ids", None)
             result = {"epoch": "fixture", "key": key, "revision": str(source_revision), "body": result}
         route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 
@@ -435,7 +432,7 @@ def run(browser, urls):
                 return
             if route.request.method == "PATCH":
                 body = route.request.post_data_json
-                assert not {"project_id", "sprint_id", "sprint_item_id"} & set(body)
+                assert not {"project_id", "sprint_id", "manager_id"} & set(body)
                 assert "guidance" not in body
                 if "field_values" in body:
                     if fail_field_save:
@@ -554,7 +551,7 @@ def run(browser, urls):
                         created_at=1,
                         kind="message_to_owner",
                         payload={
-                            "text": "Conversation [Audio plan](/files/sprint-items/si_artifacts/artifacts/plan.wav).",
+                            "text": "Conversation [Audio plan](/files/managers/si_artifacts/artifacts/plan.wav).",
                             "sender_label": "Worker",
                             "sender": {"kind": "ticket", "id": "t_artifacts"},
                             "recipient": {"kind": "owner", "id": "owner"},
@@ -638,7 +635,7 @@ def run(browser, urls):
         elif path.endswith(".md"):
             route.fulfill(
                 content_type="text/markdown",
-                body="# Markdown plan\n\nRead [Nested image](/files/sprint-items/si_artifacts/artifacts/image.svg).",
+                body="# Markdown plan\n\nRead [Nested image](/files/managers/si_artifacts/artifacts/image.svg).",
             )
         elif path.endswith(".svg"):
             route.fulfill(
@@ -1095,6 +1092,7 @@ def run(browser, urls):
     kickoff_leash.locator("[data-accept]").click()
     assert not kickoff_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
     kickoff_leash.locator('[data-ceiling-part="holder"]').click()
+    expect(kickoff_leash.locator('[role="option"]')).to_have_count(2)
     assert [
         option.get_attribute("data-ceiling-picker-choice")
         for option in kickoff_leash.locator('[role="option"]').all()
@@ -1157,11 +1155,14 @@ def run(browser, urls):
     expect(approve_row.get_by_role("listbox")).to_have_attribute(
         "aria-label", "Who holds the ceiling"
     )
-    assert [
+    expect(approve_row.locator('[role="option"]')).to_have_count(3)
+    choices = [
         option.get_attribute("data-ceiling-picker-choice")
         for option in approve_row.locator('[role="option"]').all()
-    ] == ["owner", "chief", "outcome_kept"]
-    expect(approve_row.get_by_role("option", name="Orchestrator", exact=True)).to_have_count(1)
+    ]
+    print(f"Review reviewer choices: {choices}", flush=True)
+    assert choices == ["owner", "outcome_kept", "chief"], choices
+    expect(approve_row.get_by_role("option", name="Manager", exact=True)).to_have_count(1)
     approve_row.get_by_role("listbox").press("Escape")
     retained_editor = page.locator("[data-approval-block] [data-edit]")
     retained_editor.click()
@@ -1272,14 +1273,13 @@ def run(browser, urls):
     expect(page.locator("[data-review-card]")).to_have_count(0)
     runtime_working = True
     page.evaluate("window.__refresh()")
-    expect(page.locator("[data-shell-presence]")).to_have_text("1 working")
+    expect(page.locator("[data-shell-presence]")).to_have_count(0)
     expect(page.locator(".review-empty-meta")).to_have_text("1 agent in progress")
     snapshot_unavailable = True
     # A failed replacement read does not revoke the still-valid active stream.
     # Exercise actual active-stream loss for this fail-closed runtime assertion.
     page.evaluate("window.__navigationSource.onerror?.(); window.__refresh()")
     expect(page.locator("[data-shell-presence]")).to_have_count(0)
-    assert "working" not in page.locator("[data-shell-status]").get_attribute("aria-label")
     expect(page.locator("[data-review-empty]")).to_contain_text(
         "There is nothing to review right now."
     )
@@ -1287,7 +1287,7 @@ def run(browser, urls):
     snapshot_unavailable = False
     runtime_working = False
     page.evaluate("window.__refresh()")
-    expect(page.locator("[data-shell-presence]")).to_have_text("0 working")
+    expect(page.locator("[data-shell-presence]")).to_have_count(0)
     expect(page.locator(".review-empty-meta")).to_have_text("0 agents in progress")
     artifact_started = time.monotonic()
     # End the deliberate incompatible-manifest scenario before the next Ticket visit.
@@ -1315,7 +1315,7 @@ def run(browser, urls):
     )
     saved_artifacts = page.locator('[data-stage-fold] [data-field="brief"]')
     html_link = saved_artifacts.get_by_role("link", name="HTML plan", exact=True)
-    assert html_link.get_attribute("href").startswith("/files/sprint-items/")
+    assert html_link.get_attribute("href").startswith("/files/managers/")
     original_url = page.url
 
     def click_was_claimed(link, **options):
@@ -1390,7 +1390,7 @@ def run(browser, urls):
     page.get_by_role("link", name="Audio plan", exact=True).click()
     expect(viewer).to_have_attribute("aria-label", "plan.wav")
     expect(viewer.locator("audio")).to_have_attribute(
-        "src", "/files/sprint-items/si_artifacts/artifacts/plan.wav"
+        "src", "/files/managers/si_artifacts/artifacts/plan.wav"
     )
     expect(page.locator("[data-conversation-pane]")).to_have_attribute(
         "data-conversation-state", "peeked"

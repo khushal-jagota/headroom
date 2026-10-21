@@ -105,12 +105,12 @@
   }));
   let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
   // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
-  // the Ticket page offers, including handing the Ticket back to its own Sprint Item.
-  let reviewSprintItem = $derived(
-    detail.data?.sprint_item_id
+  // the Ticket page offers, including handing the Ticket back to its own Manager.
+  let reviewManager = $derived(
+    detail.data?.manager_id
       ? {
-          id: detail.data.sprint_item_id,
-          title: detail.data.sprint_item_title || "Sprint Item"
+          id: detail.data.manager_id,
+          title: detail.data.manager_title || "Manager"
         }
       : null
   );
@@ -317,7 +317,7 @@
           {#if lc && ticketDetail.pending_proposal}
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
             <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
-              ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} sprintItem={reviewSprintItem}
+              ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
               disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}

@@ -26,7 +26,7 @@ single-door rule.
 
 Each Ticket stores the machine where its Worker can run: `vps` or `macos`.
 Creation uses an explicit locale first. Without one, a Mac requirement on the effective
-Project or Worker type selects `macos`. Otherwise it selects `vps`. An orchestrator's
+Project or Worker type selects `macos`. Otherwise it selects `vps`. A Manager's
 Project counts when the Ticket inherits that Project. Later Project or Worker edits do
 not move existing Tickets.
 
@@ -112,8 +112,8 @@ values still fail validation, even when their fields are no longer declared.
 
 Each settled field shows who approved its current text. Explicit approval records the
 actual approver, separately from the proposal recipient and the next approval holder.
-The UI says “Approved by Khushal”, “Approved by Chief”, or “Approved by Orchestrator”.
-CLI text uses the orchestrator’s human-readable title. Ticket JSON includes the approval
+The UI says “Approved by Khushal”, “Approved by Chief”, or “Approved by Manager”.
+CLI text uses the manager’s human-readable title. Ticket JSON includes the approval
 method, the principal kind and ID, and the readable label captured at approval.
 
 A field that settles below its ceiling says “Auto-accepted”. A settled Brief at creation
@@ -223,7 +223,7 @@ deadline first, then oldest-created.
 ### Ordinary Ticket edits
 
 One ordinary edit may change a Ticket's title, deadline, Project, Sprint, and
-optional Sprint Item together. Panels checks the whole request before saving any of it. All requested
+optional Manager together. Panels checks the whole request before saving any of it. All requested
 changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it
 unchanged.
@@ -255,7 +255,7 @@ and `src/planner/tickets/api.py`.
 ## The one rule: proposals and the single door
 
 Workers never change settled values or advance Stages directly. Only a Ticket's own
-Worker principal can file that Ticket's proposal; a supervisor, holder Ticket, or other
+Worker principal can file that Ticket's proposal; a Manager, holder Ticket, or other
 Worker cannot file on its behalf. A worker that wants to
 move work forward files a **proposal** on the blank the current Stage gates. The
 proposal resolver is the only thing that can turn a proposal into a real value or
@@ -273,7 +273,7 @@ takes whatever was parked on it.
 
 Ticket guidance is retired. Its historical database column and existing text remain
 intact. No active Ticket feature reads or writes that column. The API, CLI, search,
-copy text, supervisor context, Review, and Worker prompts do not expose it.
+copy text, Manager context, Review, and Worker prompts do not expose it.
 There is no replacement field. Messages, artifacts, and revision feedback keep their
 existing roles.
 
@@ -299,16 +299,16 @@ decide a proposal whoever holds it.
 
 The holder is a full principal kind and ID, not a display label or current conversation.
 A Ticket cannot hold its own ceiling: its Worker is the proposal author, so addressing a
-proposal to itself addresses it to nobody. Holder Tickets and Sprint Items must exist
+proposal to itself addresses it to nobody. Holder Tickets and Managers must exist
 when the ceiling is written.
 
 **The holder must stand above the Ticket.** An address that cannot decide is not an
-address. Authority comes from the Ticket's current Sprint Item, so moving a Ticket to
-another Sprint Item — or out of every Sprint Item — can leave the Sprint Item that holds
+address. Authority comes from the Ticket's current Manager, so moving a Ticket to
+another Manager — or out of every Manager — can leave the Manager that holds
 the ceiling below it.
 When a move does that, the ceiling returns to the user in the same transaction. The user stands above
 everything, so the ceiling always has somewhere valid to go, and only the user or the
-Chief can move a Ticket between Sprint Items in the first place. It is the same question on
+Chief can move a Ticket between Managers in the first place. It is the same question on
 every move, whether or not a proposal is parked right now: a wrong address is wrong before
 anything arrives at it. A holder that still stands above the moved Ticket keeps the
 ceiling. A Ticket that was already stranded stays as it is until something moves it.
@@ -339,7 +339,7 @@ A creator can state the ceiling instead, at creation, with `ticket create --ceil
 The same breath names who holds it, with `ticket create --holder`. A creator can name any
 holder, including the user, without holding anything itself — that is how a Ticket is
 opened for somebody else to review. Name nobody and the creator holds it, which is the
-ordinary case: a Sprint Item that opens a Ticket holds it.
+ordinary case: a Manager that opens a Ticket holds it.
 Whoever has authority to set the ceiling states it with the Ticket. This avoids a
 second approval for work the user already authorized.
 
@@ -374,7 +374,7 @@ the previous holder. The notice names the Ticket and the new holder. Automatic r
 to the user after reassignment follow the same rule. No parked proposal or no final
 holder change means no notice. A combined edit names only the final holder.
 
-The Chief, an orchestrator, or a holder Ticket receives the notice in its conversation.
+The Chief, a Manager, or a holder Ticket receives the notice in its conversation.
 The user receives a Panels message in the affected Ticket conversation. This message
 starts no worker turn and does not answer an unrelated request for a worker reply.
 
@@ -384,7 +384,7 @@ a refused send, or a restart before a queued message reaches the agent can lose 
 Once the conversation records the message, its ordinary history preserves it.
 
 Everywhere tooling takes a holder — creation, either change, and approval — it takes one
-`--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint Item id, or
+`--holder`, and reads the kind from what it is given: `me`, `chief`, a Manager id, or
 a Ticket id. Approving without naming one keeps the ceiling where it is: you hold it.
 
 Every later stage behaves the same way, including the last two: an accepted
@@ -408,7 +408,7 @@ proposal edits and unfinished picker choices.
 
 The ceiling sentence states the saved stage and reviewer and opens both choices
 directly with one click. Controls use User,
-Orchestrator, or Chief; actual entity names remain in navigation and identifying
+Manager, or Chief; actual entity names remain in navigation and identifying
 context. The parked stage is editable. An explicit raise beyond both the saved
 ceiling and the pending stage approves through atomic Accept. Same/lower scope
 preserves the proposal, including a user-owned proposal already below a higher
@@ -429,7 +429,7 @@ scope edits use actual lifecycle stages. The existing readiness, authority, bloc
 claim, and user-owned collaboration rules continue unchanged.
 
 Review's oldest-first walk shows owner-addressed proposals independently of Today.
-A proposal addressed to an ordinary orchestrator or Chief creates a durable notice
+A proposal addressed to an ordinary Manager or Chief creates a durable notice
 through the existing principal-aware manager queue. Kickoff, new filing and reviewer
 reroute all use that path. The notice reaches the intended canonical conversation
 as a real prompt; a saved holder is not delivery evidence. A parked proposal keeps
@@ -467,7 +467,7 @@ it approves that visible revision through the same canonical acceptance action.
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
 Anyone else reads proposals from canonical Ticket state through their normal Ticket and
-Sprint Item views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
+Manager views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -483,14 +483,13 @@ deletion remains a manual API or CLI operation, and the CLI requires `--yes`.
 
 The user's ordinary delete is refused while the Ticket's status says a worker step is
 out, and also while its conversation has a turn running. `--force` deletes it anyway. A
-Sprint Item can delete its own child Ticket without that activity guard. No actor can
-delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. Any delete
+Manager can delete its own child Ticket without that activity guard. No actor can
+delete a Ticket or Manager that is the ceiling holder for another Ticket. Any delete
 that goes ahead over a running worker kills that worker's turn first, so nothing keeps
 talking into a conversation whose ticket is gone.
 
-One transaction removes the ticket
-from days, sprint views, Ticket blocks, Review, and Workspace. Other tickets and day
-ordering stay intact.
+One transaction removes the Ticket from its manager, Ticket blocks, Review, and Workspace.
+Other Tickets remain intact.
 
 Ticket blocks are removed in the same transaction. The delete response lists the
 surviving Tickets from those relationships.
@@ -498,8 +497,7 @@ surviving Tickets from those relationships.
 The conversations live outside the Ticket record and are not erased. Deletion removes
 their Ticket associations, so Panels no longer assigns those transcripts to that Ticket.
 
-The whole deletion is one transaction, so it announces one change — not one per removed
-day or Ticket block.
+The whole deletion is one transaction, so it announces one change — not one per removed Ticket block.
 
 _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 `src/planner/cli/main.py`.
@@ -517,7 +515,7 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
   Worker identity hold no approval verb or authority.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
   render a ticket's story and carry the human's decisions.
-- **Projects** (`projects.md`) — the catalog that Tickets, Sprint Items, and Ideas use
+- **Projects** (`projects.md`) — the catalog that Tickets, Managers, and Ideas use
   directly.
 
 ## Deferred

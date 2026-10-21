@@ -318,3 +318,25 @@ def test_one_type_reads_back_exactly_what_the_whole_list_said(
     assert unknown.status_code == 404, unknown.text
     assert unknown.json()["error"]["code"] == "not_found"
     assert unknown.json()["error"]["detail"] == {"worker_type": "not-a-worker"}
+
+
+def test_reviewed_skill_batch_has_owner_authority_even_when_chief_can_edit_other_skills(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, _db_path = client
+    source = "---\nname: batch-role\ndescription: Reviewed role\n---\n\nExact owner instructions.\n"
+    payload = {"skills": [{"name": "batch-role", "source_text": source, "expected_sha256": None}]}
+    before = test_client.get("/api/skills").json()
+    for headers in (
+        {"X-Plan-Actor": "chief"},
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+    ):
+        result = test_client.post("/api/skills/apply", json=payload, headers=headers)
+        assert result.status_code == 400, result.text
+        assert result.json()["error"]["code"] == "agent_forbidden"
+        assert test_client.get("/api/skills").json() == before
+    accepted = test_client.post("/api/skills/apply", json=payload)
+    assert accepted.status_code == 200, accepted.text
+    assert test_client.get("/api/skills/batch-role").json()["source_text"] == source

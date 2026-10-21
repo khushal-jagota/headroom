@@ -7,6 +7,8 @@ them. Nothing here reconciles two sources, because there is only one.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -35,6 +37,7 @@ from planner.worker_settings.contracts import (
     ManagedSkill,
     ManagedWorkerLaunchDefaults,
     ManagedWorkerSettings,
+    SkillApplication,
     SkillSaveIncompleteDetail,
     SkillsHome,
     SpecialistSkillPatch,
@@ -515,3 +518,70 @@ def correct_worker_default_model(
         (json.dumps(payload), now, worker_type, previous),
     )
     return updated.rowcount == 1
+
+
+def apply_skills(
+    conn: sqlite3.Connection,
+    raw: dict[str, Any],
+    *,
+    now: int,
+    database_parent: Path | str,
+) -> tuple[ManagedSkill, ...]:
+    """Apply the complete reviewed batch, then publish its exact sources.
+
+    Row writes are atomic. File publication uses the existing incomplete-save contract.
+    An exact retry of the complete batch republishes without another logical edit.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("apply_skills requires no active transaction")
+    if set(raw) != {"skills"} or not isinstance(raw["skills"], list) or not raw["skills"]:
+        raise PlannerError(ErrorCode.validation, "skills must be a nonempty array", {})
+    entries: list[SkillApplication] = []
+    names: set[str] = set()
+    for item in raw["skills"]:
+        if not isinstance(item, dict) or set(item) != {"name", "source_text", "expected_sha256"}:
+            raise PlannerError(
+                ErrorCode.validation, "skill application must be an exact object", {}
+            )
+        name, text, expected = item["name"], item["source_text"], item["expected_sha256"]
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name)
+            or name in names
+        ):
+            raise PlannerError(ErrorCode.validation, "skill name is invalid or duplicated", {})
+        if not isinstance(text, str) or (
+            expected is not None
+            and (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected))
+        ):
+            raise PlannerError(ErrorCode.validation, "source text or expected hash is invalid", {})
+        parse_skill(text, name)
+        names.add(name)
+        entries.append(SkillApplication(name, text, expected))
+    with skill_publication_lock(database_parent) as skills_home:
+        with _one_writer(conn):
+            current = read_all_skill_sources(conn)
+            exact_retry = all(current.get(entry.name) == entry.source_text for entry in entries)
+            if not exact_retry:
+                for entry in entries:
+                    source = current.get(entry.name)
+                    actual = (
+                        None
+                        if source is None
+                        else hashlib.sha256(source.encode("utf-8")).hexdigest()
+                    )
+                    if actual != entry.expected_sha256:
+                        raise PlannerError(
+                            ErrorCode.validation,
+                            "skill source hash changed",
+                            {
+                                "skill_name": entry.name,
+                                "expected_sha256": entry.expected_sha256,
+                                "actual_sha256": actual,
+                            },
+                        )
+                for entry in entries:
+                    write_skill_source(conn, entry.name, entry.source_text, now=now)
+        for entry in entries:
+            _publish_skill(conn, skills_home, entry.name, entry.source_text)
+    return tuple(parse_skill(entry.source_text, entry.name) for entry in entries)

@@ -200,10 +200,17 @@ establishes that nothing outside the conversation shows it.
 
 ## Work and messages on other screens
 
-Each Worker, supervisor, and Chief exposes the same `conversation_signal` from its own
+Each Worker, Manager, and Chief exposes the same `conversation_signal` from its own
 conversation. `working` means that its runtime is running. `message_for_owner` means that
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
+
+The three boolean runtime checks — whether a turn is running, a permission ask is
+pending, or user input is pending — inspect existing live state without reading a stored
+record or waiting for a conversation lock. A conversation absent from this runtime has
+no live work or pending answers. Opening or sending still loads its stored record when
+needed. These checks still reject reads when the runtime has shut down or Signal is
+unavailable.
 
 Each conversation shows one indicator: an unread message dot takes precedence over the
 working spinner. Reading the latest message reveals the spinner if work is still running.
@@ -211,7 +218,7 @@ This presentation does not change either fact or the shell's actual-work count.
 
 A turn ending stops work and creates no message mark. Pending approvals, permission asks,
 Ticket stages, and child activity do not define either mark. Child totals remain separate
-from the supervisor's own conversation signal. Existing answer, approval, error, and
+from the Manager's own conversation signal. Existing answer, approval, error, and
 notification facts remain available for their own purposes.
 
 Reading or sending a prompt advances only that conversation's established read position.
@@ -222,9 +229,9 @@ end. This publication follows the runtime state transition, so a query cannot re
 answer from before the prompt or ending commit settled. The event stream carries no
 payload. Mounted queries fetch the canonical conversation signal again.
 
-The shell's working count sums that same working fact across Worker, supervisor, and
+The shell's working count sums that same working fact across Worker, Manager, and
 Chief conversations. Each conversation counts once, even when multiple records refer to
-it. Settled supervisors and backlogged Workers still count when their conversations run.
+it. Settled Managers and backlogged Workers still count when their conversations run.
 Worker-step claims do not define this count. Its existing query uses the same change
 stream refresh as the individual marks.
 
@@ -358,7 +365,7 @@ completed turn with no compaction confirmation.
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It accepts the owner, Chief, Ticket, or Sprint Item principal. An
+same send operation. It accepts the owner, Chief, Ticket, or Manager principal. An
 employee-to-owner send appends an addressed `message_to_owner` row to the employee's
 current conversation without invoking a backend. An employee without a current
 conversation cannot send to the owner. Employee recipients use their normal current
@@ -366,8 +373,8 @@ conversation path, creating it when any send needs one. Every mode starts a turn
 recipient is idle. Agent keys remain a private resolution detail. The command adds no
 second transport, queue, or conversation record.
 
-Existing ordinary orchestrator supervisors can address each other through this same
-Send Message path. Both Sprint Items must exist. This grants no authority over the
+Existing ordinary Managers can address each other through this same
+Send Message path. Both Managers must exist. This grants no authority over the
 recipient's record or Workers. Worker messages and help-recipient overrides retain
 their existing chain boundary.
 
@@ -396,17 +403,17 @@ Panels classifies that accepted send as the reply, so its recipient receives no 
 reply requirement and agent conversations cannot form an acknowledgement loop.
 
 The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
-orchestrator, or Chief principal. It empties the recap being replaced and steers the same
+manager, or Chief principal. It empties the recap being replaced and steers the same
 fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
 keep it short and top level." Only the owner may ask, and the owner is the only principal
 it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
 the agent writes rather than words it sends back. This system message carries no reply
 requirement and leaves no missing-reply marker.
 
-Automatic orchestrator startup sends the exact saved goal as a queued Panels message.
-Its answer is the work the orchestrator does. It requires no explicit reply to its
+Automatic manager startup sends the exact saved goal as a queued Panels message.
+Its answer is the work the manager does. It requires no explicit reply to its
 creator, so startup produces no `explicit_reply_missing` signal in Focus when the
-orchestrator sends no reply. No replacement signal detects a clean delivery followed by
+manager sends no reply. No replacement signal detects a clean delivery followed by
 silent inaction. Work indicators, failure rows, and delivery outcomes do not cover that gap.
 
 An actual native slash command uses its backend's exact control route, so its wire form
@@ -427,10 +434,10 @@ produce none. The markers and ending are one ordered transaction.
 
 When a failed turn belongs to a Ticket's current conversation, that transaction also
 snapshots the Ticket's current ceiling holder. The existing owner attention flag handles
-an owner-held ceiling. A Chief, Sprint Item, or Ticket holder receives one durable Panels
+an owner-held ceiling. A Chief, Manager, or Ticket holder receives one durable Panels
 notice through that principal's canonical conversation door. The failed event's
 conversation and sequence identify the notice, so replay cannot duplicate it. Historical,
-unattached, Chief, and Sprint Item conversation failures create no Ticket notice. A turn
+unattached, Chief, and Manager conversation failures create no Ticket notice. A turn
 started by a failure notice cannot create another failure notice.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
@@ -450,9 +457,9 @@ A confirmed steer refusal does the same. An uncertain steer remains terminal and
 enters the queue, because a retry can deliver the same message twice.
 
 A lower-level raw send route remains for testing conversation mechanics in isolation. It
-rejects every conversation associated with a Ticket, the Chief, or a Sprint Item
-supervisor. It therefore is not an employee conversation door and does not participate in
-principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
+rejects every conversation associated with a Ticket, the Chief, or a Manager
+Manager. It therefore is not an employee conversation door and does not participate in
+principal addressing. No shipped screen uses it: Ticket, Chief, and Manager composers
 all use the addressed Send Message operation.
 
 The conversation owns each backend exchange until its receipt settles. If its caller
@@ -604,9 +611,9 @@ evidence does not block a fresh installation. Available evidence still rejects a
 unknown or disabled selection, or an unsupported effort. This exception applies to
 creation only. A later turn still requires a successful resolution.
 
-This rule covers Workers, Chief, ordinary orchestrators, new conversations, reused
+This rule covers Workers, Chief, ordinary Managers, new conversations, reused
 conversations and queued messages. Steering retains the active turn's model. Saved legacy
-versions resolve within their own variant. New orchestrators use the managed launch
+versions resolve within their own variant. New managers use the managed launch
 defaults instead of a model pinned by a database trigger.
 
 An explicit correction action previews saved choices and applies selected corrections.
@@ -1292,11 +1299,13 @@ follow the conversation folder. Their visible text is `/name`, and their inserti
 is `/name `. Their adapters retain the live command names so ordinary and steered command
 dispatch keeps the slash token at the absolute start.
 
-Codex reads its catalog from the app-server after each thread starts or resumes. It joins
-enabled skills, callable installed apps, and enabled installed plugins with the native
-`/compact`, `/review`, and `/goal` commands. App metadata comes from `app/list`. Current app
-callability comes from `app/installed`. This prevents an installed but unusable connector
-from appearing in the menu.
+Codex publishes its native commands when a thread starts or resumes, then reads enabled
+skills, callable installed apps, and enabled installed plugins in the background. Apps
+come from thread-scoped `app/installed` runtime state, using the runtime name or exact ID.
+Only enabled, callable apps appear. Optional `app/read` requests enrich their names and
+descriptions in batches of at most 100 IDs. Metadata cannot grant callability. Panels
+never reads the full app directory for this menu. Missing or failed metadata keeps the
+runtime labels, and slow metadata cannot hold up a message.
 
 Codex runs each of those commands through a call of its own, and every one of those
 calls starts a turn. So a Codex command cannot join a turn that is already running. A
@@ -1306,12 +1315,20 @@ the current one ends. The held row says it is waiting because a command runs as 
 turn. Hermes and Claude take a steered command inside the running turn, and keep their
 behaviour.
 
-Codex refreshes the complete catalog after skill or app change notifications. Refreshes
-run beside the app-server reader and merge repeated notifications. Each source is read
-independently. A failed source contributes nothing to the new snapshot, while fresh
-sibling sources remain available. Apps appear only when both app reads succeed. Source
-errors name the failed source in the log. Every refresh publishes its truthful new
-snapshot, including a snapshot that contains only native commands.
+App-change hints refresh installed state; skill-change hints refresh skills and plugins.
+Each of these sources, plus optional app metadata, runs independently. Bursts merge over
+50 milliseconds, and successful app refreshes wait at least one second before another.
+A failed source retries after 5, 10, 20, 40, 80, 160, then 300 seconds, without another
+hint. Further hints cannot shorten a failed source's wait. Failed skills, plugins, or
+installed state remove that source's entries until recovery; failed metadata retains
+runtime labels. Warnings contain only the source, error category, numeric error code
+when present, and retry delay, capped at 240 characters.
+
+Successful app metadata stays with that child for 15 minutes. An installed-state update
+fetches missing or expired metadata; expiry alone starts no polling. Removing an app
+also removes its metadata, and a late reply cannot restore its entry or invocation.
+Unchanged entries and invocations produce no catalog event. Stopping the child cancels
+and awaits its source requests and retries.
 
 Codex resolves a selected token against that complete snapshot when the prompt starts.
 Skills use Codex skill input. Apps and plugins use exact mention paths. Exact protocol

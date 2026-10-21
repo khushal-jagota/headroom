@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from planner.core import authority
 from planner.core.authctx import RequestContext
 from planner.core.authority import (
-    refuse_outcome_re_parenting,
+    refuse_manager_re_parenting,
     require_above,
     require_above_or_self,
 )
@@ -49,20 +49,14 @@ def _container_as_given(container: str, clock: Clock, config: Config) -> str:
     return container
 
 
-
-
 # --- the writes ---------------------------------------------------------------
 
 
-
-
-
-
-def _add_outcome_ticket(write: MembershipWrite) -> None:
+def _add_manager_ticket(write: MembershipWrite) -> None:
     tickets_data.classify_ticket(
         write.conn,
         write.member_id,
-        sprint_item_id=write.container_id,
+        manager_id=write.container_id,
         principal=write.principal,
         now=write.now,
         admit=write.admit,
@@ -70,20 +64,16 @@ def _add_outcome_ticket(write: MembershipWrite) -> None:
     )
 
 
-def _remove_outcome_ticket(write: MembershipWrite) -> None:
+def _remove_manager_ticket(write: MembershipWrite) -> None:
     tickets_data.unclassify_ticket(
         write.conn,
         write.member_id,
-        sprint_item_id=write.container_id,
+        manager_id=write.container_id,
         principal=write.principal,
         now=write.now,
         admit=write.admit,
         review_transfer_notices=write.review_transfer_notices,
     )
-
-
-
-
 
 
 def _add_blocker(write: MembershipWrite) -> None:
@@ -101,20 +91,16 @@ def _remove_blocker(write: MembershipWrite) -> None:
 # --- the authority rules ------------------------------------------------------
 
 
-
-
-def _outcome_ticket_rule(
+def _manager_ticket_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
-    """The Ticket is acted on, and this write is the one that sets its Outcome.
+    """The Ticket is acted on, and this write is the one that sets its Manager.
 
     So it is re-parenting under another name, and the stated exception decides it. Not
-    ``or_self``: a Ticket setting its own Outcome is the case the exception exists for.
+    ``or_self``: a Ticket setting its own Manager is the case the exception exists for.
     """
     require_above(conn, ctx.principal, authority.ticket(member_id))
-    refuse_outcome_re_parenting(ctx.principal, member_id)
-
-
+    refuse_manager_re_parenting(ctx.principal, member_id)
 
 
 def _blocker_rule(
@@ -138,10 +124,10 @@ ENTRIES: dict[Collection, CollectionEntry] = {
     # Every entry asks the one rule about the thing the write acts on. There is no longer a
     # second rule chosen from the caller's kind: that split was the two-doors shape in one
     # file, and a collection now answers the same question whoever is asking.
-    Collection.outcome_tickets: CollectionEntry(
-        add=_add_outcome_ticket,
-        remove=_remove_outcome_ticket,
-        rule=_outcome_ticket_rule,
+    Collection.manager_tickets: CollectionEntry(
+        add=_add_manager_ticket,
+        remove=_remove_manager_ticket,
+        rule=_manager_ticket_rule,
     ),
     Collection.blockers: CollectionEntry(
         add=_add_blocker,

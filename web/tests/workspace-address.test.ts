@@ -35,11 +35,11 @@ describe("a position inside a utility the pane is showing", () => {
   it("keeps the rail on the list the reader was using", () => {
     const href = workspaceAddress(
       { kind: "utility", utility: "usage", path: ["tokens"] },
-      "items"
+      "managers"
     );
-    expect(href).toBe("#/workspace/utility/usage/tokens?view=items");
+    expect(href).toBe("#/workspace/utility/usage/tokens?view=managers");
     const address = parseWorkspaceAddress(href);
-    expect(address?.view).toBe("items");
+    expect(address?.view).toBe("managers");
     expect(whatTheAddressOpens(address!).markedUtilityPath).toEqual(["tokens"]);
   });
 
@@ -55,25 +55,25 @@ describe("a position inside a utility the pane is showing", () => {
   });
 });
 
-describe("a bare id that turns out to name an orchestrator", () => {
-  const orchestrators = (...ids: string[]) => (id: string) => ids.includes(id);
+describe("a bare id that turns out to name a manager", () => {
+  const managers = (...ids: string[]) => (id: string) => ids.includes(id);
 
   it("corrects the address rather than opening a Ticket page that says not found", () => {
     const address = parseWorkspaceAddress("#/workspace/item_abc");
     expect(address).not.toBeNull();
-    expect(correctedWorkspaceAddress(address!, orchestrators("item_abc"))).toBe(
-      "#/workspace/item/item_abc"
+    expect(correctedWorkspaceAddress(address!, managers("item_abc"))).toBe(
+      "#/workspace/manager/item_abc"
     );
   });
 
-  it("leaves every address alone that is not a misread orchestrator", () => {
+  it("leaves every address alone that is not a misread manager", () => {
     const cases = [
-      // An ordinary Ticket. The publication knows it is not an orchestrator.
+      // An ordinary Ticket. The publication knows it is not a manager.
       "#/workspace/t_abc",
-      // Already an orchestrator address.
-      "#/workspace/item/item_abc",
+      // Already a manager address.
+      "#/workspace/manager/item_abc",
       // Unambiguous: the trailing id is a Ticket inside a named Item.
-      "#/workspace/item/item_abc/t_abc",
+      "#/workspace/manager/item_abc/t_abc",
       "#/workspace",
       "#/workspace/chief-of-staff",
       "#/workspace/utility/usage"
@@ -81,14 +81,23 @@ describe("a bare id that turns out to name an orchestrator", () => {
     for (const hash of cases) {
       const address = parseWorkspaceAddress(hash);
       expect(address, hash).not.toBeNull();
-      expect(correctedWorkspaceAddress(address!, orchestrators("item_abc")), hash).toBeNull();
+      expect(correctedWorkspaceAddress(address!, managers("item_abc")), hash).toBeNull();
     }
   });
 
   it("does not correct anything while the publication is still empty", () => {
-    // Before the publication arrives nothing is known to be an orchestrator, and a
+    // Before the publication arrives nothing is known to be a manager, and a
     // correction made on no evidence would send a real Ticket to the wrong page.
     const address = parseWorkspaceAddress("#/workspace/item_abc");
-    expect(correctedWorkspaceAddress(address!, orchestrators())).toBeNull();
+    expect(correctedWorkspaceAddress(address!, managers())).toBeNull();
   });
+});
+
+// Retained addresses are decoded at the boundary. Every new address uses Manager names.
+it("decodes old Item links and emits canonical Manager paths and view queries", () => {
+  const old = parseWorkspaceAddress("#/workspace/item/si_existing/t_existing?view=items");
+  expect(old?.selection).toEqual({kind:"ticket",id:"t_existing",openedFromManagerId:"si_existing"});
+  expect(old?.view).toBe("managers");
+  expect(workspaceAddress(old!.selection, old!.view)).toBe("#/workspace/manager/si_existing/t_existing");
+  expect(workspaceAddress({kind:"none"}, old!.view)).toBe("#/workspace?view=managers");
 });
