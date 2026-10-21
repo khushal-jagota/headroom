@@ -14,7 +14,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -83,7 +83,11 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.storage import ConversationStore, StoredConversationEvent
+from planner.conversation.storage import (
+    ConversationRecord,
+    ConversationStore,
+    StoredConversationEvent,
+)
 from planner.conversation.system import (
     SqliteProcessConversationSystem,
 )
@@ -1137,6 +1141,56 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
 
 
 
+def test_status_reads_finish_while_an_unrelated_record_is_being_adopted(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "live")
+        await harness.system.send("live", text_message_content("work"), sender_label="owner")
+        await harness.raise_permission_ask("live")
+        await harness.request_user_input("live")
+        live_record = await harness.store.read_conversation("live")
+        assert live_record is not None
+        # Persist cold records without adding them to the runtime registry.
+        for conversation_id in ("adopting", "cold"):
+            await harness.store.create_conversation(
+                replace(live_record.resolved_start(), conversation_id=conversation_id)
+            )
+
+        entered, release = asyncio.Event(), asyncio.Event()
+        read_conversation = harness.store.read_conversation
+
+        async def gated_read(conversation_id: str) -> ConversationRecord | None:
+            if conversation_id == "adopting":
+                entered.set()
+                await release.wait()
+            return await read_conversation(conversation_id)
+
+        monkeypatch.setattr(harness.store, "read_conversation", gated_read)
+        adoption = asyncio.create_task(harness.system._conversation_state("adopting"))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+
+            async def read_statuses() -> None:
+                for conversation_id in ("cold", "missing", "live"):
+                    expected = conversation_id == "live"
+                    assert await harness.system.is_running(conversation_id) is expected
+                    assert (
+                        await harness.system.has_pending_permission_ask(conversation_id) is expected
+                    )
+                    assert await harness.system.has_pending_user_input(conversation_id) is expected
+
+            await asyncio.wait_for(read_statuses(), 5)
+            assert not release.is_set()
+            assert not adoption.done()
+            assert set(harness.system._conversations) == {"live"}
+        finally:
+            release.set()
+            await adoption
+
+    _run(exercise)
+
+
 # --- saying the model is thinking ----------------------------------------------------------
 
 
@@ -1393,7 +1447,7 @@ def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
 
 
 def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
-    harness: _Harness, tmp_path: Path
+    harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No re-attach on boot: the record is all there and the session is picked up lazily."""
 
@@ -1411,8 +1465,23 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
         restarted = _Harness(tmp_path / "conversations.db")
         restarted.backends = harness.backends
         try:
-            assert await restarted.system.is_running("c") is False
-            assert await restarted.system.has_pending_permission_ask("c") is False
+            reads: list[str] = []
+            read_conversation = restarted.store.read_conversation
+
+            async def count_read(conversation_id: str) -> ConversationRecord | None:
+                reads.append(conversation_id)
+                return await read_conversation(conversation_id)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(restarted.store, "read_conversation", count_read)
+                for conversation_id in ("c", "missing"):
+                    assert await restarted.system.is_running(conversation_id) is False
+                    assert (
+                        await restarted.system.has_pending_permission_ask(conversation_id) is False
+                    )
+                    assert await restarted.system.has_pending_user_input(conversation_id) is False
+                assert reads == []
+                assert restarted.system._conversations == {}
 
             fate = await restarted.system.send(
                 "c",
