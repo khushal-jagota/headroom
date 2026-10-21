@@ -15,13 +15,21 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
   await writeFile(hostPath, `
 <script lang="ts">
   import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
+  import {queryClient} from "../src/lib/queryClient";
+  import {connectionStatus} from "../src/lib/changeStream";
+  (window as any).__connection = (state: "connected" | "reconnecting") => connectionStatus.set(state);
   let notes: any[] = [{
     id: "f_1", text: "The button moved", page_address: "#/review", page_label: "Review",
     state: "open", ticket_id: null, created_at: Date.now() / 1000,
     updated_at: Date.now() / 1000, handled_at: null
   }];
   const requests: any[] = [];
-  class QuietEventSource { onopen = null; onmessage = null; onerror = null; addEventListener() {} removeEventListener() {} close() {} }
+  let deployment = {state:"preparing", deployed_sha:null,target_sha:"abc",outcome:null,detail:null,valid_until:new Date(Date.now()+600000).toISOString()};
+  (window as any).__deployment = async (state: string) => {
+    deployment = {...deployment, state};
+    await queryClient.invalidateQueries({queryKey:["deployment-status"]});
+  };
+  class QuietEventSource { constructor() { setTimeout(() => (this.onopen as any)?.({}), 0); } onopen = null; onmessage = null; onerror = null; addEventListener() {} removeEventListener() {} close() {} }
   (globalThis as any).EventSource = QuietEventSource;
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { "Content-Type": "application/json" }
@@ -39,7 +47,7 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
     requests.push({ path, method, body });
     if (path.startsWith("/api/resource-body?")) {
       const key = new URL(path, location.origin).searchParams.get("key");
-      if (key === "/api/deployment-status") return json({ key, epoch: "fixture", revision: "1", body: {state:"preparing", deployed_sha:null,target_sha:"abc",outcome:null,detail:null,valid_until:new Date(Date.now()+600000).toISOString()} });
+      if (key === "/api/deployment-status") return json({ key, epoch: "fixture", revision: "1", body: deployment });
       if (key === "/api/feedback/count") return json({ key, epoch: "fixture", revision: String(response().open_count), body: { open_count: response().open_count } });
     }
     if (path === "/api/review") return json({ items: [], running_worker_count: 0 });

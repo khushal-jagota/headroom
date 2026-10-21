@@ -174,10 +174,23 @@
   onMount(() => {
     const media = window.matchMedia("(max-width: 720px)");
     const syncCompact = () => {
-      const restoreFocus = moreOpen || desktopFoot?.contains(document.activeElement) || moreButtonElement === document.activeElement;
+      const activeElement = document.activeElement as HTMLElement | null;
+      const focusedScreen = activeElement?.closest<HTMLElement>("[data-screen]")?.dataset.screen;
+      const restoreFocus = moreOpen || desktopFoot?.contains(activeElement) || compactFoot?.contains(activeElement);
       compact = media.matches;
       moreOpen = false;
-      if (restoreFocus && !captureOpen) void tick().then(() => feedbackFocusTarget()?.focus({ preventScroll: true }));
+      if (restoreFocus && !captureOpen) void tick().then(() => {
+        let target: HTMLElement | null = null;
+        if (focusedScreen === "review") {
+          target = reviewLinks.find(element => element.getClientRects().length > 0) ?? null;
+        } else if (!compact && focusedScreen === "workspace") {
+          target = document.querySelector<HTMLElement>('.workspace-rail [aria-current="page"]')
+            ?? document.querySelector<HTMLElement>(".workspace-rail [data-chief-destination]");
+        } else if (!compact && focusedScreen && focusedScreen !== "more") {
+          target = desktopFoot?.querySelector<HTMLElement>(`[data-screen="${focusedScreen}"]`) ?? null;
+        }
+        (target ?? feedbackFocusTarget())?.focus({ preventScroll: true });
+      });
     };
     syncCompact();
     media.addEventListener("change", syncCompact);

@@ -157,6 +157,14 @@ def run(browser, urls):
     expect(pane.locator('[data-agent-id="panels-worker"]')).to_be_visible()
     expect(pane.locator('[data-agent-id="chief_of_staff"]')).to_have_count(0)
 
+    # The new foot uses the public Usage route, whose internal choices must also
+    # survive a tab change across the persistent shell's external-pane boundary.
+    page.evaluate("location.hash='#/backends/tokens'")
+    expect(pane.locator('nav.metrics')).to_be_visible()
+    pane.get_by_role('button', name='7d', exact=True).click()
+    pane.get_by_role('link', name='Cost', exact=True).click()
+    expect(pane.get_by_role('button', name='7d', exact=True)).to_have_attribute('aria-pressed', 'true')
+
     # Root destinations use the same mounted rail, even when its data is refused.
     page.evaluate("location.hash='#/settings'")
     expect(pane.locator('[data-settings]')).to_be_visible()
@@ -211,6 +219,13 @@ def run(browser, urls):
     menu.get_by_role('link', name='Settings', exact=True).click()
     expect(pane.locator('[data-settings]')).to_be_visible()
     expect(page.locator('.workspace-rail')).to_be_hidden()
+    # Resizing while the compact bar owns focus must reveal an equivalent target.
+    for name in ["Review", "Workspace"]:
+        link = page.locator('.workspace-mobile-nav').get_by_role('link', name=name, exact=True)
+        link.focus()
+        page.set_viewport_size({"width": 721, "height": 700})
+        page.wait_for_function("document.activeElement && document.activeElement.getClientRects().length > 0 && document.activeElement !== document.body")
+        page.set_viewport_size({"width": 720, "height": 700})
     evidence = Path(os.environ['PANELS_SIDEBAR_ARTIFACT_DIR'])
     evidence.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(evidence / 'shell-720.png'))

@@ -26,6 +26,29 @@ def run(browser, urls):
     expect(page.locator('[data-feedback-note="f_1"]')).to_be_visible()
     assert any(r["path"] == "/api/feedback" for r in page.evaluate("window.__requests()"))
 
+    # Rendered status owns its transition lifecycle; pure resolution cannot prove
+    # healthy removal, rapid reversal or reduced-motion card behavior.
+    status = page.locator('.rail-foot .status-card')
+    for state, word in [("preparing", "Deploying"), ("problem", "Problem"), ("restarting", "Deploying")]:
+        page.evaluate("state => window.__deployment(state)", state)
+        expect(status).to_have_text(word)
+    page.evaluate("window.__deployment('idle')")
+    expect(status).to_have_count(0)
+    page.evaluate("window.__connection('reconnecting')")
+    expect(status).to_have_text("Reconnecting")
+    page.evaluate("window.__connection('connected')")
+    expect(status).to_have_count(0)
+    page.evaluate("window.__deployment('preparing')")
+    expect(status).to_have_text("Deploying")
+    page.evaluate("async () => { await window.__deployment('idle'); await window.__deployment('problem'); }")
+    expect(status).to_have_text("Problem")
+    page.emulate_media(reduced_motion="reduce")
+    page.evaluate("window.__deployment('idle')")
+    expect(status).to_have_count(0)
+    page.evaluate("window.__deployment('preparing')")
+    expect(status).to_have_text("Deploying")
+    page.emulate_media(reduced_motion="no-preference")
+
     # Closing keeps a device-local draft and restores it.
     trigger = page.locator("[data-feedback-trigger]")
     trigger.click()
@@ -110,9 +133,14 @@ def run(browser, urls):
     phone.locator('[data-shell-more-menu] [aria-label="Feedback"]').click()
     expect(phone.locator('[data-shell-more-menu]')).to_have_count(0)
     expect(phone.locator('[data-feedback-capture]')).to_have_count(1)
+    phone.wait_for_function("""() => {
+      const sheet=document.querySelector('[data-feedback-capture]')?.getBoundingClientRect();
+      const nav=document.querySelector('.workspace-mobile-nav')?.getBoundingClientRect();
+      return sheet && nav && sheet.bottom <= nav.top + 1;
+    }""")
     sheet = phone.locator("[data-feedback-capture]").bounding_box()
     nav = phone.locator(".workspace-mobile-nav").bounding_box()
-    assert sheet and nav and sheet["y"] + sheet["height"] <= nav["y"] + 1
+    assert sheet and nav and sheet["y"] + sheet["height"] <= nav["y"] + 1, (sheet, nav)
     phone_input = phone.locator("[data-feedback-input]")
     assert phone_input.get_attribute("enterkeyhint") == "done"
     assert phone_input.evaluate("element => getComputedStyle(element).fontSize") == "16px"

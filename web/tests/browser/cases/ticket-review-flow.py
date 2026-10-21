@@ -1092,6 +1092,7 @@ def run(browser, urls):
     kickoff_leash.locator("[data-accept]").click()
     assert not kickoff_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
     kickoff_leash.locator('[data-ceiling-part="holder"]').click()
+    expect(kickoff_leash.locator('[role="option"]')).to_have_count(2)
     assert [
         option.get_attribute("data-ceiling-picker-choice")
         for option in kickoff_leash.locator('[role="option"]').all()
@@ -1154,6 +1155,7 @@ def run(browser, urls):
     expect(approve_row.get_by_role("listbox")).to_have_attribute(
         "aria-label", "Who holds the ceiling"
     )
+    expect(approve_row.locator('[role="option"]')).to_have_count(3)
     assert [
         option.get_attribute("data-ceiling-picker-choice")
         for option in approve_row.locator('[role="option"]').all()

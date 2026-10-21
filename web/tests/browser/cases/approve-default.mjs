@@ -107,7 +107,8 @@ client.setDefaultOptions({queries:{retry:false}});
 let address = $state<import('../src/lib/workspaceAddress').WorkspaceAddress>({selection:{kind:'ticket',id:'t_coding'},view:'tickets',openFile:null});
 (window as any).__workspaceAddressChange = () => { address = {...address,view:'managers',openFile:null}; };
 </script>
-<QueryClientProvider {client}><BoardRoute {address} /></QueryClientProvider>
+{#snippet railFoot()}<div class="rail-foot"><nav class="rail-utilities" aria-label="Destinations"><a href="#/review">Review</a></nav></div>{/snippet}
+<QueryClientProvider {client}><BoardRoute {address} {railFoot} /></QueryClientProvider>
 <style>:global(html),:global(body),:global(#app){height:100%;margin:0;overflow:hidden;}</style>`);
   const existingMain = await (await import('node:fs/promises')).readFile(main, 'utf8');
   await writeFile(workspaceMain, existingMain.replace(`./${stem}.svelte`, `./${stem}-workspace.svelte`));
