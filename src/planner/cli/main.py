@@ -326,6 +326,7 @@ def _sprint_item_record(
         "project",
     )
     header = {key: data[key] for key in header_keys if key in data}
+    header["settled"] = data["settled"]
     # The Sprint Item's agent is part of the Sprint Item record. It used to be a read of its
     # own, which returned these four values and nothing this read did not already carry.
     supervisor = data.get("supervisor")
@@ -2048,7 +2049,11 @@ def sprint_show(sprint_id: str | None, part_names: str | None, as_json: bool) ->
 
 @sprint.group("item")
 def sprint_item() -> None:
-    """Create, inspect, edit, and populate sprint items."""
+    """Manage ordinary orchestrators. Settled orchestrators are finished destinations.
+
+    Choose an active orchestrator for new work. Reads expose the boolean settled key.
+    An absent settled field does not establish that an orchestrator is active.
+    """
 
 
 @sprint_item.command("create")
@@ -2103,20 +2108,29 @@ def sprint_item_create(
 
 @sprint_item.command("list")
 @click.option("--search", default=None, help="Find a Sprint Item by title.")
+@click.option("--active", is_flag=True, help="Only show active orchestrators (settled=false).")
+@click.option(
+    "--settled", is_flag=True, help="Only show settled orchestrators (finished destinations)."
+)
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
 @bounded_options
 @json_option
 def sprint_item_list(
     search: str | None,
+    active: bool,
+    settled: bool,
     project: str | None,
     project_id: str | None,
     limit: int,
     offset: int,
     as_json: bool,
 ) -> None:
+    if active and settled:
+        http.fail_validation("use only one of --active or --settled", as_json)
     params = _drop_none(
         {
+            "settled": False if active else True if settled else None,
             "search": search,
             "project": project,
             "project_id": project_id,
@@ -2136,7 +2150,7 @@ def sprint_item_list(
         _format_bounded(
             _lines(
                 data["items"],
-                lambda i: f"{i['id']} {i['title']}",
+                lambda i: f"{i['id']} {i['title']} [{'settled' if i['settled'] else 'active'}]",
             ),
             data["page"],
         ),
@@ -2638,7 +2652,11 @@ _PUBLIC_COMMAND_HELP = {
     ("day", "set"): "Change one authored Day field.",
     ("day", "add-ticket"): "Add one Ticket to one Day.",
     ("day", "remove-ticket"): "Remove one Ticket from one Day.",
-    ("ticket", "create"): "Create one Ticket from one JSON object.",
+    ("ticket", "create"): (
+        "Create one Ticket from one JSON object. Choose an active orchestrator for new work. "
+        "Settled orchestrators are finished destinations. Read the settled boolean first. "
+        "An absent settled field does not establish active state."
+    ),
     ("ticket", "list"): "List Tickets with bounded filters.",
     ("ticket", "show"): "Read the current Worker's Ticket or one named Ticket.",
     ("ticket", "edit"): "Apply one or more Ticket field edits from one JSON object.",
@@ -2668,8 +2686,17 @@ _PUBLIC_COMMAND_HELP = {
         "carry-item",
     ): "Carry one Sprint Item and selected Tickets to another Sprint.",
     ("sprint", "item", "create"): "Create one Sprint Item.",
-    ("sprint", "item", "list"): "List Sprint Items as bounded summaries.",
-    ("sprint", "item", "show"): "Read one Sprint Item record or selected parts.",
+    ("sprint", "item", "list"): (
+        "List orchestrators as bounded summaries with the settled boolean. "
+        "Without --active or --settled, include both states. Settled orchestrators are finished "
+        "destinations. Choose an active orchestrator for new work. "
+        "An absent settled field does not establish active state."
+    ),
+    ("sprint", "item", "show"): (
+        "Read one orchestrator record or selected parts, including the settled boolean. "
+        "Settled orchestrators are finished destinations. Choose an active orchestrator "
+        "for new work. An absent settled field does not establish active state."
+    ),
     ("sprint", "item", "set"): "Change one Sprint Item field.",
     ("sprint", "item", "delete"): "Permanently delete one empty Sprint Item.",
     ("sprint", "item", "add-ticket"): "Classify one Ticket under one Sprint Item.",
@@ -2711,7 +2738,12 @@ def _set_public_command_help() -> None:
 @click.option("--orchestrator", "item_id", default=None, help="Ordinary orchestrator id.")
 @json_option
 def ticket_assign(ticket_id: str, chief: bool, item_id: str | None, as_json: bool) -> None:
-    """Assign one Worker to an explicit orchestrator."""
+    """Assign one Worker to an explicit orchestrator.
+
+    Choose an active orchestrator for new work. Settled orchestrators are finished
+    destinations. Read the settled boolean first. An absent settled field does not
+    establish active state.
+    """
     if chief == (item_id is not None):
         http.fail_validation("use exactly one of --chief or --orchestrator", as_json)
     parent = {"kind": "chief", "id": "chief"} if chief else {"kind": "sprint_item", "id": item_id}

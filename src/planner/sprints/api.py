@@ -113,6 +113,7 @@ async def read_items(
     detail: str | None = None,
     object_id: Annotated[str | None, Query(alias="id")] = None,
     search: str | None = None,
+    settled: bool | None = None,
     project: str | None = None,
     project_id: str | None = None,
     limit: int | None = None,
@@ -126,6 +127,7 @@ async def read_items(
             "id",
             {
                 "search": search,
+                "settled": settled,
                 "project": project,
                 "project_id": project_id,
                 "limit": limit,
@@ -140,7 +142,9 @@ async def read_items(
     )
     resolved_project_id = resolved_project.id if resolved_project is not None else None
     if level is ReadDetail.full:
-        reject_parameters("detail=full", {"search": search, "limit": limit, "offset": offset})
+        reject_parameters(
+            "detail=full", {"search": search, "settled": settled, "limit": limit, "offset": offset}
+        )
         rows = sprints_views.list_items(conn, project_id=resolved_project_id)
         await add_work_attention(conn, conversations, conversation_record, sprint_items=rows)
         return {"items": rows}
@@ -152,6 +156,7 @@ async def read_items(
         ),
         project_id=resolved_project_id,
         search=search,
+        settled=settled,
     )
     await add_work_attention(conn, conversations, conversation_record, sprint_items=page.rows)
     return page.response("items")

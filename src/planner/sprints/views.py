@@ -272,12 +272,16 @@ def list_item_summaries(
     page_request: ListPageRequest,
     project_id: str | None = None,
     search: str | None = None,
+    settled: bool | None = None,
 ) -> ListPage[JsonDict]:
     clauses: list[str] = []
-    params: list[str] = []
+    params: list[str | int] = []
     if project_id is not None:
         clauses.append("project_id=?")
         params.append(project_id)
+    if settled is not None:
+        clauses.append("settled=?")
+        params.append(int(settled))
     if search:
         clauses.append("instr(lower(title), lower(?)) > 0")
         params.append(search)
