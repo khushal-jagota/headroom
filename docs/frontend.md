@@ -223,7 +223,7 @@ One screen per part of the system:
   stay intact in requests.
 
   Steps and Artifacts are closed bands below the live card. Steps retain their circular progress marks. Each step opens its own
-  text. Future stages and a separate historical record do not appear.
+  text. Future stages appear with their upcoming progress marks and empty text. A separate historical record does not appear.
   Artifacts remain accessible even when no inline link exists,
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
