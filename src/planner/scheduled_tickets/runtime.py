@@ -20,12 +20,10 @@ class ScheduledTicketLoop:
         db_path: str,
         clock: Clock,
         *,
-        boundary_hour: int,
         busy_timeout_ms: int = 5000,
     ) -> None:
         self._db_path = db_path
         self._clock = clock
-        self._boundary_hour = boundary_hour
         self._busy_timeout_ms = busy_timeout_ms
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -35,9 +33,8 @@ class ScheduledTicketLoop:
         try:
             return run_current_slot(
                 conn,
-                planning_now=self._clock.now(),
+                local_now=self._clock.now(),
                 now=self._clock.now_unix(),
-                boundary_hour=self._boundary_hour,
             )
         finally:
             conn.close()

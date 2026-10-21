@@ -42,20 +42,6 @@ def _add_prompt(
     )
 
 
-TODAY = "day_2026-09-21"
-
-
-def _place_on_the_day(conn: sqlite3.Connection, ticket_id: str) -> None:
-    conn.execute(
-        "INSERT INTO days (id, created_at, updated_at) VALUES (?, 0, 0) ON CONFLICT(id) DO NOTHING",
-        (TODAY,),
-    )
-    conn.execute(
-        "INSERT INTO day_tickets (day_id, ticket_id, position) VALUES (?, ?, 0)",
-        (TODAY, ticket_id),
-    )
-
-
 def _add_ticket(
     conn: sqlite3.Connection, ticket_id: str, *, claim: str, conversation_id: str
 ) -> None:
@@ -66,10 +52,6 @@ def _add_ticket(
         "'needs_plan', 'done', '{}', 0, 0, ?, ?)",
         (ticket_id, ticket_id, claim, conversation_id),
     )
-
-
-
-
 
 
 def test_a_memory_notice_answers_the_boundary_so_the_same_one_is_never_sent_twice(

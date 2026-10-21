@@ -14,6 +14,7 @@
   import { presentToolCall } from "../../lib/conversation/toolCallPresentation";
   import type { ToolCallRow } from "../../lib/conversation/transcript";
   import type { SvelteMap, SvelteSet } from "svelte/reactivity";
+  import { DiagnosticExpiredError, DIAGNOSTIC_EXPIRED_MESSAGE } from "../../lib/conversation/diagnosticExpiry";
   import { readToolCallDetail } from "../../lib/conversation/wire";
 
   let {
@@ -32,13 +33,14 @@
   } = $props();
 
   let detailFailed = $state(false);
+  let detailExpired = $state(false);
   /** One request at a time, however often the effect below is woken. */
-  let asking = false;
+  let selectedDetail = $state<string|null>(null);
 
   let open = $derived(openRows.has(row.toolCallId));
   let presentation = $derived(presentToolCall(row));
   let regionId = $derived(`c2-tool-${row.toolCallId}`);
-  let shownDetail = $derived(wholeDetails.get(row.toolCallId) ?? presentation.detail);
+  let shownDetail = $derived(selectedDetail ?? wholeDetails.get(row.toolCallId) ?? presentation.detail);
 
   function openRow(): void {
     if (openRows.has(row.toolCallId)) {
@@ -46,6 +48,7 @@
       return;
     }
     detailFailed = false;
+    detailExpired = false;
     openRows.add(row.toolCallId);
   }
 
@@ -55,20 +58,14 @@
   $effect(() => {
     const at = row.cappedDetailSequence;
     const id = row.toolCallId;
-    if (!open || at === null || wholeDetails.has(id) || detailFailed || asking) return;
-    asking = true;
-    void (async () => {
-      try {
-        const whole = await readToolCallDetail(conversationId, at);
-        if (whole !== null) wholeDetails.set(id, whole);
-      } catch {
-        // The start of the output is still true and stays on screen. The row says only
-        // that the rest of it did not arrive.
-        detailFailed = true;
-      } finally {
-        asking = false;
-      }
-    })();
+    if (!open || at === null || wholeDetails.has(id) || detailFailed) return;
+    const controller=new AbortController();
+    void readToolCallDetail(conversationId,at,controller.signal).then(whole=>{
+      if(controller.signal.aborted||whole===null)return;
+      selectedDetail=whole;
+      if(whole.length*2<=512*1024)wholeDetails.set(id,whole);
+    }).catch(reason=>{if(!controller.signal.aborted){detailFailed=true;detailExpired=reason instanceof DiagnosticExpiredError;}});
+    return()=>{controller.abort();selectedDetail=null;};
   });
 </script>
 
@@ -111,7 +108,7 @@
         <pre class="c2-tool-output" data-conversation-tool-output>{shownDetail ?? ""}</pre>
         {#if detailFailed}
           <p class="c2-tool-detail-failed" data-conversation-tool-detail-failed>
-            The rest of this output did not load.
+            {detailExpired ? DIAGNOSTIC_EXPIRED_MESSAGE : "The rest of this output did not load."}
           </p>
         {/if}
       </div>

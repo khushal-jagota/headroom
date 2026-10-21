@@ -16,7 +16,7 @@ function controls(value: TicketDetail, terminal = false): string {
 
 describe("explicit ticket lifecycle controls", () => {
   it("offers deferral independently of unscheduled placement", () => {
-    const markup = controls(ticket({ sprint_id: null, sprint_item_id: null }));
+    const markup = controls(ticket({ sprint_item_id: null }));
     expect(markup).toContain("Backlog ticket");
     expect(markup).not.toContain("Ticket actions");
     expect(markup).not.toContain("<details");
@@ -26,7 +26,7 @@ describe("explicit ticket lifecycle controls", () => {
   });
 
   it("offers resume and preserves the contact and approval explanation", () => {
-    const markup = controls(ticket({ is_backlogged: true, sprint_id: "scheduled" }));
+    const markup = controls(ticket({ is_backlogged: true, }));
     expect(markup).toContain("Resume ticket");
     expect(markup).not.toContain("Retire ticket");
     expect(markup).not.toContain("Ticket actions");
@@ -60,10 +60,10 @@ describe("bounded orchestrator ticket discovery", () => {
       const backlog = queries.orchestratorTicketSummaries(principal, "backlogged", 0);
       const next = queries.orchestratorTicketSummaries(principal, "active", 30);
       for (const query of [chief, item, backlog, next]) await client.fetchQuery(query);
-      expect(client.getQueryData(chief.queryKey)).toMatchObject({ tickets: [{ id: "chief-active-0" }] });
-      expect(client.getQueryData(item.queryKey)).toMatchObject({ tickets: [{ id: "item one-active-0" }] });
-      expect(client.getQueryData(backlog.queryKey)).toMatchObject({ tickets: [{ id: "item one-backlogged-0" }] });
-      expect(client.getQueryData(next.queryKey)).toMatchObject({ tickets: [{ id: "item one-active-30" }] });
+      expect(client.getQueryData(chief.queryKey)).toMatchObject({ body: { tickets: [{ id: "chief-active-0" }] } });
+      expect(client.getQueryData(item.queryKey)).toMatchObject({ body: { tickets: [{ id: "item one-active-0" }] } });
+      expect(client.getQueryData(backlog.queryKey)).toMatchObject({ body: { tickets: [{ id: "item one-backlogged-0" }] } });
+      expect(client.getQueryData(next.queryKey)).toMatchObject({ body: { tickets: [{ id: "item one-active-30" }] } });
     } finally {
       client.clear();
       vi.unstubAllGlobals();

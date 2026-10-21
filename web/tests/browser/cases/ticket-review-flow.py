@@ -13,6 +13,7 @@ def run(browser, urls):
         str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
     )
     navigation_response = fixture["navigation_response"]
+    scoped_navigation_response = fixture["scoped_navigation_response"]
     import json
     import os
     import time
@@ -23,7 +24,6 @@ def run(browser, urls):
     ticket = dict(
         project_id="project_one",
         project="One",
-        sprint_id="sp_old",
         sprint_item_id="outcome_kept",
         sprint_item_title="Kept outcome",
         id="t_review",
@@ -39,7 +39,6 @@ def run(browser, urls):
         ceiling_holder={"kind": "chief", "id": "chief"},
         conversation_id=None,
         conversation_history=[],
-        day_ids=[],
         blocked=False,
         is_backlogged=False,
         blocker_summary={"blocked_by": []},
@@ -146,6 +145,9 @@ def run(browser, urls):
     approvals = []
     backlog_writes = []
     held_details = []
+    held_field_saves = []
+    fail_field_save = False
+    hold_field_save = False
     hold_detail = False
     snapshot_unavailable = True
     runtime_working = False
@@ -326,16 +328,37 @@ def run(browser, urls):
         response["cursor"] = encode_cursor(response["snapshot"])
         return response
 
+    def finish_read(route, result):
+        original = route.request.url.split("/api/", 1)[1]
+        if original.startswith("resource-body?"):
+            key = parse_qs(original.split("?", 1)[1])["key"][0]
+            if key.endswith("/workspace"):
+                definition = next(worker for worker in manifest["worker_types"] if worker["worker_type"] == result["worker_type"])
+                stage = next(row for row in definition["stages"] if row["id"] == result["stage"])
+                fields = result["field_values"]
+                result = {**result, "field_values": {name: value for name, value in fields.items() if name == stage["gating_field"]},
+                    "field_summaries": {name: {"revision": value, "byte_count": len(value.encode())} for name, value in fields.items()}}
+                result.pop("conversation_history", None)
+            result = {"epoch": "fixture", "key": key, "revision": str(source_revision), "body": result}
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
+
     def respond(route):
-        nonlocal navigation_proposal, session_revised
+        nonlocal navigation_proposal, session_revised, fail_field_save
         path = route.request.url.split("/api/", 1)[1]
         requests.append(path)
+        if path.startswith("resource-body?"):
+            path = parse_qs(path.split("?", 1)[1])["key"][0].removeprefix("/api/")
+            requests.append(path)
+        if path.startswith("tickets/") and path.endswith("/workspace"):
+            path = path.removesuffix("/workspace")
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path == "test/navigation-publication":
+        if path.split("?")[0] == "test/navigation-publication":
             assert route.request.method == "POST"
             result = review_snapshot(force_publication=True)
-        elif path.split("?")[0] == "navigation/snapshot":
+            if "?view=" in path:
+                result = scoped_navigation_response(result, json.loads(parse_qs(path.split("?", 1)[1])["view"][0]))
+        elif path.split("?")[0] in {"navigation/snapshot", "navigation/view/snapshot"}:
             if snapshot_unavailable:
                 route.fulfill(
                     status=503,
@@ -352,6 +375,22 @@ def run(browser, urls):
                 )
                 return
             result = review_snapshot()
+            if path.startswith("navigation/view/"):
+                result = scoped_navigation_response(result, json.loads(parse_qs(path.split("?", 1)[1])["view"][0]))
+        elif path.startswith("resource-versions?"):
+            keys = json.loads(parse_qs(path.split("?", 1)[1])["keys"][0])
+            result = {"epoch": "fixture", "resources": [{"key": key, "revision": None} for key in keys]}
+        elif "/workspace/fields/" in path:
+            identity, field = path.split("/")[1], path.rsplit("/", 1)[1]
+            value = (ticket if identity == "t_review" else fixture_ticket(identity))["field_values"].get(field, "")
+            result = {"ticket_id": identity, "field": field, "value": value, "revision": value}
+        elif path.startswith("artifact-catalog/"):
+            result = {"revision": "fixture", "directory": "", "offset": 0, "total": 0, "entries": []}
+        elif path.startswith("conversation-history/ticket/"):
+            identity = path.split("?", 1)[0].rsplit("/", 1)[1]
+            history = (ticket if identity == "t_review" else fixture_ticket(identity)).get("conversation_history", [])
+            result = {"revision": "fixture", "offset": 0, "total": len(history), "active_index": None,
+                      "entries": [{**row, "label": str(row["created_at"])} for row in history]}
         elif path.startswith("conversation/conversations/") and "artifact-conversation" not in path:
             identity = path.split("/")[2]
             if path.split("?")[0].endswith("/events"):
@@ -396,8 +435,15 @@ def run(browser, urls):
                 assert not {"project_id", "sprint_id", "sprint_item_id"} & set(body)
                 assert "guidance" not in body
                 if "field_values" in body:
+                    if fail_field_save:
+                        fail_field_save = False
+                        route.fulfill(status=503, content_type="application/json", body=json.dumps({"error": {"code": "unavailable", "message": "Save unavailable", "detail": None}}))
+                        return
                     writes.append({"value": body["field_values"]})
                     ticket["field_values"].update(body["field_values"])
+                    if hold_field_save:
+                        held_field_saves.append(route)
+                        return
                 elif "ceiling" in body or "ceiling_holder" in body:
                     ceiling_writes.append(body)
                     if (
@@ -558,6 +604,13 @@ def run(browser, urls):
             ticket.update(pending_proposal=None, ticket_status="empty")
             navigation_proposal = None
             result = ticket
+        elif path.startswith("worker-types/") and path.endswith("/manifest"):
+            worker_type = path.split("/")[1]
+            matches = [row for row in manifest["worker_types"] if row["worker_type"] == worker_type]
+            if not matches:
+                route.fulfill(status=404, json={"error": {"code": "unknown_worker_type", "message": f"Unknown worker type: {worker_type}"}})
+                return
+            result = {"worker_types": matches}
         elif path == "worker-types":
             result = manifest
         elif path == "workers/coding":
@@ -566,7 +619,7 @@ def run(browser, urls):
             result = {"backends": []}
         else:
             result = {}
-        route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
+        finish_read(route, result)
 
     page = browser.new_page()
     page.on("pageerror", lambda e: print(str(e), flush=True))
@@ -701,7 +754,7 @@ def run(browser, urls):
     hold_detail = False
     for route in held_details:
         if route.request.failure is None:
-            route.fulfill(status=200, content_type="application/json", body=json.dumps(ticket))
+            finish_read(route, ticket)
     held_details.clear()
     expect(page.locator("[data-ticket-section]")).to_have_attribute(
         "data-section-stage", "needs_success_condition"
@@ -730,9 +783,7 @@ def run(browser, urls):
     assert page.evaluate("window.__wait()")["status"] == "unknown", (
         "retained deleted header cannot certify current paint"
     )
-    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_attribute(
-        "data-conversation-signal", "working"
-    )
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
     snapshot_unavailable = True
     page.evaluate("window.__refresh()")
     expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
@@ -743,17 +794,12 @@ def run(browser, urls):
     retained_conversation["value"]["latest_sequence"] = 21
     snapshot_unavailable = False
     page.evaluate("window.__refresh()")
-    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_attribute(
-        "data-conversation-signal", "message"
-    )
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
     snapshot_unavailable = True
     page.evaluate("window.__refresh()")
-    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_attribute(
-        "data-conversation-signal", "message"
-    )
-    expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
-        "data-conversation-id", "masthead-current"
-    )
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
+    # A deleted owner has no address that authorizes an orphan conversation signal.
+    expect(page.locator(".ticket-title [data-conversation-id]")).to_have_count(0)
     retained_conversation = None
     snapshot_unavailable = False
     page.evaluate("window.__refresh()")
@@ -767,7 +813,7 @@ def run(browser, urls):
     hold_detail = False
     for route in held_details:
         if route.request.failure is None:
-            route.fulfill(status=200, content_type="application/json", body=json.dumps(ticket))
+            finish_read(route, ticket)
     held_details.clear()
     parent_project = {"id": "project_one", "name": "One"}
     runtime_working = False
@@ -997,6 +1043,34 @@ def run(browser, urls):
     page.wait_for_function("document.body.textContent.includes('kickoff')")
     assert page.locator("summary").filter(has_text="Notes").count() == 0
     assert writes == [{"value": {"brief": "Edited saved kickoff"}}]
+    # Closing a lazy stage must preserve failed and pending edits across remounts.
+    expect(saved).to_have_attribute("contenteditable", "true")
+    fail_field_save = True
+    saved.click()
+    saved.fill("Draft survives a closed stage")
+    saved.press("Tab")
+    expect(page.locator('[data-field="brief"] .error-line')).to_contain_text("Save unavailable")
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = false; }")
+    expect(saved).to_have_count(0)
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate("node => { node.open = true; }")
+    expect(saved).to_have_text("Draft survives a closed stage")
+    expect(page.locator('[data-field="brief"] .error-line')).to_contain_text("Save unavailable")
+    hold_field_save = True
+    saved.click()
+    saved.press("Tab")
+    page.wait_for_timeout(50)
+    assert len(held_field_saves) == 1
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = false; }")
+    expect(saved).to_have_count(0)
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate("node => { node.open = true; }")
+    expect(saved).to_have_attribute("contenteditable", "false")
+    hold_field_save = False
+    finish_read(held_field_saves.pop(), ticket)
+    expect(saved).to_have_attribute("contenteditable", "true")
+    expect(page.locator('[data-field="brief"] .error-line')).to_have_count(0)
+    expect(saved).to_have_text("Draft survives a closed stage")
     page.evaluate("window.__showTicket('t_personal')")
     page.locator('[data-ticket-id="t_personal"]').wait_for()
     personal_outcome = page.locator(
@@ -1160,14 +1234,12 @@ def run(browser, urls):
             break
         page.wait_for_timeout(10)
     assert held_details
-    held_details.pop(0).fulfill(
-        status=200, content_type="application/json", body=json.dumps(ticket)
-    )
+    finish_read(held_details.pop(0), ticket)
     expect(page.locator("[data-review-card]")).to_have_count(0)
     ticket["pending_proposal"] = navigation_proposal
     hold_detail = False
     for route in held_details:
-        route.fulfill(status=200, content_type="application/json", body=json.dumps(ticket))
+        finish_read(route, ticket)
     held_details.clear()
     expect(page.locator("[data-approval-block]")).to_contain_text("Replacement body")
     expect(page.locator("[data-approval-block]")).not_to_contain_text("A result")
@@ -1200,7 +1272,9 @@ def run(browser, urls):
     expect(page.locator("[data-shell-presence]")).to_have_text("1 working")
     expect(page.locator(".review-empty-meta")).to_have_text("1 agent in progress")
     snapshot_unavailable = True
-    page.evaluate("window.__refresh()")
+    # A failed replacement read does not revoke the still-valid active stream.
+    # Exercise actual active-stream loss for this fail-closed runtime assertion.
+    page.evaluate("window.__navigationSource.onerror?.(); window.__refresh()")
     expect(page.locator("[data-shell-presence]")).to_have_count(0)
     assert "working" not in page.locator("[data-shell-status]").get_attribute("aria-label")
     expect(page.locator("[data-review-empty]")).to_contain_text(
@@ -1270,6 +1344,12 @@ def run(browser, urls):
         "Malformed",
     ]:
         assert not click_was_claimed(saved_artifacts.get_by_role("link", name=label, exact=True))
+    # The opened conversation owns the full pane. Return to the document before a real click.
+    for _ in range(2):
+        if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
+            break
+        page.keyboard.press("Escape")
+    expect(page.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-state", "rest")
     html_link.click()
     viewer = page.locator("[data-ticket-artifact]")
     expect(viewer).to_have_attribute("aria-label", "plan.html")

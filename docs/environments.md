@@ -53,6 +53,35 @@ The deployed user service starts
 It binds to `127.0.0.1:8767`. `systemctl --user` starts, stops, restarts, and inspects
 the service without sudo.
 
+The supervisor records its parent identity at launch. If that parent is a verified
+systemd manager, only that manager can request shutdown with SIGINT or SIGTERM.
+An ordinary Ticket server accepts those signals from its owner as before. An
+unknown launch parent selects guarded mode without an authorized manager.
+
+Linux can deny access to the manager's executable even for its own user. In that
+case, the supervisor verifies the manager through authenticated D-Bus owner
+credentials and the kernel process start time. It repeats those checks before
+it accepts a shutdown signal. An unavailable bus or changed owner causes refusal.
+
+Guarded mode stays fixed. An unknown sender, a changed parent, or an unverifiable
+manager causes refusal rather than an unguarded shutdown. Each refusal appears on
+the server's own stderr with the signal, sender, reason, and exact-PID SIGKILL
+guidance. If a legitimate service stop fails these checks, systemd waits for its
+stop timeout and then uses SIGKILL. This delay is deliberate.
+
+Workers stop their own Ticket servers by the PID recorded at launch. If a guarded
+Ticket server refuses that signal, follow its diagnostic and use SIGKILL only
+against that recorded PID. Never use a broad process pattern. The live service
+remains operator-owned.
+
+A detached dogfood launch can also enter guarded mode. For example, a `setsid`
+launcher can exit before the supervisor captures its parent, so the parent is
+already PID 1. If PID 1 is the verified systemd manager, the supervisor selects
+guarded mode. The Worker's exact-PID SIGTERM then produces a refusal. Use the
+recorded PID and the diagnostic's SIGKILL guidance for that dogfood server.
+`setsid` alone changes the session, not the parent. The parent at capture decides
+the shutdown mode.
+
 Interactive commands use `~/Deployments/Panels/current/app/bin/panels` instead. The
 global `panels` wrapper follows that command. The deployed command establishes its own
 application root and exact SHA, preserves the rest of the caller context, and does not
@@ -135,7 +164,7 @@ off the server event loop because the CPU sample waits briefly.
 
 `panels environment cleanup` is a dry run. `--apply` collects a fresh inventory and
 re-proves every target before changing it. It can rotate configured oversized logs,
-remove expired backup temporaries, and prune verified backups beyond seven. It never
+remove expired backup temporaries, and prune verified backups beyond three. It never
 kills a process or removes a worktree, cache, environment, deployed app, or ambiguous
 path.
 
@@ -154,3 +183,12 @@ path.
 ---
 
 _Last verified: 2026-08-09._
+
+## Python build prerequisites
+
+The indexed workspace ordering uses PyICU, pinned in `requirements.txt`. Install
+ICU headers, `pkg-config`, and a C++ compiler before creating the Python environment.
+On Debian use `apt-get install libicu-dev pkg-config build-essential`. On macOS use
+`brew install icu4c pkg-config`, then set `PKG_CONFIG_PATH` to
+`$(brew --prefix icu4c)/lib/pkgconfig` for the Python dependency installation.
+The runtime needs the matching ICU shared libraries.

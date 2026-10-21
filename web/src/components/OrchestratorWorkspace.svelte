@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
+  import { isPrimaryPressOutsideConversation } from "../lib/conversation/dismissal";
   import type { ConversationState } from "../lib/conversation/conversationState";
 
   let {
@@ -19,12 +20,10 @@
     onDocumentClick?: (event: MouseEvent) => void;
   } = $props();
 
-  function dismissConversation(event: MouseEvent): void {
-    const target = event.target;
-    if (target instanceof Element && target.closest("[data-conversation-pane]") === null) {
-      conversationState = "rest";
-    }
+  function dismissConversation(event: PointerEvent): void {
+    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
   }
+
 </script>
 
 <div class={`sprint-item-page ${className}`} {...attributes}>
@@ -32,12 +31,12 @@
     <!-- Links keep their keyboard behavior. The host only redirects plain file clicks. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <main class="sprint-item-doc" onclickcapture={() => conversationState = "rest"} onclick={onDocumentClick}>
+    <main class="sprint-item-doc" onpointerdowncapture={dismissConversation} onclick={onDocumentClick}>
       <div class="sprint-item-column">{@render children()}</div>
     </main>
     {@render readingAside?.()}
   </div>
-  <div class="conversation-layer" onclickcapture={dismissConversation}>
+  <div class="conversation-layer" onpointerdowncapture={dismissConversation}>
     <div class="conversation-column">{@render conversation()}</div>
   </div>
 </div>

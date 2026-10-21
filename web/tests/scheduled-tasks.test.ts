@@ -5,7 +5,7 @@ import type { ScheduledTask } from "../src/lib/types";
 const schedule: ScheduledTask = {
   id: "schedule", enabled: false, cadence: "daily", local_time: "09:00", title: "Ordinary work",
   worker_type: "coding", kickoff_note: "Keep the context", deadline: null,
-  project_id: "project", sprint_id: null, placement_mode: "backlog", sprint_item_id: "item",
+  project_id: "project", sprint_item_id: "item",
   orchestrator: { kind: "sprint_item", id: "item" }, employee_backend: null,
   employee_launch_model: null, blocked_by_ticket_ids: [], created_at: 1, updated_at: 1
 };

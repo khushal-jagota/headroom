@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One managed file, at full size, filling whatever box the host gives it.
    *
    * There are two hosts and one rendering: the `#/preview` address, and an artifact
@@ -10,6 +11,7 @@
    * shared preview at full size, which already knows how to draw an image, a player, or
    * a download line.
    */
+  import { observeVisibleContent } from "../lib/visibleContent";
   import FilePreview from "./FilePreview.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
@@ -24,6 +26,10 @@
     reloadSignal = 0
   }: { target: FilePreviewTarget; reloadSignal?: number } = $props();
 
+  let visible = $state(false);
+  function visibility(element: HTMLElement) {
+    return { destroy: observeVisibleContent(element, next => { visible = next; }) };
+  }
   let resolved = $derived(resolvePreview(target));
   let htmlFrameHref = $state<string | null>(null);
   let markdownSource = $state<string | null>(null);
@@ -36,7 +42,7 @@
     htmlFrameHref = null;
     markdownSource = null;
     error = "";
-    if (current.kind !== "html" && current.kind !== "markdown") return;
+    if (!visible || (current.kind !== "html" && current.kind !== "markdown")) return;
 
     const controller = new AbortController();
     let objectUrl: string | null = null;
@@ -69,7 +75,11 @@
   });
 </script>
 
-{#if resolved.kind === "html"}
+<div class="visible-file-document" use:visibility>
+{#if !visible}
+  <div aria-hidden="true"></div>
+{:else if resolved.kind === "html"}
+  <SkeletonRegion shape="document" layout="fill" loading={!error && !htmlFrameHref} loadingText="Loading preview...">
   {#if error}
     <div class="quiet-line">{error}</div>
   {:else if htmlFrameHref}
@@ -80,19 +90,23 @@
       sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
       title={resolved.label}
     ></iframe>
-  {:else}
-    <div class="quiet-line">Loading preview...</div>
   {/if}
+  </SkeletonRegion>
 {:else if resolved.kind === "markdown"}
+  <SkeletonRegion shape="document" layout="fill" loading={!error && markdownSource === null} loadingText="Loading preview...">
   {#if error}
     <div class="quiet-line">{error}</div>
   {:else if markdownSource !== null}
     <article class="file-preview-markdown-document" data-file-preview-markdown>
       <MarkdownBlock text={markdownSource} depth={1} visited={markdownVisited} />
     </article>
-  {:else}
-    <div class="quiet-line">Loading preview...</div>
   {/if}
+  </SkeletonRegion>
 {:else}
   <FilePreview {target} mode="full" />
 {/if}
+
+</div>
+<style>
+  .visible-file-document { width: 100%; height: 100%; min-height: 0; }
+</style>

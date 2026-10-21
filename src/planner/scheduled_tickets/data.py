@@ -14,7 +14,6 @@ from planner.scheduled_tickets.contracts import (
     OccurrenceOutcome,
     ScheduleCadence,
     ScheduledTicketOccurrence,
-    ScheduledTicketPlacementMode,
     ScheduledTicketSchedule,
     ScheduledTicketTemplate,
 )
@@ -22,7 +21,7 @@ from planner.tickets.contracts import TicketLocale
 
 _SCHEDULE_COLUMNS = (
     "id, enabled, cadence, local_time, title, worker_type, kickoff_note, "
-    "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
+    "deadline, project_id, sprint_item_id, employee_backend, "
     "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
     "created_at, updated_at"
 )
@@ -75,8 +74,6 @@ def _row_to_schedule(row: sqlite3.Row) -> ScheduledTicketSchedule:
             kickoff_note=str(row["kickoff_note"]),
             deadline=None if row["deadline"] is None else str(row["deadline"]),
             project_id=None if row["project_id"] is None else str(row["project_id"]),
-            sprint_id=None if row["sprint_id"] is None else str(row["sprint_id"]),
-            placement_mode=ScheduledTicketPlacementMode(str(row["placement_mode"])),
             sprint_item_id=(None if row["sprint_item_id"] is None else str(row["sprint_item_id"])),
             employee_backend=(
                 None if row["employee_backend"] is None else str(row["employee_backend"])
@@ -95,7 +92,7 @@ def _row_to_occurrence(row: sqlite3.Row) -> ScheduledTicketOccurrence:
     return ScheduledTicketOccurrence(
         schedule_id=str(row["schedule_id"]),
         occurrence_key=str(row["occurrence_key"]),
-        target_day_id=str(row["target_day_id"]),
+        target_date=str(row["target_date"]),
         outcome=OccurrenceOutcome(str(row["outcome"])),
         ticket_id=None if row["ticket_id"] is None else str(row["ticket_id"]),
         error=None if row["error"] is None else str(row["error"]),
@@ -117,10 +114,10 @@ def create_schedule(
         conn.execute(
             "INSERT INTO scheduled_ticket_schedules ("
             "id, enabled, cadence, local_time, title, worker_type, kickoff_note, "
-            "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
+            "deadline, project_id, sprint_item_id, employee_backend, "
             "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
             "created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 schedule_id,
                 int(enabled),
@@ -131,8 +128,6 @@ def create_schedule(
                 template.kickoff_note,
                 template.deadline,
                 template.project_id,
-                template.sprint_id,
-                template.placement_mode.value,
                 template.sprint_item_id,
                 template.employee_backend,
                 template.employee_launch_model,
@@ -190,8 +185,6 @@ _UPDATABLE_COLUMNS = frozenset(
         "kickoff_note",
         "deadline",
         "project_id",
-        "sprint_id",
-        "placement_mode",
         "sprint_item_id",
         "orchestrator_kind",
         "employee_backend",
@@ -218,9 +211,6 @@ def update_schedule(
     cadence = encoded.get("cadence")
     if isinstance(cadence, ScheduleCadence):
         encoded["cadence"] = cadence.value
-    placement_mode = encoded.get("placement_mode")
-    if isinstance(placement_mode, ScheduledTicketPlacementMode):
-        encoded["placement_mode"] = placement_mode.value
     if "blocked_by_ticket_ids" in encoded:
         blockers = cast(Iterable[object], encoded["blocked_by_ticket_ids"])
         encoded["blocked_by_ticket_ids"] = json.dumps(list(blockers))
@@ -243,7 +233,7 @@ def read_occurrence(
     conn: sqlite3.Connection, schedule_id: str, occurrence_key: str
 ) -> ScheduledTicketOccurrence | None:
     row = conn.execute(
-        "SELECT schedule_id, occurrence_key, target_day_id, outcome, ticket_id, error, "
+        "SELECT schedule_id, occurrence_key, target_date, outcome, ticket_id, error, "
         "created_at FROM scheduled_ticket_occurrences "
         "WHERE schedule_id = ? AND occurrence_key = ?",
         (schedule_id, occurrence_key),
@@ -253,7 +243,7 @@ def read_occurrence(
 
 def list_occurrences(conn: sqlite3.Connection, schedule_id: str) -> list[ScheduledTicketOccurrence]:
     rows = conn.execute(
-        "SELECT schedule_id, occurrence_key, target_day_id, outcome, ticket_id, error, "
+        "SELECT schedule_id, occurrence_key, target_date, outcome, ticket_id, error, "
         "created_at FROM scheduled_ticket_occurrences "
         "WHERE schedule_id = ? ORDER BY created_at DESC, occurrence_key DESC",
         (schedule_id,),
@@ -266,7 +256,7 @@ def insert_occurrence(
     *,
     schedule_id: str,
     occurrence_key: str,
-    target_day_id: str,
+    target_date: str,
     outcome: OccurrenceOutcome,
     ticket_id: str | None,
     error: str | None,
@@ -274,12 +264,12 @@ def insert_occurrence(
 ) -> ScheduledTicketOccurrence:
     conn.execute(
         "INSERT INTO scheduled_ticket_occurrences ("
-        "schedule_id, occurrence_key, target_day_id, outcome, ticket_id, error, created_at"
+        "schedule_id, occurrence_key, target_date, outcome, ticket_id, error, created_at"
         ") VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             schedule_id,
             occurrence_key,
-            target_day_id,
+            target_date,
             outcome.value,
             ticket_id,
             error,

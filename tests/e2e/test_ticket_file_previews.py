@@ -64,6 +64,7 @@ def _settle_success(server: ServerHandle, ticket_id: str, body: str) -> None:
 
 
 def _open_ticket_field(page: Page, field: str) -> None:
+    page.locator("details[data-stage-fold]").evaluate("node => { node.open = true; }")
     section = page.locator(f'details[data-field="{field}"]').first
     section.evaluate(
         """(node) => {
@@ -73,6 +74,7 @@ def _open_ticket_field(page: Page, field: str) -> None:
         }"""
     )
     page.locator(f'details[data-field="{field}"][open]').wait_for(state="attached", timeout=WAIT_MS)
+    section.scroll_into_view_if_needed(timeout=WAIT_MS)
 
 
 def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(

@@ -54,7 +54,6 @@ const indexPath = join(scratchRoot, `scheduled-tasks-index-${process.pid}.html`)
     kickoff_note: "Use the saved schedule.",
     deadline: null,
     project_id: "project_panels",
-    placement_mode: "backlog",
     orchestrator: { kind: "sprint_item", id: "si_demo" },
     sprint_item_id: "si_demo",
     employee_backend: null,
@@ -63,7 +62,7 @@ const indexPath = join(scratchRoot, `scheduled-tasks-index-${process.pid}.html`)
     created_at: 1,
     updated_at: 1
   }];
-  schedules.push({ ...schedules[0], id: "schedule_retired", enabled: false, title: "Historical planning task", cadence: "every_planning_day", worker_type: "planning-day", placement_mode: "current_sprint", sprint_id: "sprint_history" });
+  schedules.push({ ...schedules[0], id: "schedule_retired", enabled: false, title: "Historical planning task", cadence: "every_planning_day", worker_type: "planning-day" });
   schedules.push({ ...schedules[1], id: "schedule_retired_active", enabled: true, title: "Disable old planning task" });
   schedules.push({ ...schedules[0], id: "schedule_personal", enabled: false, title: "Historical daily personal task", worker_type: "personal" });
   const requests: Array<{ path: string; method: string; body: any }> = [];
@@ -94,7 +93,6 @@ const indexPath = join(scratchRoot, `scheduled-tasks-index-${process.pid}.html`)
       kickoff_note: body.kickoff_note,
       deadline: body.deadline,
       project_id: body.project_id,
-      placement_mode: "backlog",
       orchestrator: body.orchestrator,
       sprint_item_id: body.orchestrator.kind === "sprint_item" ? body.orchestrator.id : null,
       employee_backend: body.employee_backend,
@@ -111,6 +109,12 @@ const indexPath = join(scratchRoot, `scheduled-tasks-index-${process.pid}.html`)
     requests.push({ path, method, body });
     if (path === "/api/review") {
       return json({ items: [], running_worker_count: 0, awaiting_approval_count: 0 });
+    }
+    if (path.startsWith("/api/resource-body?")) {
+      const key = new URL(path, location.origin).searchParams.get("key");
+      if (key === "/api/worker-types" || key === "/api/worker-types?supported=true") {
+        return json({ key, epoch: "fixture", revision: "manifest-1", body: { worker_types: key.endsWith("?supported=true") ? workerTypes.filter(entry => entry.creatable !== false) : workerTypes } });
+      }
     }
     if (path === "/api/projects?detail=full") return json({ projects });
     if (path === "/api/items?detail=full") return json({ items: sprintItems });

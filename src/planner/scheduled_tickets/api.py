@@ -12,7 +12,6 @@ from planner.projects import data as projects_data
 from planner.scheduled_tickets import actions, data, views
 from planner.scheduled_tickets.contracts import (
     ScheduleCadence,
-    ScheduledTicketPlacementMode,
     ScheduledTicketTemplate,
 )
 from planner.tickets.api import (
@@ -100,16 +99,6 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
             raise PlannerError(ErrorCode.validation, "invalid orchestrator")
     else:
         kind = "sprint_item" if sprint_item_id is not None else "chief"
-    placement_mode_raw = None
-    placement_mode = (
-        parse_enum(
-            ScheduledTicketPlacementMode,
-            placement_mode_raw,
-            "placement_mode",
-        )
-        if placement_mode_raw is not None
-        else ScheduledTicketPlacementMode.backlog
-    )
     return ScheduledTicketTemplate(
         locale=(
             parse_enum(TicketLocale, body_str(raw, "locale"), "locale") if "locale" in raw else None
@@ -120,8 +109,6 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         kickoff_note=body_str(raw, "kickoff_note"),
         deadline=body_opt_str(raw, "deadline"),
         project_id=None if project is None else project.id,
-        sprint_id=None,
-        placement_mode=placement_mode,
         sprint_item_id=sprint_item_id,
         employee_backend=body_opt_str(raw, "employee_backend"),
         employee_launch_model=body_opt_str(raw, "employee_launch_model"),
@@ -177,6 +164,7 @@ async def patch_schedule(
     _reject_unknown(raw, _PATCH_KEYS)
     if not raw:
         raise PlannerError(ErrorCode.validation, "no schedule fields to update", {})
+    actions.require_schedule_mutation(data.read_schedule(conn, schedule_id), raw)
     changes: dict[str, object] = {}
     if "locale" in raw:
         changes["locale"] = parse_enum(TicketLocale, body_str(raw, "locale"), "locale")
@@ -192,19 +180,11 @@ async def patch_schedule(
     for key in (
         "deadline",
         "project_id",
-        "sprint_id",
-        "sprint_item_id",
         "employee_backend",
         "employee_launch_model",
     ):
         if key in raw:
             changes[key] = body_opt_str(raw, key)
-    if "placement_mode" in raw:
-        changes["placement_mode"] = parse_enum(
-            ScheduledTicketPlacementMode,
-            body_str(raw, "placement_mode"),
-            "placement_mode",
-        )
     if "blocked_by_ticket_ids" in raw:
         changes["blocked_by_ticket_ids"] = tuple(body_str_list(raw, "blocked_by_ticket_ids"))
     if "orchestrator" in raw:

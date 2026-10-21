@@ -11,16 +11,18 @@
   let {
     context,
     openCount,
+    viewHref = "#/feedback",
     onSaved
   }: {
     context: () => FeedbackPageContext;
     openCount: number;
+    viewHref?: string;
     onSaved: () => void;
   } = $props();
 
   let open = $state(false);
   let attached = $state(true);
-  let activeContext = $state<FeedbackPageContext>({ address: "#/day", label: "Home" });
+  let activeContext = $state<FeedbackPageContext>({ address: "#/workspace/chief-of-staff", label: "Chief of Staff" });
   let text = $state("");
   let saving = $state(false);
   let error = $state<unknown>(null);
@@ -149,7 +151,7 @@
       <div class="shell-more-grab" aria-hidden="true"></div>
       <div class="fb-pop-head">
         <strong>Feedback</strong>
-        <a href="#/feedback" data-feedback-view onclick={() => closeCapture(false)}>{openCount ? `${openCount} open →` : "Open list →"}</a>
+        <a href={viewHref} data-feedback-view onclick={() => closeCapture(false)}>{openCount ? `${openCount} open →` : "Open list →"}</a>
       </div>
       <textarea
         bind:this={inputElement}

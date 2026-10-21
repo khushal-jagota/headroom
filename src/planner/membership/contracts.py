@@ -9,9 +9,7 @@ from typing import TypedDict
 class Collection(StrEnum):
     """Every collection Panels can put a thing into or take a thing out of."""
 
-    day_tickets = "day_tickets"  # container: a Day, by date. member: a Ticket.
     outcome_tickets = "outcome_tickets"  # container: an Outcome. member: a Ticket.
-    sprint_outcomes = "sprint_outcomes"  # container: a Sprint. member: an Outcome.
     blockers = "blockers"  # container: the blocked Ticket. member: the Ticket that blocks it.
 
 

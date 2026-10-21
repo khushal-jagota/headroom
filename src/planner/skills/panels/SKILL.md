@@ -19,8 +19,8 @@ Workers name Chief or an ordinary orchestrator explicitly. Assignment, Project, 
 holder, and Chief authority are separate facts. The owner can settle ordinary
 orchestrators. Chief can never settle. Settlement does not gate Worker continuation.
 
-Sprint and Day records are historical. Their live write commands and planning schedules
-are retired. Do not recreate them or create replacement recurring reviews.
+Day records and date-range Sprints are removed, including their screens and read commands.
+Orchestrators retain their Item identities and supervisors. Do not recreate calendar planning or replacement recurring reviews.
 
 Tickets have a Worker type that sets their stages and worker. Worker types include
 `coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing
@@ -90,16 +90,15 @@ Ordinary help exposes these object and intent roots:
 
 - `panels send-message ...` for existing conversations.
 - `panels project ...` for Projects.
-- `panels day show <date>` for a historical Day.
 - `panels ticket ...` for Ticket creation, inspection, edits, proposals, and lifecycle actions.
 - `panels orchestrator ...` for ordinary orchestrators.
-- `panels sprint ...` for historical reads and the stable `sprint item` alias.
+- `panels sprint item ...` as the stable alias for orchestrator operations.
 
 The server derives the caller from runtime context and enforces authority at each route.
 Administrative commands remain callable when a specialist skill names one, but they do
 not appear in ordinary root help.
 
-The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item
+The main list reads are bounded summaries. `ticket list`, `sprint item
 list`, and `project list` return 30 rows by default. Their text and
 JSON output state the omissions and the next offset. Use `--limit` and `--offset` for
 another page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and

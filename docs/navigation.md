@@ -309,3 +309,28 @@ SQLite begins. An uncertain result carries that same object through commit paths
 and cleanup errors. Core does not inspect it or retry the operation. The Signal
 lane owns evidence resolution. Failures from observers after a known commit do
 not turn that commit into an uncertain result.
+
+
+## Lean Settled view records
+
+Scoped navigation accepts only projection version 2 over wire version 3. Old tabs
+require a manual reload. The uncached root document selects the current bundle,
+which creates a fresh navigation owner. There is no version 1 response path.
+Canonical schema 6 and physical view-index version 1 stay unchanged.
+
+Settled-only orchestrator records carry title, creation time, settled state, and
+conversation identity. Their conversation dependency preserves exact signals.
+They omit recap text, preview, body reference, Project identity, and Project closure.
+The browser keeps lean rail rows separate from full orchestrator indexes.
+
+Only explicit selection, an admitted active rail member, the current parent of an
+admitted Ticket, or the orchestrator owner of an admitted unread address requires
+a full orchestrator record. Settled membership, viewport visibility, and count-only
+windows do not. Full demand promotes exactly that key, regardless of window order.
+Admission charges replacement bytes and dependencies atomically within existing budgets.
+A failed promotion does not admit an incomplete dependent row.
+
+Parent-scoped unread windows keep their indexed membership, exact address totals,
+and pagination. Shared browser indexes resolve row membership once per publication.
+Conversation deduplication, historical aliases, backlog exclusion, and read updates
+retain their existing rules. Global unread paging does not replace parent windows.

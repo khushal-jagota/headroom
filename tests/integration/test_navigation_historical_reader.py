@@ -24,6 +24,7 @@ from tests.support.navigation_historical_source import (
     run_historical,
     source_facts,
 )
+from tests.unit.test_db import head_revision
 
 from planner.navigation import snapshot
 
@@ -98,7 +99,9 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
         assert current["schema_version"] == 6
         initial_epoch = current["epoch"]
         facts = source_facts(connection)
-        assert facts["heads"] == [["goal_and_recap_for_orchestrators"]]
+        # Asked for rather than written down: spelling the head out made this fail for
+        # whichever Ticket next added a migration, which had already happened once.
+        assert facts["heads"] == [[head_revision()]]
         assert {key: value for key, value in facts.items() if key != "heads"} == {
             key: value for key, value in before["source"].items() if key != "heads"
         }

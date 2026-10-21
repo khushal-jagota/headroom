@@ -137,7 +137,9 @@ describe("Config destinations", () => {
     expect(index()).toMatch(/2\s+Stages/);
     setManifests(undefined, null, true);
     const markup = index();
-    expect(markup).toContain("Loading Stages…");
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).not.toContain("Loading Stages…");
+    expect(markup).not.toContain("Stages unavailable");
     expect(markup).toContain('href="#/settings/config/workers/research"');
     expect(markup).not.toMatch(/0\s+Stages/);
   });

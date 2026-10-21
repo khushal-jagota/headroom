@@ -60,8 +60,8 @@ export function createNavigationKnowledge() {
           return known(attention.durable[fact], boundary);
         };
         conversations.set(record.id, Object.freeze({
-          working: attention.current === null ? unknown : known(attention.current.signal.working, record.value.latest_sequence),
-          awaiting_answer: attention.current === null ? unknown : known(attention.current.awaiting_answer, record.value.latest_sequence),
+          working: attention.current === null ? unknown : known(attention.current.signal.working, ('latest_sequence' in record.value ? record.value.latest_sequence : publication.publicationId)),
+          awaiting_answer: attention.current === null ? unknown : known(attention.current.awaiting_answer, ('latest_sequence' in record.value ? record.value.latest_sequence : publication.publicationId)),
           message_for_owner: durable('message_for_owner', record.value.owner_read_through_sequence),
           last_turn_failed: durable('last_turn_failed', record.value.error_acknowledged_through_sequence),
         }));

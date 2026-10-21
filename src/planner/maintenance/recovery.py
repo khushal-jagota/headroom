@@ -142,6 +142,38 @@ def _enable_ticket_delete_actions(conn: sqlite3.Connection) -> None:
             index += 1
 
 
+def _remove_archived_calendar_memberships(
+    conn: sqlite3.Connection, ticket_id: str, now: int
+) -> None:
+    """Clean only an archived ancestor schema before its pending upgrade.
+
+    These tables do not exist in the live schema. Old recovery snapshots still need
+    their NO ACTION references removed before the canonical Ticket deletion.
+    """
+    if (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='day_tickets'"
+        ).fetchone()
+        is None
+    ):
+        return
+    day_ids = [
+        str(row[0])
+        for row in conn.execute("SELECT day_id FROM day_tickets WHERE ticket_id=?", (ticket_id,))
+    ]
+    for day_id in day_ids:
+        conn.execute("DELETE FROM day_tickets WHERE day_id=? AND ticket_id=?", (day_id, ticket_id))
+        members = conn.execute(
+            "SELECT ticket_id FROM day_tickets WHERE day_id=? ORDER BY position", (day_id,)
+        ).fetchall()
+        for position, member in enumerate(members):
+            conn.execute(
+                "UPDATE day_tickets SET position=? WHERE day_id=? AND ticket_id=?",
+                (position, day_id, str(member[0])),
+            )
+        conn.execute("UPDATE days SET updated_at=? WHERE id=?", (now, day_id))
+
+
 def archive_cancelled_tickets(database: Path, archive_dir: Path) -> dict[str, Any]:
     """Caller holds the stopped-environment lifecycle lease throughout this operation.
 
@@ -230,6 +262,7 @@ def archive_cancelled_tickets(database: Path, archive_dir: Path) -> dict[str, An
         for row in tickets:
             ticket_id = str(row["id"])
             try:
+                _remove_archived_calendar_memberships(conn, ticket_id, created_at)
                 delete_ticket_records(conn, ticket_id, now=created_at, capture_attention=False)
             except Exception as exc:
                 raise RuntimeError(

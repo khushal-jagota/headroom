@@ -31,7 +31,6 @@ class Config:
     # §13 named keys
     db_path: str
     port: int
-    boundary_hour: int
     tick_seconds: int
     dispatch_enabled: bool
     # other tunables named across SPEC
@@ -247,7 +246,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     return Config(
         db_path=_str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db"),
         port=_int_value(cfg, env, "port", "PLAN_PORT", 8767),
-        boundary_hour=_int_value(cfg, env, "boundary_hour", "PLAN_BOUNDARY_HOUR", 5),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
         sse_heartbeat_ms=_positive_int_value(

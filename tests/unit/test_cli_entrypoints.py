@@ -29,34 +29,10 @@ from planner.cli import main as cli_main
             },
         ),
         (
-            ("sprint", "list"),
-            "/api/sprints",
-            "sprints",
-            {
-                "id": "sp_one",
-                "name": "One",
-                "date_start": "2026-07-01",
-                "date_end": "2026-07-14",
-            },
-        ),
-        (
             ("sprint", "item", "list"),
             "/api/items",
             "items",
             {"id": "si_one", "title": "One", "settled": False},
-        ),
-        (
-            ("day", "list-tickets"),
-            "/api/day/today/tickets",
-            "tickets",
-            {
-                "id": "t_day",
-                "title": "Day",
-                "stage": "needs_plan",
-                "ticket_status": "user",
-                "project": "Panels",
-                "recap_preview": "Plan it.",
-            },
         ),
         (
             ("project", "list"),
@@ -87,9 +63,6 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
             "next_offset": 2,
         },
     }
-    if arguments[0] == "day":
-        response["id"] = "day_2026-07-04"
-
     def fake_send(method: str, requested_path: str, **kwargs: Any) -> dict[str, Any]:
         assert method == "GET"
         requested_paths.append(requested_path)

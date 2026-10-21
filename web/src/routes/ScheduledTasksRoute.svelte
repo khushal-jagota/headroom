@@ -184,7 +184,7 @@
         {#if catalogueError}<ErrorLine error={catalogueError} />{/if}
 
         {#if historical && editingSchedule}
-          <p data-retired-schedule>Retired schedule · {scheduledTaskCadenceLabel(editingSchedule.cadence)} · {editingSchedule.placement_mode === "current_sprint" ? "Current sprint" : "Backlog"}</p>
+          <p data-retired-schedule>Retired schedule · Historical cadence: {scheduledTaskCadenceLabel(editingSchedule.cadence)}</p>
         {/if}
         <form class="scheduled-task-form" onsubmit={saveSchedule}>
           <fieldset disabled={historical} style="border:0;padding:0;margin:0;min-width:0">
@@ -332,7 +332,7 @@
       {#if toggleError}<ErrorLine error={toggleError} />{/if}
 
       <div class="scheduled-task-list" data-scheduled-tasks>
-        <ResourceState
+        <ResourceState shape="rows"
           error={schedules.error}
           loading={schedules.isFetching}
           hasData={Boolean(schedules.data)}

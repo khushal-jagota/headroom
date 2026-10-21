@@ -1,4 +1,4 @@
-# Orchestrators and historical Sprints
+# Orchestrators
 
 Orchestrators hold shared intent, Workers, artifacts, and a conversation. Ordinary
 orchestrators retain their former Sprint Item IDs and supervisor agent keys. The stored
@@ -43,13 +43,10 @@ Its state filters apply before pagination. See [the CLI guide](cli.md#orchestrat
 for the flags and the `settled` field. Settlement does not change assignment authority
 or stop existing Workers.
 
-Sprint records, documents, commitments, dates, and historical placement remain readable.
-Sprint creation, edits, commitment changes, and carry-forward are retired from the live
-API and CLI. `panels sprint list/show/list-items` and historical GET routes preserve
-access. Reading history neither creates a Sprint nor activates old planning work.
-
-Historical Sprint outcomes use oldest-created order, then identifier. Project groups
-and Ticket section and title order remain.
+Date-range Sprints, their records, commitments, and placement are removed.
+The former Sprint screen and calendar read commands no longer exist.
+`panels sprint item` remains an alias for retained orchestrator operations.
+The stored Item names remain stable until their separate rename.
 
 The final visual layout waits for the approved design handoff. Its confirmed direction
 keeps Workers nested beneath orchestrators and puts Project and Settle in the eyebrow
@@ -62,8 +59,11 @@ its launch configuration with the item. Existing items received the same fixed
 configuration during migration. Former loose Workers now explicitly name Chief.
 
 Creation with a nonblank goal saves the orchestrator, then starts its supervisor with
-that goal. Creation without a goal leaves it idle. Later messages and manager wakes
-also start the supervisor conversation. Startup failure does not delete the orchestrator.
+that exact goal as a queued message from Panels. Startup requires no explicit reply to
+the creator. If the orchestrator sends no reply, startup leaves no `explicit_reply_missing`
+signal in Focus. No replacement signal detects a clean delivery followed by silent inaction.
+Full shows the goal under Panels. Creation without a goal leaves it idle.
+Later messages and manager wakes also start the supervisor conversation. Startup failure does not delete the orchestrator.
 Use the saved orchestrator to recover. An uncertain delivery gets no automatic replay.
 A reset kills current work and clears the agent link.
 Conversation records and message files remain as history. Detailed context belongs in the

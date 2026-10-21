@@ -488,9 +488,8 @@ delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. An
 that goes ahead over a running worker kills that worker's turn first, so nothing keeps
 talking into a conversation whose ticket is gone.
 
-One transaction removes the ticket
-from days, sprint views, Ticket blocks, Review, and Workspace. Other tickets and day
-ordering stay intact.
+One transaction removes the Ticket from its orchestrator, Ticket blocks, Review, and Workspace.
+Other Tickets remain intact.
 
 Ticket blocks are removed in the same transaction. The delete response lists the
 surviving Tickets from those relationships.
@@ -498,8 +497,7 @@ surviving Tickets from those relationships.
 The conversations live outside the Ticket record and are not erased. Deletion removes
 their Ticket associations, so Panels no longer assigns those transcripts to that Ticket.
 
-The whole deletion is one transaction, so it announces one change — not one per removed
-day or Ticket block.
+The whole deletion is one transaction, so it announces one change — not one per removed Ticket block.
 
 _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 `src/planner/cli/main.py`.

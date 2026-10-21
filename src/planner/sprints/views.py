@@ -1,4 +1,4 @@
-"""Sprint, Outcome and idea reads, including coherent Sprint tracking snapshots."""
+"""Coherent orchestrator, child Ticket, and Idea reads."""
 
 from __future__ import annotations
 
@@ -16,13 +16,8 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import (
     ItemWorkspaceDocument,
     OutcomeSummary,
-    Sprint,
     SprintItem,
-    SprintTicketSummary,
-    SprintTrackingBody,
-    SprintWireBody,
 )
-from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import derivation
 from planner.tickets.logic.recap import recap_preview
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -54,21 +49,6 @@ def item_json(item: SprintItem) -> JsonDict:
     }
 
 
-def sprint_json(sprint: Sprint) -> SprintWireBody:
-    return {
-        "id": sprint.id,
-        "name": sprint.name,
-        "date_start": sprint.date_start,
-        "date_end": sprint.date_end,
-        "primary_bet": sprint.primary_bet,
-        "kickoff": sprint.kickoff,
-        "checkpoint": sprint.checkpoint,
-        "review": sprint.review,
-        "created_at": sprint.created_at,
-        "updated_at": sprint.updated_at,
-    }
-
-
 def idea_json(row: sqlite3.Row) -> JsonDict:
     return {
         "id": str(row["id"]),
@@ -84,9 +64,7 @@ def idea_json(row: sqlite3.Row) -> JsonDict:
 # --- outcome reads ------------------------------------------------------
 
 
-def item_tickets(
-    conn: sqlite3.Connection, item_id: str | None, *, sprint_id: str | None = None
-) -> list[JsonDict]:
+def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     """Per-item ticket rows for the tracking-page disclosure: id/title/stage
     plus the board-card signals the sprint ticket row colours off —
     has_pending_proposal, ticket_status, waiting_to_closeout, gating_field, and
@@ -98,14 +76,13 @@ def item_tickets(
     the condition alone cannot see. Without them the Sprint Item page and the workspace
     rail would sort the same Ticket into different groups."""
     rows = conn.execute(
-        "SELECT t.*, s.name AS sprint_name,"
+        "SELECT t.*,"
         "CASE WHEN t.sprint_item_id IS NOT NULL THEN parent.project_id "
         "ELSE t.project_id END AS effective_project_id FROM tickets t "
-        "LEFT JOIN sprints s ON s.id=t.sprint_id "
         "LEFT JOIN sprint_items parent ON parent.id=t.sprint_item_id WHERE "
-        + ("t.sprint_item_id = ?" if item_id is not None else "t.sprint_id = ?")
+        + "t.sprint_item_id = ?"
         + " ORDER BY t.created_at, t.id",
-        (item_id if item_id is not None else sprint_id,),
+        (item_id,),
     ).fetchall()
     result: list[JsonDict] = []
     registry = configured_worker_type_registry()
@@ -123,8 +100,6 @@ def item_tickets(
                 "title": str(r["title"]),
                 "recap": str(r["recap"]),
                 "recap_preview": recap_preview(str(r["recap"])),
-                "sprint_id": r["sprint_id"],
-                "sprint_name": r["sprint_name"],
                 "project_id": r["effective_project_id"],
                 "sprint_item_id": r["sprint_item_id"],
                 "stage": stage,
@@ -143,13 +118,6 @@ def item_tickets(
                 "blocked": facts.blocked,
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),
-                "day_ids": [
-                    str(day_row["day_id"])
-                    for day_row in conn.execute(
-                        "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
-                        (str(r["id"]),),
-                    ).fetchall()
-                ],
             }
         )
     return result
@@ -172,15 +140,6 @@ def item_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     read = sprints_data.read_item(conn, item_id)
     result = {
         **item_json(read.item),
-        "committed_sprints": [
-            dict(row)
-            for row in conn.execute(
-                "SELECT s.id, s.name, s.date_start, s.date_end FROM sprints s "
-                "JOIN sprint_outcomes c ON c.sprint_id=s.id WHERE c.outcome_id=? "
-                "ORDER BY s.date_start, s.id",
-                (item_id,),
-            )
-        ],
     }
     result["supervisor"]["conversation_id"] = conversation_start.read_agent_conversation(
         conn, read.item.supervisor_agent_key
@@ -192,7 +151,7 @@ def item_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     """The smallest coherent read for the Sprint Item workspace.
 
     Ticket writes remain on their canonical routes. This read only assembles the child
-    state and identifies which rows belong to the current planning day.
+    Ticket state and preserves the supervisor conversation history.
     """
     with _read_snapshot(conn):
         result = item_detail(conn, item_id)
@@ -211,47 +170,15 @@ def item_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
 
 
 def item_workspace_document(conn: sqlite3.Connection, item_id: str) -> ItemWorkspaceDocument:
-    """Read goal, recap, and canonical transcript history without child or attention reads."""
+    """Read only the selected document, without child, catalog, or attention reads."""
     with _read_snapshot(conn):
-        row = conn.execute(
-            "SELECT goal, recap FROM sprint_items WHERE id=?", (item_id,)
-        ).fetchone()
+        row = conn.execute("SELECT goal, recap FROM sprint_items WHERE id=?", (item_id,)).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": item_id})
-        history = conversation_start.read_sprint_item_supervisor_conversation_history(conn, item_id)
         return {
             "goal": str(row[0]),
             "recap": str(row[1]),
-            "conversation_history": history,
         }
-
-
-def list_sprints(conn: sqlite3.Connection) -> list[JsonDict]:
-    rows = conn.execute("SELECT id FROM sprints ORDER BY date_start DESC, id").fetchall()
-    return [dict(sprint_json(sprints_data.read_sprint(conn, str(r["id"])))) for r in rows]
-
-
-def list_sprint_summaries(
-    conn: sqlite3.Connection, *, page_request: ListPageRequest
-) -> ListPage[JsonDict]:
-    rows = conn.execute(
-        "SELECT id, name, date_start, date_end FROM sprints ORDER BY date_start DESC, id"
-    ).fetchall()
-    summaries = [
-        {
-            "id": str(row["id"]),
-            "name": str(row["name"]),
-            "date_start": str(row["date_start"]),
-            "date_end": str(row["date_end"]),
-        }
-        for row in rows[page_request.offset : page_request.offset + page_request.limit]
-    ]
-    return ListPage(
-        rows=tuple(summaries),
-        match_count=len(rows),
-        limit=page_request.limit,
-        offset=page_request.offset,
-    )
 
 
 def outcome_summary(item: SprintItem) -> OutcomeSummary:
@@ -330,62 +257,3 @@ def _read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
         raise
     else:
         conn.execute("COMMIT")
-
-
-def sprint_tracking_view(
-    conn: sqlite3.Connection,
-    sprint_id: str | None,
-    planning_date_iso: str,
-) -> SprintTrackingBody:
-    if sprint_id is None:
-        return SprintTrackingBody(
-            planning_date=planning_date_iso, sprint=None, outcome_groups=[], unclassified_tickets=[]
-        )
-    with _read_snapshot(conn):
-        sprint = sprints_data.read_sprint(conn, sprint_id)
-        committed = {
-            str(row[0])
-            for row in conn.execute(
-                "SELECT outcome_id FROM sprint_outcomes WHERE sprint_id=?", (sprint_id,)
-            )
-        }
-        tickets = item_tickets(conn, None, sprint_id=sprint_id)
-        outcome_ids = committed | {str(t["sprint_item_id"]) for t in tickets if t["sprint_item_id"]}
-        outcomes = [sprints_data.read_item(conn, oid).item for oid in outcome_ids]
-        outcomes.sort(key=lambda item: (item.created_at, item.id))
-        summaries = [
-            SprintTicketSummary(
-                id=str(t["id"]),
-                title=str(t["title"]),
-                stage=str(t["stage"]),
-                ticket_status=str(t["ticket_status"]),
-                project_id=t["project_id"],
-                sprint_item_id=t["sprint_item_id"],
-                waiting_to_closeout=bool(t["waiting_to_closeout"]),
-            )
-            for t in tickets
-        ]
-        return SprintTrackingBody(
-            planning_date=planning_date_iso,
-            sprint=sprint_json(sprint),
-            outcome_groups=[
-                {
-                    "outcome": outcome_summary(item),
-                    "committed": item.id in committed,
-                    "tickets": [t for t in summaries if t["sprint_item_id"] == item.id],
-                }
-                for item in outcomes
-            ],
-            unclassified_tickets=[t for t in summaries if t["sprint_item_id"] is None],
-        )
-
-
-def sprint_current_view(conn: sqlite3.Connection, planning_date_iso: str) -> SprintTrackingBody:
-    with _read_snapshot(conn):
-        ranges = [
-            DateRange(id=str(r["id"]), date_start=str(r["date_start"]), date_end=str(r["date_end"]))
-            for r in conn.execute("SELECT id,date_start,date_end FROM sprints")
-        ]
-        return sprint_tracking_view(
-            conn, current_sprint_id(planning_date_iso, ranges), planning_date_iso
-        )

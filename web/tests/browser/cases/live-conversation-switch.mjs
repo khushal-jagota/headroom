@@ -55,7 +55,9 @@ const indexPath = join(scratchRoot, `live-switch-index-${process.pid}.html`);
   );
   await writeFile(
     mainPath,
-    String.raw`import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
+    String.raw`import {viewSnapshot,viewChanges,type FixtureEvent} from "../tests/support/conversation/view-fixture";
+import type {ConversationViewLens} from "../src/lib/conversation/view/contracts";
+import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
 import { encodeCursor } from "../src/lib/navigation/validation";
 import { authority, conversation } from "../tests/support/navigation/fixtures";
 (globalThis as any).__navigationSnapshots = 0;
@@ -109,7 +111,8 @@ let releaseRead: (() => void) | null = null;
 let delayNextASnapshot = false;
 let delayedASnapshotRequested = false;
 let releaseDelayedASnapshot: (() => void) | null = null;
-const recordedBRows: unknown[] = [];
+const recordedBRows: FixtureEvent[] = [];
+const recordedARows: FixtureEvent[] = [];
 const navigationBoundaries: Record<string,number> = {'conversation-a':0,'conversation-b':0};
 (globalThis as any).__navigationBoundaries=navigationBoundaries;
 let holdNavigation = false;
@@ -122,7 +125,7 @@ let releaseNavigation: (()=>void) | undefined;
 (globalThis as any).__releaseDelayedASnapshot = () => releaseDelayedASnapshot?.();
 (globalThis as any).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
-  if (url === "/api/navigation/snapshot") {
+  if (url.startsWith("/api/navigation/view/snapshot?")) {
     (globalThis as any).__navigationSnapshots += 1;
     if (holdNavigation) {
       holdNavigation=false;
@@ -131,8 +134,11 @@ let releaseNavigation: (()=>void) | undefined;
     }
     const continuity = {scope: "workspace", schema_version: SCHEMA_VERSION,
       semantics: SUPPORTED_SEMANTICS, epoch: "read-fixture", revision: String((globalThis as any).__navigationSnapshots)};
-    return Response.json({wire_version: 2, mode: 'current', authority: authority(), cursor: encodeCursor(continuity),
-      snapshot: {...continuity, records: [conversation("conversation-a",navigationBoundaries["conversation-a"]),conversation("conversation-b",navigationBoundaries["conversation-b"])]}, proof: null});
+    const request=JSON.parse(new URL(url,location.origin).searchParams.get('view')!);
+    const records=[conversation("conversation-a",navigationBoundaries["conversation-a"]),conversation("conversation-b",navigationBoundaries["conversation-b"])].map(row=>({kind:row.kind,id:row.id,value:{attention:row.value.attention,owner_read_through_sequence:row.value.owner_read_through_sequence,error_acknowledged_through_sequence:row.value.error_acknowledged_through_sequence}}));
+    return Response.json({event:'snapshot',wire_version:3,projection_version:2,mode:'current',authority:authority(),
+      view_id:'read-fixture',scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:continuity,
+      content_version:JSON.stringify(records),content:{records,windows:[],counts:{running_conversations:2,out_claims:0,review:0,unread:2,settled:0}},proof:null});
   }
   const ownerReadMatch = url.match(/conversations\/(conversation-[ab])\/owner-read$/);
   if (ownerReadMatch) {
@@ -156,6 +162,13 @@ let releaseNavigation: (()=>void) | undefined;
     const snapshot = snapshots[ownerReadMatch[1]];
     snapshot.owner_read_through_sequence = Math.max(snapshot.owner_read_through_sequence, body.through_sequence);
     return Response.json({ owner_read_through_sequence: body.through_sequence });
+  }
+  const viewMatch=url.match(/conversations\/(conversation-[ab])\/view\/(receipts|pages)\?/);
+  if(viewMatch){
+    const args=new URL(url,location.origin).searchParams;
+    const rows=viewMatch[1]==='conversation-b'?recordedBRows:recordedARows;
+    const snapshot=viewSnapshot(viewMatch[1],args.get('lens') as ConversationViewLens,rows);
+    return Response.json(viewMatch[2]==='pages'?snapshot.page:{conversation_id:viewMatch[1],coverage:snapshot.coverage,receipts:[]});
   }
   const eventsMatch = url.match(/conversations\/(conversation-[ab])\/events\?after=\d+$/);
   if (eventsMatch) {
@@ -182,11 +195,27 @@ class FakeEventSource {
   listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
 
   navigation: boolean;
+  conversationId: string|null=null;
+  lens:ConversationViewLens='focus';
+  transcript=true;
+  coverage=0;
+  closed=false;
   constructor(url: string) {
-    this.navigation = url.startsWith("/api/navigation/events?");
+    this.navigation = url.startsWith("/api/navigation/view/events?");
+    if(this.navigation) fetch(url.replace("/events?","/snapshot?")).then(response=>response.json()).then(value=>this.emit("snapshot",value));
     if (this.navigation) (globalThis as any).__navigationStreams += 1;
-    const conversationId = url.match(/conversations\/(conversation-[ab])\/tail/)?.[1];
-    if (conversationId) FakeEventSource.sources.set(conversationId, this);
+    const conversationId = url.match(/conversations\/(conversation-[ab])\/view\/tail/)?.[1];
+    if (conversationId) {
+      this.conversationId=conversationId;
+      const args=new URL(url,location.origin).searchParams;
+      this.lens=args.get('lens') as ConversationViewLens;
+      this.transcript=args.get('transcript')==='true';
+      FakeEventSource.sources.set(conversationId, this);
+      queueMicrotask(()=>{
+        const value=viewSnapshot(conversationId,this.lens,conversationId==='conversation-b'?recordedBRows:recordedARows,this.transcript);
+        this.coverage=value.coverage.through_sequence;this.emit('snapshot',value);
+      });
+    }
   }
 
   addEventListener(type: string, listener: (event: MessageEvent<string>) => void): void {
@@ -202,15 +231,23 @@ class FakeEventSource {
   // Deliberately keep queued callbacks callable after close. This models a browser event
   // that was already dispatched when the pane switched conversations.
   close(): void {
+    if(this.closed)return;
+    this.closed=true;
     if (this.navigation) (globalThis as any).__closedNavigationStreams += 1;
   }
 }
 
 (globalThis as any).EventSource = FakeEventSource;
 (globalThis as any).__tailExists = (id: string) => FakeEventSource.sources.has(id);
-(globalThis as any).__emitConversationRow = (id: string, row: unknown) => {
-  if (id === "conversation-b") recordedBRows.push(row);
-  FakeEventSource.sources.get(id)?.emit("conversation-event", row);
+(globalThis as any).__emitConversationRow = (id: string, row: FixtureEvent) => {
+  const source=FakeEventSource.sources.get(id);
+  if(!source)return;
+  const rows=id==='conversation-b'?recordedBRows:recordedARows;
+  // A queued callback from a closed A stream must not become recorded A history.
+  if(!source.closed)rows.push(row);
+  const value=viewSnapshot(id,source.lens,source.closed?[row]:rows,source.transcript);
+  source.emit('changes',viewChanges(value,source.coverage));
+  source.coverage=value.coverage.through_sequence;
 };
 
 async function start(): Promise<void> {

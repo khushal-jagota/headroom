@@ -45,7 +45,9 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   );
   await writeFile(
     mainPath,
-    String.raw`const snapshot = {
+    String.raw`import {viewSnapshot} from "../tests/support/conversation/view-fixture";
+import type {ConversationViewLens} from "../src/lib/conversation/view/contracts";
+const snapshot = {
   conversation_id: "conversation-one",
   backend_key: "codex",
   supports_steer: true,
@@ -73,6 +75,10 @@ let theServerIsDown = window.sessionStorage.getItem("server-is-down") === "yes";
 (globalThis as any).fetch = async (input: RequestInfo | URL) => {
   const url = String(input);
   if (theServerIsDown) throw new TypeError("Failed to fetch");
+  if (/conversations\/conversation-one\/view\/receipts\?/.test(url)) {
+    (globalThis as any).__recordReads += 1;
+    return Response.json({conversation_id:'conversation-one',coverage:{through_sequence:0},receipts:[]});
+  }
   if (/conversations\/conversation-one\/events\?after=\d+$/.test(url)) {
     (globalThis as any).__recordReads += 1;
     return Response.json({ events: [] });
@@ -84,10 +90,18 @@ let theServerIsDown = window.sessionStorage.getItem("server-is-down") === "yes";
 
 class FakeEventSource {
   static opened = 0;
+  listeners=new Map<string,Array<(event:MessageEvent<string>)=>void>>();
   constructor(url: string) {
-    if (/conversations\/conversation-one\/tail/.test(url)) FakeEventSource.opened += 1;
+    if (/conversations\/conversation-one\/view\/tail/.test(url)) {
+      FakeEventSource.opened += 1;
+      const args=new URL(url,location.origin).searchParams;
+      queueMicrotask(()=>this.emit('snapshot',viewSnapshot('conversation-one',args.get('lens') as ConversationViewLens,[],args.get('transcript')==='true')));
+    }
   }
-  addEventListener(): void {}
+  addEventListener(type:string,listener:(event:MessageEvent<string>)=>void): void {
+    this.listeners.set(type,[...(this.listeners.get(type)??[]),listener]);
+  }
+  emit(type:string,data:unknown):void{for(const listener of this.listeners.get(type)??[])listener(new MessageEvent(type,{data:JSON.stringify(data)}));}
   close(): void {}
 }
 

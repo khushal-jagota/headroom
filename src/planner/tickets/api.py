@@ -6,7 +6,7 @@ re-implements a domain rule.
 This module also homes the shared request plumbing (config/clock accessors, the
 per-request connection dependency, the transaction context manager, and the enum
 and body-key marshallers). The other api modules import these from here; the direction
-is strictly one-way (sprints/days/dispatch api -> tickets api), and views modules
+is strictly one-way (domain API -> tickets API), and views modules
 import no api module at all.
 
 Request bodies arrive as plain dicts and are marshalled into the TypedDict shapes
@@ -231,7 +231,7 @@ async def silence_the_worker_before_deleting(
 
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
-    """Wrap a NON-self-transacting writer (days/dispatch/Ticket blocks) so a mid-sequence
+    """Wrap a NON-self-transacting writer (Ticket blocks) so a mid-sequence
     PlannerError rolls back cleanly. Never wrap a ticket/sprint writer — those open
     their own BEGIN IMMEDIATE and would raise 'transaction within a transaction'."""
     conn.execute("BEGIN IMMEDIATE")
@@ -577,9 +577,6 @@ async def create_ticket(
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
-        planning_now=clk.now(),
-        sprint_item_id_explicit=orchestrator.kind is PrincipalKind.sprint_item,
-        project_id_explicit="project" in raw or "project_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
@@ -605,11 +602,9 @@ async def read_tickets(
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
-    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     orchestrator_kind: str | None = None,
     orchestrator_id: str | None = None,
-    day: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> JsonDict:
@@ -626,11 +621,9 @@ async def read_tickets(
         "search": search,
         "project": project,
         "project_id": project_id,
-        "sprint_id": sprint_id,
         "sprint_item_id": sprint_item_id,
         "orchestrator_kind": orchestrator_kind,
         "orchestrator_id": orchestrator_id,
-        "day": day,
         "limit": limit,
         "offset": offset,
     }
@@ -646,8 +639,6 @@ async def read_tickets(
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
-    if day is not None or sprint_id is not None:
-        raise PlannerError(ErrorCode.validation, "calendar filters are retired")
 
     if level is ReadDetail.full:
         reject_parameters(
@@ -677,7 +668,6 @@ async def read_tickets(
             clk.now_unix(),
             stage=stage[0] if stage else None,
             project_id=resolved_project.id if resolved_project is not None else None,
-            sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
         )
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
@@ -734,7 +724,6 @@ async def read_tickets(
             search=search,
         ),
         project_id=resolved_project.id if resolved_project is not None else None,
-        sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
     )
     await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
@@ -980,16 +969,19 @@ async def delete_ticket(
         "ok": True,
         "ticket_id": deleted.ticket_id,
         "title": deleted.title,
-        "day_ids": list(deleted.day_ids),
         "sprint_item_ids": list(deleted.sprint_item_ids),
-        "sprint_ids": list(deleted.sprint_ids),
         "linked_ticket_ids": list(deleted.linked_ticket_ids),
     }
 
 
 @router.patch("/tickets/{ticket_id}")
 async def patch_ticket(
-    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk,
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
     recognized = (
@@ -1396,8 +1388,6 @@ async def add_conversation_row_signals(
     cards = [card for column in board["columns"] for card in column["cards"]]
     children = [ticket for item in board["sprint_items"] for ticket in item["tickets"]]
     await add_work_attention(
-        # This helper predates the shared projection. Keep its public name until the Day
-        # route moves with the other callers, but give it the one canonical behavior.
         conn,
         conversation_system,
         conversation_record,

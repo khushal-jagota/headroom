@@ -143,6 +143,20 @@ class BackendStateStore:
         finally:
             conn.close()
 
+    def read_disabled_models(self, backend_key: ConversationBackendKey) -> frozenset[str]:
+        """Which of a backend's models are switched off, in one statement.
+
+        Enablement defaults to on and only a deliberate switch-off is stored, so this set
+        is small and absence is the answer for every other model. Asking the question one
+        model at a time opened a connection per model, three times over, for a card that
+        describes one backend.
+        """
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            return disabled_models(conn, backend_key)
+        finally:
+            conn.close()
+
     def model_is_enabled(
         self, backend_key: ConversationBackendKey, model_id: str
     ) -> bool:
@@ -207,6 +221,19 @@ def model_is_enabled(
         (str(backend_key), model_id),
     ).fetchone()
     return row is None or bool(row["enabled"])
+
+
+def disabled_models(
+    conn: sqlite3.Connection, backend_key: ConversationBackendKey
+) -> frozenset[str]:
+    """The stored switch-offs for one backend. Absence from this set means enabled."""
+    return frozenset(
+        str(row["model_id"])
+        for row in conn.execute(
+            "SELECT model_id FROM backend_model_enablement WHERE backend_key = ? AND enabled = 0",
+            (str(backend_key),),
+        )
+    )
 
 
 def require_enabled_model(

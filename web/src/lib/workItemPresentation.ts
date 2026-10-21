@@ -12,6 +12,7 @@ export type WorkItemTicketFacts = WorkItemAttentionFacts & {
   id: string;
   title: string;
   recap?: string;
+  recap_reference?:import("./navigation/contracts").ViewContentReference|null;
   recap_preview?: string;
   blocked?: boolean;
   stage: string;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "../components/SkeletonRegion.svelte";
   import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import "../lib/config/config.css";
@@ -12,6 +13,7 @@
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import { saveSkillField } from "../lib/skills";
   import type { ConfigSelection } from "../lib/shellRouting";
+  import { prefixHref, type UtilityHref } from "../lib/utilityAddress";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -47,7 +49,8 @@
     }
   };
 
-  let { roleKind, roleId, baseHref = "#/settings/config" }: ConfigSelection & { baseHref?: string } = $props();
+  let { roleKind, roleId, href = prefixHref("#/settings/config") }:
+    ConfigSelection & { href?: UtilityHref } = $props();
   const stableRoleKind = untrack(() => roleKind);
   const stableRoleId = untrack(() => roleId || null);
 
@@ -192,7 +195,7 @@
       <header class="agents-page-head">
         <h1>Config</h1>
       </header>
-      <ResourceState
+      <ResourceState shape="document"
         {...resourceStateForQueries(workers, skillsHome)}
         loadingText="Loading configuration..."
       >
@@ -202,7 +205,7 @@
             <div class="agents-destination-list">
               <a
                 class="agents-destination"
-                href={`${baseHref}/chief-of-staff`}
+                href={href(["chief-of-staff"])}
                 data-agent-destination
               >
                 <span class="agents-destination-copy">
@@ -215,7 +218,7 @@
               {#if supervisorSkill}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/sprint-item-supervisor`}
+                  href={href(["sprint-item-supervisor"])}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -229,7 +232,7 @@
               {#if sharedWorkerSkill}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/worker-skill`}
+                  href={href(["worker-skill"])}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -249,17 +252,19 @@
                 {@const manifest = indexedWorkerTypes.get(item.worker_type)}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/workers/${encodeURIComponent(item.worker_type)}`}
+                  href={href(["workers", encodeURIComponent(item.worker_type)])}
                   data-worker-destination
                 >
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>{item.label}</span>
                     <span class="agents-destination-description" data-destination-description>
+                      <SkeletonRegion shape="inline" loading={!manifest && supportedWorkerTypes.isFetching} loadingText="Loading Stages…">
                       {#if manifest}
                         {manifest.stages.length} {manifest.stages.length === 1 ? "Stage" : "Stages"}
                       {:else}
-                        {supportedWorkerTypes.isFetching ? "Loading Stages…" : "Stages unavailable"}
+                        {#if !supportedWorkerTypes.isFetching}Stages unavailable{/if}
                       {/if}
+                      </SkeletonRegion>
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -272,8 +277,8 @@
     </div>
   {:else if stableRoleKind === "agent"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
+      <ResourceState shape="document"
         error={workers.error}
         loading={workers.isFetching}
         hasData={Boolean(workers.data)}
@@ -314,8 +319,8 @@
     </div>
   {:else if stableRoleKind === "skill"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
+      <ResourceState shape="document"
         error={skillsHome.error}
         loading={skillsHome.isFetching}
         hasData={Boolean(roleSkill && roleSkillProfile)}
@@ -351,8 +356,8 @@
     </div>
   {:else}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
+      <ResourceState shape="document"
         error={worker.error}
         loading={worker.isFetching}
         hasData={Boolean(worker.data)}

@@ -88,6 +88,22 @@ def request_context(request: Request) -> RequestContext:
     return _classify(_normalize(actor), _normalize(ticket_id), _normalize(sprint_item_id))
 
 
+def require_owner_or_chief(ctx: RequestContext) -> None:
+    """Permit the owner or the Chief itself.
+
+    The Chief's recap is the Chief's own report of its work, the way a Ticket's recap is
+    its Worker's. Owner-only on that write makes the field unwritable by the one principal
+    whose work it describes.
+    """
+    if ctx.principal.kind in (PrincipalKind.owner, PrincipalKind.chief):
+        return
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "this operation is available only to the owner or the Chief",
+        {"actor": principal_legacy_actor(ctx.principal)},
+    )
+
+
 def require_owner(ctx: RequestContext) -> None:
     """Permit only Khushal's direct principal.
 

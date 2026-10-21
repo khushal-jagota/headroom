@@ -234,7 +234,6 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     title: str
     deadline: str | None
     project_id: str | None
-    sprint_id: str | None
     sprint_item_id: str | None
     orchestrator: Principal
     recap: str
@@ -288,11 +287,9 @@ class Ticket:  # §3.3 — column names match exactly
     deadline: str | None  # ISO date
     project_id: str | None  # effective Project placement, derived from the parent when present
     project_name: str | None
-    sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
     sprint_item_id: str | None
     orchestrator_kind: str = field(default="chief", kw_only=True)
     sprint_item_title: str | None
-    effective_sprint_id: str | None  # historical Sprint association
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     # An address, not an authority. It says which principal a parked proposal is for, so
@@ -349,9 +346,7 @@ class TicketDeletion:
 
     ticket_id: str
     title: str
-    day_ids: tuple[str, ...]
     sprint_item_ids: tuple[str, ...]
-    sprint_ids: tuple[str, ...]
     linked_ticket_ids: tuple[str, ...]
 
 
@@ -362,4 +357,7 @@ class ReviewTransferNotice:
     ticket_id: str
     ticket_title: str
     previous_holder: Principal
+    new_holder: Principal
     new_holder_name: str
+    notify_previous_holder: bool
+    mover_name: str | None

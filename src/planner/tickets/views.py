@@ -67,13 +67,11 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "deadline": ticket.deadline,
         "project_id": ticket.project_id,
         "project": ticket.project_name,
-        "sprint_id": ticket.sprint_id,
         "sprint_item_id": ticket.sprint_item_id,
         "orchestrator": {
             "kind": ticket.orchestrator_kind,
             "id": ticket.sprint_item_id if ticket.orchestrator_kind == "sprint_item" else "chief",
         },
-        "effective_sprint_id": ticket.effective_sprint_id,
         "sprint_item_title": ticket.sprint_item_title,
         "recap": ticket.recap,
         "ceiling": str(ticket.ceiling),
@@ -129,9 +127,7 @@ def list_tickets(
     *,
     stage: str | None,
     project_id: str | None,
-    sprint_id: str | None,
     sprint_item_id: str | None,
-    day_id: str | None = None,
 ) -> list[JsonDict]:
     clauses: list[str] = []
     params: list[str] = []
@@ -144,18 +140,9 @@ def list_tickets(
             "ELSE tickets.project_id END = ?"
         )
         params.append(project_id)
-    if sprint_id is not None:
-        if sprint_id == "null":
-            clauses.append("tickets.sprint_id IS NULL")
-        else:
-            clauses.append("tickets.sprint_id = ?")
-            params.append(sprint_id)
     if sprint_item_id is not None:
         clauses.append("tickets.sprint_item_id = ?")
         params.append(sprint_item_id)
-    if day_id is not None:  # scope to one day's board via the day_tickets join
-        clauses.append("tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)")
-        params.append(day_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
         "SELECT tickets.id FROM tickets "
@@ -205,8 +192,6 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "sprint_item": (
             str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
         ),
-        "sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
-        "effective_sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
         "recap_preview": recap_preview(str(row["recap"])),
     }
 
@@ -217,10 +202,7 @@ def list_ticket_summaries(
     page_request: ListPageRequest,
     filters: TicketListFilters,
     project_id: str | None,
-    sprint_id: str | None,
     sprint_item_id: str | None,
-    day_id: str | None = None,
-    day_order: bool = False,
 ) -> ListPage[JsonDict]:
     clauses: list[str] = []
     params: list[str] = []
@@ -236,26 +218,11 @@ def list_ticket_summaries(
             "ELSE tickets.project_id END = ?"
         )
         params.append(project_id)
-    if sprint_id is not None:
-        if sprint_id == "null":
-            clauses.append("tickets.sprint_id IS NULL")
-        else:
-            clauses.append("tickets.sprint_id = ?")
-            params.append(sprint_id)
     if sprint_item_id is not None:
         clauses.append("tickets.sprint_item_id = ?")
         params.append(sprint_item_id)
-    join_day = ""
-    if day_id is not None:
-        join_day = " JOIN day_tickets ON day_tickets.ticket_id = tickets.id"
-        clauses.append("day_tickets.day_id = ?")
-        params.append(day_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    order = (
-        "day_tickets.position ASC, tickets.id"
-        if day_order
-        else "tickets.created_at ASC, tickets.id"
-    )
+    order = "tickets.created_at ASC, tickets.id"
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
     rows = conn.execute(
@@ -270,15 +237,11 @@ def list_ticket_summaries(
         "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
         "ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, tickets.orchestrator_kind, "
-        "sprint_items.title AS sprint_item_title, tickets.sprint_id "
+        "sprint_items.title AS sprint_item_title "
         "FROM tickets "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
-        "THEN sprint_items.project_id ELSE tickets.project_id END"
-        + join_day
-        + where
-        + " ORDER BY "
-        + order,
+        "THEN sprint_items.project_id ELSE tickets.project_id END" + where + " ORDER BY " + order,
         tuple(params),
     ).fetchall()
     registry = configured_worker_type_registry()
@@ -332,9 +295,7 @@ def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
     signal. An existing transaction owner keeps ownership and supplies its own boundary.
 
     This detail is assembled from several queries, so without it a reader could see a
-    Ticket's row from before a move and its Day membership from after. The Outcome-scoped
-    read that used to hold this snapshot is gone; the property belongs to the ordinary
-    read that replaced it, not to the address it was reached through.
+    Ticket's row from before a move and its assignment from after.
     """
     owns_transaction = not conn.in_transaction
     if owns_transaction:
@@ -359,10 +320,6 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
     ticket_id = ticket.id
     detail = ticket_json(ticket, now)
     detail["record_sha256"] = tickets_data.ticket_record_sha256(conn, ticket_id)
-    day_rows = conn.execute(
-        "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",
-        (ticket_id,),
-    ).fetchall()
     blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     conversation_rows = conn.execute(
         "SELECT ticket_conversations.conversation_id, conversations.created_at "
@@ -376,7 +333,6 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
         {
             "artifacts": _ticket_artifacts(conn, ticket_id),
             "blocked": blocker_summary.blocked,
-            "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(ticket),
             "conversation_history": [
                 {
@@ -618,7 +574,7 @@ def _board_sprint_items(
 def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, worker_step_claim, "
-        "pending_proposal, ceiling_holder FROM tickets "
+        "pending_proposal, ceiling_holder, is_backlogged FROM tickets "
         "ORDER BY id",
     ).fetchall()
     registry = configured_worker_type_registry()
@@ -631,6 +587,8 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
             )
         )
         if facts.ticket_status is not TicketStatus.awaiting_approval:
+            continue
+        if bool(row["is_backlogged"]):
             continue
         holder = json.loads(str(row["ceiling_holder"]))
         if holder != {"kind": "owner", "id": "owner"}:

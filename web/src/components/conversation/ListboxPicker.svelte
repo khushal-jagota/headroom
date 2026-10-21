@@ -6,6 +6,12 @@
     name: string;
   };
 
+  export type ListboxPageWindow = {
+    offset: number; total: number; rowHeight: number; activeIndex?: number;
+    onWindow: (index: number) => void;
+    onTypeahead: (prefix: string, after: number) => void;
+  };
+
   export type ListboxPickerController = {
     open: () => void;
     readonly expanded: boolean;
@@ -17,6 +23,7 @@
 
   let {
     items,
+    pageWindow,
     selectedValue,
     disabled = false,
     selectionDisabled = disabled,
@@ -45,6 +52,7 @@
     afterList
   }: {
     items: readonly ListboxPickerItem[];
+    pageWindow?: ListboxPageWindow;
     selectedValue: string | null;
     disabled?: boolean;
     selectionDisabled?: boolean;
@@ -99,10 +107,23 @@
   let pointerSpot: { x: number; y: number } | null = null;
   let pointerReallyMoved = false;
 
-  let active = $derived(items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1));
+  let itemOffset = $derived(pageWindow?.offset ?? 0);
+  let totalItems = $derived(pageWindow?.total ?? items.length);
+  let active = $derived(totalItems === 0 ? 0 : Math.min(activeIndex, totalItems - 1));
+  let localActive = $derived(active-itemOffset);
+  $effect(() => { const index=pageWindow?.activeIndex; if(index!==undefined) activeIndex=index; });
+  function activate(index:number):void {
+    activeIndex=index;
+    if(pageWindow && (index<itemOffset || index>=itemOffset+items.length)) pageWindow.onWindow(index);
+  }
+  function scrollWindow():void {
+    if(!pageWindow || !list) return;
+    const index=Math.max(0,Math.floor(list.scrollTop/pageWindow.rowHeight));
+    if(index<itemOffset || (index+8>=itemOffset+items.length && itemOffset+items.length<totalItems)) pageWindow.onWindow(index);
+  }
 
   $effect(() => {
-    onActiveChange?.(open ? items[active]?.value ?? null : null);
+    onActiveChange?.(open ? items[localActive]?.value ?? null : null);
   });
 
   function focusList(): void {
@@ -111,7 +132,7 @@
 
   function setActiveValue(value: string | null): void {
     const index = value === null ? -1 : items.findIndex((item) => item.value === value);
-    activeIndex = Math.max(0, index);
+    activate(itemOffset+Math.max(0, index));
     // A rail switch puts different words in the list. Letters typed at the old one must
     // not join letters typed at the new one, or the match silently finds nothing.
     forgetTypeahead();
@@ -174,7 +195,7 @@
 
   $effect(() => {
     if (anchor && !anchorPositionReady) return;
-    active;
+    active; itemOffset; items.length;
     list?.querySelector<HTMLElement>("[data-listbox-picker-active]")?.scrollIntoView({ block: "nearest" });
   });
 
@@ -186,7 +207,7 @@
     const anchorRect = anchor?.getBoundingClientRect();
     anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
     anchorPositionReady = anchorOffset === null;
-    activeIndex = Math.max(0, items.findIndex((item) => item.value === selectedValue));
+    activate(itemOffset+Math.max(0, items.findIndex((item) => item.value === selectedValue)));
     open = true;
     await tick();
     // An alternate entry point can sit near the viewport edge. Bound the same
@@ -230,6 +251,7 @@
     typeahead += key.toLocaleLowerCase();
     if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);
     typeaheadTimer = setTimeout(() => (typeahead = ""), 500);
+    if(pageWindow) { pageWindow.onTypeahead(typeahead,active); return; }
     const start = items.length === 0 ? 0 : (active + 1) % items.length;
     for (let offset = 0; offset < items.length; offset += 1) {
       const index = (start + offset) % items.length;
@@ -246,11 +268,11 @@
       close();
       return;
     }
-    if (items.length === 0) return;
+    if (totalItems === 0) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      const step = event.key === "ArrowDown" ? 1 : items.length - 1;
-      activeIndex = (active + step) % items.length;
+      const step = event.key === "ArrowDown" ? 1 : totalItems - 1;
+      activate((active + step) % totalItems);
       return;
     }
     if (event.key === "ArrowLeft") {
@@ -262,12 +284,15 @@
     }
     if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      activeIndex = event.key === "Home" ? 0 : items.length - 1;
+      activate(event.key === "Home" ? 0 : totalItems - 1);
       return;
     }
-    if ((event.key === "Enter" || event.key === " ") && items[active] !== undefined) {
+    if (event.key === " " && pageWindow && typeahead) {
+      event.preventDefault(); moveToMatch(" "); return;
+    }
+    if ((event.key === "Enter" || event.key === " ") && items[localActive] !== undefined) {
       event.preventDefault();
-      choose(items[active].value);
+      choose(items[localActive].value);
       return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -356,32 +381,40 @@
         id={listId}
         role="listbox"
         aria-label={listLabel}
-        aria-activedescendant={items.length === 0 ? undefined : `${listId}-${active}`}
+        aria-activedescendant={items[localActive] === undefined ? undefined : `${listId}-${active}`}
         tabindex="-1"
         onkeydown={onListKeydown}
+        onscroll={scrollWindow}
+        style:max-height={pageWindow ? '288px' : undefined}
+        style:overflow-y={pageWindow ? 'auto' : undefined}
       >
+        {#if pageWindow}<div aria-hidden="true" style:height={`${itemOffset*pageWindow.rowHeight}px`}></div>{/if}
         {#each items as item, index (item.value)}
           <button
             type="button"
             class="listbox-picker-option"
-            class:cursor={index === active}
+            class:cursor={index+itemOffset === active}
             class:on={item.value === selectedValue}
-            id={`${listId}-${index}`}
+            id={`${listId}-${index+itemOffset}`}
             role="option"
+            aria-posinset={pageWindow ? index+itemOffset+1 : undefined}
+            aria-setsize={pageWindow ? totalItems : undefined}
+            style:height={pageWindow ? `${pageWindow.rowHeight}px` : undefined}
             tabindex="-1"
             aria-selected={item.value === selectedValue}
             disabled={selectionDisabled}
             data-listbox-picker-value={item.value}
-            data-listbox-picker-active={index === active ? "true" : undefined}
-            onmousemove={() => { if (pointerReallyMoved) activeIndex = index; }}
+            data-listbox-picker-active={index+itemOffset === active ? "true" : undefined}
+            onmousemove={() => { if (pointerReallyMoved) activeIndex = index+itemOffset; }}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => choose(item.value)}
-            {...optionAttributes?.(item, index === active, item.value === selectedValue)}
+            {...optionAttributes?.(item, index+itemOffset === active, item.value === selectedValue)}
           >
             {@render optionContent(item, item.value === selectedValue)}
             <span class="listbox-picker-tick" aria-hidden="true">{item.value === selectedValue ? "✓" : ""}</span>
           </button>
         {/each}
+        {#if pageWindow}<div aria-hidden="true" style:height={`${Math.max(0,totalItems-itemOffset-items.length)*pageWindow.rowHeight}px`}></div>{/if}
       </div>
       {#if afterList}{@render afterList()}{/if}
     </div>

@@ -31,7 +31,6 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
-from planner.days import data as days_data
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import derivation, revision_feedback
@@ -153,7 +152,6 @@ def _validate_ticket_creation_placement(
     conn: sqlite3.Connection,
     *,
     project_id: str | None,
-    sprint_id: str | None,
     sprint_item_id: str | None,
     blocked_by_ticket_ids: list[str] | None,
 ) -> None:
@@ -183,11 +181,6 @@ def _validate_ticket_creation_placement(
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
-    if (
-        sprint_id is not None
-        and conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone() is None
-    ):
-        raise PlannerError(ErrorCode.validation, "invalid sprint_id", {"sprint_id": sprint_id})
     for blocker_ticket_id in blocked_by_ticket_ids or []:
         if (
             conn.execute("SELECT 1 FROM tickets WHERE id = ?", (blocker_ticket_id,)).fetchone()
@@ -238,7 +231,6 @@ def resolve_ticket_creation_context(
     employee_launch_reasoning_effort: str | None = None,
     model_source_is_historical: bool = False,
     project_id: str | None = None,
-    sprint_id: str | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
@@ -303,7 +295,6 @@ def resolve_ticket_creation_context(
     _validate_ticket_creation_placement(
         conn,
         project_id=project_id,
-        sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
@@ -342,10 +333,8 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         deadline=row["deadline"],
         project_id=row["effective_project_id"],
         project_name=row["project_name"],
-        sprint_id=row["sprint_id"],
         sprint_item_id=row["sprint_item_id"],
         orchestrator_kind=str(row["orchestrator_kind"]),
-        effective_sprint_id=row["sprint_id"],
         sprint_item_title=row["sprint_item_title"],
         recap=row["recap"],
         ceiling=str(row["ceiling"]),
@@ -396,7 +385,6 @@ _TICKET_STORED_COLUMNS = (
     "field_approvals",
     "created_at",
     "updated_at",
-    "sprint_id",
     "pending_proposal",
     "ceiling_holder",
     "worker_step_claim",
@@ -954,7 +942,6 @@ def create_ticket(
     title_max_chars: int,
     brief: str | None = "",
     project_id: str | None = None,
-    sprint_id: str | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
     orchestrator_kind: str | None = None,
@@ -966,7 +953,6 @@ def create_ticket(
     model_source_is_historical: bool = False,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
-    day_id: str | None = None,
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
@@ -998,7 +984,6 @@ def create_ticket(
             model_source_is_historical=model_source_is_historical,
             locale=locale,
             project_id=project_id,
-            sprint_id=sprint_id,
             deadline=deadline,
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=blocked_by_ticket_ids,
@@ -1046,12 +1031,12 @@ def create_ticket(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, deadline, "
-            "project_id, sprint_id, sprint_item_id, orchestrator_kind, "
+            "project_id, sprint_item_id, orchestrator_kind, "
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, field_approvals, pending_proposal, "
             "pending_proposal_revision, "
             "created_at, updated_at, locale) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
             "?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1063,7 +1048,6 @@ def create_ticket(
                 stage,
                 deadline,
                 None if sprint_item_id is not None else project_id,
-                sprint_id,
                 sprint_item_id,
                 orchestrator_kind,
                 ceiling,
@@ -1098,8 +1082,6 @@ def create_ticket(
                 proposal_field=initial_proposal.field,
                 now=now,
             )
-        if day_id is not None:
-            days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             ticket_blocks.add_ticket_block(conn, blocker_ticket_id, ticket_id, now)
         capture_ticket_attention(conn, ticket_id, now)
@@ -1563,8 +1545,7 @@ def delete_ticket_records(
     # Offline recovery stops before current-schema migrations can run. Read only
     # the deletion record, without the runtime Ticket projection and its new columns.
     ticket = conn.execute(
-        "SELECT id, title, worker_step_claim, sprint_item_id, sprint_id "
-        "FROM tickets WHERE id = ?",
+        "SELECT id, title, worker_step_claim, sprint_item_id FROM tickets WHERE id = ?",
         (ticket_id,),
     ).fetchone()
     if ticket is None:
@@ -1588,13 +1569,6 @@ def delete_ticket_records(
             {"ticket_id": ticket_id},
         )
 
-    day_ids = tuple(
-        str(row["day_id"])
-        for row in conn.execute(
-            "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
-            (ticket_id,),
-        ).fetchall()
-    )
     ticket_block_rows = conn.execute(
         "SELECT blocking_ticket_id, blocked_ticket_id FROM ticket_blocks "
         "WHERE blocking_ticket_id = ? OR blocked_ticket_id = ? "
@@ -1614,11 +1588,6 @@ def delete_ticket_records(
         )
     )
     sprint_item_ids = (ticket["sprint_item_id"],) if ticket["sprint_item_id"] is not None else ()
-    effective_sprint_id = ticket["sprint_id"]
-    sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
-
-    for day_id in day_ids:
-        days_data.remove_day_ticket(conn, day_id, ticket_id, now)
     for row in ticket_block_rows:
         conn.execute(
             "DELETE FROM ticket_blocks WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
@@ -1638,9 +1607,7 @@ def delete_ticket_records(
     return TicketDeletion(
         ticket_id=ticket_id,
         title=str(ticket["title"]),
-        day_ids=day_ids,
         sprint_item_ids=sprint_item_ids,
-        sprint_ids=sprint_ids,
         linked_ticket_ids=linked_ticket_ids,
     )
 
@@ -1682,22 +1649,34 @@ def _release_a_holder_the_move_left_below(
     capture_ticket_attention(conn, ticket_id, now)
 
 
+def _resolve_holder_name(conn: sqlite3.Connection, holder: Principal) -> str:
+    if holder.kind is PrincipalKind.owner:
+        return "The user"
+    if holder.kind is PrincipalKind.chief:
+        return "The Chief"
+    table = "sprint_items" if holder.kind is PrincipalKind.sprint_item else "tickets"
+    row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
+    assert row is not None
+    return str(row["title"])
+
+
 def _review_transfer_notice(
-    conn: sqlite3.Connection, before: Ticket, after: Ticket
+    conn: sqlite3.Connection, before: Ticket, after: Ticket, actor: Principal
 ) -> ReviewTransferNotice | None:
     if not review_transfer.review_transferred(before, after):
         return None
-    holder = after.ceiling_holder
-    if holder.kind is PrincipalKind.owner:
-        name = "The user"
-    elif holder.kind is PrincipalKind.chief:
-        name = "The Chief"
-    else:
-        table = "sprint_items" if holder.kind is PrincipalKind.sprint_item else "tickets"
-        row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
-        assert row is not None
-        name = str(row["title"])
-    return ReviewTransferNotice(after.id, after.title, before.ceiling_holder, name)
+    new_holder = after.ceiling_holder
+    moved_by_someone_else = actor != new_holder
+    notify_previous_holder = moved_by_someone_else and actor != before.ceiling_holder
+    return ReviewTransferNotice(
+        after.id,
+        after.title,
+        before.ceiling_holder,
+        new_holder,
+        _resolve_holder_name(conn, new_holder),
+        notify_previous_holder,
+        _resolve_holder_name(conn, actor) if moved_by_someone_else else None,
+    )
 
 
 def _collect_review_transfer(
@@ -1739,7 +1718,6 @@ def edit_ticket(
 
         title = edit["title"] if "title" in edit else ticket.title
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
-        sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
         sprint_item_id = (
             edit["sprint_item_id"] if "sprint_item_id" in edit else ticket.sprint_item_id
         )
@@ -1790,7 +1768,6 @@ def edit_ticket(
         _validate_ticket_creation_placement(
             conn,
             project_id=effective_project_id,
-            sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=None,
         )
@@ -1798,7 +1775,6 @@ def edit_ticket(
             ("title", "title", ticket.title, title),
             ("deadline", "deadline", ticket.deadline, deadline),
             ("project_id", "project_id", old_stored_project_id, stored_project_id),
-            ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
             ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),
             ("orchestrator_kind", "orchestrator_kind", ticket.orchestrator_kind, orchestrator_kind),
         )
@@ -1937,7 +1913,7 @@ def edit_ticket(
                     proposal_field=updated.pending_proposal.field,
                     now=now,
                 )
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 
@@ -1978,7 +1954,7 @@ def classify_ticket(
             now=now,
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 
@@ -2025,7 +2001,7 @@ def unclassify_ticket(
             now=now,
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 

@@ -57,6 +57,31 @@ Linux uses systemd user services. `panels-live.service` launches the deployed ap
 deployment workflow, and the backup timer invokes the deployed app's backup command.
 The `vps` user controls them with `systemctl --user`.
 
+On Linux, a supervisor whose launch parent is systemd accepts SIGINT and SIGTERM
+only from that verified manager. A foreign signal produces a refusal on the
+server's stderr and does not request shutdown. The diagnostic names the sender
+and gives exact-PID SIGKILL guidance. Parent or manager identity failures also
+cause refusal. The guard never silently changes to ordinary shutdown behavior.
+
+The operator still stops the live unit with `systemctl --user stop panels-live.service`.
+If a supervisor cannot verify that request or cannot exit,
+systemd applies the unit's stop timeout and final kill policy. Check the effective
+`TimeoutStopUSec`, `SendSIGKILL`, `FinalKillSignal`, and `KillMode` properties rather
+than assuming their defaults. The live unit's verified values on October 20, 2026
+were 90 seconds, true, 9, and `control-group`. A refused legitimate stop can
+therefore take 90 seconds before SIGKILL stops all processes in that unit.
+
+The first deployment with this guard is its first test against the actual live
+service. If manager identification fails during that deployment, the stop waits
+for the unit timeout and then systemd uses SIGKILL. This failure delays shutdown.
+The guard does not prevent the replacement service from starting. The operator
+owns this first live stop check.
+
+Lifecycle tests use disposable units, isolated state, and unique process markers.
+They prove manager shutdown, visible foreign-signal refusal, and timeout
+escalation. A live-service stop check belongs to the operator. Workers never run
+that check against the service that hosts them.
+
 The live service receives provider secrets from protected environment files outside the
 deployment root. Voice transcription uses a mode-`0600` file at
 `~/.config/panels/panels-live.env`, loaded by a `panels-live.service` drop-in. The file
@@ -166,8 +191,37 @@ Chief configures the variable before that proof.
 
 ## Related checks before deployment
 
-Deployment runs related checks before any app transaction. Pull requests and staging
-pushes do not start a suite workflow. Agents still run focused checks before a push.
+Pull requests into staging and main run the complete mypy check against GitHub's
+proposed merge commit. The check also runs for draft pull requests and pull requests
+that change their target branch.
+It uses a fresh Python 3.12 environment and this tree's pinned dependencies on a hosted
+Ubuntu runner. It receives no service credentials and uses no production state.
+The logs record the checked revision, tree, and event base and head revisions.
+
+This pre-merge check covers types only. Ruff, pytest, Svelte, Vitest, and browser checks
+remain release-only in GitHub Actions. A type pass does not prove release readiness.
+Before those checks move before merge, decide the runner, browser prerequisites,
+coverage selection, and sandbox isolation. The deployment gate needs its served baseline
+and isolated browser setup. A pull request cannot assume that production context.
+Agents still run focused checks before a push. Staging pushes do not start a suite workflow.
+
+Repository enforcement is a separate owner action. Until the owner activates the required
+check for both branches, a failed type check does not prevent merge. The settings request
+must use the exact context and app identity from a real pull request check. Its intended
+job name is `mypy (merged tree)`. A new commit on the target branch alone does not start this
+workflow. After the owner enables strict freshness, an advanced target requires an update
+to the pull request head and a fresh check of the proposed merge commit.
+The request adds no bypass actors or extra approval requirement.
+
+If a required check never arrives or prevents a repair, the owner must change the
+repository ruleset through GitHub Settings, Rules, Rulesets. Correct its check context
+or temporarily remove that required check, merge the repair, and restore the checked rule.
+Without bypass actors, a Worker cannot override that requirement through a merge.
+Existing protections must remain effective during recovery.
+
+Code path: `.github/workflows/typecheck.yml`.
+
+Deployment runs related checks before any app transaction.
 The current workflow revision supplies control tooling. The requested checkout supplies
 its own editable Python environment, pinned dependencies, source, and test configuration.
 Both Node lockfiles supply build prerequisites. A rollback uses these same boundaries.
@@ -325,11 +379,10 @@ ledger records replacements and intentional retirements. This deployment change 
 no browser host or browser E2E case. New checks must document distinct risks and costs
 under the admission policy.
 
-Coverage savings and runner capacity remain separate evidence. This change removes
-PR-wide execution without an empty-diff guard or a replacement staging run. It adds no
-rolling-run capacity setting, so there is no such setting's capacity measurement or
-restoration condition to claim. Reverting the workflow change restores the former PR
-placement. Main workflow activation remains separate from staging landing.
+Coverage savings and runner capacity remain separate evidence. Related suites run during
+deployment. The separate pull request workflow checks the complete proposed tree with
+mypy only. No rolling-run capacity setting exists. Main workflow activation remains
+separate from staging landing.
 
 ## Deployment status evidence
 
@@ -375,6 +428,20 @@ remains live, then stops the service and runs the deployed application's
 the database and managed files. Deployment then retains the prior app as a temporary
 fallback, installs the candidate at `current/app`, restarts Panels, and requires health
 to report the requested commit.
+
+Each health proof gets 300 seconds after the service restart command returns.
+The live service uses `Type=simple`, so its first schema migration and remaining
+application startup share this window. Build and backup time precede it.
+The workspace projection upgrade measured 98.3 seconds on a production-size copy.
+With approximately 14 seconds for remaining startup, the estimated margin is 187.7
+seconds. This is an estimate from separate observations, not an end-to-end deployment
+measurement. The explicit deployment timeout parameter still overrides the default.
+Exact-SHA readiness and verified rollback requirements remain unchanged.
+
+The workflow's control checkout supplies this budget. Deployments controlled by an
+older checkout retain that checkout's budget even when the candidate is newer.
+The separate 45-second installed-candidate smoke check uses fresh state. It does not
+measure migration of the production archive.
 
 Every candidate, including its staged copy, must contain the complete current runtime
 and both executable entrypoints. The existing app still receives manifest, artifact,

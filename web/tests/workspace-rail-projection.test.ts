@@ -1,5 +1,5 @@
 import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import type { BoardCard, BoardSprintItem, SprintItemWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
@@ -13,7 +13,6 @@ const quiet = {
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
   id, title: id, recap:"", recap_preview:"", is_backlogged:false, activity_at: 0, stage: "needs_implementation",
   ticket_status: "agent", worker_type: "coding", sprint_item_id: null,
-  day_ids: [], sprint_id: null, sprint_name: null,
   ...quiet, ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem => ({
@@ -111,14 +110,13 @@ describe("orchestrator rail projection", () => {
     expect(after.chiefGroups.find((group) => group.key === "agent")?.cards[0].conversation_signal?.working).toBe(true);
   });
 
-  it("passes the authoritative orchestrator recap and uses only factual counts when absent", () => {
+  it("passes the authoritative recap through and returns nothing when it is absent", () => {
     const source = item("recap", {recap:"Full body.\n" + "The rest of the recap is available. ".repeat(12),recap_preview:"Full body.…", tickets:[card("live"), card("done", {stage:"done"})]});
     const rail = buildWorkspaceRail([], [source]);
     expect(rail.items[0].recap).toBe(source.recap);
-    expect(workspaceListRecap(rail.items[0].groups, rail.items[0].recap)).toBe(source.recap);
-    expect(workspaceListRecap(rail.items[0].groups, " ")).toBe("1 Ticket in this list.");
-    expect(workspaceListRecap(buildWorkspaceRail([card("one"), card("two")]).chiefGroups)).toBe("2 Tickets in this list.");
-    expect(workspaceListRecap([])).toBe("Nothing in this list right now.");
+    expect(workspaceListRecap(rail.items[0].recap)).toBe(source.recap);
+    expect(workspaceListRecap(" ")).toBe("");
+    expect(workspaceListRecap()).toBe("");
   });
 
   it("retains survivors through refetch and appends entries and re-entries per category", async () => {
@@ -173,6 +171,144 @@ describe("orchestrator rail projection", () => {
     await tick();
     expect(presented.settledMessages).toEqual({});
     childMotion.dispose();
+  });
+
+  it("acknowledges manual folds during a frozen rail exit and admits late pages without another entrance", async () => {
+    let presented: WorkspaceRailPresentation = {rail:buildWorkspaceRail([card("departing")]), settledOpen:false, settledMessages:{}};
+    const plays: {node:string; duration:number; delay:number; canceled:boolean; finish:()=>void}[] = [];
+    const attributes = new Set<string>();
+    let focused: unknown = null;
+    let prefersReduced = false;
+    class Surface {
+      dataset: Record<string,string> = {};
+      parentElement = null;
+      style = {overflow:"", setProperty() {}, removeProperty() { this.overflow = ""; }};
+      classList = {add() {}, remove() {}, contains:()=>false};
+      constructor(readonly name:string) { this.dataset.railMotion = name; }
+      getBoundingClientRect() {
+        const bodyOpen = presented.settledBodyOpen ?? presented.settledOpen;
+        return {height:this.name === "settled-section" ? 20 + (bodyOpen && presented.rail.settledItems.length ? 80 : 0) : 20, top:0,left:0};
+      }
+      closest() { return null; }
+      contains(value:unknown) { return this === body && value === focused; }
+      focus() { focused = this; }
+      querySelector(selector:string) {
+        if (this !== section) return null;
+        if (selector === ".settled-head") return header;
+        if (selector === ".settled-chevron") return chevron;
+        if (selector === "[data-settled-scroll]") return (presented.settledBodyOpen ?? presented.settledOpen) ? body : null;
+        return null;
+      }
+      animate(_frames:Keyframe[], options:KeyframeAnimationOptions) {
+        let finish!:()=>void;
+        const finished = new Promise<void>(resolve => finish = resolve);
+        const play = {node:this.name,duration:Number(options.duration),delay:options.delay ?? 0,canceled:false,finish};
+        plays.push(play);
+        return {finished,effect:{target:this},cancel:()=>{play.canceled=true;finish();}};
+      }
+    }
+    const section = new Surface("settled-section"), header = new Surface("header"), chevron = new Surface("chevron"), body = new Surface("body");
+    const departing = new Surface("row:departing"), late = new Surface("settled:late");
+    const railRoot = {
+      querySelector:(selector:string)=>selector === ".settled" ? section : null,
+      querySelectorAll:()=>[section, ...(presented.rail.chiefGroups.length ? [departing] : []),
+        ...((presented.settledBodyOpen ?? presented.settledOpen) && presented.rail.settledItems.length ? [late] : [])],
+      setAttribute:(key:string)=>attributes.add(key), removeAttribute:(key:string)=>attributes.delete(key)
+    } as unknown as HTMLElement;
+    vi.stubGlobal("HTMLElement", Surface);
+    vi.stubGlobal("getComputedStyle", (node:Surface)=>({backgroundColor:"white",color:"black",opacity:"1",
+      transform:node === chevron && presented.settledOpen ? "rotate(180deg)" : "none"}));
+    vi.stubGlobal("document", {get activeElement() { return focused; },createElement:()=>({getContext:()=>({fillStyle:"",fillRect() {},getImageData:()=>({data:[255,255,255,255]})})})});
+    vi.stubGlobal("window", {matchMedia:()=>({get matches() {return prefersReduced;},addEventListener() {},removeEventListener() {}})});
+    const flush = async () => { for (let i=0;i<12;i++) await tick(); };
+    const motion = createRailMotionController(()=>railRoot, ()=>presented, next=>presented=next);
+    try {
+      motion.update({rail:buildWorkspaceRail([]), settledOpen:false, settledMessages:{}});
+      const unrelated = plays.find(play=>play.node === "row:departing")!;
+      expect(unrelated.duration).toBe(160);
+      motion.freeze(true);
+      motion.setSettledOpen(true);
+      expect(presented.settledOpen).toBe(true);
+      await flush();
+      const fold = plays.filter(play=>play.node === "chevron" || play.node === "body");
+      expect(fold.map(play=>[play.duration,play.delay])).toEqual([[340,0],[340,0]]);
+      for (const play of fold) play.finish();
+      await flush();
+      // A coherent first page arrives after the fold beat. The Worker exit
+      // remains unresolved and hovered, but it cannot hold this page back.
+      const child = card("child", {conversation_id:"child-conversation",conversation_signal:{working:false,message_for_owner:true}});
+      const page:WorkspaceRailPresentation = {rail:buildWorkspaceRail([], [item("late", {settled:true,tickets:[child]})]), settledOpen:false,
+        settledMessages:{late:[{kind:"ticket",id:"child",title:"Original message",parentId:"late",parentTitle:"late",settled:true,
+          conversationId:"child-conversation",conversationSignal:child.conversation_signal}]}};
+      motion.update(page);
+      expect(presented.rail.settledItems.map(item=>item.id)).toEqual(["late"]);
+      expect(presented.settledOpen).toBe(true);
+      expect(plays).toHaveLength(3);
+      focused = {};
+      motion.setSettledOpen(false);
+      expect(presented.settledOpen).toBe(false);
+      expect(presented.settledBodyOpen).toBe(true);
+      expect(focused).toBe(header);
+      await flush();
+      const closing = plays.slice(3);
+      expect(closing.map(play=>[play.duration,play.delay])).toEqual([[340,0],[340,0],[340,0]]);
+      // Board clears message demand immediately, then navigation withdraws
+      // the settled scope. Neither update can empty a body mid-fade.
+      const readChild = {...child,conversation_signal:{working:false,message_for_owner:false}};
+      motion.update({...page,rail:buildWorkspaceRail([], [item("late", {settled:true,tickets:[readChild]})]),settledMessages:{}});
+      expect(presented.settledMessages.late).toMatchObject([{title:"Original message",conversationSignal:{message_for_owner:false}}]);
+      const closed:WorkspaceRailPresentation = {rail:buildWorkspaceRail([]),settledOpen:false,settledMessages:{}};
+      motion.update(closed);
+      await flush();
+      expect(presented.settledBodyOpen).toBe(true);
+      expect(presented.rail.settledItems.map(item=>item.id)).toEqual(["late"]);
+      expect(presented.settledMessages.late).toHaveLength(1);
+      motion.setSettledOpen(true);
+      expect(closing.every(play=>play.canceled)).toBe(true);
+      expect(unrelated.canceled).toBe(false);
+      expect(presented.settledMessages.late).toHaveLength(1);
+      const reopened = {...page,rail:buildWorkspaceRail([], [item("late", {settled:true,title:"Fresh page",tickets:[readChild]})]),
+        settledMessages:{late:page.settledMessages.late.map(message=>({...message,title:"Fresh message",conversationSignal:readChild.conversation_signal}))}};
+      motion.update(reopened);
+      expect(presented.rail.settledItems[0].title).toBe("Fresh page");
+      expect(presented.settledMessages.late[0].title).toBe("Fresh message");
+      await flush();
+      for (const play of plays.slice(6)) play.finish();
+      await flush();
+      expect(presented.settledOpen).toBe(true);
+      expect(presented.settledBodyOpen).toBe(true);
+      // The old queued snapshot is allowed to finish its Worker transition,
+      // but its closed flag cannot revert the newer manual choice.
+      motion.freeze(false);
+      unrelated.finish();
+      await flush();
+      expect(presented.settledOpen).toBe(true);
+      expect(presented.rail.chiefGroups).toEqual([]);
+      expect(presented.rail.settledItems.map(item=>item.id)).toEqual(["late"]);
+      expect(plays.some(play=>play.node === "settled:late")).toBe(false);
+      expect(attributes.has("data-rail-motion-busy")).toBe(false);
+      const beforeClose = plays.length;
+      motion.setSettledOpen(false);
+      await flush();
+      motion.update(closed);
+      await flush();
+      expect(presented.rail.settledItems[0].title).toBe("Fresh page");
+      expect(presented.settledMessages.late[0].title).toBe("Fresh message");
+      expect(presented.settledBodyOpen).toBe(true);
+      for (const play of plays.slice(beforeClose)) play.finish();
+      await flush();
+      expect(presented.settledBodyOpen).toBe(false);
+      expect(presented.rail.settledItems).toEqual([]);
+      prefersReduced = true;
+      const beforeReduced = plays.length;
+      motion.setSettledOpen(true);
+      motion.update(reopened);
+      await flush();
+      motion.setSettledOpen(false);
+      await flush();
+      expect(presented.settledBodyOpen).toBe(false);
+      expect(plays).toHaveLength(beforeReduced);
+    } finally { motion.dispose(); vi.unstubAllGlobals(); }
   });
 
   it("preserves creation and ID order and exact direct-conversation message marks", () => {

@@ -52,17 +52,6 @@ export type VpsStatusSummary = {
 import type { WorkerTypeManifest } from "./lifecycle";
 export type { WorkerTypesResponse } from "./lifecycle";
 
-export type SprintSummary = {
-  id: string;
-  name: string;
-  date_start: string;
-  date_end: string;
-};
-
-export type SprintsResponse = {
-  sprints: SprintSummary[];
-};
-
 export type AgentState = "working" | "idle" | "errored";
 
 // `awaiting_approval` is a proposal the owner holds; `awaiting_agent_approval` is one
@@ -101,8 +90,6 @@ export type TicketSummary = WorkAttention & {
   project: string | null;
   sprint_item_id: string | null;
   sprint_item: string | null;
-  sprint_id: string | null;
-  effective_sprint_id: string | null;
   recap_preview: string;
 };
 
@@ -128,9 +115,7 @@ export type SprintItemSummariesResponse = {
   page: ListPageFacts;
 };
 
-export type SprintItemSummary = OutcomeSummary & {
-  committed_sprints: SprintSummary[];
-};
+export type SprintItemSummary = OutcomeSummary;
 
 export type SprintItemsResponse = {
   items: SprintItemSummary[];
@@ -154,8 +139,6 @@ export type ScheduleCadence =
   | "current_sprint_day_four"
   | "current_sprint_final_day";
 
-export type SchedulePlacementMode = "current_sprint" | "backlog";
-
 export type ScheduledTask = {
   orchestrator_kind?: "chief" | "sprint_item";
   orchestrator?: Principal;
@@ -168,8 +151,6 @@ export type ScheduledTask = {
   kickoff_note: string;
   deadline: string | null;
   project_id: string | null;
-  sprint_id: string | null;
-  placement_mode: SchedulePlacementMode;
   sprint_item_id: string | null;
   employee_backend: string | null;
   employee_launch_model: string | null;
@@ -318,14 +299,11 @@ export type TicketDetail = {
   deadline?: string | null;
   project_id?: string | null;
   project?: string | null;
-  sprint_id?: string | null;
-  effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
   sprint_item_title: string | null;
   ticket_status?: string;
   conversation_id: string | null;
-  conversation_history: TicketConversationHistoryEntry[];
-  day_ids?: string[];
+  conversation_history?: TicketConversationHistoryEntry[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
@@ -350,63 +328,8 @@ export type TicketDeletionResponse = {
   ok: true;
   ticket_id: string;
   title: string;
-  day_ids: string[];
   sprint_item_ids: string[];
-  sprint_ids: string[];
   linked_ticket_ids: string[];
-};
-
-export type SprintWireBody = {
-  id: string;
-  name: string;
-  date_start: string;
-  date_end: string;
-  primary_bet: string;
-  kickoff: string;
-  checkpoint: string;
-  review: string;
-  created_at: number;
-  updated_at: number;
-};
-
-export type CurrentSprint = SprintWireBody;
-
-export type SprintTicketSummary = WorkAttention & {
-  is_backlogged?: boolean;
-  id: string;
-  title: string;
-  stage: string;
-  ticket_status: string;
-  project_id: string | null;
-  sprint_item_id: string | null;
-  waiting_to_closeout: boolean;
-};
-
-export type SprintOutcomeGroup = {
-  outcome: OutcomeSummary;
-  committed: boolean;
-  tickets: SprintTicketSummary[];
-};
-
-export type SprintTrackingBody = {
-  planning_date: string;
-  sprint: SprintWireBody | null;
-  outcome_groups: SprintOutcomeGroup[];
-  unclassified_tickets: SprintTicketSummary[];
-};
-
-export type CurrentSprintResponse = SprintTrackingBody;
-
-export type CarryOutcomeBody = {
-  target_sprint_id: string;
-  ticket_ids: string[];
-};
-
-export type CarryOutcomeResult = {
-  source_sprint_id: string;
-  target_sprint_id: string;
-  outcome_id: string;
-  ticket_ids: string[];
 };
 
 export type SprintItemWorkspaceTicket = WorkAttention & {
@@ -425,9 +348,6 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   gating_field: string | null;
   blocked: boolean;
   worker_type: string;
-  day_ids: string[];
-  sprint_id: string | null;
-  sprint_name: string | null;
 };
 
 export type SprintItemWorkspace = SprintItemSummary & {
@@ -439,8 +359,6 @@ export type SprintItemWorkspace = SprintItemSummary & {
     conversation_id: string | null;
     launch_configuration: EmployeeConfigurationSnapshot;
   };
-  planning_day_id: string;
-  today_ticket_ids: string[];
   tickets: SprintItemWorkspaceTicket[];
   ticket_rollup: WorkAttention;
   artifacts: SprintItemArtifact[];
@@ -538,34 +456,6 @@ export type BoardCard = WorkAttention & {
   sprint_item_title: string | null;
 };
 
-export type DayTicket = AnyRecord & {
-  conversation_signal?: ConversationSignal;
-  id: string;
-  title: string;
-  stage: string;
-  ticket_status: string;
-  conversation_id: string | null;
-  is_done?: boolean;
-  waiting_to_closeout?: boolean;
-  gating_field?: string | null;
-  awaiting_reply?: boolean;
-  awaiting_answer?: boolean;
-  awaiting_approval?: boolean;
-  awaiting_agent_approval?: boolean;
-  assigned?: boolean;
-  agent_state?: AgentState;
-};
-
-export type DayResponse = {
-  id: string;
-  focus?: string | null;
-  brief_take?: string | null;
-  watchout?: string | null;
-  if_today_lands?: string | null;
-  midday_reconciliation?: string | null;
-  tickets: DayTicket[];
-};
-
 export type IdeasResponse = {
   ideas: AnyRecord[];
 };
@@ -601,4 +491,4 @@ export type WorkspaceMessageConversation = {
 };
 
 /** Exact detail-only reply, independent of shared navigation facts. */
-export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "goal" | "recap" | "artifacts" | "conversation_history">;
+export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "goal" | "recap">;

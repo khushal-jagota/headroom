@@ -12,6 +12,7 @@
    * than something to guess at here.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
+  import VisibleMessageImage from "./VisibleMessageImage.svelte";
   import ConversationFileCard from "./ConversationFileCard.svelte";
   import { base64DecodedByteCount } from "../../lib/conversation/pendingFiles";
   import {
@@ -35,11 +36,9 @@
   {#if piece.piece === "text"}
     <MarkdownBlock text={piece.text} />
   {:else if piece.piece === "image"}
-    <img
-      class="c2-piece-image"
-      data-conversation-piece="image"
-      data-conversation-piece-outgoing={"data" in piece ? "true" : undefined}
-      src={"data" in piece
+    <VisibleMessageImage
+      outgoing={"data" in piece}
+      src={() => "data" in piece
         ? `data:${piece.media_type};base64,${piece.data}`
         : conversationFileHref(conversationId, piece.stored_file_id)}
       alt={piece.file_name ?? "an image in this message"}
@@ -55,13 +54,3 @@
     />
   {/if}
 {/each}
-
-<style>
-  .c2-piece-image {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    margin-block: var(--space-2);
-    border-radius: var(--radius-sm);
-  }
-</style>

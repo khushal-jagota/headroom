@@ -26,9 +26,9 @@ reading it. Placement and categorization writes accept either `project_id` or th
 legacy project name. If both are sent and they point to different rows, the server
 rejects the request.
 
-A Ticket has an effective Project and an optional Sprint. When it names a Sprint Item,
+A Ticket has an effective Project. When it names a Sprint Item,
 the Item owns its Project classification. Moving a Sprint Item changes each child Ticket's
-effective Project and updates schedule templates, without changing any Sprint placement.
+effective Project and updates schedule templates.
 
 Workspace groups Tickets by their assigned Chief or ordinary orchestrator. Project facts
 remain visible on individual Ticket and orchestrator pages as text. The removed global
@@ -55,7 +55,7 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 
 ## Handoffs
 
-- **Sprints** (`sprints.md`) — Tickets and Sprint Items use Projects in sprint tracking.
+- **Orchestrators** (`sprints.md`) — shared context and Project classification.
 - **Tickets & the gates** (`tickets-and-gates.md`) — Tickets expose effective Project
   placement.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — both capture surfaces use the catalog.
