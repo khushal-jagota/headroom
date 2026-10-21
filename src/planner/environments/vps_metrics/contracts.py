@@ -1,7 +1,8 @@
 """JSON-native collection, persistence, and API contracts.
 
-Metric map keys are stable signal paths. An entity field selects a device,
-interface, process identity, or service identity when a signal has members.
+Metric map keys are stable signal paths. History entity selects a service
+identity. Device and interface series use their host metric keys. Complete
+process records belong to immutable snapshot pages.
 """
 
 from __future__ import annotations
