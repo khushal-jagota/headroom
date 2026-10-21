@@ -67,7 +67,7 @@ def _catalogs(browser, url):
         page.locator("[data-artifacts-band] > summary").click()
         window = page.locator(".artifact-catalog-window").first
         expect(window.locator(':scope > .skeleton-region[aria-busy="true"]')).to_have_count(1)
-        page.wait_for_timeout(50)
+        expect(window.locator(':scope > .skeleton-region .skeleton[data-entering]')).to_have_count(1)
         request, response = pending_artifacts.pop(0)
         request.fulfill(json=response)
         expect(window.locator(":scope > .skeleton-region > .skeleton-content > [data-artifact-page] > [data-artifact-folder]")).to_have_count(1)
@@ -101,7 +101,7 @@ def _catalogs(browser, url):
         assert after_spacer.evaluate("element => element.offsetHeight") == after_height
         window.get_by_role("button", name="Retry", exact=True).evaluate("element => element.click()")
         expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
-        page.wait_for_timeout(50)
+        expect(page.locator('.artifact-pending-page .skeleton[data-entering]')).to_have_count(1)
         request, response = pending_artifacts.pop(0)
         overlay_box = page.locator('.artifact-pending-page').first.bounding_box()
         request.fulfill(json=response)
@@ -124,7 +124,7 @@ def _catalogs(browser, url):
         chip_box = window.locator('[data-artifact-chip="file080.md"]').bounding_box()
         assert overlay_box and chip_box and overlay_box["height"] > 0
         assert overlay_box["y"] + overlay_box["height"] <= chip_box["y"] + 1
-        page.wait_for_timeout(50)
+        expect(page.locator('.artifact-pending-page .skeleton[data-entering]')).to_have_count(1)
         request, response = pending_artifacts.pop(0)
         assert response["offset"] == 40
         request.fulfill(json=response)
