@@ -119,7 +119,7 @@ def _load_manager(conn: sqlite3.Connection, item_id: str) -> Manager:
 # --- sprint writers -------------------------------------------------------------
 
 
-# --- sprint-item writers --------------------------------------------------------
+# --- Manager writers ------------------------------------------------------------
 
 
 def create_manager(
