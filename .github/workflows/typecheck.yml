@@ -1,0 +1,42 @@
+name: Pull request type check
+
+on:
+  pull_request:
+    branches: [staging, main]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  mypy:
+    name: mypy (merged tree)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Record merged source
+        env:
+          PANELS_MERGED_SHA: ${{ github.sha }}
+          PANELS_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PANELS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          checked_sha="$(git rev-parse HEAD)"
+          test "$checked_sha" = "$PANELS_MERGED_SHA"
+          printf 'Merged revision: %s\n' "$checked_sha"
+          printf 'Merged tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
+          printf 'Event base revision: %s\n' "$PANELS_BASE_SHA"
+          printf 'Event head revision: %s\n' "$PANELS_HEAD_SHA"
+      - name: Install pinned Python environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable .
+      - name: Check complete merged tree
+        run: .venv/bin/mypy

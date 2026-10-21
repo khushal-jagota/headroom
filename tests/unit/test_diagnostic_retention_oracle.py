@@ -7,6 +7,7 @@ No server or provider connection is needed.
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ from planner.maintenance.diagnostic_history_measure import (
 
 
 @pytest.fixture
-def archive() -> sqlite3.Connection:
+def archive() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(":memory:")
     connection.executescript("""
         CREATE TABLE tickets(id,stage,worker_step_claim,conversation_id);

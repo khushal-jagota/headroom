@@ -19,3 +19,6 @@ export const reservation: Record<SkeletonShape, number> = {
   conversation: conversationPattern.reduce((height, turn) => height + turn.height + conversationGap, 0),
   inline: 24
 };
+
+// Status speaks halfway through the visual grace period.
+export const announcementDelayRatio = 0.5;

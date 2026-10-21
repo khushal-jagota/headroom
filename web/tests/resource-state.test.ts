@@ -3,7 +3,7 @@
  * ResourceState owns the three states every screen has. The rule it must keep is
  * that a screen holding data never loses it: a failed read is a line above the
  * data, not a replacement for the screen. A screen with nothing to show still
- * gives itself over to the error or to the loading line.
+ * gives itself over to the error or reserves space during the initial wait.
  */
 
 import { createRawSnippet } from "svelte";
@@ -48,14 +48,15 @@ describe("ResourceState", () => {
     expect(markup).not.toContain("Loading...");
   });
 
-  it("announces a cold wait without exposing decorative shapes to assistive technology", () => {
+  it("begins a cold wait busy and silent, before admitting decorative shapes", () => {
     const markup = body({ loading: true });
     // The status closes before the busy root opens, at the same top level.
     // This protects the announcement from aria-busy deferral.
     const elements = markup.replace(/<!--[\s\S]*?-->/g, "").trim();
-    expect(elements).toMatch(/^<span class="skeleton-status" role="status">Loading\.\.\.<\/span>\s*<div[^>]*aria-busy="true"/);
+    expect(elements).toMatch(/^<span class="skeleton-status" role="status"><\/span>\s*<div[^>]*aria-busy="true"/);
     expect(markup).toContain('class="skeleton-status"');
-    expect(markup).toContain('aria-hidden="true"');
+    expect(markup).not.toContain('aria-hidden="true"');
+    expect(markup).not.toContain("Loading...");
     expect(markup).toContain('aria-busy="true"');
     expect(markup).not.toContain("data-the-data");
   });

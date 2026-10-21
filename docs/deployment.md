@@ -191,8 +191,37 @@ Chief configures the variable before that proof.
 
 ## Related checks before deployment
 
-Deployment runs related checks before any app transaction. Pull requests and staging
-pushes do not start a suite workflow. Agents still run focused checks before a push.
+Pull requests into staging and main run the complete mypy check against GitHub's
+proposed merge commit. The check also runs for draft pull requests and pull requests
+that change their target branch.
+It uses a fresh Python 3.12 environment and this tree's pinned dependencies on a hosted
+Ubuntu runner. It receives no service credentials and uses no production state.
+The logs record the checked revision, tree, and event base and head revisions.
+
+This pre-merge check covers types only. Ruff, pytest, Svelte, Vitest, and browser checks
+remain release-only in GitHub Actions. A type pass does not prove release readiness.
+Before those checks move before merge, decide the runner, browser prerequisites,
+coverage selection, and sandbox isolation. The deployment gate needs its served baseline
+and isolated browser setup. A pull request cannot assume that production context.
+Agents still run focused checks before a push. Staging pushes do not start a suite workflow.
+
+Repository enforcement is a separate owner action. Until the owner activates the required
+check for both branches, a failed type check does not prevent merge. The settings request
+must use the exact context and app identity from a real pull request check. Its intended
+job name is `mypy (merged tree)`. A new commit on the target branch alone does not start this
+workflow. After the owner enables strict freshness, an advanced target requires an update
+to the pull request head and a fresh check of the proposed merge commit.
+The request adds no bypass actors or extra approval requirement.
+
+If a required check never arrives or prevents a repair, the owner must change the
+repository ruleset through GitHub Settings, Rules, Rulesets. Correct its check context
+or temporarily remove that required check, merge the repair, and restore the checked rule.
+Without bypass actors, a Worker cannot override that requirement through a merge.
+Existing protections must remain effective during recovery.
+
+Code path: `.github/workflows/typecheck.yml`.
+
+Deployment runs related checks before any app transaction.
 The current workflow revision supplies control tooling. The requested checkout supplies
 its own editable Python environment, pinned dependencies, source, and test configuration.
 Both Node lockfiles supply build prerequisites. A rollback uses these same boundaries.
@@ -350,11 +379,10 @@ ledger records replacements and intentional retirements. This deployment change 
 no browser host or browser E2E case. New checks must document distinct risks and costs
 under the admission policy.
 
-Coverage savings and runner capacity remain separate evidence. This change removes
-PR-wide execution without an empty-diff guard or a replacement staging run. It adds no
-rolling-run capacity setting, so there is no such setting's capacity measurement or
-restoration condition to claim. Reverting the workflow change restores the former PR
-placement. Main workflow activation remains separate from staging landing.
+Coverage savings and runner capacity remain separate evidence. Related suites run during
+deployment. The separate pull request workflow checks the complete proposed tree with
+mypy only. No rolling-run capacity setting exists. Main workflow activation remains
+separate from staging landing.
 
 ## Deployment status evidence
 
