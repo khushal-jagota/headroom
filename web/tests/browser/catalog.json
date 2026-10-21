@@ -5,7 +5,8 @@
       "id": "shell-feedback",
       "path": "web/tests/shell-feedback-browser.test.mjs",
       "cases": [
-        "feedback-inbox"
+        "feedback-inbox",
+        "workspace-utility-pane"
       ],
       "companions": []
     },

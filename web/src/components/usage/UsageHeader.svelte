@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { UsageDays } from "../../lib/conversation/recordedUsageWire";
   import { USAGE_PERIODS, providerLabel } from "./usagePresentation";
-  import { usageTabHref, type UsageTab } from "../../lib/usageAddress";
-  let { tab, days, providerKeys, selectedProviders, busy, onDays, onProviders, onRefresh }: {
-    tab: UsageTab; days: UsageDays; providerKeys: readonly string[];
+  import type { UsageTab } from "../../lib/usageAddress";
+  import type { UtilityHref } from "../../lib/utilityAddress";
+  let { tab, href, days, providerKeys, selectedProviders, busy, onDays, onProviders, onRefresh }: {
+    tab: UsageTab; href: UtilityHref; days: UsageDays; providerKeys: readonly string[];
     selectedProviders: readonly string[]; busy: boolean;
     onDays: (days: UsageDays) => void;
     onProviders: (providers: string[]) => void; onRefresh: () => void;
@@ -32,7 +33,7 @@
   <div class="toolbar">
     <nav class="segmented metrics" aria-label="Usage tabs">
       {#each ["tokens", "cost", "limits", "config"] as value}
-        <a href={usageTabHref(value as UsageTab)} aria-current={tab === value ? "page" : undefined}>{providerLabel(value)}</a>
+        <a href={href([value])} aria-current={tab === value ? "page" : undefined}>{providerLabel(value)}</a>
       {/each}
     </nav>
     {#if tab !== "config"}
