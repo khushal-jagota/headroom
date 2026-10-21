@@ -72,7 +72,6 @@
   let conversationOnScreen: string | null = null;
   let stateOnScreen: ConversationState | null = null;
   let stateHasBeenDrawn = false;
-  let pendingLayerMove = false;
   let pendingOpen = false;
   let pendingLatest = false;
   let sentMessageToPlace: string | null = null;
@@ -224,7 +223,6 @@
         }
         settledOnOpening = true;
         pendingOpen = false;
-        pendingLayerMove = false;
         pendingLatest = false;
         sentMessageToPlace = null;
         takeTheReading(geometry.read(reservedSpacePixels));
@@ -249,7 +247,6 @@
       reservedSpacePixels = 0;
       answerRoomMessageId = null;
       sentMessageToPlace = null;
-      pendingLayerMove = false;
       pendingOpen = true;
       pendingLatest = false;
       withTheNewestLineBeforeTheWrite = true;
@@ -281,7 +278,8 @@
       stateHasBeenDrawn = true;
       stateOnScreen = wanted;
       if (!moved) return;
-      pendingLayerMove = true;
+      // Changing height is not a reason to move the thread. Only coming back from
+      // rest is, because the thread was not there to be read a moment ago.
       if (previous === "rest" && wanted !== "rest") pendingOpen = true;
       requestReconciliation();
     });
