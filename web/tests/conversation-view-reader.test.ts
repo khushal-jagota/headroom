@@ -64,7 +64,8 @@ it('does not restore a collapsed scope from a delayed response and resumes after
   await reader.load(); await vi.advanceTimersByTimeAsync(0);
   expect(Source.all.at(-1)!.closed).toBe(false);
   Source.all.at(-1)!.send('reset', {});
-  expect(reader.pages).toHaveLength(0);
+  // A reset asks for everything again. It does not take the conversation away first.
+  expect(reader.pages).toHaveLength(1);
   expect(reader.coverage).toBe(0);
 });
 
@@ -113,19 +114,20 @@ it('publishes unknown runtime status when an established stream fails', async ()
   expect(reader.pages).toHaveLength(1);
 });
 
-it('discards every held scope and advances content authority on an unchanged replacement snapshot', async () => {
+it('keeps every held scope when a reconnect brings a snapshot of the same conversation', async () => {
+  // The stream is torn down once per page of scroll-back, so its snapshot is an
+  // ordinary reconnect, not a new conversation. Discarding history here took the
+  // reader's place away every time they scrolled back.
   const reader = await start();
   const scope = { kind: 'turn' as const, key: 'turn:e1' };
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...snapshot().page, scope }))));
   await reader.expand(scope, true); await vi.advanceTimersByTimeAsync(0);
-  const generation = reader.contentGeneration;
   expect(reader.pages).toHaveLength(2);
   const replacement = snapshot(); replacement.status.diagnostics_expired = true;
   Source.all.at(-1)!.send('snapshot', replacement);
-  expect(reader.pages).toHaveLength(1);
+  expect(reader.pages).toHaveLength(2);
   expect(reader.coverage).toBe(1);
-  expect(reader.contentGeneration).toBe(generation + 1);
-  expect(reader.isExpanded(scope)).toBe(true); // Preference survives, bodies require a fresh read.
+  expect(reader.isExpanded(scope)).toBe(true);
   expect(reader.status?.diagnostics_expired).toBe(true);
 });
 
@@ -137,8 +139,8 @@ it('cancels queued page demand on reset and admits fresh demand after the replac
   const loading = reader.load();
   Source.all[0].send('reset', {});
   await loading;
-  expect(reader.pages).toHaveLength(0);
-  expect(reader.contentGeneration).toBe(2);
+  // What is on screen stays on screen until its replacement exists.
+  expect(reader.pages).toHaveLength(1);
   await vi.advanceTimersByTimeAsync(1500);
   Source.all.at(-1)!.send('snapshot', snapshot());
   const scope = { kind: 'turn' as const, key: 'turn:e1' };
@@ -147,17 +149,17 @@ it('cancels queued page demand on reset and admits fresh demand after the replac
   expect(reader.pages).toHaveLength(2);
 });
 
-it('clears held history and component content at a runtime epoch boundary', async () => {
+it('re-reads everything at a runtime epoch boundary without emptying the conversation', async () => {
   const reader = await start();
-  const generation = reader.contentGeneration;
   const change = viewChanges(snapshot(), 1); change.status.runtime_epoch = 'replacement';
   Source.all[0].send('changes', change);
-  expect(reader.pages).toHaveLength(0);
+  // Suspect, so read it all again - and keep showing it while that happens.
+  expect(reader.pages).toHaveLength(1);
   expect(reader.coverage).toBe(0);
-  expect(reader.contentGeneration).toBe(generation + 1);
-  expect(reader.status).toBeNull();
   await vi.advanceTimersByTimeAsync(0);
   expect(new URL(Source.all.at(-1)!.url, 'http://local').searchParams.has('after')).toBe(false);
+  Source.all.at(-1)!.send('snapshot', snapshot());
+  expect(reader.pages).toHaveLength(1);
 });
 
 it('distinguishes a canonical expired body from an unrelated HTTP 410 failure', async () => {

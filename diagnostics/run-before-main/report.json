@@ -1,0 +1,49 @@
+{
+  "recorded_at": "2026-10-21T02:00:43",
+  "base": "http://127.0.0.1:8767",
+  "address": "#/workspace/chief-of-staff",
+  "typed_at_start": 61,
+  "after_scrollback": {
+    "scrollTop": 2449,
+    "scrollHeight": 23262,
+    "clientHeight": 644,
+    "typed": 61,
+    "jump": true
+  },
+  "latest": {
+    "scrollTop": 22617,
+    "scrollHeight": 23261,
+    "clientHeight": 644,
+    "fromBottom": 0,
+    "jump": false
+  },
+  "after_update": {
+    "typed": 61,
+    "threadPresent": true,
+    "scrollTop": 22617
+  },
+  "after_tab": {
+    "typed": 61,
+    "threadPresent": true,
+    "scrollTop": 22617
+  },
+  "summary": {
+    "events": 650,
+    "transcript_mounts": 104,
+    "transcript_unmounts": 97,
+    "thread_mounts": 1,
+    "thread_unmounts": 1,
+    "composer_mounts": 0,
+    "composer_unmounts": 0,
+    "skeleton_shape_mounts": 2,
+    "sse_opens": 6,
+    "sse_closes": 5,
+    "snapshots": 4,
+    "changes": 1,
+    "resets": 0,
+    "page_reads": 1,
+    "anchor_lost": 0,
+    "worst_anchor_drift": 18487,
+    "typed_zeroed_after_typing": false
+  }
+}

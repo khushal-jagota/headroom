@@ -1680,13 +1680,16 @@ def _bounded_reader(browser, url):
     page.goto(url + "?reader=1")
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
     page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
-    assert page.locator('[data-conversation-row="agent_message"]').count() <= 150
+    # What the reader retains is what is drawn. One bound, not two: a row that is
+    # held but not drawn has to claim a height it has not measured, and that is what
+    # made the thread change size under a gesture.
+    assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     assert page.evaluate("() => window.__viewCalls.every(url => !url.includes('/events?') && (!url.includes('/tail?') || url.includes('/view/tail?')))")
     before = page.evaluate("() => window.__viewCalls.filter(url => url.includes('/view/pages')).length")
     page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
     page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
     assert page.locator('[data-conversation-view-key]').count() <= 300
-    assert page.locator('[data-conversation-row="agent_message"]').count() <= 150
+    assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     page.evaluate("() => window.__readerState('rest')")
     page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
     assert page.locator('[data-conversation-view-key]').count() == 0

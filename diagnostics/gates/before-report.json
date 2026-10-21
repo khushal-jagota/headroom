@@ -1,0 +1,138 @@
+{
+  "label": "before",
+  "base": "http://127.0.0.1:8831",
+  "recorded_at": "2026-10-21T03:03:46",
+  "seconds_to_first_thread": 4.73,
+  "at_open": {
+    "present": true,
+    "scrollTop": 7335,
+    "scrollHeight": 7979,
+    "clientHeight": 644,
+    "fromBottom": 0,
+    "blankBelowNewestLine": 16,
+    "typed": 0,
+    "rows": 100,
+    "filledRows": 8,
+    "jump": false
+  },
+  "back_through_history": [
+    {
+      "round": 0,
+      "asked_for": 7340,
+      "delivered": 2997,
+      "content_grew": 4350,
+      "fromBottom": 7347
+    },
+    {
+      "round": 1,
+      "asked_for": 7340,
+      "delivered": 1446,
+      "content_grew": 5899,
+      "fromBottom": 14692
+    },
+    {
+      "round": 2,
+      "asked_for": 7340,
+      "delivered": 2510,
+      "content_grew": 4832,
+      "fromBottom": 22034
+    }
+  ],
+  "down_to_the_newest_line": [
+    {
+      "round": 0,
+      "asked_for": 7340,
+      "delivered": 7341,
+      "content_grew": 2,
+      "fromBottom": 14695
+    },
+    {
+      "round": 1,
+      "asked_for": 7340,
+      "delivered": 7342,
+      "content_grew": 0,
+      "fromBottom": 7353
+    },
+    {
+      "round": 2,
+      "asked_for": 7340,
+      "delivered": 6642,
+      "content_grew": -3,
+      "fromBottom": 708
+    }
+  ],
+  "latest": [
+    {
+      "press": 0,
+      "case": "wheel still arriving after the press (not a hand)",
+      "before_fromBottom": 6591,
+      "after_fromBottom": 1549,
+      "control_still_offered": true,
+      "landed": false
+    },
+    {
+      "press": 1,
+      "case": "momentum, then the press",
+      "before_fromBottom": 8050,
+      "after_fromBottom": 0,
+      "control_still_offered": false,
+      "landed": true
+    },
+    {
+      "press": 2,
+      "case": "wheel still arriving after the press (not a hand)",
+      "before_fromBottom": 6372,
+      "after_fromBottom": 1549,
+      "control_still_offered": true,
+      "landed": false
+    },
+    {
+      "press": 3,
+      "case": "momentum, then the press",
+      "before_fromBottom": 8050,
+      "after_fromBottom": 0,
+      "control_still_offered": false,
+      "landed": true
+    },
+    {
+      "press": 4,
+      "case": "wheel still arriving after the press (not a hand)",
+      "before_fromBottom": 6372,
+      "after_fromBottom": 620,
+      "control_still_offered": true,
+      "landed": false
+    },
+    {
+      "press": 5,
+      "case": "momentum, then the press",
+      "before_fromBottom": 7413,
+      "after_fromBottom": 0,
+      "control_still_offered": false,
+      "landed": true
+    }
+  ],
+  "structure": {
+    "transcript_destroyed": 390,
+    "thread_destroyed": 1,
+    "composer_destroyed": 0,
+    "snapshots": 4,
+    "history_page_reads": 6
+  },
+  "rows": {
+    "height_changes": 93,
+    "from_a_placeholder": 44,
+    "total_absolute_change": 16065
+  },
+  "final": {
+    "present": true,
+    "scrollTop": 22416,
+    "scrollHeight": 23060,
+    "clientHeight": 644,
+    "fromBottom": 0,
+    "blankBelowNewestLine": 16,
+    "typed": 61,
+    "rows": 100,
+    "filledRows": 8,
+    "jump": false
+  }
+}

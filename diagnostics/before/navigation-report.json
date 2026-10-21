@@ -1,0 +1,79 @@
+{
+  "scenario": "navigation",
+  "recorded_at": "2026-10-21T02:12:28",
+  "base": "http://127.0.0.1:8767",
+  "address": "#/workspace/chief-of-staff",
+  "at_rest": {
+    "present": true,
+    "scrollTop": 7911,
+    "scrollHeight": 8555,
+    "clientHeight": 644,
+    "fromBottom": 0,
+    "typed": 61,
+    "jump": false,
+    "navError": false
+  },
+  "navigation": {
+    "typed_before": "DRAFT-KEEP-THIS-TEXT-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "before": {
+      "present": true,
+      "scrollTop": 7911,
+      "scrollHeight": 8555,
+      "clientHeight": 644,
+      "fromBottom": 0,
+      "typed": 61,
+      "jump": false,
+      "navError": false
+    },
+    "during_outage": {
+      "present": true,
+      "scrollTop": 7911,
+      "scrollHeight": 8555,
+      "clientHeight": 644,
+      "fromBottom": 0,
+      "typed": 61,
+      "jump": false,
+      "navError": false
+    },
+    "after_recovery": {
+      "present": true,
+      "scrollTop": 7911,
+      "scrollHeight": 8555,
+      "clientHeight": 644,
+      "fromBottom": 0,
+      "typed": 61,
+      "jump": false,
+      "navError": false
+    },
+    "typed_after": "DRAFT-KEEP-THIS-TEXT-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "final": {
+    "present": true,
+    "scrollTop": 7911,
+    "scrollHeight": 8555,
+    "clientHeight": 644,
+    "fromBottom": 0,
+    "typed": 61,
+    "jump": false,
+    "navError": false
+  },
+  "probe_error": null,
+  "structure": {
+    "thread_destroyed": 1,
+    "thread_created": 1,
+    "composer_destroyed": 0,
+    "composer_created": 0,
+    "transcript_destroyed": 6,
+    "transcript_created": 13,
+    "live_stream_opens": 5,
+    "live_stream_closes": 3,
+    "snapshots": 4,
+    "history_page_reads": 0
+  },
+  "rows": {
+    "row_height_changes": 1,
+    "largest_row_growth_pixels": 27,
+    "rows_that_grew_from_placeholder": 0,
+    "total_absolute_row_change_pixels": 27
+  }
+}
