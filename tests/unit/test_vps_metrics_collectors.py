@@ -114,6 +114,12 @@ def test_inventory_partial_sources_and_slow_probe_cache(
 
     monkeypatch.setattr(collectors, "_read", safe_read)
     (collector.proc / "11/io").unlink()
+    write(
+        collector.proc,
+        "pressure/cpu",
+        "some avg10=1.5 avg60=2.0 avg300=3.0 total=100\n"
+        "full avg10=malformed avg60=4.0 missing-token\n",
+    )
     first = collector.collect(include_slow=True)
     assert first["process_count"] == 2
     assert first["process_availability"] == "partial"
@@ -129,6 +135,19 @@ def test_inventory_partial_sources_and_slow_probe_cache(
     assert panels["metrics"]["memory_bytes"]["value"] == 20000
     assert panels["metrics"]["read_bytes_per_second"]["value"] is None
     assert panels["state"] == "active/running"
+    for resource in ("cpu", "memory", "io"):
+        for kind in ("some", "full"):
+            for period in ("avg10", "avg60", "avg300"):
+                metric = panels["metrics"][f"pressure.{resource}.{kind}.{period}"]
+                assert metric["value"] is None and metric["reason"] == "FileNotFoundError"
+    assert first["metrics"]["pressure.cpu.some.avg10"]["value"] == 1.5
+    assert first["metrics"]["pressure.cpu.full.avg10"]["value"] is None
+    assert first["metrics"]["pressure.cpu.full.avg10"]["reason"] == "ValueError"
+    assert first["metrics"]["pressure.cpu.full.avg60"]["value"] == 4.0
+    assert first["metrics"]["pressure.cpu.full.avg300"]["value"] is None
+    assert first["metrics"]["pressure.cpu.full.avg300"]["reason"] == "KeyError"
+    assert first["metrics"]["pressure.memory.full.avg10"]["value"] is None
+    assert first["metrics"]["pressure.memory.full.avg10"]["reason"] == "pressure row unavailable"
     failed = next(item for item in first["services"] if item["name"] == "failed.service")
     assert failed["state"] == "failed/failed" and failed["process_count"] == 0
     assert failed["metrics"]["cpu_percent"]["value"] is None

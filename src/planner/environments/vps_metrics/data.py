@@ -72,7 +72,7 @@ class Store:
             page_size = conn.execute("PRAGMA page_size").fetchone()[0]
             conn.execute(f"PRAGMA max_page_count={max(1, self.config.database_bytes // page_size)}")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 2):
                 raise RuntimeError("unsupported VPS metrics schema")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -85,14 +85,16 @@ class Store:
                     payload TEXT NOT NULL, bytes INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS aggregates(
                     resolution TEXT NOT NULL, bucket INTEGER NOT NULL, boot TEXT NOT NULL,
-                    payload TEXT NOT NULL, bytes INTEGER NOT NULL,
-                    PRIMARY KEY(resolution,bucket,boot));
+                    entity TEXT NOT NULL, payload BLOB NOT NULL, bytes INTEGER NOT NULL,
+                    PRIMARY KEY(resolution,bucket,boot,entity));
+                CREATE INDEX IF NOT EXISTS aggregates_entity_time
+                    ON aggregates(resolution,entity,bucket);
                 CREATE INDEX IF NOT EXISTS samples_time ON samples(timestamp);
                 CREATE INDEX IF NOT EXISTS snapshots_time ON snapshots(timestamp);
                 CREATE TABLE IF NOT EXISTS payload_totals(
                     kind TEXT PRIMARY KEY, bytes INTEGER NOT NULL);
                 INSERT OR IGNORE INTO payload_totals VALUES ('metrics',0),('snapshots',0);
-                PRAGMA user_version=1;
+                PRAGMA user_version=2;
             """)
             for table, kind in (
                 ("samples", "metrics"),
@@ -192,7 +194,7 @@ class Store:
             previous_sample = self._get(conn, "latest")
             previous_signals = signals(previous_sample) if previous_sample else {}
             for resolution, width in (("minute", 60), ("coarse", 900)):
-                buckets: dict[int, dict[str, Any]] = {}
+                buckets: dict[tuple[int, str], dict[str, Any]] = {}
                 for entity, metrics in signals(sample).items():
                     for signal, measurement in metrics.items():
                         metric_end = sample["timestamp"]
@@ -216,20 +218,21 @@ class Store:
                         if source_duration is not None:
                             metric_start = max(metric_start, metric_end - max(0, source_duration))
                         for bucket, duration in bucket_intervals(metric_start, metric_end, width):
-                            if bucket not in buckets:
+                            key = (bucket, entity)
+                            if key not in buckets:
                                 row = conn.execute(
                                     "SELECT payload FROM aggregates "
-                                    "WHERE resolution=? AND bucket=? AND boot=?",
-                                    (resolution, bucket, sample["boot_id"]),
+                                    "WHERE resolution=? AND bucket=? AND boot=? AND entity=?",
+                                    (resolution, bucket, sample["boot_id"], entity),
                                 ).fetchone()
-                                buckets[bucket] = _unpack(row[0]) if row else {}
-                            entries = buckets[bucket].setdefault(entity, {})
+                                buckets[key] = _unpack(row[0]) if row else {}
+                            entries = buckets[key]
                             entry = entries.setdefault(
                                 signal,
                                 dict(unit=measurement["unit"], statistics=empty_statistics()),
                             )
                             accumulate(entry["statistics"], measurement, duration)
-                for bucket, aggregate in buckets.items():
+                for (bucket, entity), aggregate in buckets.items():
                     aggregate_payload = _pack(aggregate)
                     size = len(aggregate_payload)
                     encoded_transaction += size
@@ -238,10 +241,10 @@ class Store:
                             "VPS metrics aggregate exceeds transaction byte limit"
                         )
                     conn.execute(
-                        "INSERT INTO aggregates VALUES (?,?,?,?,?) "
-                        "ON CONFLICT(resolution,bucket,boot) DO UPDATE SET "
+                        "INSERT INTO aggregates VALUES (?,?,?,?,?,?) "
+                        "ON CONFLICT(resolution,bucket,boot,entity) DO UPDATE SET "
                         "payload=excluded.payload,bytes=excluded.bytes",
-                        (resolution, bucket, sample["boot_id"], aggregate_payload, size),
+                        (resolution, bucket, sample["boot_id"], entity, aggregate_payload, size),
                     )
             self._put(
                 conn,
@@ -312,8 +315,8 @@ class Store:
                 if total > budget:
                     rows = conn.execute(
                         "SELECT timestamp,bytes,'raw',seq,'' FROM samples "
-                        "UNION ALL SELECT bucket,bytes,resolution,bucket,boot "
-                        "FROM aggregates ORDER BY 1"
+                        "UNION ALL SELECT bucket,SUM(bytes),resolution,bucket,boot "
+                        "FROM aggregates GROUP BY resolution,bucket,boot ORDER BY 1"
                     ).fetchall()
                     for _, size, resolution, key, boot in rows:
                         if total <= budget:
@@ -379,12 +382,13 @@ class Store:
         policy: float,
         requested: float | None = None,
         resolution: str | None = None,
+        entity: str | None = None,
     ) -> RetentionCoverage:
         column = "bucket" if table == "aggregates" else "timestamp"
-        where = " WHERE resolution=?" if resolution else ""
+        where = " WHERE resolution=? AND entity=?" if resolution else ""
         row = conn.execute(
             f"SELECT MIN({column}),MAX({column}) FROM {table}{where}",
-            (resolution,) if resolution else (),
+            (resolution, entity or "") if resolution else (),
         ).fetchone()
         return dict(
             requested_start=requested,
@@ -490,9 +494,9 @@ class Store:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT bucket,boot,payload FROM aggregates WHERE resolution=? "
+                    "SELECT bucket,boot,payload FROM aggregates WHERE resolution=? AND entity=? "
                     "AND bucket>=? AND bucket<? ORDER BY bucket LIMIT ?",
-                    (resolution, start, end, self.config.history_points + 1),
+                    (resolution, entity or "", start, end, self.config.history_points + 1),
                 ).fetchall()
             if len(rows) > self.config.history_points:
                 raise QueryLimitError("history point count exceeds limit")
@@ -515,7 +519,7 @@ class Store:
                         statistics=None,
                     )
                 else:
-                    entry = record.get(entity or "", {}).get(signal)
+                    entry = record.get(signal)
                     if entry is None:
                         continue
                     stats = entry["statistics"]
@@ -540,6 +544,7 @@ class Store:
                 policy,
                 start,
                 None if resolution == "raw" else resolution,
+                entity,
             )
             return cast(
                 HistoryResponse,

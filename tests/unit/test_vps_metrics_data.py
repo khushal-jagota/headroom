@@ -48,19 +48,40 @@ def history(result: Store, resolution: str = "minute") -> list[dict]:
 def test_weighted_rollups_split_buckets_and_keep_gap_reboot_and_reset_absent(
     tmp_path: Path,
 ) -> None:
-    result = store(tmp_path)
-    result.append(sample(50))
-    result.append(sample(65, 20))
-    result.append(sample(80, 40))
-    result.append(sample(200, 60))  # Only preceding 15 seconds have coverage.
+    result = store(tmp_path, history_points=3)
+
+    def append(current: Sample) -> None:
+        current["services"] = [
+            dict(
+                identity="service",
+                name="unit",
+                kind="service",
+                metrics={"cpu": dict(value=500.0, unit="percent", reason=None)},
+                state="active",
+                state_reason=None,
+                process_count=1,
+            )
+        ]
+        result.append(current)
+
+    append(sample(50))
+    append(sample(65, 20))
+    append(sample(80, 40))
+    append(sample(200, 60))  # Only preceding 15 seconds have coverage.
     reset = sample(215)
     reset["metrics"]["cpu"].update(value=None, reason="counter reset", duration=15)
-    result.append(reset)
-    result.append(sample(220, 100, boot="second"))  # Restart baseline has no duration.
+    append(reset)
+    append(sample(220, 100, boot="second"))  # Restart baseline has no duration.
     points = history(result)
     assert [(p["timestamp"], p["value"]) for p in points] == [(0, 20), (60, 35), (180, 60)]
     assert [p["statistics"]["valid_duration"] for p in points] == [10, 20, 15]
     assert points[-1]["statistics"]["expected_duration"] == 30
+    with sqlite3.connect(result.path) as conn:
+        service = result.history(
+            conn, signal="cpu", entity="service", start=0, end=1800, resolution="minute"
+        )
+        assert [point["value"] for point in service["points"]] == [500, 500, 500]
+        assert service["coverage"]["retained_start"] == 0
     coarse = history(result, "coarse")
     assert coarse[0]["statistics"]["valid_duration"] == 45
     assert coarse[0]["value"] == pytest.approx(1800 / 45)
@@ -181,6 +202,27 @@ def test_payload_age_budgets_churn_and_read_limits(tmp_path: Path) -> None:
         assert result.latest(conn, 300)["coverage"]["budget_evicted"]
         with pytest.raises(QueryLimitError):
             result.history(conn, signal="cpu", entity=None, start=0, end=31, resolution="raw")
+    # A lower budget removes complete aggregate buckets, never selected entities.
+    with sqlite3.connect(result.path) as conn:
+        before = {
+            (resolution, bucket, boot): set()
+            for resolution, bucket, boot in conn.execute(
+                "SELECT resolution,bucket,boot FROM aggregates"
+            )
+        }
+        for resolution, bucket, boot, entity in conn.execute(
+            "SELECT resolution,bucket,boot,entity FROM aggregates"
+        ):
+            before[(resolution, bucket, boot)].add(entity)
+    smaller = Store(result.path, replace(result.config, metrics_payload_bytes=1000))
+    smaller.prune(300)
+    with sqlite3.connect(result.path) as conn:
+        after = {key: set() for key in before}
+        for resolution, bucket, boot, entity in conn.execute(
+            "SELECT resolution,bucket,boot,entity FROM aggregates"
+        ):
+            after[(resolution, bucket, boot)].add(entity)
+        assert all(not after[key] or after[key] == entities for key, entities in before.items())
     result.prune(2000)
     with sqlite3.connect(result.path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0] == 0

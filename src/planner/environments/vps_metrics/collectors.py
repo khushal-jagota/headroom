@@ -155,20 +155,31 @@ class LinuxCollector:
 
     def _pressure(self, root: Path, prefix: str, metrics: dict[str, Measurement]) -> None:
         for resource in ("cpu", "memory", "io"):
+            keys = {
+                (kind, period): f"{prefix}{resource}.{kind}.{period}"
+                for kind in ("some", "full")
+                for period in ("avg10", "avg60", "avg300")
+            }
+            for key in keys.values():
+                metrics[key] = measure(None, "percent", "pressure row unavailable")
             path = root / resource if root.name == "pressure" else root / (resource + ".pressure")
             try:
                 rows = _read(path).splitlines()
-                for row in rows:
-                    parts = row.split()
-                    if parts[0] not in {"some", "full"}:
-                        continue
-                    fields = dict(item.split("=", 1) for item in parts[1:])
-                    for period in ("avg10", "avg60", "avg300"):
-                        metrics[f"{prefix}{resource}.{parts[0]}.{period}"] = measure(
-                            _number(fields[period]), "percent"
-                        )
-            except (OSError, ValueError, KeyError, IndexError) as exc:
-                metrics[f"{prefix}{resource}"] = measure(None, "percent", type(exc).__name__)
+            except OSError as exc:
+                for key in keys.values():
+                    metrics[key] = measure(None, "percent", type(exc).__name__)
+                continue
+            for row in rows:
+                parts = row.split()
+                if not parts or parts[0] not in {"some", "full"}:
+                    continue
+                fields = dict(item.split("=", 1) for item in parts[1:] if "=" in item)
+                for period in ("avg10", "avg60", "avg300"):
+                    key = keys[parts[0], period]
+                    try:
+                        metrics[key] = measure(_number(fields[period]), "percent")
+                    except (ValueError, KeyError) as exc:
+                        metrics[key] = measure(None, "percent", type(exc).__name__)
 
     def _host(self) -> tuple[dict[str, Measurement], int, list[str], list[str]]:
         metrics: dict[str, Measurement] = {}
