@@ -1,4 +1,4 @@
-# Orchestrators and historical Sprints
+# Orchestrators
 
 Orchestrators hold shared intent, Workers, artifacts, and a conversation. Ordinary
 orchestrators retain their former Sprint Item IDs and supervisor agent keys. The stored
@@ -37,13 +37,16 @@ orchestrators. Existing `panels sprint item` paths remain aliases. Use
 `panels orchestrator settle <item>` settles an ordinary orchestrator. `--active` returns
 it to active. The server accepts only the owner for this action.
 
-Sprint records, documents, commitments, dates, and historical placement remain readable.
-Sprint creation, edits, commitment changes, and carry-forward are retired from the live
-API and CLI. `panels sprint list/show/list-items` and historical GET routes preserve
-access. Reading history neither creates a Sprint nor activates old planning work.
+Settled orchestrators are finished destinations. Choose an active orchestrator for new
+work. The CLI exposes that state in lists and records, including selected-part reads.
+Its state filters apply before pagination. See [the CLI guide](cli.md#orchestrator-assignment-and-settlement)
+for the flags and the `settled` field. Settlement does not change assignment authority
+or stop existing Workers.
 
-Historical Sprint outcomes use oldest-created order, then identifier. Project groups
-and Ticket section and title order remain.
+Date-range Sprints, their records, commitments, and placement are removed.
+The former Sprint screen and calendar read commands no longer exist.
+`panels sprint item` remains an alias for retained orchestrator operations.
+The stored Item names remain stable until their separate rename.
 
 The final visual layout waits for the approved design handoff. Its confirmed direction
 keeps Workers nested beneath orchestrators and puts Project and Settle in the eyebrow

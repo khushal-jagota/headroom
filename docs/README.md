@@ -9,7 +9,7 @@ The owner can settle any ordinary orchestrator. Chief never settles. Settlement 
 presentation and does not gate Worker continuation or hide approvals and messages.
 Explicit Ticket backlog separately prevents automatic Worker progression. Resume restores
 ordinary checks. Delete removes a Ticket when its record is no longer needed.
-Sprint and Day records remain historical reads. Their live planning machinery is retired.
+Day records and date-range Sprints are removed. Orchestrators keep their stable Item identities.
 
 This is the entry point. Read it to find which system owns a question, then read
 that system's doc.
@@ -85,10 +85,8 @@ path. The supervisor reads canonical Item and Ticket state before it acts on a n
 
 **The surfaces you plan on**
 
-- **Historical Days** (`days.md`) — retained writing and memberships, with no live
-  Today gate or planning schedule.
-- **Orchestrators and historical Sprints** (`sprints.md`) — explicit Chief assignment,
-  owner-controlled settlement, stable identities, and historical reads.
+- **Orchestrators** (`sprints.md`) — explicit Chief assignment,
+  owner-controlled settlement, and stable identities.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — committed work and remembered possibilities.
 - **Feedback** (`feedback.md`) — loose notes captured from any page and their handled history.
 - **Projects** (`projects.md`) — the data-backed project catalog.

@@ -105,16 +105,6 @@ def _ticket_row(conn: Connection, ticket_id: str) -> tuple[object, ...]:
     return tuple(row)
 
 
-
-
-
-
-
-
-
-
-
-
 def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
@@ -246,8 +236,6 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
     assert (t.pending_proposal is not None) is True
 
     assert t.ticket_status is TicketStatus.awaiting_approval
-
-
 
 
 def test_a06_edit_accept_stores_edited_text(
@@ -389,8 +377,6 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         next_holder=OWNER_PRINCIPAL,
     )
     assert t3.stage == "needs_consequences"
-
-
 
 
 def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
@@ -584,20 +570,6 @@ def _blocked_tickets(conn: Connection, ticket_id: str) -> list[str]:
     ]
 
 
-
-
-
-
-def _has_day_membership(conn: Connection, ticket_id: str) -> bool:
-    return (
-        conn.execute(
-            "SELECT 1 FROM day_tickets WHERE ticket_id = ?",
-            (ticket_id,),
-        ).fetchone()
-        is not None
-    )
-
-
 def _created_with_blockers(
     conn: Connection,
     cfg: Config,
@@ -632,7 +604,6 @@ def test_a_ticket_created_with_a_live_blocker_never_starts_until_it_clears(
 
     assert created.stage == "needs_success_condition"
     assert created.ticket_status is TicketStatus.blocked
-    assert not _has_day_membership(tmp_db, created.id)
     assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
 
     advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
@@ -740,9 +711,6 @@ def test_a_failed_creation_block_rolls_the_whole_create_back(
     assert written == [first.id, second.id]
     assert _ticket_count(tmp_db) == tickets_before
     assert _blocked_tickets(tmp_db, first.id) == []
-    assert tmp_db.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
-
-
 
 
 def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
@@ -778,10 +746,6 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
         is False
     )
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.agent
-
-
-
-
 
 
 def test_auto_approval_old_data_and_multi_field_edit(

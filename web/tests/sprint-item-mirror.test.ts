@@ -13,11 +13,8 @@ import {
   type WorkItemTicketFacts
 } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
-import { sprintTicketCondition } from "../src/lib/sprintPresentation";
-import { workspaceHeading, sprintItemHeading, sprintItemWord, ticketFacts } from "./support/screenReadings";
-import { dayActionTiles, dayVisualTicket } from "../src/lib/dayPresentation";
+import { workspaceHeading, sprintItemHeading, ticketFacts } from "./support/screenReadings";
 import { feedbackTicketStateLabel } from "../src/lib/feedback";
-import type { DayTicket } from "../src/lib/types";
 
 function ticket(
   id: string,
@@ -36,9 +33,6 @@ function ticket(
     gating_field: "implementation",
     blocked: false,
     worker_type: "coding",
-    day_ids: [],
-    sprint_id: null,
-    sprint_name: null,
     awaiting_reply: false,
     awaiting_answer: false,
     awaiting_approval: false,
@@ -86,7 +80,6 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
     project: "Panels",
     created_at: 1,
     updated_at: 1,
-    committed_sprints: [],
     supervisor: {
       agent_key: "sprint_item:si_mirror",
       conversation_id: null,
@@ -96,8 +89,6 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
         employee_launch_reasoning_effort: "medium"
       }
     },
-    planning_day_id: "day_2026-09-22",
-    today_ticket_ids: [],
     tickets: rows,
     artifacts: [],
     conversation_history: [],
@@ -145,7 +136,7 @@ describe("the shared Item and Ticket presentation", () => {
     expect(groups[0].tickets).toEqual([original]);
     expect(groups[0].tickets[0]).toBe(row);
     expect(groups[0].quiet).toBe(false);
-    expect(sprintTicketCondition(row).word).toBe("backlog");
+    expect(workItemTicketGroups([row])[0].label).toBe("Backlog");
     expect(workItemTicketGroupKey({ ...row, is_backlogged: false })).toBe(resumedGroup);
   });
 
@@ -153,23 +144,18 @@ describe("the shared Item and Ticket presentation", () => {
     const facts = ticketFacts({ is_backlogged: true, awaiting_approval: true });
     expect(workspaceHeading(facts)).toBe("Backlog");
     expect(sprintItemHeading(facts)).toBe("Backlog");
-    expect(sprintItemWord(facts)).toBe("backlog");
     const { is_backlogged: _, ...legacy } = ticket("legacy", { awaiting_approval: true });
     expect(workItemTicketGroupKey(legacy)).toBe("awaiting_approval");
   });
 
-  it("preserves historical Day counts and Feedback labels with raw backlog facts", () => {
+  it("preserves Feedback labels with raw backlog facts", () => {
     const rows = [ticket("review", { is_backlogged: true, awaiting_approval: true }),
       ticket("done", { is_backlogged: true, stage: "done" })];
-    const visuals = rows.map((row) => dayVisualTicket(row as unknown as DayTicket));
-    expect(visuals.map((visual) => visual.group)).toEqual(["awaiting_approval", "done"]);
-    expect(dayActionTiles(visuals).map(({ key, count }) => [key, count]))
-      .toEqual([["review", 1], ["done", 1]]);
     expect(rows.map(feedbackTicketStateLabel)).toEqual(["Needs your approval", "Done"]);
     expect(rows.map((row) => workItemTicketGroupKey(row))).toEqual(["backlog", "backlog"]);
   });
 
-  it("uses projected completion and failure facts in the Item, rail, Day, and Feedback", () => {
+  it("uses projected completion and failure facts in the Item, rail, and Feedback", () => {
     const completed = ticket("completed-history", { stage: "done", agent_state: "idle" });
     const unfinished = ticket("unfinished-failure", { agent_state: "errored" });
     const rows = [completed, unfinished];
@@ -182,7 +168,6 @@ describe("the shared Item and Ticket presentation", () => {
     const rail = buildWorkspaceRail([], [boardItem(rows)]);
     expect(rail.items[0].groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
       .toEqual([["Errored", [unfinished.id]]]);
-    expect(dayVisualTicket(completed as unknown as DayTicket).group).toBe("done");
 
     expect(feedbackTicketStateLabel(completed)).toBe("Done");
     expect(feedbackTicketStateLabel(unfinished)).toBe("Errored");
@@ -268,7 +253,6 @@ describe("the shared Item and Ticket presentation", () => {
       const html = conversationSignalReading(row);
       expect(html).not.toContain('data-conversation-signal="working"');
       expect(html).toContain('data-conversation-signal="message"');
-      expect(dayVisualTicket(row as unknown as DayTicket).ticket.conversation_signal).toEqual(row.conversation_signal);
     }
     expect(conversationSignalReading(working)).toContain('data-conversation-signal="working"');
     expect(conversationSignalReading(working)).not.toContain('data-conversation-signal="message"');

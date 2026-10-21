@@ -52,8 +52,6 @@ class WorkspaceTicket(TypedDict):
     deadline: str | None
     project_id: str | None
     project: str | None
-    sprint_id: str | None
-    effective_sprint_id: str | None
     sprint_item_id: str | None
     sprint_item_title: str | None
     conversation_id: str | None

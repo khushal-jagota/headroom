@@ -42,7 +42,8 @@ ceiling holder or replace Chief's global authority.
 
 Today membership no longer governs continuation. Keep every other existing rule.
 Do not recreate daily or Sprint planning Tickets, routines, or replacement recurring
-reviews. Historical Day and Sprint reads remain available when evidence needs them.
+reviews. Day records and date-range Sprints, including their read commands, are removed.
+Orchestrators and their stable Item aliases remain.
 One-time cancellation applies only to the reviewed obsolete planning cohort. Do not
 cancel ordinary unfinished work or represent obsolete work as Done.
 

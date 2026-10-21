@@ -49,13 +49,7 @@ def _container_as_given(container: str, clock: Clock, config: Config) -> str:
     return container
 
 
-
-
 # --- the writes ---------------------------------------------------------------
-
-
-
-
 
 
 def _add_outcome_ticket(write: MembershipWrite) -> None:
@@ -82,10 +76,6 @@ def _remove_outcome_ticket(write: MembershipWrite) -> None:
     )
 
 
-
-
-
-
 def _add_blocker(write: MembershipWrite) -> None:
     tickets_actions.add_ticket_block(
         write.conn, write.member_id, write.container_id, now=write.now, admit=write.admit
@@ -101,8 +91,6 @@ def _remove_blocker(write: MembershipWrite) -> None:
 # --- the authority rules ------------------------------------------------------
 
 
-
-
 def _outcome_ticket_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
@@ -113,8 +101,6 @@ def _outcome_ticket_rule(
     """
     require_above(conn, ctx.principal, authority.ticket(member_id))
     refuse_outcome_re_parenting(ctx.principal, member_id)
-
-
 
 
 def _blocker_rule(

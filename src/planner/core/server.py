@@ -43,7 +43,6 @@ from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.web_assets import WebAssets
-from planner.days.api import router as days_router
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.vps_status import (
     VpsStatusSnapshot,
@@ -300,7 +299,6 @@ def create_app(
         conversation_history_router,
         projects_router,
         sprints_router,
-        days_router,
         scheduled_tickets_router,
         notifications_router,
         feedback_router,

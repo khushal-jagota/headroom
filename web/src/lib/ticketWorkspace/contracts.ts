@@ -43,8 +43,6 @@ export interface WorkspaceTicket {
   deadline: string | null;
   project_id: string | null;
   project: string | null;
-  sprint_id: string | null;
-  effective_sprint_id: string | null;
   sprint_item_id: string | null;
   sprint_item_title: string | null;
   conversation_id: string | null;
