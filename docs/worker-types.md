@@ -267,7 +267,7 @@ _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 
 ## Skills and the Config page
 
-The owner can apply a reviewed skill batch with `POST /api/skills/apply`.
+The owner and Chief can apply a reviewed skill batch with `POST /api/skills/apply`.
 The CLI exposes it as `panels skill apply --input-json MANIFEST.json`.
 Each entry supplies a name, full source text, and the expected current SHA-256 hash.
 An explicit null hash requires an absent row. Every entry passes validation before any row changes.
@@ -275,7 +275,7 @@ All row changes share one transaction and the existing publication lock.
 File publication follows that transaction and reports the existing incomplete-save diagnostic.
 The same complete manifest can retry publication when all rows already match its exact targets.
 This operation preserves existing immutable versions and Worker bindings.
-The Chief and all agents receive a refusal from this owner-only operation.
+Worker, manager, and legacy supervisor actors receive a refusal without any row changes.
 
 
 Every managed skill's text is a row in `managed_skills`, and that row is the authority.
