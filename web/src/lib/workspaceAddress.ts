@@ -3,14 +3,17 @@ import {
   targetFromPreviewQuery,
   type ManagedFileTarget
 } from "./filePreview";
+import { isWorkspaceUtility, parseUtilityPath, type WorkspaceUtility } from "./utilityAddress";
 
 export type WorkspaceView = "tickets" | "items";
-export type WorkspaceUtility = "usage" | "settings" | "ideas" | "feedback";
+export type { WorkspaceUtility };
 
 export type WorkspaceSelection =
   | { kind: "none" }
   | { kind: "chief" }
-  | { kind: "utility"; utility: WorkspaceUtility }
+  // `path` is the screen's own position, the same path its standalone page uses. Empty
+  // means the screen's default, which is what a rail icon asks for.
+  | { kind: "utility"; utility: WorkspaceUtility; path: string[] }
   | { kind: "ticket"; id: string; openedFromItemId?: string }
   | { kind: "item"; id: string };
 
@@ -34,6 +37,7 @@ export type WorkspaceOpening = {
   markedTicketId: string | null;
   chiefMarked: boolean;
   markedUtility: WorkspaceUtility | null;
+  markedUtilityPath: string[];
 };
 
 function decodeSegment(segment: string): string {
@@ -58,9 +62,12 @@ function parseSelection(segments: string[]): WorkspaceSelection | null {
   if (segments[1] === "chief-of-staff" && segments.length === 2) {
     return { kind: "chief" };
   }
-  if (segments[1] === "utility" && segments.length === 3 &&
-      ["usage", "settings", "ideas", "feedback"].includes(segments[2])) {
-    return { kind: "utility", utility: segments[2] as WorkspaceUtility };
+  if (segments[1] === "utility" && segments.length >= 3 && isWorkspaceUtility(segments[2])) {
+    // Segments stay as they arrived. The screen's own parser decodes what it owns, and
+    // decoding here as well would differ from how its standalone page reads the path.
+    const path = segments.slice(3);
+    if (parseUtilityPath(segments[2], path) === null) return null;
+    return { kind: "utility", utility: segments[2], path };
   }
   if (segments[1] === "item" && segments[2]) {
     if (segments.length === 3) return { kind: "item", id: decodeSegment(segments[2]) };
@@ -111,7 +118,10 @@ export function workspaceAddress(
 function selectionPath(selection: WorkspaceSelection): string {
   if (selection.kind === "none") return "#/workspace";
   if (selection.kind === "chief") return "#/workspace/chief-of-staff";
-  if (selection.kind === "utility") return `#/workspace/utility/${selection.utility}`;
+  if (selection.kind === "utility") {
+    const base = `#/workspace/utility/${selection.utility}`;
+    return selection.path.length === 0 ? base : `${base}/${selection.path.join("/")}`;
+  }
   if (selection.kind === "item") {
     return `#/workspace/item/${encodeURIComponent(selection.id)}`;
   }
@@ -159,6 +169,7 @@ export function whatTheAddressOpens(address: WorkspaceAddress): WorkspaceOpening
     markedItemId: selection.kind === "item" ? selection.id : null,
     markedTicketId: selection.kind === "ticket" ? selection.id : null,
     chiefMarked: selection.kind === "chief",
-    markedUtility: selection.kind === "utility" ? selection.utility : null
+    markedUtility: selection.kind === "utility" ? selection.utility : null,
+    markedUtilityPath: selection.kind === "utility" ? selection.path : []
   };
 }

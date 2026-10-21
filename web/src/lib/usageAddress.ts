@@ -15,7 +15,3 @@ export function parseUsageSelection(segments: readonly string[]): UsageSelection
   }
   return null;
 }
-
-export function usageTabHref(tab: UsageTab): string {
-  return `#/backends/${tab}`;
-}

@@ -13,6 +13,7 @@
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import { saveSkillField } from "../lib/skills";
   import type { ConfigSelection } from "../lib/shellRouting";
+  import { prefixHref, type UtilityHref } from "../lib/utilityAddress";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -48,7 +49,8 @@
     }
   };
 
-  let { roleKind, roleId, baseHref = "#/settings/config" }: ConfigSelection & { baseHref?: string } = $props();
+  let { roleKind, roleId, href = prefixHref("#/settings/config") }:
+    ConfigSelection & { href?: UtilityHref } = $props();
   const stableRoleKind = untrack(() => roleKind);
   const stableRoleId = untrack(() => roleId || null);
 
@@ -203,7 +205,7 @@
             <div class="agents-destination-list">
               <a
                 class="agents-destination"
-                href={`${baseHref}/chief-of-staff`}
+                href={href(["chief-of-staff"])}
                 data-agent-destination
               >
                 <span class="agents-destination-copy">
@@ -216,7 +218,7 @@
               {#if supervisorSkill}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/sprint-item-supervisor`}
+                  href={href(["sprint-item-supervisor"])}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -230,7 +232,7 @@
               {#if sharedWorkerSkill}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/worker-skill`}
+                  href={href(["worker-skill"])}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -250,7 +252,7 @@
                 {@const manifest = indexedWorkerTypes.get(item.worker_type)}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/workers/${encodeURIComponent(item.worker_type)}`}
+                  href={href(["workers", encodeURIComponent(item.worker_type)])}
                   data-worker-destination
                 >
                   <span class="agents-destination-copy">
@@ -275,7 +277,7 @@
     </div>
   {:else if stableRoleKind === "agent"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
       <ResourceState shape="document"
         error={workers.error}
         loading={workers.isFetching}
@@ -317,7 +319,7 @@
     </div>
   {:else if stableRoleKind === "skill"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
       <ResourceState shape="document"
         error={skillsHome.error}
         loading={skillsHome.isFetching}
@@ -354,7 +356,7 @@
     </div>
   {:else}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
       <ResourceState shape="document"
         error={worker.error}
         loading={worker.isFetching}

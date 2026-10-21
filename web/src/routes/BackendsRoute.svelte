@@ -9,6 +9,7 @@
   import ConfigRoute from "./ConfigRoute.svelte";
   import type { ConfigSelection } from "../lib/shellRouting";
   import type { UsageTab } from "../lib/usageAddress";
+  import { nestedHref, prefixHref, type UtilityHref } from "../lib/utilityAddress";
   import { usageBackends } from "../components/usage/usageProviders";
   import { refreshRecordedUsage, type UsageDays, type UsageProvider, type UsageSummary } from "../lib/conversation/recordedUsageWire";
   import { timestampLabel } from "../components/usage/usagePresentation";
@@ -42,10 +43,11 @@
     type ConversationBackendKey
   } from "../lib/conversation/wire";
 
-  let { tab = "limits", roleKind = "index", roleId }: {
+  let { tab = "limits", roleKind = "index", roleId, href = prefixHref("#/backends") }: {
     tab?: UsageTab;
     roleKind?: ConfigSelection["roleKind"];
     roleId?: string;
+    href?: UtilityHref;
   } = $props();
   let metric = $derived(tab === "config" ? "limits" : tab);
   let days = $state<UsageDays>(1);
@@ -219,13 +221,13 @@
 </script>
 
 <section class="backends-page" data-screen="backends">
-  <UsageHeader {tab} {days} {providerKeys} {selectedProviders} busy={refreshing}
+  <UsageHeader {tab} {href} {days} {providerKeys} {selectedProviders} busy={refreshing}
     onDays={value => days = value}
     onProviders={value => providerSelection = value} onRefresh={() => void runRefresh()} />
 
   {#if tab === "config"}
     {#key `${roleKind}/${roleId ?? ""}`}
-      <ConfigRoute {roleKind} {roleId} baseHref="#/backends/config" />
+      <ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />
     {/key}
   {:else}
   {#if nativeRefreshError}<p class="error" role="alert">Local usage: {nativeRefreshError}</p>{/if}

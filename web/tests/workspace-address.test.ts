@@ -5,16 +5,53 @@ describe("workspace utility addresses", () => {
   it.each(["usage", "settings", "ideas", "feedback"] as const)(
     "round trips %s as a selected workspace utility",
     (utility) => {
-      const href = workspaceAddress({ kind: "utility", utility });
+      const href = workspaceAddress({ kind: "utility", utility, path: [] });
       const address = parseWorkspaceAddress(href);
-      expect(address?.selection).toEqual({ kind: "utility", utility });
+      expect(address?.selection).toEqual({ kind: "utility", utility, path: [] });
       expect(whatTheAddressOpens(address!).markedUtility).toBe(utility);
+      expect(whatTheAddressOpens(address!).markedUtilityPath).toEqual([]);
       expect(workspaceAddress(address!.selection, address!.view, address!.openFile)).toBe(href);
     }
   );
 
   it("keeps unsupported utility names out of the workspace selection", () => {
     expect(parseWorkspaceAddress("#/workspace/utility/unknown")).toBeNull();
+  });
+});
+
+describe("a position inside a utility the pane is showing", () => {
+  it.each([
+    ["#/workspace/utility/usage/tokens", "usage", ["tokens"]],
+    ["#/workspace/utility/usage/config/workers/coding", "usage", ["config", "workers", "coding"]],
+    ["#/workspace/utility/settings/scheduled-tasks", "settings", ["scheduled-tasks"]],
+    ["#/workspace/utility/settings/config/chief-of-staff", "settings", ["config", "chief-of-staff"]]
+  ] as const)("round trips %s, so a reload or a paste lands where the click did", (href, utility, path) => {
+    const address = parseWorkspaceAddress(href);
+    expect(address?.selection).toEqual({ kind: "utility", utility, path: [...path] });
+    expect(whatTheAddressOpens(address!).markedUtilityPath).toEqual([...path]);
+    expect(workspaceAddress(address!.selection, address!.view, address!.openFile)).toBe(href);
+  });
+
+  it("keeps the rail on the list the reader was using", () => {
+    const href = workspaceAddress(
+      { kind: "utility", utility: "usage", path: ["tokens"] },
+      "items"
+    );
+    expect(href).toBe("#/workspace/utility/usage/tokens?view=items");
+    const address = parseWorkspaceAddress(href);
+    expect(address?.view).toBe("items");
+    expect(whatTheAddressOpens(address!).markedUtilityPath).toEqual(["tokens"]);
+  });
+
+  it.each([
+    "#/workspace/utility/usage/unknown",
+    "#/workspace/utility/usage/tokens/detail",
+    "#/workspace/utility/settings/unknown",
+    "#/workspace/utility/settings/notifications/detail",
+    "#/workspace/utility/ideas/anything",
+    "#/workspace/utility/feedback/anything"
+  ])("refuses an address no screen has a position for: %s", (href) => {
+    expect(parseWorkspaceAddress(href)).toBeNull();
   });
 });
 
