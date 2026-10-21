@@ -33,7 +33,7 @@ textarea {
 .chat-attachments,
 .board-workspace-left,
 .ticket-doc,
-.sprint-item-doc {
+.manager-doc {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
@@ -1454,7 +1454,7 @@ textarea {
 /* --- List row ------------------------------------------------------------ */
 
 /* THE LIST ROW — one row primitive (title left, metadata right, hover) for every
- * hand-rolled row: sprint tickets, backlog items, flat ideas, board cards. Base is a
+ * hand-rolled row: Worker tickets, backlog items, flat ideas, board cards. Base is a
  * flex baseline row with a flex-1 title and one title-color-on-hover rule; per-screen
  * variants (--ticket, --backlog, --idea, --board) set their own spacing/seams/tokens. */
 .list-row {
@@ -3114,7 +3114,7 @@ select {
   min-width: 0;
 }
 
-/* A box inside a box reads as noise, so a bucket nested in a Sprint Item drops the box
+/* A box inside a box reads as noise, so a bucket nested in a Manager drops the box
  * and steps its label under the Item title. Everything else about it is the bucket. */
 .disclosure--workspace-bucket--nested {
   padding: 0;
@@ -3139,7 +3139,7 @@ select {
   font-size: var(--type-sm);
 }
 
-/* THE SPRINT ITEM — the bucket's box, reused. It is not a Disclosure: selection opens
+/* THE MANAGER — the bucket's box, reused. It is not a Disclosure: selection opens
  * it, not a chevron. */
 .board-workspace-item {
   min-width: 0;
@@ -3219,7 +3219,7 @@ select {
 }
 
 /* One ticket row grammar — title, condition mark — shared by the
- * workspace rail and the Sprint Item detail sections (SprintTicketRow.svelte). */
+ * workspace rail and the Manager detail sections (WorkerRow.svelte). */
 .ticket-row {
   width: 100%;
   display: flex;
@@ -3737,7 +3737,7 @@ select {
   flex: 1;
 }
 
-.sprint-item-reading {
+.manager-reading {
   position: relative;
   display: flex;
   flex: 1;
@@ -3826,8 +3826,8 @@ select {
 }
 
 /* --- The conversation, the section under a document ------------------------ */
-/* One card, one class family, every host. The Ticket page, the Sprint Item page and the
- * Atlas supervisor panel all end in this same conversation, so it is keyed to its own
+/* One card, one class family, every host. The Ticket page, the Manager page and the
+ * Atlas manager panel all end in this same conversation, so it is keyed to its own
  * name and not to any one of theirs. A host is any element that ends its column with
  * `.conversation-layer`; a host that also wants the narrow-pane insets names itself a
  * `conversation-host` container. Where one host genuinely differs from another, the
@@ -3965,7 +3965,7 @@ select {
 
 /* A narrow pane gives the conversation its gutters back: 48px a side would spend a
  * quarter of the width on margin. The pane and not the window decides, because the
- * Workspace right pane is narrow on a window that is not — and the Sprint Item beside
+ * Workspace right pane is narrow on a window that is not — and the Manager beside
  * this Ticket in that same slot has always measured its pane. Two rulers for one inset
  * put a step between the two of them at every width where the pane and the window
  * disagree. On the full-screen route the pane is the window, so nothing moves there.
@@ -4107,7 +4107,7 @@ select {
 
 /* The recap is the title's quiet, editable second line. It has no surface of its own.
  *
- * It is also the voice the Sprint Item's brief and the Sprint's primary bet speak in, and
+ * It is also the voice the Manager's brief and the Sprint's primary bet speak in, and
  * ClampedText.svelte is what draws all three: the clamp below is its resting height and
  * the measurement it takes is the same number of lines. */
 .ticket-recap {
@@ -4205,7 +4205,7 @@ select {
   padding: var(--space-4) var(--page-gutter) var(--space-6);
 }
 
-/* One compact file index is shared by Ticket and Sprint Item reading columns. */
+/* One compact file index is shared by Ticket and Manager reading columns. */
 .artifact-strip {
   display: flex;
   align-items: baseline;
@@ -4302,14 +4302,14 @@ a.artifact-chip:hover,
 
 /* --- The page's one column ------------------------------------------------ */
 /* Header, body and conversation are the same column, so it is stated once here, after
- * all three, and they cannot drift apart again. The Sprint Item's two columns are the
+ * all three, and they cannot drift apart again. The Manager's two columns are the
  * same column as well: an Item and a Ticket open in the same slot, one after the other,
  * and a second formula for the same measure is what makes them step apart there.
  *
  * The column is measured against its pane and never the window, because both routes
  * also render in the Workspace right pane, which is around 500px narrower than the
  * window around it. That is what `cqi` reads and what `.ticket-screen` and
- * `.sprint-item-page` declare. `cqi` takes the nearest container either way, so each
+ * `.manager-page` declare. `cqi` takes the nearest container either way, so each
  * selector measures against its own pane and this stays one rule.
  *
  * On a pane wide enough for them the column is the pane less a 192px gutter each side.
@@ -4320,7 +4320,7 @@ a.artifact-chip:hover,
 .ticket-head,
 .ticket-col,
 .conversation-column,
-.sprint-item-column {
+.manager-column {
   width: min(
     100%,
     max(
@@ -4388,7 +4388,7 @@ a.artifact-chip:hover,
  * conversation. Opened remains an explicit full-height reading mode.
  *
  * The Ticket asks for this and no other host does, so it is written on the Ticket screen
- * rather than in the shared card: a Sprint Item's peeked share is 60% at every height. */
+ * rather than in the shared card: a Manager's peeked share is 60% at every height. */
 @media (max-width: 720px) and (max-height: 480px) {
   [data-screen="ticket"] .conversation-layer:has([data-conversation-state="peeked"]) {
     height: 52%;
@@ -4593,12 +4593,12 @@ a.artifact-chip:hover,
 
 /* In the workspace host the rail is the way back, so the link is for narrow screens
  * only — below 960px the rail is hidden and this is the only way out. */
-[data-screen="workspace"] .sprint-item-back {
+[data-screen="workspace"] .manager-back {
   display: none;
 }
 
 @media (max-width: 960px) {
-  [data-screen="workspace"] .sprint-item-back {
+  [data-screen="workspace"] .manager-back {
     display: inline-block;
     padding-top: var(--space-4);
     color: var(--text-faintest);
@@ -4607,15 +4607,15 @@ a.artifact-chip:hover,
     transition: color var(--motion-fast) var(--motion-ease);
   }
 
-  [data-screen="workspace"] .sprint-item-back:hover {
+  [data-screen="workspace"] .manager-back:hover {
     color: var(--text-default);
   }
 }
 
-/* --- Sprint Item workspace ----------------------------------------------- */
+/* --- Manager workspace ----------------------------------------------- */
 /* The page is the pane, so it owns the size container, exactly as .ticket-screen does.
  * Inline-size leaves the height chain from the shell to the page untouched. */
-.sprint-item-page {
+.manager-page {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -4627,10 +4627,10 @@ a.artifact-chip:hover,
   container-type: inline-size;
   /* Its own name for its own rules, and `conversation-host` for the one question every
    * host of the conversation card asks of its pane. See .ticket-screen. */
-  container-name: sprint-item-pane conversation-host;
+  container-name: manager-pane conversation-host;
 }
 
-.sprint-item-doc {
+.manager-doc {
   flex: 1;
   min-width: 0;
   max-width: 100%;
@@ -4638,7 +4638,7 @@ a.artifact-chip:hover,
   overflow: auto;
 }
 
-.sprint-item-column {
+.manager-column {
   padding-bottom: var(--space-6);
   padding-inline: var(--page-gutter);
 }
@@ -4651,21 +4651,21 @@ a.artifact-chip:hover,
  * asks about, and an unnamed one would quietly re-point at the first container anyone put
  * in between. It has to sit after the rule above: `@container` adds no specificity, so
  * source order is all that decides between them. */
-@container sprint-item-pane (min-width: 1152px) {
-  .sprint-item-column {
+@container manager-pane (min-width: 1152px) {
+  .manager-column {
     padding-inline: var(--space-7);
   }
 
-  .sprint-item-doc {
+  .manager-doc {
     scrollbar-gutter: stable both-edges;
   }
 }
 
-.sprint-workspace-head {
+.manager-workspace-head {
   padding-top: var(--space-4);
 }
 
-.sprint-workspace-identity {
+.manager-workspace-identity {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4676,7 +4676,7 @@ a.artifact-chip:hover,
   text-transform: uppercase;
 }
 
-.sprint-workspace-title {
+.manager-workspace-title {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -4689,14 +4689,14 @@ a.artifact-chip:hover,
   line-height: 1.26;
 }
 
-.sprint-workspace-title-mark {
+.manager-workspace-title-mark {
   flex: 0 0 auto;
 }
 
 
 /* The brief keeps the Ticket recap's voice and its clamp, and drops the 62ch measure,
    which is the one thing that made it narrower than the list under it. */
-.sprint-workspace-brief {
+.manager-workspace-brief {
   max-width: none;
   margin-top: var(--space-2);
   color: var(--text-faint);
@@ -4705,27 +4705,27 @@ a.artifact-chip:hover,
   line-height: 1.5;
 }
 
-.sprint-workspace-brief .quiet-line {
+.manager-workspace-brief .quiet-line {
   color: var(--text-faintest);
   font-style: italic;
 }
 
 /* The page is three blocks — head, work, index. One seam between them, stated once:
  * the same step above the rule as below it, and the same step at every seam. */
-.sprint-workspace-work,
-.sprint-workspace-section {
+.manager-workspace-work,
+.manager-workspace-section {
   margin-top: var(--space-5);
   padding-top: var(--space-5);
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-.sprint-workspace-section-heading {
+.manager-workspace-section-heading {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.sprint-workspace-section > summary {
+.manager-workspace-section > summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -4735,13 +4735,13 @@ a.artifact-chip:hover,
   cursor: pointer;
 }
 
-.sprint-workspace-section > summary::-webkit-details-marker {
+.manager-workspace-section > summary::-webkit-details-marker {
   display: none;
 }
 
 /* Section labels keep the small uppercase voice, so a section and a status are never
    mistaken for each other. */
-.sprint-workspace-section-label {
+.manager-workspace-section-label {
   flex: 1;
   font-family: var(--font-ui);
   font-size: var(--type-xs);
@@ -4754,7 +4754,7 @@ a.artifact-chip:hover,
 
 /* The same proximity rule as the rail's buckets: the row's own top padding binds the
  * body to the header above it, and the section carries no margin of its own. */
-.sprint-workspace-section-body {
+.manager-workspace-section-body {
   margin-top: 0;
 }
 
@@ -4762,11 +4762,11 @@ a.artifact-chip:hover,
    same object, so it speaks with the rail's voice: the serif, at the nested bucket's
    size. Colour carries the hierarchy instead of size — faint ink, greyer than the Ticket
    under it, and never louder than the block that contains it. */
-.sprint-workspace-status + .sprint-workspace-status {
+.manager-workspace-status + .manager-workspace-status {
   margin-top: var(--space-5);
 }
 
-.sprint-workspace-status > summary {
+.manager-workspace-status > summary {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -4792,7 +4792,7 @@ a.artifact-chip:hover,
  * the row's own padding; a block that opens with a group header gets nothing. Only the
  * first group is against the label — the rest are spaced by the group-to-group margin
  * above, which is correct. */
-.sprint-workspace-section-body > .sprint-workspace-status:first-child {
+.manager-workspace-section-body > .manager-workspace-status:first-child {
   margin-top: var(--space-2);
 }
 
@@ -4800,32 +4800,32 @@ a.artifact-chip:hover,
    shut group header, which does not, and the seam to the next block came out at two
    different values because of it. Scoped to the shut state: an open header's bottom pad
    would push its own rows away, and that is the one gap already right. */
-.sprint-workspace-status:not([open]) > summary {
+.manager-workspace-status:not([open]) > summary {
   padding-bottom: var(--space-2);
 }
 
-.sprint-workspace-status > summary::-webkit-details-marker {
+.manager-workspace-status > summary::-webkit-details-marker {
   display: none;
 }
 
-.sprint-workspace-status > summary:hover {
+.manager-workspace-status > summary:hover {
   color: var(--text-muted);
 }
 
-.sprint-workspace-status-label {
+.manager-workspace-status-label {
   flex: 1;
   min-width: 0;
 }
 
-.sprint-workspace-status-body {
+.manager-workspace-status-body {
   margin-top: 0;
 }
 
 /* The count and the chevron are one slot: a summary shows the count while it is shut
  * and the chevron while it is open. They therefore have to measure the same, or every
  * open and shut would move the rest of the page by the difference. */
-.sprint-workspace-count,
-.sprint-workspace-chevron {
+.manager-workspace-count,
+.manager-workspace-chevron {
   flex: none;
   min-width: var(--space-4);
   margin-left: auto;
@@ -4839,49 +4839,49 @@ a.artifact-chip:hover,
 
 /* A shut status or section still names and counts itself, but the count is a whisper —
    it must not read at the heading's size. */
-.sprint-workspace-status > summary > .sprint-workspace-count,
-.sprint-workspace-section > summary > .sprint-workspace-count {
+.manager-workspace-status > summary > .manager-workspace-count,
+.manager-workspace-section > summary > .manager-workspace-count {
   font-size: var(--type-sm);
   font-weight: 400;
   color: var(--text-faintest);
 }
 
-.sprint-workspace-chevron::before {
+.manager-workspace-chevron::before {
   content: "›";
   color: var(--text-faintest);
 }
 
-details[open] > summary > .sprint-workspace-count {
+details[open] > summary > .manager-workspace-count {
   display: none;
 }
 
-details[open] > summary > .sprint-workspace-chevron::before {
+details[open] > summary > .manager-workspace-chevron::before {
   content: "⌄";
 }
 
-details:not([open]) > summary > .sprint-workspace-chevron {
+details:not([open]) > summary > .manager-workspace-chevron {
   display: none;
 }
 
 /* The Ticket line. One size up from the shared row, and a shade whiter than the status
    above it, so the two levels never read as one. In the detail column the row pulls out
    to the column gutter. */
-.sprint-item-column .ticket-row {
+.manager-column .ticket-row {
   margin-inline: calc(var(--space-2) * -1);
   padding: var(--space-2);
   font-size: var(--type-md);
 }
 
 
-.sprint-workspace-empty {
+.manager-workspace-empty {
   padding-block: var(--space-2);
   color: var(--text-faintest);
   font-size: var(--type-sm);
 }
 
-/* The Sprint Item ends in the shared conversation card (.conversation-layer, set once on
+/* The Manager ends in the shared conversation card (.conversation-layer, set once on
  * the Ticket screen above) and takes its narrow-pane insets from its own pane, because
- * .sprint-item-page names itself a `conversation-host` container.
+ * .manager-page names itself a `conversation-host` container.
  *
  * This card once did two things the Ticket's did not: it kept a step of space between
  * head, transcript and well, and it refused to light the well's other three edges on
@@ -4890,16 +4890,16 @@ details:not([open]) > summary > .sprint-workspace-chevron {
  * pane closes the seam to nothing like the Ticket's, and focus is shown on the card
  * rather than on the well, so there was nothing left for either rule to say. */
 
-@container sprint-item-pane (max-width: 720px) {
-  .sprint-workspace-title {
+@container manager-pane (max-width: 720px) {
+  .manager-workspace-title {
     font-size: 24px;
   }
 
-  .sprint-item-column .ticket-row {
+  .manager-column .ticket-row {
     align-items: flex-start;
   }
 
-  .sprint-item-column .ticket-row-title {
+  .manager-column .ticket-row-title {
     display: -webkit-box;
     overflow: hidden;
     line-height: 1.35;
@@ -4934,7 +4934,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   }
 }
 
-@container sprint-item-pane (max-width: 720px) {
+@container manager-pane (max-width: 720px) {
   .artifact-strip {
     display: block;
   }

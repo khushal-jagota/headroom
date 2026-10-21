@@ -14,7 +14,7 @@ from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus, WakeSour
 def create_wake(
     conn: sqlite3.Connection,
     *,
-    sprint_item_id: str,
+    manager_id: str,
     ticket_id: str,
     source_kind: WakeSourceKind,
     source_revision: int,
@@ -24,13 +24,13 @@ def create_wake(
     source_conversation_id: str | None = None,
 ) -> bool:
     """Insert one wake for one persisted source identity. The caller owns the transaction."""
-    resolved_target = target or Principal(PrincipalKind.sprint_item, sprint_item_id)
+    resolved_target = target or Principal(PrincipalKind.manager, manager_id)
     inserted = conn.execute(
         "INSERT OR IGNORE INTO manager_wakes("
-        "sprint_item_id,ticket_id,source_kind,source_revision,summary,created_at,"
+        "manager_id,ticket_id,source_kind,source_revision,summary,created_at,"
         "target_kind,target_id,source_conversation_id) VALUES (?,?,?,?,?,?,?,?,?)",
         (
-            sprint_item_id,
+            manager_id,
             ticket_id,
             source_kind.value,
             source_revision,
@@ -47,7 +47,7 @@ def create_wake(
 def create_proposal_wake(
     conn: sqlite3.Connection,
     *,
-    sprint_item_id: str,
+    manager_id: str,
     ticket_id: str,
     proposal_revision: int,
     ticket_title: str,
@@ -57,7 +57,7 @@ def create_proposal_wake(
 ) -> bool:
     return create_wake(
         conn,
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
         ticket_id=ticket_id,
         source_kind=WakeSourceKind.proposal,
         source_revision=proposal_revision,
@@ -72,7 +72,7 @@ def create_proposal_wake(
 def create_worker_error_wake(
     conn: sqlite3.Connection,
     *,
-    sprint_item_id: str,
+    manager_id: str,
     ticket_id: str,
     claim_revision: int,
     ticket_title: str,
@@ -80,7 +80,7 @@ def create_worker_error_wake(
 ) -> bool:
     return create_wake(
         conn,
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
         ticket_id=ticket_id,
         source_kind=WakeSourceKind.worker_error,
         source_revision=claim_revision,
@@ -103,7 +103,7 @@ def create_turn_failure_wake(
     """Create the notice identified by the failed turn's durable event."""
     return create_wake(
         conn,
-        sprint_item_id=target.id if target.kind is PrincipalKind.sprint_item else "",
+        manager_id=target.id if target.kind is PrincipalKind.manager else "",
         ticket_id=ticket_id,
         source_kind=WakeSourceKind.turn_failure,
         source_revision=event_sequence,
@@ -118,7 +118,7 @@ def _batch_from_row(row: sqlite3.Row) -> WakeBatch:
     target = Principal(PrincipalKind(str(row["target_kind"])), str(row["target_id"]))
     return WakeBatch(
         id=int(row["id"]),
-        sprint_item_id=(target.id if target.kind is PrincipalKind.sprint_item else ""),
+        manager_id=(target.id if target.kind is PrincipalKind.manager else ""),
         target=target,
         sender_message_id=str(row["sender_message_id"]),
         message=str(row["message"]),
@@ -223,7 +223,7 @@ def claim_next_batch(
             return None
         target_kind = str(target["target_kind"])
         target_id = str(target["target_id"])
-        sprint_item_id = target_id if target_kind == "sprint_item" else ""
+        manager_id = target_id if target_kind == "manager" else ""
         rows = conn.execute(
             "SELECT w.id,w.summary FROM manager_wakes w "
             "WHERE w.target_kind=? AND w.target_id=? "
@@ -239,13 +239,13 @@ def claim_next_batch(
             "ORDER BY w.created_at,w.id",
             (target_kind, target_id, now - 5),
         ).fetchall()
-        sender_message_id = f"supervisor_delivery_wake_{uuid4().hex}"
+        sender_message_id = f"manager_delivery_wake_{uuid4().hex}"
         inserted = conn.execute(
             "INSERT INTO manager_wake_batches("
-            "sprint_item_id,sender_message_id,message,status,process_token,created_at,updated_at,"
+            "manager_id,sender_message_id,message,status,process_token,created_at,updated_at,"
             "target_kind,target_id) VALUES (?,?,?,'pending',?,?,?,?,?)",
             (
-                sprint_item_id,
+                manager_id,
                 sender_message_id,
                 _compose_message(rows),
                 process_token,

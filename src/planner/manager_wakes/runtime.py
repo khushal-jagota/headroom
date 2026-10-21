@@ -25,9 +25,9 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.manager_wakes import data
 from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus
+from planner.managers import data as managers_data
+from planner.managers import service as managers_service
 from planner.runtime import conversation_start
-from planner.sprints import data as sprints_data
-from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
@@ -100,26 +100,26 @@ async def deliver_batch(
     try:
         target = batch.target
         lifecycle = (
-            sprints_service.supervisor_lifecycle_lock(target.id)
-            if target.kind is PrincipalKind.sprint_item
+            managers_service.manager_lifecycle_lock(target.id)
+            if target.kind is PrincipalKind.manager
             else _no_lifecycle_lock()
         )
         async with lifecycle:
             try:
-                if target.kind is PrincipalKind.sprint_item:
-                    item = sprints_data.read_item(conn, target.id).item
-                    agent_key = item.supervisor_agent_key
-                    resolved = conversation_start.sprint_item_supervisor_resolve(item)
-                    required_sprint_item_id = target.id
+                if target.kind is PrincipalKind.manager:
+                    item = managers_data.read_manager(conn, target.id).item
+                    agent_key = item.manager_agent_key
+                    resolved = conversation_start.manager_resolve(item)
+                    required_manager_id = target.id
                 elif target.kind is PrincipalKind.chief:
                     agent_key = CHIEF_SETTINGS_KEY
                     resolved = conversation_start.agent_resolve(conn)
-                    required_sprint_item_id = None
+                    required_manager_id = None
                 else:
                     ticket = tickets_data.read_ticket(conn, target.id)
                     agent_key = None
                     resolved = conversation_start.worker_resolve(conn, ticket)
-                    required_sprint_item_id = None
+                    required_manager_id = None
             except PlannerError as error:
                 if error.code is ErrorCode.not_found:
                     data.close_undeliverable_batch(conn, batch.id, now=now())
@@ -178,7 +178,7 @@ async def deliver_batch(
                             mode=PromptDeliveryMode.queue,
                             sender_message_id=batch.sender_message_id,
                             reply_requested=False,
-                            required_sprint_item_id=required_sprint_item_id,
+                            required_manager_id=required_manager_id,
                         )
                 except BaseException:
                     data.record_batch_uncertain(

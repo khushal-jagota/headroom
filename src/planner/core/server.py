@@ -53,6 +53,9 @@ from planner.environments.vps_status import (
 from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
+from planner.ideas.api import router as ideas_router
+from planner.managers.api import legacy_router as legacy_managers_router
+from planner.managers.api import router as managers_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
@@ -67,7 +70,6 @@ from planner.skill_versions import (
     reconcile_managed_skill_versions,
     reconcile_provisional_worker_step_bindings,
 )
-from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -298,7 +300,9 @@ def create_app(
         artifact_catalog_router,
         conversation_history_router,
         projects_router,
-        sprints_router,
+        managers_router,
+        legacy_managers_router,
+        ideas_router,
         scheduled_tickets_router,
         notifications_router,
         feedback_router,

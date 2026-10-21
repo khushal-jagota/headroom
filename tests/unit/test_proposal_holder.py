@@ -16,7 +16,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.errors import ErrorCode, PlannerError
-from planner.sprints import data as sprints_data
+from planner.managers import data as managers_data
 from planner.tickets import data, revision_feedback, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
 
@@ -169,23 +169,25 @@ def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None
 # --- a move that leaves the holder below the Ticket -----------------------------
 
 
-def _outcome(conn: Connection, title: str, clock: Clock) -> str:
-    return sprints_data.create_item(conn, title=title, project_id="project_vylo", clock=clock).id
+def _manager(conn: Connection, title: str, clock: Clock) -> str:
+    return managers_data.create_manager(
+        conn, title=title, project_id="project_vylo", clock=clock
+    ).id
 
 
-def _park_under(conn: Connection, outcome_id: str, *, now: int = 10) -> Ticket:
-    """A Ticket under an Outcome, with a proposal parked for that same Outcome."""
-    holder = Principal(PrincipalKind.sprint_item, outcome_id)
+def _park_under(conn: Connection, manager_id: str, *, now: int = 10) -> Ticket:
+    """A Ticket under a Manager, with a proposal parked for that same Manager."""
+    holder = Principal(PrincipalKind.manager, manager_id)
     ticket = data.create_ticket(
         conn,
-        title="Addressed to its Outcome",
+        title="Addressed to its Manager",
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Agreed kickoff",
         stated_ceiling="needs_success_condition",
-        sprint_item_id=outcome_id,
+        manager_id=manager_id,
         stated_holder=holder,
     )
     return data.file_current_proposal(
@@ -201,8 +203,8 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     tmp_db: Connection, fake_clock: Clock
 ) -> None:
     """The whole complaint, end to end: parked, moved, and nobody coming."""
-    left = _outcome(tmp_db, "Inbox triage", fake_clock)
-    joined = _outcome(tmp_db, "Sprint hygiene", fake_clock)
+    left = _manager(tmp_db, "Inbox triage", fake_clock)
+    joined = _manager(tmp_db, "Sprint hygiene", fake_clock)
     ticket = _park_under(tmp_db, left)
     assert views.review_view(tmp_db)["items"] == []
 
@@ -233,7 +235,7 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     data.edit_ticket(
         tmp_db,
         ticket.id,
-        edit=TicketEdit(sprint_item_id=joined),
+        edit=TicketEdit(manager_id=joined),
         title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=30,

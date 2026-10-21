@@ -28,7 +28,7 @@ def _principal(raw: object) -> Principal:
     if not isinstance(raw_kind, str):
         raise PlannerError(
             ErrorCode.validation,
-            "recipient kind must be owner, chief, sprint_item, or ticket",
+            "recipient kind must be owner, chief, manager, or ticket",
             {"kind": raw_kind},
         )
     try:
@@ -36,7 +36,7 @@ def _principal(raw: object) -> Principal:
     except ValueError as exc:
         raise PlannerError(
             ErrorCode.validation,
-            "recipient kind must be owner, chief, sprint_item, or ticket",
+            "recipient kind must be owner, chief, manager, or ticket",
             {"kind": raw_kind},
         ) from exc
     raw_id = raw.get("id")
@@ -113,7 +113,7 @@ async def request_recap(
     clock: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    """Ask one Ticket or orchestrator for a fresh recap.
+    """Ask one Ticket or manager for a fresh recap.
 
     Only the owner asks. An agent that wants another agent's recap is sending an ordinary
     message, and Send Message is already that door.

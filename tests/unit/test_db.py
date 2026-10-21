@@ -195,8 +195,6 @@ def test_current_cutover_refuses_ordinary_only_historical_fixture_without_mutati
     conn.close()
 
 
-
-
 def test_manager_wake_migration_backfills_current_unresolved_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -247,14 +245,6 @@ def test_manager_wake_migration_backfills_current_unresolved_sources(
         ("t_proposal", "proposal", 1),
     ]
     conn.close()
-
-
-
-
-
-
-
-
 
 
 # --- what a migration can rely on ---------------------------------------------------------
@@ -953,8 +943,11 @@ def _database_before_calendar_removal(
     )
     personal["worker_type"] = "personal"
     personal["label"] = "Historical personal task"
-    conn.execute("INSERT INTO worker_types(worker_type,position,definition_json,updated_at) "
-        "VALUES('personal',99,?,1)", (json.dumps(personal),))
+    conn.execute(
+        "INSERT INTO worker_types(worker_type,position,definition_json,updated_at) "
+        "VALUES('personal',99,?,1)",
+        (json.dumps(personal),),
+    )
     conn.execute(
         "INSERT INTO sprint_items(id,title,goal,recap,project_id,supervisor_backend,"
         "supervisor_model,created_at,updated_at) "
@@ -1181,4 +1174,182 @@ def test_calendar_removal_refuses_invalid_receipt_without_changes(
     with pytest.raises(RuntimeError, match="invalid receipt target"):
         create_schema(conn)
     assert list(conn.iterdump()) == before
+    conn.close()
+
+
+def _database_before_manager_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> sqlite3.Connection:
+    """Reuse the occupied calendar-removal fixture at the exact rename boundary."""
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    conn, _ = _database_before_calendar_removal(tmp_path, monkeypatch)
+    create_schema(conn)
+    monkeypatch.setattr(db_module, "MIGRATIONS_DIRECTORY", shipped)
+    identity = '[ ["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", "si_kept"] ]'
+    conn.execute(
+        "UPDATE conversations SET identity_environment_variables=? "
+        "WHERE conversation_id='kept-conversation'",
+        (identity,),
+    )
+    conn.execute(
+        "INSERT INTO manager_wakes(id,sprint_item_id,ticket_id,source_kind,source_revision,"
+        "summary,created_at,target_kind,target_id) VALUES(41,'si_kept','t_item',"
+        "'proposal',7,'Keep sprint item text',3,'sprint_item','si_kept')"
+    )
+    conn.execute(
+        "INSERT INTO manager_wake_batches(id,sprint_item_id,sender_message_id,message,status,"
+        "conversation_id,created_at,updated_at,target_kind,target_id) VALUES(51,'si_kept',"
+        "'supervisor_delivery_kept','Keep authored message','uncertain','kept-conversation',"
+        "3,4,'sprint_item','si_kept')"
+    )
+    conn.execute("INSERT INTO manager_wake_batch_members VALUES(51,41)")
+    # A deleted sequence maximum is still an issued identity and must not be reused.
+    conn.execute("UPDATE sqlite_sequence SET seq=80 WHERE name='manager_wake_batches'")
+    conn.commit()
+    return conn
+
+
+def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    ticket_columns = (
+        "id,conversation_id,field_values,field_approvals,pending_proposal,"
+        "pending_proposal_revision,worker_step_claim,worker_step_claim_revision,locale,is_backlogged"
+    )
+    ticket = tuple(
+        conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone()
+    )
+    unchanged_tables = (
+        "agents",
+        "conversations",
+        "ticket_conversations",
+        "ticket_blocks",
+        "scheduled_ticket_occurrences",
+        "manager_wake_batch_members",
+        "managed_skill_versions",
+    )
+    unchanged = {
+        table: [tuple(row) for row in conn.execute(f'SELECT * FROM "{table}"')]
+        for table in unchanged_tables
+    }
+    create_schema(conn)
+    assert _revision(conn) == "rename_managers"
+    assert (
+        tuple(conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone())
+        == ticket
+    )
+    for table, expected in unchanged.items():
+        assert [tuple(row) for row in conn.execute(f'SELECT * FROM "{table}"')] == expected
+    assert tuple(
+        conn.execute("SELECT manager_id,manager_kind FROM tickets WHERE id='t_item'").fetchone()
+    ) == ("si_kept", "manager")
+    assert tuple(
+        conn.execute(
+            "SELECT manager_id,target_kind,target_id,summary FROM manager_wakes WHERE id=41"
+        ).fetchone()
+    ) == ("si_kept", "manager", "si_kept", "Keep sprint item text")
+    assert tuple(
+        conn.execute(
+            "SELECT manager_id,target_kind,status,sender_message_id,message "
+            "FROM manager_wake_batches "
+            "WHERE id=51"
+        ).fetchone()
+    ) == (
+        "si_kept",
+        "manager",
+        "uncertain",
+        "supervisor_delivery_kept",
+        "Keep authored message",
+    )
+    assert (
+        conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name='manager_wake_batches'"
+        ).fetchone()[0]
+        == 80
+    )
+    assert tuple(
+        conn.execute(
+            "SELECT owner_kind,owner_id FROM conversation_history_catalog "
+            "WHERE conversation_id='kept-conversation' AND owner_kind='manager'"
+        ).fetchone()
+    ) == ("manager", "si_kept")
+    projected = json.loads(
+        conn.execute(
+            "SELECT value FROM navigation_records WHERE kind='manager' AND id='si_kept'"
+        ).fetchone()[0]
+    )
+    assert projected["conversation_id"] == "kept-conversation"
+    assert projected["recap"] == "Keep recap"
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    for sql in (
+        "UPDATE tickets SET manager_kind='sprint_item' WHERE id='t_item'",
+        "UPDATE tickets SET manager_kind='chief' WHERE id='t_item'",
+        "UPDATE manager_wakes SET target_kind='sprint_item' WHERE id=41",
+        "UPDATE scheduled_ticket_schedules SET manager_kind='chief' WHERE id='assigned'",
+        "UPDATE notification_preferences SET subject_key='sprint_item_supervisors'",
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(sql)
+    conn.rollback()
+    before = _all_table_rows(conn)
+    create_schema(conn)
+    assert _all_table_rows(conn) == before
+    conn.close()
+
+
+def test_manager_rename_rolls_back_tables_rows_and_projections_after_a_late_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    before = list(conn.iterdump())
+    from planner.navigation import data as navigation
+
+    def fail_rebuild(connection: sqlite3.Connection) -> None:
+        assert connection.execute("SELECT id FROM managers").fetchone() is not None
+        raise RuntimeError("injected failure after Manager table rebuilds")
+
+    monkeypatch.setattr(navigation, "rebuild", fail_rebuild)
+    with pytest.raises(RuntimeError, match="injected failure after Manager table rebuilds"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
+    assert _revision(conn) == "remove_calendar_records"
+    conn.close()
+
+
+def test_manager_rename_refuses_conflicting_issued_agent_identities_before_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    conn.execute("INSERT INTO agents VALUES('manager_si_kept','different-conversation')")
+    conn.commit()
+    before = list(conn.iterdump())
+    with pytest.raises(RuntimeError, match="conflicting conversation identities"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
+    conn.close()
+
+
+def test_manager_rename_preserves_consumed_ids_when_wake_tables_are_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    conn.execute("DELETE FROM manager_wake_batch_members")
+    conn.execute("DELETE FROM manager_wake_batches")
+    conn.execute("DELETE FROM manager_wakes")
+    conn.commit()
+    create_schema(conn)
+    wake = conn.execute(
+        "INSERT INTO manager_wakes(manager_id,ticket_id,source_kind,source_revision,"
+        "summary,created_at,target_kind,target_id) VALUES('si_kept','t_item','proposal',8,"
+        "'New wake',5,'manager','si_kept')"
+    )
+    batch = conn.execute(
+        "INSERT INTO manager_wake_batches(manager_id,sender_message_id,message,status,"
+        "created_at,updated_at,target_kind,target_id) VALUES('si_kept','manager_delivery_new',"
+        "'New message','pending',5,5,'manager','si_kept')"
+    )
+    assert wake.lastrowid == 42
+    assert batch.lastrowid == 81
+    conn.rollback()
     conn.close()

@@ -55,8 +55,8 @@
     onCompleteGate?: (raw: string) => Promise<unknown>;
   } = $props();
 
-  let approvalLabel = $derived(approval?.method === "explicit_accept" && approval.principal?.kind === "sprint_item"
-    ? "Approved by Orchestrator"
+  let approvalLabel = $derived(approval?.method === "explicit_accept" && approval.principal?.kind === "manager"
+    ? "Approved by Manager"
     : approval?.display_label);
   let reviewVariant = $derived(variant === "review");
   let fieldLabel = $derived(fieldLabelFor(lifecycle, name));

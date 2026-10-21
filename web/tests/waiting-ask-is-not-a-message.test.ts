@@ -67,7 +67,7 @@ describe("a worker waiting on an answer", () => {
     ]);
   });
 
-  it("is not called a message on the Sprint Item page", () => {
+  it("is not called a message on the Manager page", () => {
     expect(workItemTicketGroups([{ ...quiet, awaiting_answer: true }])[0].label).toBe("Needs your answer");
   });
 

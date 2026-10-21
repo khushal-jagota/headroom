@@ -13,7 +13,7 @@ from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationStore
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
-from planner.sprints import data as sprints_data
+from planner.managers import data as managers_data
 from planner.tickets import data as tickets_data
 from planner.tickets.api import add_conversation_row_signals
 from planner.tickets.contracts import TITLE_MAX_CHARS, PendingTicketProposal
@@ -41,7 +41,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     conn = connect(str(db_path))
     create_schema(conn)
     seed_test_model_catalogue(conn)
-    item = sprints_data.create_item(
+    item = managers_data.create_manager(
         conn, title="Complete approval queue", project_id="project_vylo", clock=RealClock()
     )
     rows = [
@@ -52,7 +52,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
-            sprint_item_id=item.id,
+            manager_id=item.id,
         )
         for title, worker_type in (
             ("On Today", "coding"),
@@ -94,7 +94,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     )
     conn.execute(
         "UPDATE agents SET conversation_id = 'c_quiet_supervisor' WHERE agent_key = ?",
-        (item.supervisor_agent_key,),
+        (item.manager_agent_key,),
     )
     conn.commit()
     board = board_view(conn)
@@ -113,7 +113,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     assert {card["id"] for column in board["columns"] for card in column["cards"]} == {
         row.id for row in rows
     }
-    [item_row] = board["sprint_items"]
+    [item_row] = board["managers"]
     assert item_row["title"] == "Complete approval queue"
     assert "priority" not in item_row
     children = {row["id"]: row for row in item_row["tickets"]}
@@ -127,7 +127,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     assert owner_approval["ceiling_holder"] == {"kind": "owner", "id": "owner"}
     assert owner_approval["worker_type"] == "coding"
     assert owner_approval["blocked"] is False
-    assert owner_approval["sprint_item_id"] == item.id
+    assert owner_approval["manager_id"] == item.id
     feedback = children[rows[2].id]
     assert feedback["assigned"] is True
     assert feedback["awaiting_approval"] is False

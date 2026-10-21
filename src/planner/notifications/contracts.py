@@ -8,7 +8,7 @@ from typing import Final
 from planner.core.contracts import Principal, PrincipalKind
 
 TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
-SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY: Final = "sprint_item_supervisors"
+MANAGER_NOTIFICATION_SUBJECT_KEY: Final = "managers"
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +63,7 @@ NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
     item.id: item for item in NOTIFICATION_TYPES
 }
 
-# What each subject offers. A Sprint Item conversation offers one switch: a failed
+# What each subject offers. A Manager conversation offers one switch: a failed
 # turn. Nothing it does reaches the user by itself, and the user is present for the
 # turns it takes, because a message of theirs is the only thing that starts one.
 NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
@@ -86,9 +86,9 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         ("awaiting_reply", "awaiting_answer", "errored"),
     ),
     NotificationSubject(
-        SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
-        "Sprint Item supervisors",
-        PrincipalKind.sprint_item,
+        MANAGER_NOTIFICATION_SUBJECT_KEY,
+        "Managers",
+        PrincipalKind.manager,
         ("awaiting_reply", "awaiting_answer", "errored"),
     ),
 )

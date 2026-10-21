@@ -5,7 +5,7 @@ import {
 } from "./filePreview";
 import { isWorkspaceUtility, parseUtilityPath, type WorkspaceUtility } from "./utilityAddress";
 
-export type WorkspaceView = "tickets" | "items";
+export type WorkspaceView = "tickets" | "managers";
 export type { WorkspaceUtility };
 
 export type WorkspaceSelection =
@@ -14,8 +14,8 @@ export type WorkspaceSelection =
   // `path` is the screen's own position, the same path its standalone page uses. Empty
   // means the screen's default, which is what a rail icon asks for.
   | { kind: "utility"; utility: WorkspaceUtility; path: string[] }
-  | { kind: "ticket"; id: string; openedFromItemId?: string }
-  | { kind: "item"; id: string };
+  | { kind: "ticket"; id: string; openedFromManagerId?: string }
+  | { kind: "manager"; id: string };
 
 // The whole address: what the pane shows, which list the rail shows, and the artifact a
 // Ticket has open. Nothing else decides any of them.
@@ -31,9 +31,9 @@ export type WorkspaceAddress = {
 export type WorkspaceOpening = {
   view: WorkspaceView;
   // The Item drawn open. A Ticket opened from inside an Item keeps its Item open.
-  openItemId: string | null;
+  openManagerId: string | null;
   // Exactly one row carries the selected mark, and it is what the pane shows.
-  markedItemId: string | null;
+  markedManagerId: string | null;
   markedTicketId: string | null;
   chiefMarked: boolean;
   markedUtility: WorkspaceUtility | null;
@@ -49,12 +49,12 @@ function decodeSegment(segment: string): string {
 }
 
 // The empty Workspace and a Ticket that names no Item belong to Tickets. Selections
-// with Item context belong to Sprint Items. An address only carries `?view=` when the
+// with Item context belong to Managers. An address only carries `?view=` when the
 // reader asked for the other one.
 export function impliedWorkspaceView(selection: WorkspaceSelection): WorkspaceView {
   if (selection.kind === "none" || selection.kind === "utility") return "tickets";
-  if (selection.kind === "ticket" && !selection.openedFromItemId) return "tickets";
-  return "items";
+  if (selection.kind === "ticket" && !selection.openedFromManagerId) return "tickets";
+  return "managers";
 }
 
 function parseSelection(segments: string[]): WorkspaceSelection | null {
@@ -69,18 +69,18 @@ function parseSelection(segments: string[]): WorkspaceSelection | null {
     if (parseUtilityPath(segments[2], path) === null) return null;
     return { kind: "utility", utility: segments[2], path };
   }
-  if (segments[1] === "item" && segments[2]) {
-    if (segments.length === 3) return { kind: "item", id: decodeSegment(segments[2]) };
+  if (["manager", "item"].includes(segments[1]) && segments[2]) {
+    if (segments.length === 3) return { kind: "manager", id: decodeSegment(segments[2]) };
     if (segments.length === 4) {
       return {
         kind: "ticket",
         id: decodeSegment(segments[3]),
-        openedFromItemId: decodeSegment(segments[2])
+        openedFromManagerId: decodeSegment(segments[2])
       };
     }
     return null;
   }
-  if (segments[1] === "item") return null;
+  if (["manager", "item"].includes(segments[1])) return null;
   if (segments.length === 2) {
     return { kind: "ticket", id: decodeSegment(segments[1]) };
   }
@@ -98,7 +98,7 @@ export function parseWorkspaceAddress(hash: string): WorkspaceAddress | null {
   if (selection === null) return null;
   const params = new URLSearchParams(query);
   const asked = params.get("view");
-  const view = asked === "tickets" || asked === "items" ? asked : null;
+  const view = asked === "items" ? "managers" : asked === "tickets" || asked === "managers" ? asked : null;
   const openFile = selection.kind === "ticket" ? targetFromPreviewQuery(params) : null;
   return { selection, view: view ?? impliedWorkspaceView(selection), openFile };
 }
@@ -122,51 +122,51 @@ function selectionPath(selection: WorkspaceSelection): string {
     const base = `#/workspace/utility/${selection.utility}`;
     return selection.path.length === 0 ? base : `${base}/${selection.path.join("/")}`;
   }
-  if (selection.kind === "item") {
-    return `#/workspace/item/${encodeURIComponent(selection.id)}`;
+  if (selection.kind === "manager") {
+    return `#/workspace/manager/${encodeURIComponent(selection.id)}`;
   }
-  if (selection.openedFromItemId) {
-    return `#/workspace/item/${encodeURIComponent(selection.openedFromItemId)}/${encodeURIComponent(selection.id)}`;
+  if (selection.openedFromManagerId) {
+    return `#/workspace/manager/${encodeURIComponent(selection.openedFromManagerId)}/${encodeURIComponent(selection.id)}`;
   }
   return `#/workspace/${encodeURIComponent(selection.id)}`;
 }
 
-/** The address this one should have been, when its bare id names an orchestrator.
+/** The address this one should have been, when its bare id names a manager.
  *
  * The grammar cannot tell one bare id from another, so `#/workspace/<id>` is read as a
- * Ticket. A link of that shape pointing at an orchestrator therefore opened the Ticket
+ * Ticket. A link of that shape pointing at a manager therefore opened the Ticket
  * page and said "ticket not found", while four of the six requests behind it asked Ticket
- * questions about an orchestrator id. Each answered 404 in 96 bytes and was retried a
+ * questions about a manager id. Each answered 404 in 96 bytes and was retried a
  * second later, and then again on every later reconciliation, because a 404 carries no
  * revision and so always looks like it changed.
  *
- * The browser can tell, because the navigation publication holds that orchestrator. So
+ * The browser can tell, because the navigation publication holds that manager. So
  * this is answered where the answer is known rather than guessed at in the grammar.
  *
  * The corrected address does not carry the original's view. That view was implied by the
  * misreading - a bare Ticket implies the Tickets list - so keeping it would pin the
- * orchestrator's own address to the wrong list. Returns null when there is nothing to
+ * manager's own address to the wrong list. Returns null when there is nothing to
  * correct, which is every ordinary address.
  */
 export function correctedWorkspaceAddress(
   address: WorkspaceAddress,
-  namesAnOrchestrator: (id: string) => boolean
+  namesAnManager: (id: string) => boolean
 ): string | null {
   const selection = address.selection;
   // An id that arrived as item/<item>/<ticket> is already unambiguous.
-  if (selection.kind !== "ticket" || selection.openedFromItemId) return null;
-  if (!namesAnOrchestrator(selection.id)) return null;
-  return workspaceAddress({ kind: "item", id: selection.id });
+  if (selection.kind !== "ticket" || selection.openedFromManagerId) return null;
+  if (!namesAnManager(selection.id)) return null;
+  return workspaceAddress({ kind: "manager", id: selection.id });
 }
 
 export function whatTheAddressOpens(address: WorkspaceAddress): WorkspaceOpening {
   const selection = address.selection;
-  const openedFromItemId =
-    selection.kind === "ticket" ? selection.openedFromItemId ?? null : null;
+  const openedFromManagerId =
+    selection.kind === "ticket" ? selection.openedFromManagerId ?? null : null;
   return {
     view: address.view,
-    openItemId: selection.kind === "item" ? selection.id : openedFromItemId,
-    markedItemId: selection.kind === "item" ? selection.id : null,
+    openManagerId: selection.kind === "manager" ? selection.id : openedFromManagerId,
+    markedManagerId: selection.kind === "manager" ? selection.id : null,
     markedTicketId: selection.kind === "ticket" ? selection.id : null,
     chiefMarked: selection.kind === "chief",
     markedUtility: selection.kind === "utility" ? selection.utility : null,

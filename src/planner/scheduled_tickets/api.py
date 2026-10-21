@@ -8,6 +8,7 @@ from fastapi import APIRouter
 
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
+from planner.managers.assignment import normalize_assignment
 from planner.projects import data as projects_data
 from planner.scheduled_tickets import actions, data, views
 from planner.scheduled_tickets.contracts import (
@@ -41,7 +42,7 @@ _CREATE_KEYS = frozenset(
         "deadline",
         "project",
         "project_id",
-        "orchestrator",
+        "manager",
         "employee_backend",
         "employee_launch_model",
         "blocked_by_ticket_ids",
@@ -85,31 +86,31 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         project_id=body_opt_str(raw, "project_id"),
         project_name=body_opt_str(raw, "project"),
     )
-    sprint_item_id = None
-    orchestrator = raw.get("orchestrator")
-    if orchestrator is not None:
-        if not isinstance(orchestrator, dict) or set(orchestrator) != {"kind", "id"}:
-            raise PlannerError(ErrorCode.validation, "invalid orchestrator")
-        kind = orchestrator["kind"]
-        if kind == "chief" and orchestrator["id"] == "chief":
-            sprint_item_id = None
-        elif kind == "sprint_item" and isinstance(orchestrator["id"], str):
-            sprint_item_id = orchestrator["id"]
+    manager_id = None
+    manager = raw.get("manager")
+    if manager is not None:
+        if not isinstance(manager, dict) or set(manager) != {"kind", "id"}:
+            raise PlannerError(ErrorCode.validation, "invalid manager")
+        kind = manager["kind"]
+        if kind == "chief" and manager["id"] == "chief":
+            manager_id = None
+        elif kind == "manager" and isinstance(manager["id"], str):
+            manager_id = manager["id"]
         else:
-            raise PlannerError(ErrorCode.validation, "invalid orchestrator")
+            raise PlannerError(ErrorCode.validation, "invalid manager")
     else:
-        kind = "sprint_item" if sprint_item_id is not None else "chief"
+        kind = "manager" if manager_id is not None else "chief"
     return ScheduledTicketTemplate(
         locale=(
             parse_enum(TicketLocale, body_str(raw, "locale"), "locale") if "locale" in raw else None
         ),
-        orchestrator_kind=kind,
+        manager_kind=kind,
         title=body_str(raw, "title"),
         worker_type=worker_type,
         kickoff_note=body_str(raw, "kickoff_note"),
         deadline=body_opt_str(raw, "deadline"),
         project_id=None if project is None else project.id,
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
         employee_backend=body_opt_str(raw, "employee_backend"),
         employee_launch_model=body_opt_str(raw, "employee_launch_model"),
         blocked_by_ticket_ids=tuple(body_str_list(raw, "blocked_by_ticket_ids")),
@@ -120,6 +121,7 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
 async def create_schedule(
     raw: dict[str, Any], conn: DbConn, clk: Clk, model_resolver: ModelResolver
 ) -> JsonDict:
+    raw = normalize_assignment(raw)
     _reject_unknown(raw, _CREATE_KEYS)
     template = _template_from_create(raw, conn)
     await warm_ticket_creation_model(
@@ -161,6 +163,7 @@ async def get_schedule(schedule_id: str, conn: DbConn) -> JsonDict:
 async def patch_schedule(
     schedule_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk, model_resolver: ModelResolver
 ) -> JsonDict:
+    raw = normalize_assignment(raw)
     _reject_unknown(raw, _PATCH_KEYS)
     if not raw:
         raise PlannerError(ErrorCode.validation, "no schedule fields to update", {})
@@ -187,13 +190,13 @@ async def patch_schedule(
             changes[key] = body_opt_str(raw, key)
     if "blocked_by_ticket_ids" in raw:
         changes["blocked_by_ticket_ids"] = tuple(body_str_list(raw, "blocked_by_ticket_ids"))
-    if "orchestrator" in raw:
+    if "manager" in raw:
         # Reuse the same parser without allowing a second assignment vocabulary.
         assignment = _template_from_create(
             {**views.schedule_json(data.read_schedule(conn, schedule_id)), **raw}, conn
         )
-        changes["orchestrator_kind"] = assignment.orchestrator_kind
-        changes["sprint_item_id"] = assignment.sprint_item_id
+        changes["manager_kind"] = assignment.manager_kind
+        changes["manager_id"] = assignment.manager_id
     if {"worker_type", "employee_backend", "employee_launch_model"} & changes.keys():
         existing = data.read_schedule(conn, schedule_id).template
         await warm_ticket_creation_model(

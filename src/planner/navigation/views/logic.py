@@ -42,7 +42,7 @@ def project(
 ) -> ViewRecord:
     value: dict[str, Any] = dict(record["value"])
     kind = record["kind"]
-    if settled_only and kind == "orchestrator" and value["settled"]:
+    if settled_only and kind == "manager" and value["settled"]:
         return cast(
             ViewRecord,
             {
@@ -63,7 +63,7 @@ def project(
                 "attention",
             )
         }
-    if kind in ("ticket", "orchestrator"):
+    if kind in ("ticket", "manager"):
         recap = str(value["recap"])
         size = len(recap.encode())
         value["recap_reference"] = None

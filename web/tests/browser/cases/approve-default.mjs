@@ -25,7 +25,7 @@ import {viewWindow} from '../src/lib/navigation/views/owner';
  const root=document.createElement('div');root.style.cssText='position:fixed;top:0;left:0;height:64px;width:200px;overflow-y:auto;background:white;z-index:99999';document.body.append(root);
  let start=0,moves=0,activations=0,admitted=!empty;const rowHeight=32;if(short)root.style.height='300px';
  const draw=()=>{root.replaceChildren(...Array.from({length:admitted?size:0},(_,i)=>{const row=document.createElement('div');row.dataset.scrollKey=String(start+i);row.style.height=rowHeight+'px';row.textContent=String(start+i);return row;}));};
- const view=()=>({window_id:'fixture',request:viewWindow('rail_parents',null,{limit:size,anchor:start?String(start):null}),members:Array.from({length:admitted?size:0},(_,i)=>({kind:'orchestrator' as const,id:String(start+i)})),total:180,previous:start?String(Math.max(0,start-size)):null,next:String(start+size),forward_overlap:size>1?String(start+Math.floor(size/2)):null,backward_overlap:start&&size>1?String(Math.max(0,start-Math.floor(size/2))):null});
+ const view=()=>({window_id:'fixture',request:viewWindow('rail_parents',null,{limit:size,anchor:start?String(start):null}),members:Array.from({length:admitted?size:0},(_,i)=>({kind:'manager' as const,id:String(start+i)})),total:180,previous:start?String(Math.max(0,start-size)):null,next:String(start+size),forward_overlap:size>1?String(start+Math.floor(size/2)):null,backward_overlap:start&&size>1?String(Math.max(0,start-Math.floor(size/2))):null});
  const options=()=>({window:view(),activate:()=>{if(!admitted){activations++;admitted=true;draw();action.update(options());}},selector:'[data-scroll-key]',key:(node:HTMLElement)=>node.dataset.scrollKey!,move:(next:string,direction:'before'|'after')=>{moves++;start=Number(next);draw();action.update(options());}});
  draw();const action=navigationScrollWindow(root,options());
  const paint=()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
@@ -57,7 +57,7 @@ import {viewWindow} from '../src/lib/navigation/views/owner';
   const previous=current.publication!;
   if(response.coverage.revision===previous.continuity.revision)return;
   const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
-  const frame:any={event:'patch',wire_version:3,projection_version:2,view_id:response.view_id,
+  const frame:any={event:'patch',wire_version:3,projection_version:3,view_id:response.view_id,
     scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
     coverage:response.coverage,previous_coverage:previous.continuity,authority:response.authority,
     content_version:response.content_version,previous_content_version:previous.view!.contentVersion,
@@ -105,7 +105,7 @@ import BoardRoute from '../src/routes/BoardRoute.svelte';
 provideNavigationApplication();
 client.setDefaultOptions({queries:{retry:false}});
 let address = $state<import('../src/lib/workspaceAddress').WorkspaceAddress>({selection:{kind:'ticket',id:'t_coding'},view:'tickets',openFile:null});
-(window as any).__workspaceAddressChange = () => { address = {...address,view:'items',openFile:null}; };
+(window as any).__workspaceAddressChange = () => { address = {...address,view:'managers',openFile:null}; };
 </script>
 <QueryClientProvider {client}><BoardRoute {address} /></QueryClientProvider>
 <style>:global(html),:global(body),:global(#app){height:100%;margin:0;overflow:hidden;}</style>`);

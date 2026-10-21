@@ -7,7 +7,7 @@ import secrets
 from typing import Final
 
 ID_PREFIXES: Final[dict[str, str]] = {
-    "sprint_item": "si",
+    "manager": "si",
     "ticket": "t",
     "schedule": "schedule",
     "idea": "idea",

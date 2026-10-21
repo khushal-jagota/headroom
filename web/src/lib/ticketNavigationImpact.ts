@@ -3,7 +3,7 @@ import { recordImpactTouches as impactHas } from './navigation/commandEvidence';
 import type { EffectiveNavigationView } from './navigation/knowledge';
 import type { TicketRecord } from './navigation/contracts';
 
-const sectionFields:readonly (keyof TicketRecord['value'])[]=['stage','gating_field','stage_ownership','terminal','ticket_status','ceiling','ceiling_holder','is_backlogged','blocked','proposal_field','proposal_created_at','proposal_revision','conversation_id','worker_step_claim_out','sprint_item_id'];
+const sectionFields:readonly (keyof TicketRecord['value'])[]=['stage','gating_field','stage_ownership','terminal','ticket_status','ceiling','ceiling_holder','is_backlogged','blocked','proposal_field','proposal_created_at','proposal_revision','conversation_id','worker_step_claim_out','manager_id'];
 export function ticketSectionImpact(impact:RecordImpact,record:TicketRecord | undefined):boolean {
   if(!record) return false;
   return impact.kind==='ticket' && impact.id===record.id && impactHas(impact,sectionFields)
@@ -11,8 +11,8 @@ export function ticketSectionImpact(impact:RecordImpact,record:TicketRecord | un
 }
 export function ticketMastheadImpact(impact:RecordImpact,record:TicketRecord | undefined,parentId:string | null,projectId:string | null):boolean {
   if(!record) return false;
-  return impact.kind==='ticket' && impact.id===record.id && impactHas(impact,['title','worker_type','conversation_id','sprint_item_id','project_id'])
-    || impact.kind==='orchestrator' && impact.id===parentId && impactHas(impact,['project_id'])
+  return impact.kind==='ticket' && impact.id===record.id && impactHas(impact,['title','worker_type','conversation_id','manager_id','project_id'])
+    || impact.kind==='manager' && impact.id===parentId && impactHas(impact,['project_id'])
     || impact.kind==='project' && impact.id===projectId && impactHas(impact,['name'])
     || impact.kind==='conversation' && impact.id===record.value.conversation_id && impactHas(impact,['attention']);
 }

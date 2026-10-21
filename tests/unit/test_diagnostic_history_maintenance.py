@@ -11,7 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from alembic.script import ScriptDirectory
 
 from planner.conversation.lifecycle_storage import (
     ConversationRuntimeAlreadyOwned,
@@ -202,20 +201,29 @@ def test_actual_migration_and_explicit_install_converge_preserving_ranges(
     archive: Path, explicit_first: bool, tmp_path: Path
 ) -> None:
     copied = tmp_path / "migration.db"
-    with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
-        source.backup(target)
+    # Build the real historical schema. A current database cannot safely receive
+    # a historical revision stamp after intervening structural migrations.
+    with db.schema_migration_transaction(str(copied)) as migration:
+        db.upgrade_schema_connection(migration, "open_work_group_index")
+    with sqlite3.connect(archive) as source, closing(connect(str(copied))) as target:
+        target.execute("BEGIN IMMEDIATE")
+        # These generic rows have the same columns at the historical boundary.
+        for table in ("conversations", "conversation_events"):
+            cursor = source.execute(f"SELECT * FROM {table}")
+            columns = [column[0] for column in cursor.description]
+            placeholders = ",".join("?" for _ in columns)
+            target.executemany(
+                f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",
+                cursor.fetchall(),
+            )
+        target.commit()
     archive = copied
-    # Recreate the exact previous additive schema. Both orders then use the real
-    # packaged migration through create_schema, rather than a future callback.
     with sqlite3.connect(archive) as conn:
-        conn.execute("DROP TABLE conversation_expired_ranges")
-        conn.execute("DROP INDEX conversation_view_rows_ordinary_turn")
-        conn.execute("UPDATE alembic_version SET version_num='open_work_group_index'")
         if explicit_first:
             maintenance.install_expiry_metadata(conn)
             conn.execute("INSERT INTO conversation_expired_ranges VALUES ('history',2,3,1,2,2)")
-    with closing(connect(str(archive))) as conn:
-        create_schema(conn)
+    with db.schema_migration_transaction(str(archive)) as migration:
+        db.upgrade_schema_connection(migration, "diagnostic_expiry_metadata")
     with sqlite3.connect(archive) as conn:
         definition = conn.execute(
             "SELECT sql FROM sqlite_master WHERE name='conversation_expired_ranges'"
@@ -253,9 +261,6 @@ def test_actual_migration_and_explicit_install_converge_preserving_ranges(
             ).fetchone()[0]
             == definition
         )
-    assert ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_heads() == [
-        "diagnostic_expiry_metadata"
-    ]
 
 
 @pytest.mark.parametrize("drift", ["table", "trigger"])
@@ -360,7 +365,7 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
                 "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Archive',1,1)"
             )
             conn.execute(
-                "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+                "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
                 "created_at,updated_at,settled) VALUES ('item','Settled','p','codex','test',1,1,1)"
             )
             conn.execute(

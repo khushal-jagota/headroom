@@ -133,8 +133,8 @@ describe("usage surfaces",()=>{
     expect(body).toMatch(/href="#\/backends\/limits"[^>]*aria-current="page"/);
     expect(body).toContain('aria-pressed="true"');
     // The same strip embedded in the Workspace pane addresses the pane, not the page.
-    const inPane=render(UsageHeader,{props:{tab:"limits",href:(segments:string[])=>`#/workspace/utility/usage/${segments.join("/")}?view=items`,days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
-    expect(inPane).toContain('href="#/workspace/utility/usage/cost?view=items"');
+    const inPane=render(UsageHeader,{props:{tab:"limits",href:(segments:string[])=>`#/workspace/utility/usage/${segments.join("/")}?view=managers`,days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    expect(inPane).toContain('href="#/workspace/utility/usage/cost?view=managers"');
     expect(inPane).not.toContain('href="#/backends');
   });
   it("keeps the Config tab active without usage-only controls or an external marker",()=>{

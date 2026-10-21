@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   feedbackLabel,
-  sprintItemHeading,
+  managerHeading,
   ticketFacts,
   ticketPageMark,
   workspaceHeading
@@ -17,7 +17,7 @@ describe("a worker that holds the claim but is between turns", () => {
 
   it("still reads as the agent's on every screen", () => {
     expect(workspaceHeading(held)).toBe("Agent");
-    expect(sprintItemHeading(held)).toBe("Agent");
+    expect(managerHeading(held)).toBe("Agent");
     expect(feedbackLabel(held)).toBe("Agent");
   });
 

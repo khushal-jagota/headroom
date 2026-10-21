@@ -121,18 +121,18 @@ def run(browser, urls):
     assert page.evaluate("location.hash") == "#/workspace/utility/usage/tokens"
 
     # Settings keeps the pane and the list the rail was showing.
-    page.goto(url + "#/workspace/utility/settings?view=items", wait_until="domcontentloaded")
+    page.goto(url + "#/workspace/utility/settings?view=managers", wait_until="domcontentloaded")
     expect(pane.locator("[data-settings]")).to_be_visible()
     # The back-arrow to Usage belonged to a page that reached Settings from Usage.
     assert pane.locator('a[href="#/backends"]').count() == 0
     pane.get_by_role("link", name="Scheduled tasks").click()
-    page.wait_for_function("location.hash === '#/workspace/utility/settings/scheduled-tasks?view=items'")
+    page.wait_for_function("location.hash === '#/workspace/utility/settings/scheduled-tasks?view=managers'")
     expect(rail).to_be_visible()
 
     # A row of the Config index is a link like any other, and it was never reported.
-    page.goto(url + "#/workspace/utility/settings?view=items", wait_until="domcontentloaded")
+    page.goto(url + "#/workspace/utility/settings?view=managers", wait_until="domcontentloaded")
     pane.locator('a[href*="/config/chief-of-staff"]').click()
-    page.wait_for_function("location.hash === '#/workspace/utility/settings/config/chief-of-staff?view=items'")
+    page.wait_for_function("location.hash === '#/workspace/utility/settings/config/chief-of-staff?view=managers'")
     expect(rail).to_be_visible()
 
     # The pane owns its scroll. The skeleton is gone by now, so nothing it styles is
@@ -167,6 +167,6 @@ def run(browser, urls):
     assert control['opacity'] < 1 and control['transform'] != 'none', control
 
     assert not errors, errors
-    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/items", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
+    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
     assert not unwanted, unwanted
     context.close()

@@ -28,7 +28,7 @@ class WakeBatchStatus(StrEnum):
 @dataclass(frozen=True, slots=True)
 class WakeBatch:
     id: int
-    sprint_item_id: str
+    manager_id: str
     target: Principal
     sender_message_id: str
     message: str

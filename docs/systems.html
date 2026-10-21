@@ -111,8 +111,8 @@ direct user ─────► user-owned Ticket gate                    change 
           <div class="body"><p>SQLite stores product, runtime, conversation, notification, schedule, and operational records. Domain writers commit transactions. Each commit announces that something changed. Mounted browser reads and Worker readiness then ask the record again. A commit stays quiet only where no screen is waiting for its rows: managed skill history, and the conversation rows an open conversation is the only reader of, which is handed them directly.</p><p class="paths"><code>src/planner/core/db.py</code> · <code>src/planner/core/migrations/</code> · <code>src/planner/core/change_signal.py</code></p></div>
         </details>
         <details>
-          <summary><span class="number">02</span><span><b>Planning domains</b><span>Orchestrators, Tickets, Ideas, and Projects.</span></span></summary>
-          <div class="body"><p>Each domain owns its contracts, rules, writers, views, and routes. Tickets name Chief or an ordinary orchestrator explicitly. Orchestrators preserve their Item identities, shared context, and supervisors. Day and date-range Sprint records and screens are removed.</p><p class="paths"><code>src/planner/sprints/</code> · <code>src/planner/tickets/</code> · <code>src/planner/projects/</code></p></div>
+          <summary><span class="number">02</span><span><b>Planning domains</b><span>Managers, Tickets, Ideas, and Projects.</span></span></summary>
+          <div class="body"><p>Each domain owns its contracts, rules, writers, views, and routes. Tickets name Chief or an ordinary Manager explicitly. Managers preserve their Item identities, shared context, and Managers. Day and date-range Sprint records and screens are removed.</p><p class="paths"><code>src/planner/managers/</code> · <code>src/planner/tickets/</code> · <code>src/planner/projects/</code></p></div>
         </details>
         <details>
           <summary><span class="number">03</span><span><b>Tickets, gates, and Worker types</b><span>Workflow shape, proposals, the ceiling, ownership, and control state.</span></span></summary>
@@ -120,7 +120,7 @@ direct user ─────► user-owned Ticket gate                    change 
         </details>
         <details>
           <summary><span class="number">04</span><span><b>Scheduled Ticket creation</b><span>Exact-minute Ticket supply with durable receipts.</span></span></summary>
-          <div class="body"><p>A due occurrence creates one ordinary Ticket or records suppression or failure. The loop does not backfill downtime. Scheduling ends at ordinary Ticket creation and explicit orchestrator assignment. The commit hands the Ticket to ordinary readiness.</p><p class="paths"><code>src/planner/scheduled_tickets/</code> · <a href="scheduled-tickets.md">scheduled-tickets.md</a></p></div>
+          <div class="body"><p>A due occurrence creates one ordinary Ticket or records suppression or failure. The loop does not backfill downtime. Scheduling ends at ordinary Ticket creation and explicit manager assignment. The commit hands the Ticket to ordinary readiness.</p><p class="paths"><code>src/planner/scheduled_tickets/</code> · <a href="scheduled-tickets.md">scheduled-tickets.md</a></p></div>
         </details>
         <details>
           <summary><span class="number">05</span><span><b>Worker orchestration</b><span>Decide, claim once, and send the Stage instruction.</span></span></summary>

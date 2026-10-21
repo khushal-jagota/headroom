@@ -55,13 +55,13 @@ _Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`, and
 
 ### 2. The work domains
 
-Tickets carry bounded work and an explicit assignment to Chief or an ordinary orchestrator.
-Orchestrators retain their stored Sprint Item identities, shared context, and supervisors.
-Ideas hold possibilities. Projects classify Tickets, orchestrators, and Ideas.
+Tickets carry bounded work and an explicit assignment to Chief or an ordinary Manager.
+Managers retain their stored Manager identities, shared context, and Managers.
+Ideas hold possibilities. Projects classify Tickets, managers, and Ideas.
 Backlog defers a Ticket. Feedback records notes and their handled Ticket history.
 
 Day records and date-range Sprints are removed, including their screens and placement.
-The Item package and aliases remain. They describe the retained orchestrator layer.
+The Item package and aliases remain. They describe the retained manager layer.
 
 Each domain owns its contracts, rules, writers, views, and HTTP routes.
 Cross-domain actions use those owners. Collection operations retain Item assignment and Ticket blockers.
@@ -73,10 +73,10 @@ DELETE /api/collections/{collection}/{container_id}/{member_id}
 
 Each collection keeps its own membership rules. Every operation uses the same caller authority.
 
-Read **Orchestrators** (`sprints.md`), **Backlog & Ideas** (`backlog-and-ideas.md`),
+Read **Managers** (`managers.md`), **Backlog & Ideas** (`backlog-and-ideas.md`),
 **Feedback** (`feedback.md`), and **Projects** (`projects.md`).
 
-_Code paths:_ `src/planner/membership/`, `src/planner/sprints/`,
+_Code paths:_ `src/planner/membership/`, `src/planner/managers/`,
 `src/planner/tickets/`, and `src/planner/projects/`.
 
 ### 3. Tickets, gates, and Worker types
@@ -99,13 +99,13 @@ awaits Khushal's reply, awaits his approval, awaits an agent's approval, is assi
 Khushal, and whether the agent is working, idle, or errored. A parked proposal is split
 by who holds the ceiling there, once, so no route decides whose approval "awaiting
 approval" means. Review contains today's owner-addressed proposals. A proposal routed to
-a Sprint Item manager creates a durable wake for that manager. Other non-owner holders
+a Manager creates a durable wake for that manager. Other non-owner holders
 inspect canonical Ticket state through the normal Chief and Ticket views.
 Addressed help messages stay in conversation and appear through the same attention facts.
 
 The manager wake loop shares the server's machine lock, change signal, and periodic
 recovery timer. It also receives explicit worker-error transitions. It groups open wakes,
-uses the normal supervisor conversation queue, and closes only exact delivered prompts.
+uses the normal Manager conversation queue, and closes only exact delivered prompts.
 
 Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**
 (`worker-types.md`).
@@ -120,7 +120,7 @@ daily. Retired cadences remain only on frozen historical rows. One
 transaction records a created, suppressed, or failed occurrence. The loop checks only
 the current minute and does not backfill downtime.
 
-Scheduling stops at ordinary Ticket creation and explicit orchestrator assignment. The commit signal hands the new
+Scheduling stops at ordinary Ticket creation and explicit manager assignment. The commit signal hands the new
 Ticket to ordinary Worker readiness. The Scheduled tasks screen and `panels schedule`
 manage the template. Neither starts a Worker directly.
 
@@ -197,13 +197,13 @@ _Code paths:_ `web/src/`, `assets/`, and `web/dist/`.
 
 ### 8. The CLI and authority boundary
 
-`panels` speaks HTTP to the server. Ordinary help exposes Send Message, Projects, Tickets, and orchestrators.
-The stable Sprint Item aliases remain. Ticket creation and edits accept one structured object. One Ticket
+`panels` speaks HTTP to the server. Ordinary help exposes Send Message, Projects, Tickets, and managers.
+The stable Manager aliases remain. Ticket creation and edits accept one structured object. One Ticket
 proposal command submits, accepts, or revises the current proposal. Administrative paths
 stay callable but do not appear in ordinary discovery. The Chief remains a conversation
 principal, not a Ticket write group.
 
-Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
+Every request resolves to one principal: the owner, Chief, a Manager, or a Ticket.
 An unattributed browser request resolves to the owner. What that principal may then do is
 one sentence, asked at every door: you may act on anything strictly below you. Historical
 planning Workers retain their original authority interpretation for preserved records.
@@ -225,7 +225,7 @@ Launchers scrub ambient planner configuration and supply explicit paths.
 Deployment builds one exact commit, verifies a persistent-state snapshot, replaces only
 the app, and proves the requested revision. Failure restores both the prior app and the
 pre-cutover snapshot. Backups contain the SQLite record and managed files. Web Push turns a
-selected Ticket, Chief, or Sprint Item supervisor attention edge into durable delivery
+selected Ticket, Chief, or Manager attention edge into durable delivery
 work.
 
 Read **Runtime environments** (`environments.md`), **Production deployment**
@@ -252,7 +252,7 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
   and `data/skills` is the copy Panels writes from it. Packaged skills seed a database that
   has none. Codex, Claude and Hermes all provision every managed Panels skill.
 - **Authority versus your own record.** Standing above a thing is one question. Being
-  the thing — a Ticket proposing, a Sprint Item writing its own body — is another, and the
+  the thing — a Ticket proposing, a Manager writing its own body — is another, and the
   chain does not decide it.
 
 ## Deferred

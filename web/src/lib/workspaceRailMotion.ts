@@ -108,7 +108,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
       node.style.setProperty("--rail-motion-surrounding", surface.surrounding);
     }
     node.classList.add("rail-moving");
-    const travellingCard = travelling ? node.closest<HTMLElement>(".orchestrator-card") : null;
+    const travellingCard = travelling ? node.closest<HTMLElement>(".manager-card") : null;
     if (travelling) { node.classList.add("rail-travelling"); travellingCard?.classList.add("rail-travelling-card"); }
     const animation = node.animate(frames, { duration, delay, easing, fill: "backwards" });
     animations.add(animation);

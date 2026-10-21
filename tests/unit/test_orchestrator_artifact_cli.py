@@ -72,7 +72,7 @@ def artifact_cli(
 
 def _create_item(client: TestClient, goal: str = "") -> str:
     response = client.post(
-        "/api/items",
+        "/api/managers",
         json={"title": "Recoverable context", "project_id": "project_other", "goal": goal},
     )
     assert response.status_code == 200, response.text
@@ -87,12 +87,12 @@ def _invoke(
 ) -> Result:
     return runner.invoke(
         main,
-        ["orchestrator", *args],
+        ["manager", *args],
         input=stdin,
         env={
             "PLAN_SERVER_URL": "http://testserver",
-            "PLAN_ACTOR": "sprint_item_supervisor",
-            "PLAN_SPRINT_ITEM_ID": actor_item_id,
+            "PLAN_ACTOR": "manager",
+            "PLAN_MANAGER_ID": actor_item_id,
         },
     )
 
@@ -133,17 +133,17 @@ def test_own_artifact_round_trip_preserves_exact_text(
     )
     assert structured.exit_code == 0, structured.output
     assert json.loads(structured.stdout) == {
-        "sprint_item_id": item_id,
+        "manager_id": item_id,
         "path": "notes/original.md",
         "content": content,
     }
-    assert client.get(f"/api/items/{item_id}/workspace").json()["goal"] == "The goal stays here."
+    assert client.get(f"/api/managers/{item_id}/workspace").json()["goal"] == "The goal stays here."
 
 
 
 
 @pytest.mark.parametrize("operation", ["read", "write", "list"])
-def test_foreign_orchestrator_artifacts_remain_refused(
+def test_foreign_manager_artifacts_remain_refused(
     artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path, operation: str
 ) -> None:
     client, runner = artifact_cli
@@ -172,7 +172,7 @@ def test_foreign_orchestrator_artifacts_remain_refused(
     assert result.exit_code == 1, result.output
     assert result.stdout == ""
     assert json.loads(result.stderr)["error"]["code"] == "agent_forbidden"
-    assert client.get(f"/files/sprint-items/{foreign}/artifacts/context.md").content == b"private"
+    assert client.get(f"/files/managers/{foreign}/artifacts/context.md").content == b"private"
 
 
 

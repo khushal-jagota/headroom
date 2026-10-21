@@ -16,7 +16,7 @@ from planner.conversation.model_resolution.contracts import CurrentModelResolver
 from planner.core import authority
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
-from planner.sprints.data import correct_supervisor_model
+from planner.managers.data import correct_manager_model
 from planner.tickets.data import correct_ticket_model
 from planner.worker_settings.service import (
     CHIEF_SETTINGS_KEY,
@@ -29,8 +29,8 @@ from planner.worker_types.store import read_definition
 def _authorize(conn: sqlite3.Connection, principal: Principal, target: CorrectionTarget) -> None:
     if target.kind == "ticket":
         scope = authority.ticket(target.id)
-    elif target.kind == "orchestrator":
-        scope = authority.outcome(target.id)
+    elif target.kind == "manager":
+        scope = authority.manager(target.id)
     else:
         scope = authority.owner_only("model defaults")
     authority.require_above(conn, principal, scope)
@@ -52,9 +52,9 @@ def _read(conn: sqlite3.Connection, target: CorrectionTarget) -> SavedLaunch:
             "employee_launch_reasoning_effort FROM tickets WHERE id=?",
             target.id,
         ),
-        "orchestrator": (
-            "SELECT supervisor_backend, supervisor_model, "
-            "supervisor_reasoning_effort FROM sprint_items WHERE id=?",
+        "manager": (
+            "SELECT manager_backend, manager_model, "
+            "manager_reasoning_effort FROM managers WHERE id=?",
             target.id,
         ),
         "chief": (
@@ -128,8 +128,8 @@ def _write(conn: sqlite3.Connection, correction: ModelCorrection, now: int) -> b
     )
     if correction.target.kind == "ticket":
         return correct_ticket_model(conn, correction.target.id, now=now, **kwargs)
-    if correction.target.kind == "orchestrator":
-        return correct_supervisor_model(conn, correction.target.id, now=now, **kwargs)
+    if correction.target.kind == "manager":
+        return correct_manager_model(conn, correction.target.id, now=now, **kwargs)
     if correction.target.kind == "chief":
         return correct_chief_model(conn, **kwargs)
     return correct_worker_default_model(conn, correction.target.id, now=now, **kwargs)

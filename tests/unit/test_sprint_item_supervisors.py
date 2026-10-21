@@ -1,4 +1,4 @@
-"""Sprint Item supervisor ownership, scope, and lazy conversation lifecycle."""
+"""Manager supervisor ownership, scope, and lazy conversation lifecycle."""
 
 from __future__ import annotations
 
@@ -32,9 +32,9 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.loops import BackgroundLoops, start_background_loops
 from planner.core.server import create_app
+from planner.managers import data as sprints_data
+from planner.managers import service as sprints_service
 from planner.runtime import conversation_start
-from planner.sprints import data as sprints_data
-from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
 
@@ -90,7 +90,7 @@ def _app(
 
 
 def _create_item(client: TestClient, title: str = "Supervised") -> dict[str, Any]:
-    response = client.post("/api/items", json={"title": title, "project_id": "project_vylo"})
+    response = client.post("/api/managers", json={"title": title, "project_id": "project_vylo"})
     assert response.status_code == 200, response.text
     return cast(dict[str, Any], response.json())
 
@@ -102,7 +102,7 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "worker_type": "coding",
             "title": "Supervisor review",
             "brief": "Start here.",
-            "orchestrator": {"kind": "sprint_item", "id": item_id},
+            "manager": {"kind": "manager", "id": item_id},
             "ceiling": "needs_success_condition",
         },
         headers=_supervisor_headers(item_id),
@@ -121,8 +121,8 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
 
 def _supervisor_headers(item_id: str) -> dict[str, str]:
     return {
-        "X-Plan-Actor": "sprint_item_supervisor",
-        "X-Plan-Sprint-Item-ID": item_id,
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": item_id,
     }
 
 
@@ -143,18 +143,18 @@ def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path)
                 "worker_type": "coding",
                 "title": "Current child",
                 "brief": "Start.",
-                "orchestrator": {"kind": "sprint_item", "id": own["id"]},
+                "manager": {"kind": "manager", "id": own["id"]},
             },
         ).json()
         worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
         reply = client.post(
             "/api/messages/send",
-            json={"target": {"kind": "sprint_item", "id": own["id"]}, "message": "Answered."},
+            json={"target": {"kind": "manager", "id": own["id"]}, "message": "Answered."},
             headers=worker,
         )
         stranger = client.post(
             "/api/messages/send",
-            json={"target": {"kind": "sprint_item", "id": other["id"]}, "message": "Answered."},
+            json={"target": {"kind": "manager", "id": other["id"]}, "message": "Answered."},
             headers=worker,
         )
         to_owner = client.post(
@@ -213,7 +213,7 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
     assert after.pending_proposal is None
     assert after.ticket_status.value == "empty"
     assert feedback is not None
-    assert feedback.items[0].sender.kind.value == "sprint_item"
+    assert feedback.items[0].sender.kind.value == "manager"
     assert feedback.items[0].sender.id == str(item["id"])
     assert feedback.items[0].message == "State the verification evidence."
     assert system.backend_prompt_writes(conversation_id) == ()
@@ -300,9 +300,9 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        before = client.get("/api/items", params={"detail": "full", "id": item["id"]}).json()
+        before = client.get("/api/managers", params={"detail": "full", "id": item["id"]}).json()
         sent = client.post(
-            f"/api/items/{item['id']}/conversation/send",
+            f"/api/managers/{item['id']}/conversation/send",
             json={
                 "content": [{"piece": "text", "text": "Hello"}],
                 "sender_label": "owner",
@@ -311,7 +311,7 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
             },
         )
         conversation_id = sent.json()["conversation_id"]
-        after_send = client.get("/api/items", params={"detail": "full", "id": item["id"]}).json()
+        after_send = client.get("/api/managers", params={"detail": "full", "id": item["id"]}).json()
         with connect(str(db_path)) as conn:
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,model,"
@@ -321,20 +321,20 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
                     conversation_id,
                     json.dumps(
                         [
-                            ["PLAN_ACTOR", "sprint_item_supervisor"],
-                            ["PLAN_SPRINT_ITEM_ID", item["id"]],
+                            ["PLAN_ACTOR", "manager"],
+                            ["PLAN_MANAGER_ID", item["id"]],
                         ]
                     ),
                 ),
             )
             conn.commit()
-        reset = client.post(f"/api/items/{item['id']}/conversation/reset")
-        workspace = client.get(f"/api/items/{item['id']}/workspace")
+        reset = client.post(f"/api/managers/{item['id']}/conversation/reset")
+        workspace = client.get(f"/api/managers/{item['id']}/workspace")
 
-    assert before["supervisor"]["conversation_id"] is None
+    assert before["manager"]["conversation_id"] is None
     assert sent.status_code == 200, sent.text
     assert conversation_id.startswith("conv_")
-    launch = after_send["supervisor"]["launch_configuration"]
+    launch = after_send["manager"]["launch_configuration"]
     assert launch["employee_launch_model"] == "gpt-5.6-terra"
     assert launch["employee_launch_reasoning_effort"] == "high"
     assert reset.json() == {"conversation_id": None}
@@ -352,7 +352,7 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
         assert (
             conn.execute(
                 "SELECT conversation_id FROM agents WHERE agent_key=?",
-                (item["supervisor"]["agent_key"],),
+                (item["manager"]["agent_key"],),
             ).fetchone()[0]
             is None
         )
@@ -378,7 +378,7 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
         sender = connect(str(db_path))
         create_schema(sender)
         clock = RealClock()
-        item = sprints_data.create_item(
+        item = sprints_data.create_manager(
             sender,
             title="Racing",
             project_id="project_vylo",
@@ -391,24 +391,24 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
             conversation_start.send_to_agent_conversation(
                 system,
                 sender,
-                item.supervisor_agent_key,
+                item.manager_agent_key,
                 text_message_content("Hello"),
-                conversation_start.sprint_item_supervisor_resolve(item),
+                conversation_start.manager_resolve(item),
                 conversation_id=None,
                 created_conversation_id=created_id,
                 sender_label="owner",
-                required_sprint_item_id=item.id,
+                required_manager_id=item.id,
             )
         )
         await system.started.wait()
-        await sprints_service.delete_item(system, deleter, item.id, principal=OWNER_PRINCIPAL)
+        await sprints_service.delete_manager(system, deleter, item.id, principal=OWNER_PRINCIPAL)
         system.release.set()
         with pytest.raises(PlannerError, match="no longer exists"):
             await send
         assert await system.is_running(created_id) is False
         assert (
             sender.execute(
-                "SELECT 1 FROM agents WHERE agent_key=?", (item.supervisor_agent_key,)
+                "SELECT 1 FROM agents WHERE agent_key=?", (item.manager_agent_key,)
             ).fetchone()
             is None
         )
@@ -425,7 +425,7 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
             "worker_type": "coding",
             "title": title,
             "brief": "Do the work.",
-            "orchestrator": {"kind": "sprint_item", "id": item_id},
+            "manager": {"kind": "manager", "id": item_id},
         },
     )
     assert created.status_code == 200, created.text
@@ -454,7 +454,7 @@ def _stranded_child(
             "worker_type": worker_type,
             "title": "Stranded child",
             "brief": "Start here.",
-            "orchestrator": {"kind": "sprint_item", "id": item_id},
+            "manager": {"kind": "manager", "id": item_id},
         },
     ).json()
     accepted = client.post(
@@ -488,7 +488,7 @@ def _stranded_child(
 def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
     """The stated exception, at the door that is re-parenting under another name.
 
-    Outcome membership is the write that sets ``tickets.sprint_item_id``. A Ticket that
+    Outcome membership is the write that sets ``tickets.manager_id``. A Ticket that
     could set its own could move to another Outcome, or leave every Outcome, and pick who
     is allowed to accept, reject, delete or restart it. Being a thing does not include
     choosing who is above you.
@@ -503,7 +503,7 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
                 "worker_type": "coding",
                 "title": "Child",
                 "brief": "Start.",
-                "orchestrator": {"kind": "sprint_item", "id": own["id"]},
+                "manager": {"kind": "manager", "id": own["id"]},
             },
         ).json()
         itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
@@ -526,7 +526,7 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
     assert orphaned.json()["error"]["code"] == "agent_forbidden"
     assert parent_moves_it.json()["error"]["code"] == "agent_forbidden"
     assert khushal_moves_it.status_code == 200, khushal_moves_it.text
-    assert after["sprint_item_id"] == other["id"]
+    assert after["manager_id"] == other["id"]
 
 
 def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -> None:
@@ -540,7 +540,7 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
                 "worker_type": "coding",
                 "title": "Mine",
                 "brief": "Start.",
-                "orchestrator": {"kind": "sprint_item", "id": own["id"]},
+                "manager": {"kind": "manager", "id": own["id"]},
             },
         ).json()
         stranger = client.post(
@@ -555,14 +555,14 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
         )
         up_to_its_outcome = client.post(
             f"/api/tickets/{mine['id']}/request-help",
-            json={"message": "Help.", "recipient": {"kind": "sprint_item", "id": own["id"]}},
+            json={"message": "Help.", "recipient": {"kind": "manager", "id": own["id"]}},
             headers=itself,
         )
 
     assert into_a_stranger.json()["error"]["code"] == "agent_forbidden"
     # Asking its own Outcome for help is speaking up the chain, so it lands.
     assert up_to_its_outcome.status_code == 200, up_to_its_outcome.text
-    assert up_to_its_outcome.json()["target"] == {"kind": "sprint_item", "id": own["id"]}
+    assert up_to_its_outcome.json()["target"] == {"kind": "manager", "id": own["id"]}
 
 
 def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_path: Path) -> None:
@@ -577,7 +577,7 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
         worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
         peer = client.post(
             "/api/messages/send",
-            json={"target": {"kind": "sprint_item", "id": other["id"]}, "message": "Coordinate"},
+            json={"target": {"kind": "manager", "id": other["id"]}, "message": "Coordinate"},
             headers=own_headers,
         )
         assert peer.status_code == 200, peer.text
@@ -589,12 +589,12 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             ),
             client.post(
                 "/api/messages/send",
-                json={"target": {"kind": "sprint_item", "id": other["id"]}, "message": "Act"},
+                json={"target": {"kind": "manager", "id": other["id"]}, "message": "Act"},
                 headers=worker,
             ),
             client.post(
                 f"/api/tickets/{mine['id']}/request-help",
-                json={"recipient": {"kind": "sprint_item", "id": other["id"]}, "message": "Help"},
+                json={"recipient": {"kind": "manager", "id": other["id"]}, "message": "Help"},
                 headers=worker,
             ),
             client.patch(
@@ -612,7 +612,7 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
                 headers=own_headers,
             ),
             client.patch(
-                f"/api/items/{other['id']}",
+                f"/api/managers/{other['id']}",
                 json={"recap": "Unauthorized change"},
                 headers=own_headers,
             ),
@@ -621,7 +621,7 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             assert response.status_code == 400, response.text
             assert response.json()["error"]["code"] == "agent_forbidden", response.text
         assert client.get(f"/api/tickets?detail=full&id={theirs['id']}").json() == before
-        assert client.get(f"/api/items?detail=full&id={other['id']}").json()["recap"] == ""
+        assert client.get(f"/api/managers?detail=full&id={other['id']}").json()["recap"] == ""
 
 
 def test_recap_public_patch_readback_preserves_archived_files(tmp_path: Path) -> None:
@@ -637,11 +637,11 @@ def test_recap_public_patch_readback_preserves_archived_files(tmp_path: Path) ->
         files.mkdir(parents=True)
         (files / "original-brief.md").write_text(original, encoding="utf-8")
         (files / "working-notes.md").write_text(notes, encoding="utf-8")
-        saved = client.patch(f"/api/items/{item_id}", json={"recap": replacement})
+        saved = client.patch(f"/api/managers/{item_id}", json={"recap": replacement})
         assert saved.status_code == 200, saved.text
-        assert client.get(f"/api/items/{item_id}/workspace").json()["recap"] == replacement
+        assert client.get(f"/api/managers/{item_id}/workspace").json()["recap"] == replacement
         for name, content in (("original-brief.md", original), ("working-notes.md", notes)):
-            archived = client.get(f"/files/sprint-items/{item_id}/artifacts/{name}")
+            archived = client.get(f"/files/managers/{item_id}/artifacts/{name}")
             assert archived.status_code == 200, archived.text
             assert archived.text == content
 
@@ -656,8 +656,8 @@ def test_workspace_history_keeps_exact_current_and_past_supervisor_identities(
         with connect(str(db_path)) as conn:
             identity = json.dumps(
                 [
-                    ["PLAN_ACTOR", "sprint_item_supervisor"],
-                    ["PLAN_SPRINT_ITEM_ID", item["id"]],
+                    ["PLAN_ACTOR", "manager"],
+                    ["PLAN_MANAGER_ID", item["id"]],
                 ]
             )
             for name, created_at in (("past-supervisor", 10), ("current-supervisor", 20)):
@@ -671,14 +671,14 @@ def test_workspace_history_keeps_exact_current_and_past_supervisor_identities(
                 "UPDATE agents SET conversation_id=? WHERE agent_key=?",
                 (
                     "current-supervisor",
-                    item["supervisor"]["agent_key"],
+                    item["manager"]["agent_key"],
                 ),
             )
             conn.commit()
-        response = client.get(f"/api/items/{item['id']}/workspace")
+        response = client.get(f"/api/managers/{item['id']}/workspace")
         assert response.status_code == 200, response.text
         workspace = response.json()
-        assert workspace["supervisor"]["conversation_id"] == "current-supervisor"
+        assert workspace["manager"]["conversation_id"] == "current-supervisor"
         assert workspace["conversation_history"] == [
             {"conversation_id": "past-supervisor", "created_at": 10},
             {"conversation_id": "current-supervisor", "created_at": 20},

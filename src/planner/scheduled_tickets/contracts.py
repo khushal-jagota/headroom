@@ -28,11 +28,11 @@ class ScheduledTicketTemplate:
     kickoff_note: str
     deadline: str | None
     project_id: str | None
-    sprint_item_id: str | None
+    manager_id: str | None
     employee_backend: str | None
     employee_launch_model: str | None
     blocked_by_ticket_ids: tuple[str, ...]
-    orchestrator_kind: str = field(default="chief", kw_only=True)
+    manager_kind: str = field(default="chief", kw_only=True)
     locale: TicketLocale | None = field(default=None, kw_only=True)
 
 

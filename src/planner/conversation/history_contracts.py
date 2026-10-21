@@ -1,12 +1,15 @@
 """Bounded prior-conversation metadata behind the existing picker."""
+
 from typing import Literal, TypedDict
 
-HistoryOwnerKind = Literal["ticket", "sprint_item"]
+HistoryOwnerKind = Literal["ticket", "manager"]
+
 
 class ConversationHistoryEntry(TypedDict):
     conversation_id: str
     created_at: int
     label: str
+
 
 class ConversationHistoryPage(TypedDict):
     revision: str

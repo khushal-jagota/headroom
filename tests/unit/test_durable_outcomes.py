@@ -13,12 +13,12 @@ from planner.core.authctx import _classify
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.clock import TestClock as Clock
 from planner.core.errors import PlannerError
-from planner.sprints import data
+from planner.managers import data
 from planner.tickets import data as tickets
 from planner.tickets.contracts import Ticket
 
 
-def _ticket(conn: Connection, outcome_id: str, title: str) -> Ticket:
+def _ticket(conn: Connection, manager_id: str, title: str) -> Ticket:
     return tickets.create_ticket(
         conn,
         title=title,
@@ -26,17 +26,17 @@ def _ticket(conn: Connection, outcome_id: str, title: str) -> Ticket:
         now=1,
         title_max_chars=200,
         worker_type="coding",
-        sprint_item_id=outcome_id,
+        manager_id=manager_id,
     )
 
 
 def test_ticket_classification_preserves_existing_authority(
     tmp_db: Connection, fake_clock: Clock
 ) -> None:
-    outcome = data.create_item(tmp_db, title="O", project_id="project_vylo", clock=fake_clock)
-    other = data.create_item(tmp_db, title="Other", project_id="project_vylo", clock=fake_clock)
-    valid = _ticket(tmp_db, outcome.id, "Valid")
-    stale = _ticket(tmp_db, outcome.id, "Completed since selection")
+    manager = data.create_manager(tmp_db, title="O", project_id="project_vylo", clock=fake_clock)
+    other = data.create_manager(tmp_db, title="Other", project_id="project_vylo", clock=fake_clock)
+    valid = _ticket(tmp_db, manager.id, "Valid")
+    stale = _ticket(tmp_db, manager.id, "Completed since selection")
     advance_ticket(tmp_db, stale.id, new_stage="done", principal=OWNER_PRINCIPAL, now=2)
     worker = _classify("worker", valid.id)
     # A Ticket classifies itself, and no longer any Ticket that happens to exist.
@@ -45,7 +45,7 @@ def test_ticket_classification_preserves_existing_authority(
         tickets.classify_ticket(
             tmp_db,
             stale.id,
-            sprint_item_id=other.id,
+            manager_id=other.id,
             principal=worker.principal,
             now=3,
             admit=lambda: require_above_or_self(
@@ -55,18 +55,18 @@ def test_ticket_classification_preserves_existing_authority(
     tickets.classify_ticket(
         tmp_db,
         stale.id,
-        sprint_item_id=other.id,
+        manager_id=other.id,
         principal=stale_worker.principal,
         now=3,
         admit=lambda: require_above_or_self(
             tmp_db, stale_worker.principal, authority.ticket(stale.id)
         ),
     )
-    assert tickets.read_ticket(tmp_db, stale.id).sprint_item_id == other.id
-    supervisor = _classify("sprint_item_supervisor", None, outcome.id)
+    assert tickets.read_ticket(tmp_db, stale.id).manager_id == other.id
+    supervisor = _classify("manager", None, manager.id)
     require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))
     tickets.classify_ticket(
-        tmp_db, valid.id, sprint_item_id=other.id, principal=OWNER_PRINCIPAL, now=4
+        tmp_db, valid.id, manager_id=other.id, principal=OWNER_PRINCIPAL, now=4
     )
     with pytest.raises(PlannerError):
         require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))

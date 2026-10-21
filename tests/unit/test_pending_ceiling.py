@@ -92,7 +92,7 @@ def test_visible_accept_sets_selected_scope_reviewer_and_releases_claim(tmp_db: 
     assert accepted.pending_proposal is None
     assert accepted.field_values["success_condition"] == "Exact visible success condition"
     assert accepted.worker_step_claim is WorkerStepClaim.none
-    assert accepted.sprint_item_id == original.sprint_item_id
+    assert accepted.manager_id == original.manager_id
 
 
 @pytest.mark.parametrize("change", ["replacement", "reroute", "field"])

@@ -98,6 +98,14 @@ http://testserver/files/tickets/{ticket}/e.md
     assert links.managed_href(
         f"http://TESTSERVER:80/files/tickets/{ticket}/a.md", "http://testserver"
     ) == f"/files/tickets/{ticket}/a.md"
+    for retained in (
+        "/files/sprint-items/si_existing/plan.md",
+        "#/preview?source=sprint-item&item=si_existing&path=plan.md",
+        "#/preview?source=manager&manager=si_existing&path=plan.md",
+    ):
+        assert links.managed_href(retained, "http://testserver") == (
+            "/files/managers/si_existing/plan.md"
+        )
     assert links.managed_href(f"/files/tickets/{ticket}/%FF.md", "http://testserver") is None
     assert links.managed_href(f"/files/tickets/{ticket}/%ZZ.md", "http://testserver") is None
     assert (
@@ -153,7 +161,7 @@ def test_history_pages_keep_selected_position_and_locale_typeahead_without_full_
     tmp_db.execute("BEGIN")
     for index in range(135):
         identity = json.dumps(
-            [["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", "si_example"]]
+            [["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", "si_example"]]
         )
         tmp_db.execute(
             (
@@ -183,7 +191,7 @@ def test_history_pages_keep_selected_position_and_locale_typeahead_without_full_
     assert (
         tmp_db.execute(
             "SELECT count(*) FROM conversation_history_catalog WHERE "
-            "owner_kind='sprint_item' AND owner_id='si_example'"
+            "owner_kind='manager' AND owner_id='si_example'"
         ).fetchone()[0]
         == 135
     )

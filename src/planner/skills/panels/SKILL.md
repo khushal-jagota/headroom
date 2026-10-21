@@ -9,18 +9,18 @@ Panels is a **workspace for agents**, where the user's work lives. It includes a
 
 The workspace has these pieces:
 
-- An **orchestrator** holds shared intent, Workers, artifacts, and a conversation.
-- **Chief** is a special orchestrator and an explicit Worker assignment destination.
+- An **manager** holds shared intent, Workers, artifacts, and a conversation.
+- **Chief** is a special manager and an explicit Worker assignment destination.
 - A **Worker** is one Ticket with one coherent job and a registered lifecycle.
 - An **idea** is a possibility that is not committed work.
 
-Ordinary orchestrators keep their former Sprint Item IDs and supervisor conversations.
-Workers name Chief or an ordinary orchestrator explicitly. Assignment, Project, approval
+Ordinary managers keep their existing IDs and Manager conversations.
+Workers name Chief or an ordinary Manager explicitly. Assignment, Project, approval
 holder, and Chief authority are separate facts. The owner can settle ordinary
-orchestrators. Chief can never settle. Settlement does not gate Worker continuation.
+managers. Chief can never settle. Settlement does not gate Worker continuation.
 
 Day records and date-range Sprints are removed, including their screens and read commands.
-Orchestrators retain their Item identities and supervisors. Do not recreate calendar planning or replacement recurring reviews.
+Managers retain their Item identities and Managers. Do not recreate calendar planning or replacement recurring reviews.
 
 Tickets have a Worker type that sets their stages and worker. Worker types include
 `coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing
@@ -91,14 +91,13 @@ Ordinary help exposes these object and intent roots:
 - `panels send-message ...` for existing conversations.
 - `panels project ...` for Projects.
 - `panels ticket ...` for Ticket creation, inspection, edits, proposals, and lifecycle actions.
-- `panels orchestrator ...` for ordinary orchestrators.
-- `panels sprint item ...` as the stable alias for orchestrator operations.
+- `panels manager ...` for ordinary Managers.
 
 The server derives the caller from runtime context and enforces authority at each route.
 Administrative commands remain callable when a specialist skill names one, but they do
 not appear in ordinary root help.
 
-The main list reads are bounded summaries. `ticket list`, `sprint item
+The main list reads are bounded summaries. `ticket list`, `manager
 list`, and `project list` return 30 rows by default. Their text and
 JSON output state the omissions and the next offset. Use `--limit` and `--offset` for
 another page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and
@@ -107,8 +106,15 @@ result before you increase its limit.
 
 ## Skills
 
-- **`panels-sprint-item-supervisor`** — supervising one Sprint Item through the ordinary
+- **`panels-manager`** — supervising one Manager through the ordinary
   commands, which the one authority rule admits on its current child Tickets, plus
   messages to their Worker conversations.
 - **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
+
+## Retained Manager identities
+
+If your stored role says Sprint Item supervisor, read `panels-manager`.
+If that skill is absent before release activation, read `panels-sprint-item-supervisor`.
+`PLAN_SPRINT_ITEM_ID` and `PLAN_MANAGER_ID` name the same retained Manager identity.
+If both exist and differ, stop and report the identity conflict.

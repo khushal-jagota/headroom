@@ -2140,7 +2140,7 @@ def _conversation_repairs(browser, url):
     def state(page, value):
         page.wait_for_selector(f'{pane_selector}[data-conversation-state="{value}"]')
         frames(page)
-    for route in ("orchestrator", "ticket"):
+    for route in ("manager", "ticket"):
         page = browser.new_page(viewport={"width": 1280, "height": 1000})
         errors = []
         page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))

@@ -55,7 +55,7 @@ All readiness questions run again inside the write, so only one racer wins the c
 
 Today membership is no longer a readiness question. No replacement activation gate
 exists. Existing ceilings, proposals, blockers, ownership, claims, busy checks, and
-context recovery keep their normal meaning. Orchestrator settlement does not gate
+context recovery keep their normal meaning. Manager settlement does not gate
 continuation. One-time obsolete planning cancellation is migration hygiene, not a
 runtime rule for ordinary unfinished work.
 
@@ -72,13 +72,13 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 
 ## Durable manager notices
 
-Proposals routed to a Sprint Item manager and explicit worker-error transitions create
+Proposals routed to a Manager and explicit worker-error transitions create
 durable notices in the same transaction as their source event. Proposal routing remains a
 separate deterministic decision before notice creation. It contains no TypeSafe call.
 
 A failed turn on a Ticket's current conversation creates a notice for the current ceiling
 holder in the same transaction as the ending row. The notice stores the holder principal.
-Chief, Sprint Item, and Ticket holders receive it through their canonical conversation
+Chief, Manager, and Ticket holders receive it through their canonical conversation
 door. Owner-held failures use the ordinary attention flag and push policy instead. A reset
 therefore moves delivery to the recipient's new conversation, while a deleted recipient
 closes the undeliverable notice. Failures in old or unattached conversations create none.
@@ -206,8 +206,8 @@ still reads as claimed, and a Ticket with its claim back but still pointing at a
 conversation would talk into it.
 
 Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
-own Sprint Item. Khushal could not before: no ordinary route restarted a Worker, and the
-only door was the Sprint Item's. This is a new capability on his surface, not a rename.
+own Manager. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Manager's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a

@@ -10,9 +10,9 @@ schedule → current local minute → ordinary Ticket + occurrence receipt
 ```
 
 New schedules use the `daily` cadence. Their template holds the title, Worker type,
-Brief context, deadline, Project, explicit orchestrator assignment, launch
-choice, resolved execution locale, and blockers. An assignment is either Chief or one ordinary orchestrator.
-The canonical wire field is `orchestrator`, with `kind` and `id`.
+Brief context, deadline, Project, explicit manager assignment, launch
+choice, resolved execution locale, and blockers. An assignment is either Chief or one ordinary Manager.
+The canonical wire field is `manager`, with `kind` and `id`.
 
 Sprint placement, Sprint cadences, and planning Worker templates are retired. The
 migration disables the old morning, midday, Sprint review, and Sprint checkpoint supply.
@@ -44,7 +44,7 @@ No receipt points to a Day record.
 
 The Sprint placement columns and placement mode are removed.
 All six legacy schedules already name Chief with a null Item reference. Their assignment stays unchanged.
-Ordinary due schedules create Chief-assigned Tickets outside backlog unless they explicitly name an ordinary orchestrator.
+Ordinary due schedules create Chief-assigned Tickets outside backlog unless they explicitly name an ordinary Manager.
 The stored Project remains unchanged. A null Project uses ordinary Ticket creation defaults.
 
 Old cadence values remain solely as deliberate historical descriptions.

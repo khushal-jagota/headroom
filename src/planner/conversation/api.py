@@ -198,6 +198,7 @@ def _require_unassociated_send_conversation(
     if owned is not None or identity.get("PLAN_ACTOR") in {
         "worker",
         "chief",
+        "manager",
         "sprint_item_supervisor",
     }:
         raise HTTPException(

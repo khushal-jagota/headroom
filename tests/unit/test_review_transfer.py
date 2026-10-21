@@ -17,7 +17,7 @@ from planner.conversation.in_memory_conversation_system import (
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
-from planner.sprints import data as sprints_data
+from planner.managers import data as managers_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, ReviewTransferNotice
 from planner.tickets.review_transfer import notify_review_transfers
@@ -29,20 +29,20 @@ def _parked_ticket(
     *,
     title: str,
     holder: Principal,
-    sprint_item_id: str | None = None,
+    manager_id: str | None = None,
 ) -> str:
     ticket = tickets_data.create_ticket(
         conn,
         title=title,
-        principal=Principal(PrincipalKind.sprint_item, sprint_item_id)
-        if sprint_item_id is not None
+        principal=Principal(PrincipalKind.manager, manager_id)
+        if manager_id is not None
         else holder,
         now=clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
         stated_ceiling="needs_success_condition",
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
         stated_holder=holder,
     )
     tickets_data.file_current_proposal(
@@ -110,7 +110,7 @@ def test_new_holder_moving_it_themselves_is_not_notified(
 def test_third_party_move_notifies_the_previous_holder_with_the_movers_name(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
-    mover_item = sprints_data.create_item(
+    mover_item = managers_data.create_manager(
         tmp_db, title="Reassigning supervisor", project_id="project_vylo", clock=fake_clock
     )
     ticket_id = _parked_ticket(
@@ -118,9 +118,9 @@ def test_third_party_move_notifies_the_previous_holder_with_the_movers_name(
         fake_clock,
         title="Third party move",
         holder=OWNER_PRINCIPAL,
-        sprint_item_id=mover_item.id,
+        manager_id=mover_item.id,
     )
-    actor = Principal(PrincipalKind.sprint_item, mover_item.id)
+    actor = Principal(PrincipalKind.manager, mover_item.id)
     notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=CHIEF_PRINCIPAL, actor=actor)
     assert notice.previous_holder == OWNER_PRINCIPAL
     assert notice.new_holder == CHIEF_PRINCIPAL
@@ -148,14 +148,14 @@ def test_new_holder_can_be_a_ticket(tmp_db: Connection, fake_clock: FakeClock) -
     assert notice.new_holder_name == "Reviewer ticket"
 
 
-def test_new_holder_can_be_a_sprint_item(tmp_db: Connection, fake_clock: FakeClock) -> None:
+def test_new_holder_can_be_a_manager(tmp_db: Connection, fake_clock: FakeClock) -> None:
     ticket_id = _parked_ticket(
         tmp_db, fake_clock, title="Transferred to an item", holder=OWNER_PRINCIPAL
     )
-    item = sprints_data.create_item(
+    item = managers_data.create_manager(
         tmp_db, title="Owning sprint item", project_id="project_vylo", clock=fake_clock
     )
-    new_holder = Principal(PrincipalKind.sprint_item, item.id)
+    new_holder = Principal(PrincipalKind.manager, item.id)
     notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=OWNER_PRINCIPAL)
     assert notice.new_holder == new_holder
     assert notice.new_holder_name == "Owning sprint item"
@@ -164,7 +164,7 @@ def test_new_holder_can_be_a_sprint_item(tmp_db: Connection, fake_clock: FakeClo
 def test_delivery_addresses_both_targets_on_a_third_party_move(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
-    mover_item = sprints_data.create_item(
+    mover_item = managers_data.create_manager(
         tmp_db, title="Reassigning supervisor", project_id="project_vylo", clock=fake_clock
     )
     ticket_id = _parked_ticket(
@@ -172,7 +172,7 @@ def test_delivery_addresses_both_targets_on_a_third_party_move(
         fake_clock,
         title="Delivered both ways",
         holder=OWNER_PRINCIPAL,
-        sprint_item_id=mover_item.id,
+        manager_id=mover_item.id,
     )
     holder_ticket = tickets_data.create_ticket(
         tmp_db,
@@ -184,7 +184,7 @@ def test_delivery_addresses_both_targets_on_a_third_party_move(
         brief="Start",
     )
     new_holder = Principal(PrincipalKind.ticket, holder_ticket.id)
-    actor = Principal(PrincipalKind.sprint_item, mover_item.id)
+    actor = Principal(PrincipalKind.manager, mover_item.id)
     notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=actor)
     assert notice.notify_previous_holder is True
 

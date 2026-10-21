@@ -54,11 +54,11 @@ def _validate_template(
     model_source_is_historical: bool = False,
 ) -> ScheduledTicketTemplate:
     require_creatable_worker_type(template.worker_type)
-    if template.orchestrator_kind not in {"chief", "sprint_item"} or (
-        (template.orchestrator_kind == "sprint_item") != (template.sprint_item_id is not None)
+    if template.manager_kind not in {"chief", "manager"} or (
+        (template.manager_kind == "manager") != (template.manager_id is not None)
     ):
         raise PlannerError(
-            ErrorCode.validation, "schedule requires an explicit orchestrator assignment"
+            ErrorCode.validation, "schedule requires an explicit manager assignment"
         )
     resolved = tickets_data.resolve_ticket_creation_context(
         conn,
@@ -71,7 +71,7 @@ def _validate_template(
         model_source_is_historical=model_source_is_historical,
         project_id=template.project_id,
         deadline=template.deadline,
-        sprint_item_id=template.sprint_item_id,
+        manager_id=template.manager_id,
         blocked_by_ticket_ids=list(template.blocked_by_ticket_ids),
     )
     return replace(template, locale=resolved.locale, project_id=resolved.project_id)
@@ -89,10 +89,10 @@ def create_schedule(
     if cadence is not ScheduleCadence.daily:
         raise PlannerError(ErrorCode.validation, "calendar planning cadences are retired")
     with data.transaction(conn):
-        if template.sprint_item_id is not None and template.project_id is None:
+        if template.manager_id is not None and template.project_id is None:
             item = conn.execute(
-                "SELECT project_id FROM sprint_items WHERE id = ?",
-                (template.sprint_item_id,),
+                "SELECT project_id FROM managers WHERE id = ?",
+                (template.manager_id,),
             ).fetchone()
             if item is not None:
                 template = replace(
@@ -138,9 +138,9 @@ def _update_schedule_locked(
     require_schedule_mutation(current, changes)
     if set(changes) <= {"enabled"} and changes.get("enabled") is False:
         return data.update_schedule(conn, schedule_id, changes, now=now)
-    item_id = normalized_changes.get("sprint_item_id", current.template.sprint_item_id)
+    item_id = normalized_changes.get("manager_id", current.template.manager_id)
     if item_id is not None:
-        item = conn.execute("SELECT project_id FROM sprint_items WHERE id=?", (item_id,)).fetchone()
+        item = conn.execute("SELECT project_id FROM managers WHERE id=?", (item_id,)).fetchone()
         if item is not None:
             if (
                 "project_id" in normalized_changes
@@ -156,8 +156,8 @@ def _update_schedule_locked(
         "kickoff_note": current.template.kickoff_note,
         "deadline": current.template.deadline,
         "project_id": current.template.project_id,
-        "sprint_item_id": current.template.sprint_item_id,
-        "orchestrator_kind": current.template.orchestrator_kind,
+        "manager_id": current.template.manager_id,
+        "manager_kind": current.template.manager_kind,
         "employee_backend": current.template.employee_backend,
         "employee_launch_model": current.template.employee_launch_model,
         "blocked_by_ticket_ids": current.template.blocked_by_ticket_ids,
@@ -171,7 +171,7 @@ def _update_schedule_locked(
             if template_values["locale"] is None
             else require_ticket_locale(template_values["locale"])
         ),
-        orchestrator_kind=str(template_values["orchestrator_kind"]),
+        manager_kind=str(template_values["manager_kind"]),
         title=str(template_values["title"]),
         worker_type=str(template_values["worker_type"]),
         kickoff_note=str(template_values["kickoff_note"]),
@@ -181,10 +181,10 @@ def _update_schedule_locked(
         project_id=(
             None if template_values["project_id"] is None else str(template_values["project_id"])
         ),
-        sprint_item_id=(
+        manager_id=(
             None
-            if template_values["sprint_item_id"] is None
-            else str(template_values["sprint_item_id"])
+            if template_values["manager_id"] is None
+            else str(template_values["manager_id"])
         ),
         employee_backend=(
             None
@@ -228,7 +228,7 @@ def _settle_occurrence(
             existing_occurrence = data.read_occurrence(conn, schedule.id, key)
             if existing_occurrence is not None:
                 return existing_occurrence
-            sprint_item_id = schedule.template.sprint_item_id
+            manager_id = schedule.template.manager_id
             project_id = schedule.template.project_id
             ticket = tickets_actions.create_ticket(
                 conn,
@@ -244,9 +244,9 @@ def _settle_occurrence(
                 brief=schedule.template.kickoff_note,
                 project_id=project_id,
                 deadline=schedule.template.deadline,
-                sprint_item_id=sprint_item_id,
+                manager_id=manager_id,
                 blocked_by_ticket_ids=list(schedule.template.blocked_by_ticket_ids),
-                orchestrator_kind=schedule.template.orchestrator_kind,
+                manager_kind=schedule.template.manager_kind,
             )
             return data.insert_occurrence(
                 conn,

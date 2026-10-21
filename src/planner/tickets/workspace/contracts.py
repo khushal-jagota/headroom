@@ -48,12 +48,12 @@ class WorkspaceTicket(TypedDict):
     blocker_summary: WorkspaceBlockers
     ceiling: str
     ceiling_holder: Principal
-    orchestrator: Principal
+    manager: Principal
     deadline: str | None
     project_id: str | None
     project: str | None
-    sprint_item_id: str | None
-    sprint_item_title: str | None
+    manager_id: str | None
+    manager_title: str | None
     conversation_id: str | None
     recap: str
     record_sha256: str

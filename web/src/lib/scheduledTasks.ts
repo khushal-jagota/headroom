@@ -6,7 +6,7 @@ import type {
 
 export type ScheduledTaskForm = {
   enabled: boolean;
-  orchestrator: Principal;
+  manager: Principal;
   local_time: string;
   title: string;
   worker_type: string;
@@ -21,7 +21,7 @@ export type ScheduledTaskForm = {
 export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
   return {
     enabled: true,
-    orchestrator: { kind: "chief", id: "chief" },
+    manager: { kind: "chief", id: "chief" },
     local_time: "09:00",
     title: "",
     worker_type: workerType,
@@ -37,8 +37,8 @@ export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
 export function scheduledTaskFormFromSchedule(schedule: ScheduledTask): ScheduledTaskForm {
   return {
     enabled: schedule.enabled,
-    orchestrator: schedule.orchestrator ?? (schedule.sprint_item_id
-      ? { kind: "sprint_item", id: schedule.sprint_item_id }
+    manager: schedule.manager ?? (schedule.manager_id
+      ? { kind: "manager", id: schedule.manager_id }
       : { kind: "chief", id: "chief" }),
     local_time: schedule.local_time,
     title: schedule.title,
@@ -63,7 +63,7 @@ export function scheduledTaskPayload(form: ScheduledTaskForm): Record<string, un
   return {
     enabled: form.enabled,
     cadence: "daily",
-    orchestrator: form.orchestrator,
+    manager: form.manager,
     local_time: form.local_time,
     title: form.title.trim(),
     worker_type: form.worker_type,

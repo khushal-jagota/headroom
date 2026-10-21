@@ -14,11 +14,11 @@ def _template() -> ScheduledTicketTemplate:
         kickoff_note="Prepare one result",
         deadline=None,
         project_id="project_other",
-        sprint_item_id=None,
+        manager_id=None,
         employee_backend=None,
         employee_launch_model=None,
         blocked_by_ticket_ids=(),
-        orchestrator_kind="chief",
+        manager_kind="chief",
     )
 
 

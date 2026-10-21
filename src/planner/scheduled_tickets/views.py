@@ -36,10 +36,10 @@ def schedule_json(
         "kickoff_note": schedule.template.kickoff_note,
         "deadline": schedule.template.deadline,
         "project_id": schedule.template.project_id,
-        "sprint_item_id": schedule.template.sprint_item_id,
-        "orchestrator": {
-            "kind": schedule.template.orchestrator_kind,
-            "id": schedule.template.sprint_item_id or "chief",
+        "manager_id": schedule.template.manager_id,
+        "manager": {
+            "kind": schedule.template.manager_kind,
+            "id": schedule.template.manager_id or "chief",
         },
         "employee_backend": schedule.template.employee_backend,
         "employee_launch_model": schedule.template.employee_launch_model,

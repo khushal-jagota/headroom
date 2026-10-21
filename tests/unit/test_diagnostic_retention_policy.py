@@ -18,7 +18,7 @@ from planner.conversation.lifecycle import (
 )
 from planner.conversation.retention.contracts import (
     ConversationRetentionInput,
-    OrchestratorOwner,
+    ManagerOwner,
     RetentionEvent,
     TicketOwner,
 )
@@ -86,7 +86,7 @@ def test_cutoff_controls_latest_plan_timestamp_ties_and_markers_are_not_expendab
             {"tickets": (TicketOwner("t", "done", "none"), TicketOwner("old", "backlog", "none"))},
             "unfinished_ticket",
         ),
-        ({"orchestrators": (OrchestratorOwner("o", False),)}, "unsettled_orchestrator"),
+        ({"managers": (ManagerOwner("o", False),)}, "unsettled_manager"),
         ({"identity_json": '[["PLAN_ACTOR","chief"]]'}, "chief"),
         ({"agent_keys": ("chief_of_staff",)}, "chief"),
         (

@@ -18,7 +18,7 @@
     recap?: string; worker?: WorkItemTicketFacts | null;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
-    recapTarget?: { kind: "ticket" | "sprint_item" | "chief"; id: string } | null;
+    recapTarget?: { kind: "ticket" | "manager" | "chief"; id: string } | null;
     onKeepOpen?: () => void; onLeave?: () => void;
     element?: HTMLDivElement | null;
   } = $props();

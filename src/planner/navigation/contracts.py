@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-PREPARED_SCHEMA_VERSION = 5
-SCHEMA_VERSION = 6
-SUPPORTED_SEMANTICS = "attention-knowledge-v6-recap"
+PREPARED_SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
+SUPPORTED_SEMANTICS = "attention-knowledge-v8-manager"
 RecordKind = Literal[
-    "ticket", "orchestrator", "chief", "conversation", "address", "totals", "project"
+    "ticket", "manager", "chief", "conversation", "address", "totals", "project"
 ]
 
 
@@ -35,8 +35,8 @@ class TicketValue(TypedDict):
     worker_step_claim_out: bool
     deadline: str | None
     project_id: str | None
-    orchestrator_kind: str
-    sprint_item_id: str | None
+    manager_kind: str
+    manager_id: str | None
     conversation_id: str | None
     is_backlogged: bool
     ceiling: str
@@ -50,7 +50,7 @@ class TicketValue(TypedDict):
     locale: str
 
 
-class OrchestratorValue(TypedDict):
+class ManagerValue(TypedDict):
     title: str
     recap: str
     recap_preview: str
@@ -133,11 +133,11 @@ class ConversationValue(TypedDict):
 
 
 class AddressValue(TypedDict):
-    owner_kind: Literal["ticket", "orchestrator", "chief"]
+    owner_kind: Literal["ticket", "manager", "chief"]
     owner_id: str
     conversation_id: str
     current: bool
-    parent_kind: Literal["orchestrator", "chief"] | None
+    parent_kind: Literal["manager", "chief"] | None
     parent_id: str | None
 
 
@@ -156,10 +156,10 @@ class TicketRecord(TypedDict):
     value: TicketValue
 
 
-class OrchestratorRecord(TypedDict):
-    kind: Literal["orchestrator"]
+class ManagerRecord(TypedDict):
+    kind: Literal["manager"]
     id: str
-    value: OrchestratorValue
+    value: ManagerValue
 
 
 class ChiefRecord(TypedDict):
@@ -194,7 +194,7 @@ class ProjectRecord(TypedDict):
 
 type NavigationRecord = (
     TicketRecord
-    | OrchestratorRecord
+    | ManagerRecord
     | ChiefRecord
     | ConversationRecord
     | AddressRecord
@@ -206,7 +206,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v6-recap"]
+    semantics: Literal["attention-knowledge-v8-manager"]
     epoch: str
     revision: str
 
@@ -218,7 +218,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v6-recap"]
+    semantics: Literal["attention-knowledge-v8-manager"]
     epoch: str
     base_revision: str
     revision: str

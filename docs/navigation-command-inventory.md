@@ -6,8 +6,8 @@ all registered application write routes. Adding a write route requires a decisio
 about its navigation effect; the HTTP verb alone does not make that decision.
 
 The covered families are Ticket creation, metadata, proposals, approvals and
-lifecycle; collection membership; Projects and orchestrators; Chief, Ticket and
-orchestrator conversation sends and resets; addressed messages, including the
+lifecycle; collection membership; Projects and managers; Chief, Ticket and
+manager conversation sends and resets; addressed messages, including the
 owner's request for a fresh recap, which empties the published recap it replaces;
 conversation
 creation, owner read acknowledgment, interruption, termination, held prompt
@@ -24,7 +24,7 @@ changes no currently published value. A fully captured operation with no relevan
 commit receives an empty witness list.
 
 The browser mutation callers were audited in `TicketRoute`, `ReviewProposalCard`,
-`TicketLifecycleControls`, `ChiefConversation`, `SprintItemWorkspace`, `BoardRoute`,
+`TicketLifecycleControls`, `ChiefConversation`, `ManagerWorkspace`, `BoardRoute`,
 `ConfigRoute`, `IdeasRoute`, `ScheduledTasksRoute`, `NotificationsRoute`,
 `FeedbackCapture`, `FeedbackRoute`, `App`, and `lib/conversation/wire.ts` and
 `voiceCapture.ts`. They require no changes: existing response bodies, receipts,

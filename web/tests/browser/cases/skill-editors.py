@@ -36,7 +36,7 @@ def run(browser, urls):
     names = [
         "panels-chief-of-staff",
         "panels-worker",
-        "panels-sprint-item-supervisor",
+        "panels-manager",
         "coding-specialist+candidate",
     ]
     skills = {
@@ -96,7 +96,7 @@ def run(browser, urls):
     destinations = [
         ("agent", "chief_of_staff", "Chief"),
         ("skill", names[1], "Worker"),
-        ("skill", names[2], "Sprint Item supervisor"),
+        ("skill", names[2], "Manager"),
         ("worker", "coding", "Specialist"),
     ]
     for name, (role_kind, role_id, label) in zip(names, destinations, strict=True):

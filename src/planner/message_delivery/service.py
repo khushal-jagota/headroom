@@ -18,19 +18,19 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.managers import data as managers_data
+from planner.managers import service as managers_service
 from planner.message_delivery.contracts import (
     MessageDeliveryMode,
     MessageDeliveryResult,
     MessageRecordedToOwner,
 )
-from planner.message_delivery.logic.permissions import permits_supervisor_message
+from planner.message_delivery.logic.permissions import permits_manager_message
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
     ConversationStartOverrides,
 )
-from planner.sprints import data as sprints_data
-from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
@@ -58,7 +58,7 @@ def sender_label(ctx: RequestContext) -> str:
         return "Chief"
     if ctx.principal.kind is PrincipalKind.ticket:
         return f"Ticket {ctx.principal.id}"
-    return f"Sprint Item {ctx.principal.id}"
+    return f"Manager {ctx.principal.id}"
 
 
 def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDeliveryMode:
@@ -76,9 +76,9 @@ def _sender_conversation_id(conn: sqlite3.Connection, sender: Principal) -> str 
         return tickets_data.read_ticket(conn, sender.id).conversation_id
     if sender.kind is PrincipalKind.chief:
         return conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
-    if sender.kind is PrincipalKind.sprint_item:
-        item = sprints_data.read_item(conn, sender.id).item
-        return conversation_start.read_agent_conversation(conn, item.supervisor_agent_key)
+    if sender.kind is PrincipalKind.manager:
+        item = managers_data.read_manager(conn, sender.id).item
+        return conversation_start.read_agent_conversation(conn, item.manager_agent_key)
     return None
 
 
@@ -87,9 +87,9 @@ def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -
         return f"ticket:{sender.id}"
     if sender.kind is PrincipalKind.chief:
         return f"agent:{CHIEF_SETTINGS_KEY}"
-    if sender.kind is PrincipalKind.sprint_item:
-        item = sprints_data.read_item(conn, sender.id).item
-        return f"agent:{item.supervisor_agent_key}"
+    if sender.kind is PrincipalKind.manager:
+        item = managers_data.read_manager(conn, sender.id).item
+        return f"agent:{item.manager_agent_key}"
     raise ValueError("the owner has no sender conversation link")
 
 
@@ -101,8 +101,8 @@ def _as_target(principal: Principal) -> authority.Target | None:
     """
     if principal.kind is PrincipalKind.ticket:
         return authority.ticket(principal.id)
-    if principal.kind is PrincipalKind.sprint_item:
-        return authority.outcome(principal.id)
+    if principal.kind is PrincipalKind.manager:
+        return authority.manager(principal.id)
     return None
 
 
@@ -115,7 +115,7 @@ def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Princi
     a Worker answering the Outcome that asked it something is speaking, and refusing that
     would make the reply every addressed prompt requires impossible to send.
 
-    Existing ordinary orchestrator supervisors can also speak to one another. This
+    Existing ordinary Managers can also speak to one another. This
     message-only permission grants no authority over either supervisor or its Tickets.
     Other strangers are neither, and they refuse.
 
@@ -125,9 +125,9 @@ def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Princi
     its own ceiling holder for help names a principal Panels addressed it to, which is not
     the caller reaching anywhere.
     """
-    if permits_supervisor_message(caller, recipient):
-        sprints_data.read_item(conn, caller.id)
-        sprints_data.read_item(conn, recipient.id)
+    if permits_manager_message(caller, recipient):
+        managers_data.read_manager(conn, caller.id)
+        managers_data.read_manager(conn, recipient.id)
         return
     target = _as_target(recipient)
     if target is None:
@@ -273,25 +273,21 @@ async def send_message(
                 recipient=recipient,
                 reply_requested=not system_message and expects_reply and not is_reply,
             )
-    elif recipient.kind is PrincipalKind.sprint_item:
+    elif recipient.kind is PrincipalKind.manager:
         item_id = recipient.id
-        async with sprints_service.supervisor_lifecycle_lock(item_id):
-            item = sprints_data.read_item(conn, item_id).item
-            async with conversation_start.conversation_link_lock(
-                f"agent:{item.supervisor_agent_key}"
-            ):
-                current = conversation_start.read_agent_conversation(
-                    conn, item.supervisor_agent_key
-                )
+        async with managers_service.manager_lifecycle_lock(item_id):
+            item = managers_data.read_manager(conn, item_id).item
+            async with conversation_start.conversation_link_lock(f"agent:{item.manager_agent_key}"):
+                current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
                 resolved = (
-                    conversation_start.sprint_item_supervisor_resolve(item)
+                    conversation_start.manager_resolve(item)
                     if runs_under is NO_CONVERSATION_START_OVERRIDES
-                    else conversation_start.sprint_item_supervisor_resolve(item, runs_under)
+                    else conversation_start.manager_resolve(item, runs_under)
                 )
                 delivered = await conversation_start.send_to_agent_conversation(
                     conversations,
                     conn,
-                    item.supervisor_agent_key,
+                    item.manager_agent_key,
                     content,
                     resolved,
                     conversation_id=(
@@ -309,7 +305,7 @@ async def send_message(
                     sender=sender,
                     recipient=recipient,
                     reply_requested=not system_message and expects_reply and not is_reply,
-                    required_sprint_item_id=item_id,
+                    required_manager_id=item_id,
                     retain_created_conversation=retain_created_conversation,
                 )
                 if caller.kind is PrincipalKind.owner and (
@@ -323,17 +319,17 @@ async def send_message(
                         )
                     )
                 ):
-                    sprints_data.update_supervisor_launch_configuration(
+                    managers_data.update_manager_launch_configuration(
                         conn,
                         item_id,
-                        item.supervisor_launch_configuration.__class__(
+                        item.manager_launch_configuration.__class__(
                             employee_backend=resolved.backend_key,
                             employee_launch_model=resolved.model,
                             employee_launch_reasoning_effort=resolved.reasoning_effort,
                         ),
                         principal=caller,
                         clock=clock,
-                        expected_configuration=item.supervisor_launch_configuration,
+                        expected_configuration=item.manager_launch_configuration,
                     )
     else:
         raise PlannerError(

@@ -26,8 +26,8 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.views.storage import read_page
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
-from planner.sprints import data as sprints_data
-from planner.sprints.contracts import SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
+from planner.managers import data as managers_data
+from planner.managers.contracts import MANAGER_LAUNCH_DEFAULTS
 
 
 class _StartupHarness:
@@ -67,7 +67,7 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
         runtime = app.state.conversation
         store = runtime.store
         response = client.post(
-            "/api/items",
+            "/api/managers",
             json={"title": "Kickoff", "project_id": "project_vylo", "goal": goal},
             headers={"X-Plan-Actor": "chief"} if actor == "chief" else {},
         )
@@ -86,14 +86,14 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
         assert message_content_text(prompt.content) == goal
         assert prompt.sender is None
         assert prompt.sender_label == "Panels"
-        assert prompt.recipient == Principal(PrincipalKind.sprint_item, item["id"])
+        assert prompt.recipient == Principal(PrincipalKind.manager, item["id"])
         assert prompt.mode is PromptDeliveryMode.queue
         assert prompt.sender_message_id
         record = client.portal.call(store.read_conversation, conversation_id)
         assert record is not None
-        defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
+        defaults = MANAGER_LAUNCH_DEFAULTS
         with closing(connect(str(db_path))) as conn:
-            saved = sprints_data.read_item(conn, item["id"]).item.supervisor_launch_configuration
+            saved = managers_data.read_manager(conn, item["id"]).item.manager_launch_configuration
         assert saved == defaults
         # The configured alias and its concrete catalogue resolution are distinct.
         assert (record.backend_key, record.model, record.reasoning_effort) == (
@@ -102,8 +102,8 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
             defaults.employee_launch_reasoning_effort,
         )
         identity = dict(record.identity_environment_variables)
-        assert identity["PLAN_ACTOR"] == "sprint_item_supervisor"
-        assert identity["PLAN_SPRINT_ITEM_ID"] == item["id"]
+        assert identity["PLAN_ACTOR"] == "manager"
+        assert identity["PLAN_MANAGER_ID"] == item["id"]
         wire = harness.backend(conversation_id).written_texts
         assert len(wire) == 1
         assert wire[0].endswith(goal)

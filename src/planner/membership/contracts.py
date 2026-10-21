@@ -9,7 +9,14 @@ from typing import TypedDict
 class Collection(StrEnum):
     """Every collection Panels can put a thing into or take a thing out of."""
 
-    outcome_tickets = "outcome_tickets"  # container: an Outcome. member: a Ticket.
+    manager_tickets = "manager_tickets"  # container: a Manager. member: a Ticket.
+
+    @classmethod
+    def _missing_(cls, value: object) -> Collection | None:
+        if value == "outcome_tickets":
+            return cls.manager_tickets
+        return None
+
     blockers = "blockers"  # container: the blocked Ticket. member: the Ticket that blocks it.
 
 

@@ -36,7 +36,7 @@ from measure_navigation_delivery import (
 # Returned as a private remote object, never installed on window or application state.
 DOM_OBSERVER = r"""({ids}) => {
  const roots=[document.querySelector('.approved-rail'),
-  document.querySelector('[data-orchestrator-children]')];
+  document.querySelector('[data-manager-children]')];
  if(roots.some(root=>!root)) throw Error('Actual workspace roots are absent');
  const marks=[];
  const read=()=>({at:performance.now(),connected:roots.every(root=>root.isConnected),
@@ -120,7 +120,7 @@ async def diagnose(
         )
         await cdp.send("Profiler.start")
         started = time.perf_counter_ns()
-        await page.goto(url + "#/workspace/item/" + seed["items"][0])
+        await page.goto(url + "#/workspace/manager/" + seed["managers"][0])
         await page.locator(f'[data-sprint-ticket-id="{seed["tickets"][0]}"]').wait_for(
             state="attached"
         )
@@ -456,9 +456,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                     )
                 started = time.perf_counter_ns()
-                await cold_page.goto(url + "#/workspace/item/" + seed["items"][0])
+                await cold_page.goto(url + "#/workspace/manager/" + seed["managers"][0])
                 await cold_page.locator(
-                    "[data-sprint-item-workspace] .sprint-workspace-title"
+                    "[data-manager-workspace] .sprint-workspace-title"
                 ).wait_for(state="visible")
                 await cold_page.locator(f'[data-sprint-ticket-id="{ids[0]}"]').wait_for(
                     state="attached"
@@ -498,7 +498,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     ),
                 )
-            await page.goto(url + "#/workspace/item/" + seed["items"][0])
+            await page.goto(url + "#/workspace/manager/" + seed["managers"][0])
             await page.locator(f'[data-sprint-ticket-id="{ids[0]}"]').wait_for(state="attached")
             await page.locator("details[data-workspace-group]").evaluate_all(
                 "nodes => nodes.forEach(node => { node.open=true; })"
@@ -558,7 +558,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             for index in range(args.trials):
                 await change(f"paired-warm-{index:03d}")
             ui_started = time.perf_counter_ns()
-            item_path = "/api/items/" + seed["items"][0]
+            item_path = "/api/managers/" + seed["managers"][0]
             async with page.expect_response(
                 lambda response: (
                     urlparse(response.url).path == item_path and response.request.method == "PATCH"
@@ -571,11 +571,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             assert ui_response.ok, await ui_response.text()
             await page.wait_for_function(
                 "(id)=>document.querySelector("
-                '`[data-sprint-item="${id}"] .item-title`)?.textContent === '
+                '`[data-manager="${id}"] .item-title`)?.textContent === '
                 '"Measured Alpha edited in actual App" && document.querySelector('
                 '".sprint-workspace-title [contenteditable=true]")?.textContent === '
                 '"Measured Alpha edited in actual App"',
-                arg=seed["items"][0],
+                arg=seed["managers"][0],
             )
             ui_fence = ui_response.headers.get("panels-navigation-fence")
             if args.mode == "candidate":
@@ -713,7 +713,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             # Exercise actual route/draft state without a product debug accessor.
             await page.evaluate(
                 "(hash)=>{location.hash=hash}",
-                "#/workspace/item/" + seed["items"][0] + "/" + ids[0],
+                "#/workspace/manager/" + seed["managers"][0] + "/" + ids[0],
             )
             await page.locator('[data-screen="ticket"]').wait_for()
             draft = page.locator("[data-conversation-composer] textarea").first
@@ -735,9 +735,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 assert await draft.input_value() == "Measured local draft"
                 draft_check = {"supported": True, "preserved_after_background_commit": True}
             await page.evaluate(
-                "(hash)=>{location.hash=hash}", "#/workspace/item/" + seed["items"][0]
+                "(hash)=>{location.hash=hash}", "#/workspace/manager/" + seed["managers"][0]
             )
-            await page.locator("[data-orchestrator-children]").wait_for()
+            await page.locator("[data-manager-children]").wait_for()
             # Actual runtime facts originate at the controlled backend wire.
             signal_response = await page.request.post(url + "api/harness/signal/0/start")
             assert signal_response.ok, await signal_response.text()
@@ -849,12 +849,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             moved_id = ids[-1]
             parent_response = await page.request.patch(
                 url + "api/tickets/" + moved_id,
-                data={"orchestrator": {"kind": "sprint_item", "id": seed["items"][1]}},
+                data={"manager": {"kind": "manager", "id": seed["managers"][1]}},
             )
             assert parent_response.ok, await parent_response.text()
             await page.locator(f'[data-sprint-ticket-id="{moved_id}"]').wait_for(state="detached")
             await page.evaluate(
-                "hash=>{location.hash=hash}", "#/workspace/item/" + seed["items"][1]
+                "hash=>{location.hash=hash}", "#/workspace/manager/" + seed["managers"][1]
             )
             await page.locator(f'[data-sprint-ticket-id="{moved_id}"]').wait_for(state="attached")
             deletion = await page.request.delete(url + "api/tickets/" + moved_id)
@@ -862,7 +862,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             await page.locator(f'[data-sprint-ticket-id="{moved_id}"]').wait_for(state="detached")
             await page.locator(f'[data-ticket-id="{moved_id}"]').wait_for(state="detached")
             await page.evaluate(
-                "hash=>{location.hash=hash}", "#/workspace/item/" + seed["items"][0]
+                "hash=>{location.hash=hash}", "#/workspace/manager/" + seed["managers"][0]
             )
             await page.locator(f'[data-sprint-ticket-id="{ids[0]}"]').wait_for(state="attached")
             samples.append({"scenario": "parent-move-and-deletion", "connected_panes": True})

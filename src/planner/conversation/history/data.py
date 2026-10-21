@@ -42,28 +42,44 @@ def install(conn: sqlite3.Connection) -> None:
         "WHERE owner_kind='ticket' AND owner_id=OLD.ticket_id AND "
         "conversation_id=OLD.conversation_id; END"
     )
+    current = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managers'"
+        ).fetchone()
+        is not None
+    )
+    owner_kind = "manager" if current else "sprint_item"
     actor = (
         "(SELECT json_extract(value,'$[1]') FROM json_each(CASE WHEN "
         "json_valid(identity_environment_variables) THEN "
         "identity_environment_variables ELSE '[]' END) WHERE "
         "json_extract(value,'$[0]')='PLAN_ACTOR' LIMIT 1)"
     )
-    owner = (
+    legacy_owner = (
         "(SELECT json_extract(value,'$[1]') FROM json_each(CASE WHEN "
         "json_valid(identity_environment_variables) THEN "
         "identity_environment_variables ELSE '[]' END) WHERE "
         "json_extract(value,'$[0]')='PLAN_SPRINT_ITEM_ID' LIMIT 1)"
     )
+    current_owner = legacy_owner.replace("PLAN_SPRINT_ITEM_ID", "PLAN_MANAGER_ID")
+    owner = f"coalesce({current_owner},{legacy_owner})" if current else legacy_owner
+    actors = "('manager','sprint_item_supervisor')" if current else "('sprint_item_supervisor')"
+    conflict = (
+        f" AND ({current_owner} IS NULL OR {legacy_owner} IS NULL "
+        f"OR {current_owner}={legacy_owner})"
+        if current
+        else ""
+    )
     select = (
-        f"SELECT 'sprint_item',{owner},conversation_id,created_at FROM conversations "
-        f"WHERE {actor}='sprint_item_supervisor' AND {owner} IS NOT NULL"
+        f"SELECT '{owner_kind}',{owner},conversation_id,created_at FROM conversations "
+        f"WHERE {actor} IN {actors} AND {owner} IS NOT NULL" + conflict
     )
     conn.execute("INSERT OR IGNORE INTO conversation_history_catalog " + select)
     for operation in ("INSERT", "UPDATE OF identity_environment_variables,created_at"):
         name = operation.split()[0].lower()
         conn.execute(
             f"CREATE TRIGGER history_owner_{name} AFTER {operation} ON conversations BEGIN "
-            "DELETE FROM conversation_history_catalog WHERE owner_kind='sprint_item' "
+            f"DELETE FROM conversation_history_catalog WHERE owner_kind='{owner_kind}' "
             "AND conversation_id=NEW.conversation_id; "
             f"INSERT OR IGNORE INTO conversation_history_catalog {select} "
             "AND conversation_id=NEW.conversation_id; END"

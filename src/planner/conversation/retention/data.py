@@ -10,7 +10,7 @@ from pathlib import Path
 from planner.conversation.lifecycle_storage import read_facts
 from planner.conversation.retention.contracts import (
     ConversationRetentionInput,
-    OrchestratorOwner,
+    ManagerOwner,
     RetentionEvent,
     RetentionReport,
     TicketOwner,
@@ -120,9 +120,16 @@ def build_report(
         str(row[0]): TicketOwner(str(row[0]), str(row[1]), str(row[2]))
         for row in connection.execute("SELECT id,stage,worker_step_claim FROM tickets")
     }
-    orchestrators = {
-        str(row[0]): OrchestratorOwner(str(row[0]), row[1] == 1)
-        for row in connection.execute("SELECT id,settled FROM sprint_items")
+    manager_table = (
+        "managers"
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='managers'"
+        ).fetchone()
+        else "sprint_items"
+    )
+    managers = {
+        str(row[0]): ManagerOwner(str(row[0]), row[1] == 1)
+        for row in connection.execute(f"SELECT id,settled FROM {manager_table}")
     }
     decisions = []
     for conversation in conversations:
@@ -150,13 +157,14 @@ def build_report(
                 (conversation_id,),
             )
         )
-        orchestrator_ids = {
-            key.removeprefix("sprint_item_supervisor_")
+        manager_ids = {
+            key.removeprefix(prefix)
             for key in agent_keys
-            if key.startswith("sprint_item_supervisor_")
+            for prefix in ("manager_", "sprint_item_supervisor_")
+            if key.startswith(prefix)
         }
-        if "PLAN_SPRINT_ITEM_ID" in identity:
-            orchestrator_ids.add(identity["PLAN_SPRINT_ITEM_ID"])
+        if "PLAN_MANAGER_ID" in identity:
+            manager_ids.add(identity["PLAN_MANAGER_ID"])
         events = tuple(
             RetentionEvent(str(row[0]), int(row[1]), str(row[2]), str(row[3]), int(row[4]))
             for row in connection.execute(
@@ -184,10 +192,7 @@ def build_report(
                 tickets.get(key, TicketOwner(key, "unknown", "unknown"))
                 for key in sorted(ticket_ids)
             ),
-            tuple(
-                orchestrators.get(key, OrchestratorOwner(key, False))
-                for key in sorted(orchestrator_ids)
-            ),
+            tuple(managers.get(key, ManagerOwner(key, False)) for key in sorted(manager_ids)),
             agent_keys,
             events,
             tuple(sorted(protected)),

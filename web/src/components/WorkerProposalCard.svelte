@@ -6,9 +6,9 @@
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { proposal, lifecycle, stage, ceiling, holder, sprintItem, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, contextRow }: {
+  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, contextRow }: {
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
-    sprintItem: { id: string; title: string } | null;
+    manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
     onScope: (body: Record<string,unknown>) => Promise<void>;
     onReturn: (message: string) => Promise<unknown>;
@@ -28,7 +28,7 @@
   let lastKey: string | null = null;
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
-  let identity = $derived([proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), sprintItem?.id || ""].join("|"));
+  let identity = $derived([proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
   $effect(() => {
     if (identity === lastKey) return;
     lastKey = identity;
@@ -39,7 +39,7 @@
     error = null;
   });
   function reviewerLabel(value: Principal): string {
-    return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : value.kind === "ticket" ? "Worker" : "Orchestrator";
+    return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : value.kind === "ticket" ? "Worker" : "Manager";
   }
   async function completeScope(change: { ceiling?: string; holder: Principal | null; approval?: boolean }): Promise<void> {
     if (!change.holder || disabled || busy || resolved) return;
@@ -83,7 +83,7 @@
         onclick={() => { if (canReturn) returning = true; }}>Send it back</button>
     {/if}
   </div>
-  <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {sprintItem} below pendingStage={stage}
+  <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
   {#if proposal.field !== "brief" && !canReturn}<p class="return-unavailable" data-return-unavailable>{returnUnavailableReason}</p>{/if}

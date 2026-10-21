@@ -6,12 +6,12 @@ import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { currentSnapshot,continuity,conversation } from './support/navigation/fixtures';
 import type { TicketRecord,NavigationRecord,ViewRecord } from '../src/lib/navigation/contracts';
-import { workspaceHoverImpact,orchestratorChildrenImpact,workspaceRailImpact } from '../src/lib/workspaceNavigationImpact';
+import { workspaceHoverImpact,managerChildrenImpact,workspaceRailImpact } from '../src/lib/workspaceNavigationImpact';
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 import { runtimeCountImpact,reviewBadgeImpact } from '../src/lib/reviewNavigationImpact';
 
-const ticket:TicketRecord={kind:'ticket',id:'a',value:{title:'A',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,deadline:null,project_id:'p',orchestrator_kind:'sprint_item',sprint_item_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'test'}};
-const records:NavigationRecord[]=[ticket,conversation('a-conversation'),{kind:'orchestrator',id:'parent',value:{title:'Parent',recap:'',recap_preview:'',created_at:1,project_id:'p',settled:false,conversation_id:null}},{kind:'project',id:'p',value:{name:'Project'}}];
+const ticket:TicketRecord={kind:'ticket',id:'a',value:{title:'A',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,deadline:null,project_id:'p',manager_kind:'manager',manager_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'test'}};
+const records:NavigationRecord[]=[ticket,conversation('a-conversation'),{kind:'manager',id:'parent',value:{title:'Parent',recap:'',recap_preview:'',created_at:1,project_id:'p',settled:false,conversation_id:null}},{kind:'project',id:'p',value:{name:'Project'}}];
 const titleImpact:RecordImpact={kind:'ticket',id:'a',fields:['title','updated_at']};
 const fence={...continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic'};
 
@@ -23,10 +23,10 @@ describe('application presentation and command evidence',()=>{
       const view=knowledge.accept(collection.getPublication()!);
       const first=presentationFor(view);
       expect(presentationFor(view)).toBe(first);
-      expect(first.orchestratorsById.get('parent')?.tickets[0]).toBe(first.ticketsById.get('a'));
-      expect(first.ticketsByParent.get('orchestrator:parent')?.[0]).toBe(first.ticketsById.get('a'));
+      expect(first.managersById.get('parent')?.tickets[0]).toBe(first.ticketsById.get('a'));
+      expect(first.ticketsByParent.get('manager:parent')?.[0]).toBe(first.ticketsById.get('a'));
       expect(first.ticketMastheadsById.get('a')?.project).toBe('Project');
-      const missingParent={...view,publication:{...view.publication,records:view.publication.records.filter(record=>record.kind!=='orchestrator')}};
+      const missingParent={...view,publication:{...view.publication,records:view.publication.records.filter(record=>record.kind!=='manager')}};
       expect(presentationFor(missingParent).ticketMastheadsById.has('a')).toBe(false);
       expect(createNavigationPresentationCache()(view)).not.toBe(first);
       const lost=knowledge.loseRuntime()!;
@@ -39,32 +39,32 @@ describe('application presentation and command evidence',()=>{
       expect(presentationFor(read).tickets[0].conversation_signal?.message_for_owner).toBeUndefined();
       expect(presentationFor(read)).not.toBe(next);
       // Title also updates activity order, but has no runtime-count or badge effect.
-      expect(orchestratorChildrenImpact(titleImpact,{kind:'sprint_item',id:'parent'},first,first.tickets,[{key:'empty',tickets:first.tickets}],{})).toBe(true);
-      expect(orchestratorChildrenImpact(titleImpact,{kind:'sprint_item',id:'other'},first,[],[],{})).toBe(false);
-      expect(orchestratorChildrenImpact({kind:'ticket',id:'a',fields:['sprint_item_id']},{kind:'sprint_item',id:'other'},first,[],[],{})).toBe(true);
+      expect(managerChildrenImpact(titleImpact,{kind:'manager',id:'parent'},first,first.tickets,[{key:'empty',tickets:first.tickets}],{})).toBe(true);
+      expect(managerChildrenImpact(titleImpact,{kind:'manager',id:'other'},first,[],[],{})).toBe(false);
+      expect(managerChildrenImpact({kind:'ticket',id:'a',fields:['manager_id']},{kind:'manager',id:'other'},first,[],[],{})).toBe(true);
       expect(workspaceHoverImpact(titleImpact,'ticket','a','a-conversation',first)).toBe(true);
       expect(workspaceHoverImpact(titleImpact,'ticket','other',null,first)).toBe(false);
       // A tail change can preserve the list preview but must refresh an open popup.
       expect(workspaceHoverImpact({kind:'ticket',id:'a',fields:['recap']},'ticket','a','a-conversation',first)).toBe(true);
-      expect(workspaceHoverImpact({kind:'orchestrator',id:'parent',fields:['recap']},'orchestrator','parent',null,first)).toBe(true);
-      expect(orchestratorChildrenImpact(titleImpact,{kind:'sprint_item',id:'parent'},first,[],[],{})).toBe(false);
-      expect(orchestratorChildrenImpact(titleImpact,{kind:'sprint_item',id:'parent'},first,first.tickets,[{key:'empty',tickets:first.tickets}],{empty:false})).toBe(false);
-      const rail=buildWorkspaceRail(first.tickets,first.orchestrators);
+      expect(workspaceHoverImpact({kind:'manager',id:'parent',fields:['recap']},'manager','parent',null,first)).toBe(true);
+      expect(managerChildrenImpact(titleImpact,{kind:'manager',id:'parent'},first,[],[],{})).toBe(false);
+      expect(managerChildrenImpact(titleImpact,{kind:'manager',id:'parent'},first,first.tickets,[{key:'empty',tickets:first.tickets}],{empty:false})).toBe(false);
+      const rail=buildWorkspaceRail(first.tickets,first.managers);
       expect(workspaceRailImpact(titleImpact,first,rail,false)).toBe(true);
       expect(workspaceRailImpact({kind:'conversation',id:'unlinked',fields:['attention']},first,rail,false)).toBe(false);
       expect(workspaceRailImpact({kind:'project',id:'other-project',fields:['name']},first,rail,false)).toBe(false);
       const excluded={...first,ticketsById:new Map([['a',{...first.tickets[0],is_backlogged:true}]])};
-      const excludedRail=buildWorkspaceRail([...excluded.ticketsById.values()],first.orchestrators.map(item=>({...item,tickets:[...excluded.ticketsById.values()]})));
+      const excludedRail=buildWorkspaceRail([...excluded.ticketsById.values()],first.managers.map(item=>({...item,tickets:[...excluded.ticketsById.values()]})));
       expect(workspaceRailImpact(titleImpact,excluded,excludedRail,false)).toBe(false);
       expect(workspaceRailImpact({kind:'ticket',id:'a',fields:['is_backlogged','updated_at']},excluded,excludedRail,false)).toBe(true);
       // A parent's generated fallback recap counts eligible child rows. Saved
       // recap text and unrelated parents do not depend on that count.
       const backlogImpact:RecordImpact={kind:'ticket',id:'a',fields:['is_backlogged','updated_at']};
-      expect(workspaceHoverImpact(backlogImpact,'orchestrator','parent',null,first,true)).toBe(true);
-      expect(workspaceHoverImpact(backlogImpact,'orchestrator','parent',null,first,false)).toBe(false);
-      expect(workspaceHoverImpact(backlogImpact,'orchestrator','other',null,first,true)).toBe(false);
+      expect(workspaceHoverImpact(backlogImpact,'manager','parent',null,first,true)).toBe(true);
+      expect(workspaceHoverImpact(backlogImpact,'manager','parent',null,first,false)).toBe(false);
+      expect(workspaceHoverImpact(backlogImpact,'manager','other',null,first,true)).toBe(false);
       const chiefView={...view,publication:{...view.publication,records:records.map(record=>record.kind==='ticket'
-        ? {...record,value:{...record.value,orchestrator_kind:'chief' as const,sprint_item_id:null}} : record)}};
+        ? {...record,value:{...record.value,manager_kind:'chief' as const,manager_id:null}} : record)}};
       const chiefPresentation=presentationFor(chiefView);
       expect(workspaceHoverImpact(backlogImpact,'chief','chief',null,chiefPresentation,true)).toBe(true);
       expect(workspaceHoverImpact(titleImpact,'chief','chief',null,chiefPresentation,true)).toBe(false);
@@ -73,12 +73,12 @@ describe('application presentation and command evidence',()=>{
       // Ticket has no current conversation pointer and is absent from groups.
       const historicalRecords:NavigationRecord[]=[...records.map(record=>record.kind==='ticket'
         ? {...record,value:{...record.value,stage:'done',terminal:true,blocked:true,conversation_id:null}}
-        : record.kind==='orchestrator' ? {...record,value:{...record.value,settled:true}} : record),
+        : record.kind==='manager' ? {...record,value:{...record.value,settled:true}} : record),
         conversation('history'),{kind:'address',id:'historical-address',value:{owner_kind:'ticket',owner_id:'a',
-          conversation_id:'history',current:false,parent_kind:'orchestrator',parent_id:'parent'}}];
+          conversation_id:'history',current:false,parent_kind:'manager',parent_id:'parent'}}];
       collection.publishSnapshot(currentSnapshot({...continuity,revision:'1',records:historicalRecords}),'historical');
       const historical=presentationFor(knowledge.accept(collection.getPublication()!));
-      const historicalRail=buildWorkspaceRail(historical.tickets,historical.orchestrators);
+      const historicalRail=buildWorkspaceRail(historical.tickets,historical.managers);
       const historyImpact:RecordImpact={kind:'conversation',id:'history',fields:['attention']};
       expect(historicalRail.settledItems[0].groups).toHaveLength(0);
       expect(historical.messagesByParent.get('parent')?.[0].conversationId).toBe('history');
@@ -92,11 +92,11 @@ describe('application presentation and command evidence',()=>{
         record.kind==='conversation' && record.id==='history' ? conversation('history',0,false) : record)}),'quiet-historical');
       const quiet=presentationFor(knowledge.accept(collection.getPublication()!));
       expect(quiet.messagesByParent.get('parent')).toBeUndefined();
-      expect(workspaceRailImpact(historyImpact,quiet,buildWorkspaceRail(quiet.tickets,quiet.orchestrators),true)).toBe(true);
+      expect(workspaceRailImpact(historyImpact,quiet,buildWorkspaceRail(quiet.tickets,quiet.managers),true)).toBe(true);
       const movedBacklogged={...quiet.tickets[0],is_backlogged:true,
-        orchestrator:{kind:'sprint_item' as const,id:'other'},sprint_item_id:'other'};
+        manager:{kind:'manager' as const,id:'other'},manager_id:'other'};
       const backlogged={...quiet,tickets:[movedBacklogged],ticketsById:new Map([['a',movedBacklogged]])};
-      const backloggedRail=buildWorkspaceRail(backlogged.tickets,quiet.orchestrators.map(item=>({...item,tickets:[]})));
+      const backloggedRail=buildWorkspaceRail(backlogged.tickets,quiet.managers.map(item=>({...item,tickets:[]})));
       // The historical alias stays under the former parent. Canonical backlog
       // still excludes it even though the Ticket is absent from that parent's rows.
       expect(workspaceRailImpact(historyImpact,backlogged,backloggedRail,true)).toBe(false);
@@ -114,12 +114,12 @@ describe('application presentation and command evidence',()=>{
       collection.publishSnapshot(currentSnapshot({...continuity,records}),'base');
       const base=collection.getPublication()!;
       const history=conversation('history');
-      const window={window_id:'parent-unread',request:{section:'unread' as const,owner:{kind:'orchestrator' as const,id:'parent'},group:'all' as const,child_filter:'all' as const,anchor:null,direction:'after' as const,limit:60},
+      const window={window_id:'parent-unread',request:{section:'unread' as const,owner:{kind:'manager' as const,id:'parent'},group:'all' as const,child_filter:'all' as const,anchor:null,direction:'after' as const,limit:60},
         members:[{kind:'address' as const,id:'history-address'}],total:7,previous:null,next:'more',forward_overlap:null,backward_overlap:null};
       const scopedRecords:ViewRecord[]=[...records.filter(row=>row.kind!=='totals').map(row=>row.kind==='ticket' ? {...row,value:{...row.value,recap_reference:null,stage:'done',conversation_id:null}}
-        : row.kind==='orchestrator' ? {...row,value:{...row.value,recap:'Parent recap',recap_reference:null,settled:true}} : row),
-        history,{kind:'address',id:'history-address',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'history',current:false,parent_kind:'orchestrator',parent_id:'parent'}},
-        {kind:'orchestrator',id:'lean',value:{title:'Lean row',created_at:2,settled:true,conversation_id:null}}];
+        : row.kind==='manager' ? {...row,value:{...row.value,recap:'Parent recap',recap_reference:null,settled:true}} : row),
+        history,{kind:'address',id:'history-address',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'history',current:false,parent_kind:'manager',parent_id:'parent'}},
+        {kind:'manager',id:'lean',value:{title:'Lean row',created_at:2,settled:true,conversation_id:null}}];
       const publication={...base,records:scopedRecords,view:{id:'scoped',scopeGeneration:1,contentVersion:'one',orderingGeneration:'fixture',
         windows:[window,{...window,window_id:'global-unread',request:{...window.request,owner:null,limit:0},members:[],total:7}],counts:{running_conversations:1,out_claims:0,review:0,unread:7,settled:2}}};
       const effective=knowledge.accept(publication),first=presentationFor(effective);
@@ -130,8 +130,8 @@ describe('application presentation and command evidence',()=>{
       expect(first.viewWindows[0].total).toBe(7);
       expect(first.viewWindows[0].next).toBe('more');
       expect(first.ticketMastheadsById.get('a')?.project).toBe('Project');
-      expect(first.rawOrchestratorsById.get('parent')?.value.recap).toBe('Parent recap');
-      const rail=buildWorkspaceRail(first.tickets,[...first.orchestrators,...first.settledOrchestrators]);
+      expect(first.rawManagersById.get('parent')?.value.recap).toBe('Parent recap');
+      const rail=buildWorkspaceRail(first.tickets,[...first.managers,...first.settledManagers]);
       expect(rail.settledItems.find(item=>item.id==='lean')).not.toHaveProperty('recap');
       expect(rail.settledItems.find(item=>item.id==='lean')).not.toHaveProperty('projectId');
       const read=knowledge.invalidateDurableFact('history','message_for_owner',20)!;
