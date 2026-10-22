@@ -106,10 +106,24 @@ writes need not emit a database change.
 `ConversationPlaceholder` is the clearly named integration slot on Chief,
 Orchestrator and Ticket. No transcript, composer, read marker, or conversation
 layout has been implemented; the agreed conversation design comes later. Artifact
-viewing and the non-Settings More destinations are placeholders. All shipped
-network calls are read-only, including during simulator verification. Screen
-workers must add explicit mutations behind the API adapter as needed.
+viewing and the Ideas, Usage and VPS destinations are placeholders. Feedback
+implements the Open/Handled inbox, grouped Ticket links, page context links and
+Dismiss/Reopen actions through its API adapter. It follows foreground change
+revisions and supports pull-to-refresh. Its empty state omits the web's capture
+button instruction because native global feedback capture is not yet implemented.
+Live simulator verification is read-only; Feedback writes are exercised only with
+an injected stub or URLProtocol interception.
 
 Haptic helpers offer light, medium, success and selection. Navigation and tab
 changes use them, as does saving Settings. Native navigation transitions supply
 motion, respect system accessibility preferences, and avoid custom bouncing.
+
+## Feedback verification
+
+`PanelsTests/FeedbackTests` protects four distinct gaps in the foundation tests:
+Feedback response grouping and attention precedence, safe native page-context
+routing, retaining notes after a failed mutation and refreshing after success,
+and the POST adapter's encoding of one identifier component. Tests reuse the
+shared decoder, one small synthetic response, an actor stub and an ephemeral
+URLSession; they start no backend or browser host. Feedback's views, contracts,
+presentation and API extension are confined to `Features/More/Feedback`.

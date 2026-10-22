@@ -8,7 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		0307B26ABAB3340A50EA35E2 /* ticket-full.json in Resources */ = {isa = PBXBuildFile; fileRef = 050F4E53EA9313A8C93AC324 /* ticket-full.json */; };
+		063C8A6F11DADE62594FDDFE /* FeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */; };
 		1350FA8D85AF214989D52105 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F829A52B0ABE0E906313419 /* Haptics.swift */; };
+		18B3FBCD4CC57EEAB99D6336 /* FeedbackContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356BA2ECFEB85ADECDEC8FC5 /* FeedbackContracts.swift */; };
 		23C2B5D08DA29C319EDD15F4 /* ArtifactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCEE66ABADAB38227077931 /* ArtifactListView.swift */; };
 		2B76A62CFB6F9FF7119EBA2B /* ChiefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE13519E521C9A6D6DD3A99A /* ChiefView.swift */; };
 		3E90EAD8718A7CC68F1E9D6B /* managers.json in Resources */ = {isa = PBXBuildFile; fileRef = D00C1733528B6700CE613C4A /* managers.json */; };
@@ -34,8 +36,11 @@
 		93E5D8990C2F3F7615FC8B01 /* ScreenState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CD280BD116D51431A92E820 /* ScreenState.swift */; };
 		A29A4D112F11C5E9FC2FB65C /* ManagerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7687EE6822ECA78D49FE1A64 /* ManagerModels.swift */; };
 		A47892D9718F06729227DA16 /* ChangeStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC948AEFA056E4850619C188 /* ChangeStream.swift */; };
+		B24400AA059945ADEF9116AE /* FeedbackModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71F32ADD51357FC7D1B635FF /* FeedbackModel.swift */; };
 		BBD854BD301C60BE514FCE08 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0434C98350BF77AD359C7B6 /* WorkspaceView.swift */; };
 		C021BC02393459A9D0BA8C95 /* tickets.json in Resources */ = {isa = PBXBuildFile; fileRef = 490342327C1A28E38841549F /* tickets.json */; };
+		C9F696AD1D9B408F44AFA6F6 /* FeedbackAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB95C680FF6CF50767A7CE6A /* FeedbackAPI.swift */; };
+		D863C2DB0472D5E5C45BC142 /* FeedbackPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4947C201978999EE83C7707 /* FeedbackPresentation.swift */; };
 		D8759A19CECC7DF6FE887A2F /* manager.json in Resources */ = {isa = PBXBuildFile; fileRef = 84958E18FFD4BF0F350CDDA3 /* manager.json */; };
 		DF98D89CF003C17DFD2322F9 /* ArtifactViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E71530843F077BD7F076F6B /* ArtifactViewerView.swift */; };
 		E7EFCAAEF02CEB7B09D87478 /* ArtifactModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C56C713C713662C2E7B1D24 /* ArtifactModels.swift */; };
@@ -67,6 +72,7 @@
 		2CD280BD116D51431A92E820 /* ScreenState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenState.swift; sourceTree = "<group>"; };
 		2E71530843F077BD7F076F6B /* ArtifactViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactViewerView.swift; sourceTree = "<group>"; };
 		2E8189870D845B834795C410 /* ModelDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDecodingTests.swift; sourceTree = "<group>"; };
+		356BA2ECFEB85ADECDEC8FC5 /* FeedbackContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackContracts.swift; sourceTree = "<group>"; };
 		39606234AB8F948E15D6F5A2 /* IdeasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeasView.swift; sourceTree = "<group>"; };
 		3F829A52B0ABE0E906313419 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		47A70D70AFB6D9EF5EF29D49 /* TicketModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketModels.swift; sourceTree = "<group>"; };
@@ -78,6 +84,8 @@
 		6C56C713C713662C2E7B1D24 /* ArtifactModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactModels.swift; sourceTree = "<group>"; };
 		6CCEE66ABADAB38227077931 /* ArtifactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactListView.swift; sourceTree = "<group>"; };
 		6D79CCF7EB676CEF0E8B6306 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackTests.swift; sourceTree = "<group>"; };
+		71F32ADD51357FC7D1B635FF /* FeedbackModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackModel.swift; sourceTree = "<group>"; };
 		761B3507C34F559D58C84476 /* DeploymentStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeploymentStrip.swift; sourceTree = "<group>"; };
 		7687EE6822ECA78D49FE1A64 /* ManagerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerModels.swift; sourceTree = "<group>"; };
 		783A5F0113315294102CE6CE /* review.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = review.json; sourceTree = "<group>"; };
@@ -88,8 +96,10 @@
 		8E5FBB5EFD5C2312A346A617 /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
 		915822ADC1565248F5088336 /* AppShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShell.swift; sourceTree = "<group>"; };
 		98AC191805A3FDBCA1926495 /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
+		A4947C201978999EE83C7707 /* FeedbackPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackPresentation.swift; sourceTree = "<group>"; };
 		AD8BD0258E05C85BEB58764E /* OrchestratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrchestratorView.swift; sourceTree = "<group>"; };
 		B0434C98350BF77AD359C7B6 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		BB95C680FF6CF50767A7CE6A /* FeedbackAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackAPI.swift; sourceTree = "<group>"; };
 		C7D9B0CB8A6B3EA62C937A4E /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		C99A69BEF25D336DE99BFC97 /* TicketView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketView.swift; sourceTree = "<group>"; };
 		CC948AEFA056E4850619C188 /* ChangeStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeStream.swift; sourceTree = "<group>"; };
@@ -104,7 +114,10 @@
 		044235D549390F28211B3C1A /* Feedback */ = {
 			isa = PBXGroup;
 			children = (
+				356BA2ECFEB85ADECDEC8FC5 /* FeedbackContracts.swift */,
 				98AC191805A3FDBCA1926495 /* FeedbackView.swift */,
+				34DF767567EB6FD2F5F3F259 /* Data */,
+				0A7A2D2AF22667B8CEDACF74 /* Logic */,
 			);
 			path = Feedback;
 			sourceTree = "<group>";
@@ -115,6 +128,14 @@
 				B0434C98350BF77AD359C7B6 /* WorkspaceView.swift */,
 			);
 			path = Workspace;
+			sourceTree = "<group>";
+		};
+		0A7A2D2AF22667B8CEDACF74 /* Logic */ = {
+			isa = PBXGroup;
+			children = (
+				A4947C201978999EE83C7707 /* FeedbackPresentation.swift */,
+			);
+			path = Logic;
 			sourceTree = "<group>";
 		};
 		12564C390860352F78B67ED2 /* VPS */ = {
@@ -182,6 +203,15 @@
 			path = Ideas;
 			sourceTree = "<group>";
 		};
+		34DF767567EB6FD2F5F3F259 /* Data */ = {
+			isa = PBXGroup;
+			children = (
+				BB95C680FF6CF50767A7CE6A /* FeedbackAPI.swift */,
+				71F32ADD51357FC7D1B635FF /* FeedbackModel.swift */,
+			);
+			path = Data;
+			sourceTree = "<group>";
+		};
 		39EC58EDFE09C3AEBE3C13D6 /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -210,6 +240,7 @@
 		573F39E82855139A8A316A23 /* PanelsTests */ = {
 			isa = PBXGroup;
 			children = (
+				709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */,
 				2E8189870D845B834795C410 /* ModelDecodingTests.swift */,
 				20815F2876B394D504D0AA5F /* Fixtures */,
 			);
@@ -437,6 +468,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				063C8A6F11DADE62594FDDFE /* FeedbackTests.swift in Sources */,
 				56C8379A0AA3BC97F760B875 /* ModelDecodingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -455,6 +487,10 @@
 				E8EB97A1681A6EAEA0322130 /* ChiefModels.swift in Sources */,
 				2B76A62CFB6F9FF7119EBA2B /* ChiefView.swift in Sources */,
 				85EB4A27FABBB5B9E9C7224E /* DeploymentStrip.swift in Sources */,
+				C9F696AD1D9B408F44AFA6F6 /* FeedbackAPI.swift in Sources */,
+				18B3FBCD4CC57EEAB99D6336 /* FeedbackContracts.swift in Sources */,
+				B24400AA059945ADEF9116AE /* FeedbackModel.swift in Sources */,
+				D863C2DB0472D5E5C45BC142 /* FeedbackPresentation.swift in Sources */,
 				5C1808D01B65A50AFABA730C /* FeedbackView.swift in Sources */,
 				1350FA8D85AF214989D52105 /* Haptics.swift in Sources */,
 				736550B721555579BC7085A5 /* IdeasView.swift in Sources */,
