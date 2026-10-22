@@ -188,7 +188,9 @@ time and show “No feed”. Pull-to-refresh also reloads history.
 Settings reads agent launch defaults, role skills, schedules and notification
 preferences. Server preferences are read-only; management remains on the web.
 The Server sheet changes only this app's stored HTTPS address. Its save closure
-can be replaced by a stub. Native push is not connected in this preview.
+can be replaced by a stub. Native notification permission, APNs token handling and tap routing are implemented.
+Server delivery remains disabled until the APNs endpoint and Apple signing are
+configured; see [the notification handoff](NOTIFICATIONS.md).
 
 The four system-screen tests cover gaps not covered by the foundation fixtures:
 nullable recorded cost versus a real zero; per-core CPU conversion and missing

@@ -1,0 +1,12 @@
+{
+  "aps": {
+    "alert": {
+      "title": "iOS launch \u00b7 Error",
+      "body": "The orchestrator\u2019s turn failed. Open it to inspect the error."
+    },
+    "sound": "default",
+    "thread-id": "panels-orchestrator"
+  },
+  "server_url": "https://panels-vps.tail687c57.ts.net",
+  "route": "/#/workspace/item/notify-manager"
+}

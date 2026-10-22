@@ -102,6 +102,7 @@ struct SettingsView: View {
     }
     private var notificationPreferences: some View {
         Group {
+            NotificationDeviceSettings()
             if let notifications {
                 ForEach(notifications.subjects, id: \.key) { subject in
                     Section(subject.label) {
@@ -118,10 +119,6 @@ struct SettingsView: View {
                         }
                     }.listRowBackground(PanelsTheme.raised)
                 }
-                Section("This Device") {
-                    Text("Push notifications are not connected in this iOS preview.").foregroundStyle(PanelsTheme.muted)
-                    Text("These are the server’s notification preferences. Change them on the web.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                }.listRowBackground(PanelsTheme.raised)
             }
         }
     }

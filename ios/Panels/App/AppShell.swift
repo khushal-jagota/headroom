@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppShell: View {
     @Environment(AppStore.self) private var store
+    @Environment(NotificationController.self) private var notifications
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .workspace
     @State private var reviewPath: [AppRoute] = []
@@ -40,6 +41,13 @@ struct AppShell: View {
             }
                 .tabItem { Label("More", systemImage: "ellipsis") }.tag(AppTab.more)
         }
+        .task(id: notifications.pendingOpen?.id) { openNotification() }
+        .task(id: "push:\(store.baseURL):\(scenePhase == .active)") {
+            if scenePhase == .active { await notifications.refresh(using: store.client) }
+        }
+        .alert("Notification", isPresented: Binding(get: { notifications.routingError != nil }, set: { if !$0 { notifications.routingError = nil } })) {
+            Button("OK") { notifications.routingError = nil }
+        } message: { Text(notifications.routingError ?? "") }
         // Owner override: tabs select; pushes and back navigation give a light impact.
         .onChange(of: selectedTab) { _, _ in Haptics.selection() }
         .onChange(of: reviewPath) { old, new in if old != new { Haptics.light() } }
@@ -48,6 +56,23 @@ struct AppShell: View {
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
             if scenePhase == .active { await store.run() }
+        }
+    }
+
+    private func openNotification() {
+        guard let destination = notifications.consumeOpen(for: store.baseURL) else { return }
+        switch destination {
+        case .review(let ticketID):
+            if let ticketID {
+                workspacePath = [.ticket(ticketID)]
+                selectedTab = .workspace
+            } else {
+                reviewPath = []
+                selectedTab = .review
+            }
+        case .ticket(let id): selectedTab = .workspace; workspacePath = [.ticket(id)]
+        case .orchestrator(let id): selectedTab = .workspace; workspacePath = [.orchestrator(id)]
+        case .chief: selectedTab = .workspace; workspacePath = [.chief]
         }
     }
 
