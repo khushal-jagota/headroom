@@ -252,7 +252,7 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
         assert unchanged["project_id"] == "project_vylo"
 
         with connect(str(db_path)) as conn:
-            before = tuple(conn.iterdump())
+            before_invalid_holder = tuple(conn.iterdump())
         invalid_holder = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
@@ -267,7 +267,7 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
             "ceiling holder must have authority to decide this Ticket"
         )
         with connect(str(db_path)) as conn:
-            assert tuple(conn.iterdump()) == before
+            assert tuple(conn.iterdump()) == before_invalid_holder
 
         moved = client.patch(
             f"/api/tickets/{ticket_id}",
