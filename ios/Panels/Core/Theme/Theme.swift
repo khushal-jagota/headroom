@@ -25,7 +25,14 @@ enum PanelsTheme {
         static let heading = Font.title3.weight(.semibold)
         static let title = Font.largeTitle.weight(.semibold)
     }
-    enum Motion { static let fast = 0.09; static let base = 0.15; static let slow = 0.24 }
+    enum Motion {
+        static let fast = 0.09
+        static let base = 0.15
+        static let slow = 0.24
+        static let enter = 0.32
+        static let fade = Animation.timingCurve(0.2, 0.7, 0.3, 1, duration: base)
+        static let disclosure = Animation.smooth(duration: slow, extraBounce: 0)
+    }
 }
 
 private extension Color {
@@ -35,8 +42,31 @@ private extension Color {
 struct PanelsScreen: ViewModifier {
     func body(content: Content) -> some View {
         content.scrollContentBackground(.hidden)
+            .textCase(nil)
             .background(PanelsTheme.surface)
             .foregroundStyle(PanelsTheme.text)
     }
 }
 extension View { func panelsScreen() -> some View { modifier(PanelsScreen()) } }
+
+/// Preserve the approved default size while following the user's text size.
+private struct PanelsScaledFont: ViewModifier {
+    @ScaledMetric private var size: CGFloat
+    let weight: Font.Weight
+
+    init(size: CGFloat, relativeTo style: Font.TextStyle, weight: Font.Weight) {
+        _size = ScaledMetric(wrappedValue: size, relativeTo: style)
+        self.weight = weight
+    }
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size, weight: weight))
+    }
+}
+
+extension View {
+    func panelsScaledFont(size: CGFloat, relativeTo style: Font.TextStyle = .body, weight: Font.Weight = .regular) -> some View {
+        modifier(PanelsScaledFont(size: size, relativeTo: style, weight: weight))
+    }
+
+}

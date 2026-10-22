@@ -35,12 +35,11 @@ struct ArtifactListView: View {
     }
     private var list: some View {
         List {
-            if let error { LoadErrorView(message: error) { await load() }.listRowBackground(Color.clear) }
             ForEach(entries.filter { $0.directory != nil }) { folder in
                 ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { selectedArtifact = $0 })
             }
             fileSection(entries.filter { $0.directory == nil && !$0.key.hasPrefix("linked:") }, title: directory.isEmpty ? "Files" : (directory as NSString).lastPathComponent)
-            fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From fields")
+            fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From Fields")
             if hasLoaded && nextOffset < total {
                 Button { Task { await load(more: true) } } label: {
                     HStack { Text("More files"); Spacer(); if isLoading { ProgressView() } }
@@ -49,11 +48,11 @@ struct ArtifactListView: View {
         }
         .listStyle(.plain)
         .overlay {
-            if entries.isEmpty && (isLoading || (!hasLoaded && error == nil)) { ProgressView("Loading artifacts…") }
-            else if hasLoaded && entries.isEmpty && error == nil {
+            if hasLoaded && entries.isEmpty {
                 ContentUnavailableView("No artifacts yet", systemImage: "folder", description: Text("Files will appear here when they are added."))
             }
         }
+        .screenLoadState("artifacts", hasContent: hasLoaded, error: error) { await load(); refreshVersion += 1 }
     }
     @ViewBuilder private func fileSection(_ files: [ArtifactEntry], title: String) -> some View {
         if !files.isEmpty {
@@ -107,16 +106,19 @@ private struct ArtifactFolderSection: View {
                 if let directory = entry.directory {
                     NavigationLink(value: AppRoute.artifacts(owner: owner, directory: directory)) {
                         Label(entry.label, systemImage: "folder")
-                    }.listRowBackground(Color.clear)
+                    }.accessibilityLabel(entry.label)
+                        .accessibilityValue("Folder, \(entry.childCount) items")
+                        .listRowBackground(Color.clear)
                 } else { ArtifactFileRow(owner: owner, entry: entry, open: open) }
             }
             if let error { LoadErrorView(message: error) { await load() }.listRowBackground(Color.clear) }
-            if loading && entries.isEmpty { ProgressView().listRowBackground(Color.clear) }
+            if loading && entries.isEmpty { ProgressView("Loading folder…").listRowBackground(Color.clear) }
             if search.isEmpty && total > visible.count {
                 Button("\(total - visible.count) more") {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) { expanded = true }
+                    withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded = true }
                     if entries.count < total { Task { await load(more: true) } }
                 }.disabled(loading).listRowBackground(Color.clear)
+                    .accessibilityLabel("Show \(total - visible.count) more files in \(folder.label)")
             }
         } header: { Text(folder.label.prefix(1).uppercased() + folder.label.dropFirst()).textCase(nil).font(.caption2).foregroundStyle(PanelsTheme.faint) }
         .task(id: refreshVersion) { await load() }

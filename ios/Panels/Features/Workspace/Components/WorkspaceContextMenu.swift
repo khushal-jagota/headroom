@@ -31,6 +31,16 @@ struct WorkspaceContextMenu: ViewModifier {
                 .onDisappear { previewChanged(false) }
                 .onTapGesture { open(route) }
         }
+        .accessibilityActions {
+            Button("Ask for a recap") { perform(.recap) }.disabled(sending)
+            if let ticket {
+                Button(ticket.isBacklogged ? "Resume ticket" : "Backlog ticket") {
+                    perform(ticket.isBacklogged ? .resume : .backlog)
+                }.disabled(sending)
+            } else if case .orchestrator = route {
+                Button("Settle") { perform(.settle) }.disabled(sending)
+            }
+        }
         .alert("Couldn’t complete action", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: { Text(error ?? "") }
@@ -46,7 +56,7 @@ struct WorkspaceContextMenu: ViewModifier {
                 Haptics.success()
                 await store.refresh()
             } catch {
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
                 self.error = error.localizedDescription
             }
         }
@@ -66,19 +76,19 @@ private struct WorkspacePreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let parent { Text(parent).font(.system(size: 13)).foregroundStyle(PanelsTheme.faint) }
+            if let parent { Text(parent).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.faint) }
             HStack(alignment: .top) {
-                Text(title).font(.system(size: 20, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                Text(title).panelsScaledFont(size: 20, relativeTo: .title3, weight: .semibold).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 WorkspaceSignalMark(signal: signal)
             }
-            if !stageLine.isEmpty { Text(stageLine).font(.system(size: 15)).foregroundStyle(PanelsTheme.muted) }
+            if !stageLine.isEmpty { Text(stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
             if let recap, !recap.isEmpty {
-                Text(recap).font(.system(size: 16)).lineLimit(5)
+                Text(recap).panelsScaledFont(size: 16).lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                     .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 8))
             } else if recap == nil && loadError == nil { ProgressView() }
-            if let loadError { Text(loadError).font(.system(size: 13)).foregroundStyle(PanelsTheme.faint) }
+            if let loadError { Text(loadError).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.faint) }
         }
         .foregroundStyle(PanelsTheme.strong).padding(20).frame(width: 330, alignment: .leading)
         .background(PanelsTheme.raised)

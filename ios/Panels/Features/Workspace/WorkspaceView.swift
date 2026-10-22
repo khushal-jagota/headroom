@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct WorkspaceView: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var groups: [String: [WorkspaceTicketGroup]] = [:]
@@ -14,7 +15,12 @@ struct WorkspaceView: View {
     @State private var chiefSignalError: String?
     @State private var loadingMore = false
 
-    private var motion: Animation? { reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow) }
+    private var hasContent: Bool { store.chief != nil || store.managerPage != nil || store.ticketPage != nil }
+    private var refreshError: String? {
+        store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] ?? chiefSignalError
+    }
+
+    private var motion: Animation? { reduceMotion ? nil : PanelsTheme.Motion.disclosure }
 
     @GestureState private var fingerDown = false
     @State private var pendingSettled: ManagersResponse?
@@ -25,33 +31,29 @@ struct WorkspaceView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                if let error = store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] {
-                    LoadErrorView(message: error) { await store.refresh() }
-                }
-                if let chiefSignalError {
-                    LoadErrorView(message: chiefSignalError) { await refreshSupplementary() }
-                }
-                WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
-                              route: .chief, signal: chiefSignal, groups: groups["chief"] ?? [],
-                              previewChanged: setPreviewOpen, open: open)
-                ForEach(managers) { manager in
-                    WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
-                                  signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
+                if hasContent {
+                    WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
+                                  route: .chief, signal: chiefSignal, groups: groups["chief"] ?? [],
                                   previewChanged: setPreviewOpen, open: open)
+                    ForEach(managers) { manager in
+                        WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
+                                      signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
+                                      previewChanged: setPreviewOpen, open: open)
+                    }
+                    if store.managerPage?.nextOffset != nil || store.ticketPage?.nextOffset != nil {
+                        Button {
+                            Task {
+                                loadingMore = true
+                                await store.loadMore()
+                                updateGroups()
+                                loadingMore = false
+                            }
+                        } label: {
+                            HStack { if loadingMore { ProgressView() }; Text("Load more") }.frame(minHeight: 44)
+                        }.disabled(loadingMore)
+                    }
+                    settledSection.padding(.top, 16)
                 }
-                if store.managerPage?.nextOffset != nil || store.ticketPage?.nextOffset != nil {
-                    Button {
-                        Task {
-                            loadingMore = true
-                            await store.loadMore()
-                            updateGroups()
-                            loadingMore = false
-                        }
-                    } label: {
-                        HStack { if loadingMore { ProgressView() }; Text("Load more") }.frame(minHeight: 44)
-                    }.disabled(loadingMore)
-                }
-                settledSection.padding(.top, 16)
             }
             .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 24)
         }
@@ -62,10 +64,11 @@ struct WorkspaceView: View {
             scrolling = phase != .idle
             if !scrolling { updateGroups() }
         }
-        .refreshable { await store.refresh() }
-        .overlay { if store.isLoading && store.chief == nil { ProgressView().controlSize(.large) } }
+        .refreshable { await refresh() }
+        .screenLoadState("workspace", hasContent: hasContent, error: refreshError) { await refresh() }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selectedRoute) { old, new in if old != new { Haptics.light() } }
         .navigationDestination(item: $selectedRoute) { RouteDestination(route: $0) }
         .panelsScreen()
         .onChange(of: store.revision, initial: true) { _, _ in updateGroups() }
@@ -91,7 +94,7 @@ struct WorkspaceView: View {
                     Text("Settled").foregroundStyle(PanelsTheme.text)
                     if let settled { Text(String(settled.page.matchCount)).foregroundStyle(PanelsTheme.faint) }
                     Spacer()
-                }.font(.system(size: 17)).frame(minHeight: 44).contentShape(Rectangle())
+                }.panelsScaledFont(size: 17).frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .accessibilityIdentifier("workspace-settled")
                 .accessibilityValue(settledOpen ? "Expanded" : "Collapsed")
@@ -102,18 +105,19 @@ struct WorkspaceView: View {
                     ForEach(settled.managers) { manager in
                         NavigationLink(value: AppRoute.orchestrator(manager.id)) {
                             HStack {
-                                Text(manager.title).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                                Text(manager.title).lineLimit(typeSize.isAccessibilitySize ? nil : 1).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                                 WorkspaceSignalMark(signal: manager.conversationSignal)
-                            }.font(.system(size: 16)).foregroundStyle(PanelsTheme.faint).frame(minHeight: 44)
+                            }.panelsScaledFont(size: 16).foregroundStyle(PanelsTheme.faint).frame(minHeight: 44)
                         }.buttonStyle(.plain)
+                            .conversationAccessibility(label: manager.title, signal: manager.conversationSignal)
                     }
                     if settled.managers.isEmpty { Text("No settled orchestrators").foregroundStyle(PanelsTheme.faint) }
                     if settled.page.nextOffset != nil {
                         Button("Load more settled") { Task { await loadMoreSettled() } }
                             .frame(minHeight: 44).disabled(settledLoading)
                     }
-                } else if settledError == nil { ProgressView() }
-                if settledLoading { ProgressView() }
+                } else if settledError == nil { ProgressView("Loading settled orchestrators…") }
+                if settledLoading && settled != nil { ProgressView("Loading more settled orchestrators…") }
             }
         }.padding(.horizontal, 16)
     }
@@ -147,6 +151,11 @@ struct WorkspaceView: View {
         }
     }
 
+    private func refresh() async {
+        await store.refresh()
+        await refreshSupplementary()
+    }
+
     private func refreshSupplementary() async {
         let api = store.client
         async let signalRead: () = loadChiefSignal(api)
@@ -161,7 +170,7 @@ struct WorkspaceView: View {
             chiefSignal = signal; chiefSignalError = nil
         } catch {
             guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
-            chiefSignal = nil; chiefSignalError = "Chief activity couldn’t refresh. \(error.localizedDescription)"
+            chiefSignalError = "Chief activity couldn’t refresh. \(error.localizedDescription)"
         }
     }
 

@@ -18,7 +18,7 @@ struct SettingsView: View {
                     Text("Config").tag("Config")
                     Text("Scheduled").tag("Scheduled")
                     Text("Notifications").tag("Notifications")
-                }.pickerStyle(.segmented)
+                }.accessibleSegmentedPicker()
             }.listRowBackground(PanelsTheme.raised)
             if let error { Section { LoadErrorView(message: error) { await load() } } }
             if loading && !hasData { ProgressView("Reading settings…") }
@@ -35,7 +35,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings").panelsScreen()
         .task(id: "\(store.baseURL):\(section):\(store.revision)") { await load() }
-        .refreshable { Haptics.light(); await load() }
+        .refreshable { await load() }
         .onChange(of: section) { _, _ in Haptics.selection() }
         .sheet(isPresented: $showingServer) {
             ServerAddressSheet(initialAddress: store.baseURL.absoluteString) { store.configure(baseURL: $0) }
@@ -85,7 +85,7 @@ struct SettingsView: View {
                                     LabeledContent("Cadence", value: schedule.cadence.replacingOccurrences(of: "_", with: " ").capitalized)
                                     LabeledContent("Worker", value: schedule.workerType.replacingOccurrences(of: "_", with: " ").capitalized)
                                 }.listRowBackground(PanelsTheme.raised)
-                                if !schedule.kickoffNote.isEmpty { Section("Kickoff note") { Text(schedule.kickoffNote).textSelection(.enabled) }.listRowBackground(PanelsTheme.raised) }
+                                if !schedule.kickoffNote.isEmpty { Section("Kickoff Note") { Text(schedule.kickoffNote).textSelection(.enabled) }.listRowBackground(PanelsTheme.raised) }
                             }.navigationTitle(schedule.title).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
                         } label: {
                             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
@@ -95,7 +95,7 @@ struct SettingsView: View {
                             }
                         }
                     }
-                } header: { Text("Scheduled tasks") } footer: { Text("Schedules follow the server’s local time. Manage schedules on the web.") }
+                } header: { Text("Scheduled Tasks") } footer: { Text("Schedules follow the server’s local time. Manage schedules on the web.") }
                 .listRowBackground(PanelsTheme.raised)
             }
         }
@@ -118,7 +118,7 @@ struct SettingsView: View {
                         }
                     }.listRowBackground(PanelsTheme.raised)
                 }
-                Section("This device") {
+                Section("This Device") {
                     Text("Push notifications are not connected in this iOS preview.").foregroundStyle(PanelsTheme.muted)
                     Text("These are the server’s notification preferences. Change them on the web.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                 }.listRowBackground(PanelsTheme.raised)
@@ -154,7 +154,7 @@ private struct SettingsAgentDetail: View {
     let skill: ManagedSkill?
     var body: some View {
         List {
-            Section("Launch defaults") {
+            Section("Launch Defaults") {
                 LabeledContent("Backend", value: configuration.employeeBackend.capitalized)
                 LabeledContent("Model", value: configuration.employeeLaunchModel ?? "Backend default")
                 LabeledContent("Reasoning", value: configuration.employeeLaunchReasoningEffort?.capitalized ?? "Backend default")
@@ -191,7 +191,7 @@ struct ServerAddressSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("HTTPS address") {
+                Section("HTTPS Address") {
                     TextField("https://panels.example.com", text: $address)
                         .textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     if let error { Text(error).foregroundStyle(PanelsTheme.error) }
@@ -201,7 +201,6 @@ struct ServerAddressSheet: View {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { Haptics.light(); dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") {
-                            Haptics.light()
                             guard let url = SettingsServerAddress.validated(address) else {
                                 error = "Enter an HTTPS server address without a path."; return
                             }

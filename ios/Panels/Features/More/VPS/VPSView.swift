@@ -35,8 +35,8 @@ struct VPSView: View {
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
                     }.listRowBackground(PanelsTheme.raised)
                     instruments(sample)
-                    Section("CPU history") {
-                        Picker("Window", selection: $window) { ForEach(VPSWindow.allCases, id: \.self) { Text($0.rawValue) } }.pickerStyle(.segmented)
+                    Section("CPU History") {
+                        Picker("Window", selection: $window) { ForEach(VPSWindow.allCases, id: \.self) { Text($0.rawValue) } }.accessibleSegmentedPicker()
                         if let historyError { LoadErrorView(message: historyError) { await loadHistory() } }
                         if let history, !history.points.isEmpty {
                             Chart(Array(history.points.enumerated()), id: \.offset) { _, point in
@@ -60,7 +60,7 @@ struct VPSView: View {
                             workload(name: process.name, detail: "PID \(process.identity.pid)", cpu: process.metrics["cpu_percent"]?.value, memory: process.metrics["rss_bytes"]?.value, cores: sample.coreCount)
                         }
                         if nextOffset != nil {
-                            Button { Haptics.light(); Task { await loadProcesses(reset: false) } } label: {
+                            Button { Task { await loadProcesses(reset: false) } } label: {
                                 if loadingProcesses { ProgressView() } else { Text("Load more processes") }
                             }.disabled(loadingProcesses)
                         }
@@ -82,7 +82,7 @@ struct VPSView: View {
         }
         .task(id: window) { history = nil; await loadHistory() }
         .onChange(of: window) { _, _ in Haptics.selection() }
-        .refreshable { Haptics.light(); await load(); await loadHistory() }
+        .refreshable { await load(); await loadHistory() }
     }
     private func instruments(_ sample: VPSSample) -> some View {
         Section("Machine") {

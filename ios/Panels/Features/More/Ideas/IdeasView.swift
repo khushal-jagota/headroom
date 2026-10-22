@@ -17,7 +17,7 @@ struct IdeasView: View {
                 if let error = model.readError {
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                         Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
-                        Button("Try again") { Haptics.light(); Task { await model.refresh(using: store.client) } }
+                        Button("Try again") { Task { await model.refresh(using: store.client) } }
                     }
                 }
                 if !model.hasLoaded && model.readError == nil {
@@ -46,7 +46,7 @@ struct IdeasView: View {
         }
         .panelsScreen()
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await model.refresh(using: store.client) }
-        .refreshable { Haptics.light(); await model.refresh(using: store.client) }
+        .refreshable { await model.refresh(using: store.client) }
     }
 
     private var captureForm: some View {
@@ -94,7 +94,7 @@ struct IdeasView: View {
 
     private func projectChip(_ name: String, id: String?) -> some View {
         Button {
-            Haptics.selection()
+            if model.projectID != id { Haptics.selection() }
             model.projectID = id
         } label: {
             Text(name)
@@ -116,7 +116,7 @@ struct IdeasView: View {
             if await model.capture(using: store.client) {
                 Haptics.success()
                 titleFocused = false
-            }
+            } else if model.captureError != nil { Haptics.error() }
         }
     }
 }
@@ -137,7 +137,7 @@ private struct IdeaRow: View {
                         .textSelection(.enabled)
                         .padding(.vertical, PanelsTheme.Space.md)
                 } label: { heading }
-                .onChange(of: expanded) { _, _ in Haptics.selection() }
+                .clipped()
             }
         }
         .padding(.vertical, PanelsTheme.Space.sm)

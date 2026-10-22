@@ -11,15 +11,21 @@ struct OrchestratorView: View {
     @State private var scrolling = false
     @State private var refreshAfterScroll = false
 
+    private var summary: ManagerSummary? { store.managers.first { $0.id == managerID } }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                if let error { LoadErrorView(message: error) { await load() } }
-                if let detail {
-                    VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                        AgentEyebrow(title: detail.project + (detail.settled == true ? " · Settled" : ""), signal: detail.conversationSignal)
-                        AgentPageTitle(title: detail.title)
+                VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
+                    AgentEyebrow(title: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""), signal: detail?.conversationSignal ?? summary?.conversationSignal)
+                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator")
+                    if let detail {
                         AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
+                    }
+                }
+                if let detail {
+                    if detail.tickets.isEmpty {
+                        Text("No workers yet").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     }
                     WorkerSections(tickets: detail.tickets)
                     VStack(spacing: 0) {
@@ -41,8 +47,6 @@ struct OrchestratorView: View {
                             }.frame(minHeight: 50).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }.font(PanelsTheme.TypeScale.body)
-                } else if error == nil {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
@@ -54,7 +58,7 @@ struct OrchestratorView: View {
             }
         }
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 100 } action: { _, collapsed in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { headerCollapsed = collapsed }
+            withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
         }
         .navigationTitle(headerCollapsed ? detail?.title ?? "Orchestrator" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
@@ -63,7 +67,8 @@ struct OrchestratorView: View {
             AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
         } }
         .task(id: store.revision) { await load() }
-        .refreshable { Haptics.light(); await load() }
+        .refreshable { await load() }
+        .screenLoadState("orchestrator", hasContent: detail != nil, error: error) { await load() }
         .accessibilityIdentifier("orchestrator-screen")
     }
 
@@ -101,5 +106,7 @@ struct AgentEyebrow: View {
             Spacer()
             WorkerSignalMark(signal: signal)
         }.frame(minHeight: 18).padding(.top, PanelsTheme.Space.sm)
+            .conversationAccessibility(label: title.isEmpty ? "Chief activity" : title, signal: signal)
+            .accessibilityHidden(title.isEmpty && signal?.working != true && signal?.messageForOwner != true)
     }
 }

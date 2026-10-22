@@ -25,10 +25,6 @@ struct ArtifactViewerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let error, document != nil {
-                HStack { Text(error).font(.footnote); Spacer(); Button("Retry") { loadVersion += 1 } }
-                    .padding(12).background(PanelsTheme.raised)
-            }
             if let document {
                 content(document)
                     .environment(\.openURL, OpenURLAction { url in follow(url); return .handled })
@@ -46,13 +42,19 @@ struct ArtifactViewerView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let error, document != nil {
+                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { await load() }
+                    .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
+            }
+        }
         .panelsScreen()
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text((path as NSString).lastPathComponent).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                Text((path as NSString).lastPathComponent).panelsScaledFont(size: 15, relativeTo: .subheadline, weight: .semibold).lineLimit(1).truncationMode(.middle)
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button { sharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
@@ -117,16 +119,16 @@ struct ArtifactViewerView: View {
         } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
     }
     private func load() async {
-        isLoading = true; error = nil
+        isLoading = true
         defer { isLoading = false }
         do {
             let result = try await store.client.artifactDocument(target)
             try Task.checkCancellation()
-            document = result; webReady = false; renderVersion += 1
+            document = result; error = nil; webReady = false; renderVersion += 1
         } catch {
             if !Task.isCancelled {
                 self.error = error.localizedDescription
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
             }
         }
     }

@@ -5,9 +5,11 @@ Native SwiftUI foundation, iOS 18 minimum. The app defaults to
 HTTPS server address. The Mac must be able to reach the server over Tailscale.
 No backend changes or third-party packages are needed.
 
-Workspace is the initial tab. Review and Workspace each own their navigation stack. More opens a native sheet
-with its own navigation stack, grouped into Work and System. Choosing a destination
-expands the sheet; dismissing returns to the previous tab. Navigation uses `AppRoute`; every destination has a separate source file.
+Workspace is the initial tab. Review, Workspace and More each own a navigation
+stack and retain their place when switching tabs. More groups Work and System in
+a native list. The tab bar is visible on these three roots; the shared `AppRoute`
+destination hides it on detail pages. Navigation uses native pushes and back swipes;
+every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets/{id}/workspace` endpoint returned HTTP 500 for the sampled tickets;
 `/api/tickets?detail=full&id=…` succeeded. This adapter deliberately uses that
@@ -144,15 +146,20 @@ limits, proposal acceptance/return, owner completion, field/title/recap editing,
 blocker removal and pristine worker setup. Live simulator verification is read-only; ticket and Feedback writes are
 exercised only with an injected stub or URLProtocol interception.
 
-
-
 Review supports approval and send-back through its API adapter; see
 `Review.md` for its behavior and focused verification. Live-server simulator
 verification remains read-only; mutation verification uses a mocked transport.
 
-Haptic helpers offer light, medium, success, error and selection. Navigation and tab
-changes use them, as does saving Settings. Native navigation transitions supply
-motion, respect system accessibility preferences, and avoid custom bouncing.
+Haptic helpers offer light, success, error and selection. By the owner’s
+2026-10-22 override, tabs give selection feedback and shell push/back changes
+give a light impact, including Workspace navigation. Disclosures and read retries
+are silent; pull refresh and context menus retain system feedback. Selection also
+acknowledges a changed control value.
+Ideas and Feedback use light feedback when submitting and success or error on
+the result; page context actions and edits acknowledge the result only. Copy and
+local Settings saves acknowledge completion. Background updates never buzz.
+Native pushes retain system motion; shared disclosures use the same bounce-free
+spring, with instant changes under Reduce Motion.
 
 ## Feedback verification
 
@@ -220,7 +227,7 @@ blocked and completed tickets leave this rail. Unread dots and working spinners
 are independent. Chief activity comes from the read-only workers index.
 
 The approved mobile design keeps hairline cards, title-case group labels, one-line
-rows and native pushes. Settled is a plain expandable list after the cards, with
+rows at standard text sizes and native pushes. Accessibility text sizes wrap row titles. Settled is a plain expandable list after the cards, with
 the server's total count. Pages load in batches of 30; refresh preserves the loaded
 window. Surviving rows retain order, and section changes fade instead of travelling.
 Regrouping waits during scrolling and context previews; titles and marks stay live.
@@ -229,7 +236,7 @@ Reduce Motion removes layout animation.
 Long press previews the full title, recap and manifest-derived stage sentence.
 Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
 orchestrator. These use existing endpoints. Failed or uncertain actions show an
-error; confirmed actions give success haptics. Pushes and the Settled toggle are
+error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle is
 silent, and pull refresh/context menus use system feedback. Every shared route
 destination hides the tab bar; returning to a tab root restores it. Physical haptic feel
 still needs a device. Conversation contents use the shared native overlay described below.
@@ -312,3 +319,68 @@ an intercepted URLSession. Setup reuses the shared API decoder; no backend,
 browser, or live write is involved. The Debug-only `--conversation-smoke` launch
 argument renders a deterministic read-only fixture with all composer actions
 disabled and no AppShell/network task. It is excluded from Release.
+
+## App-wide feel pass
+
+Chief and Orchestrator headers use the already loaded Workspace identity during
+the initial detail read. Ticket navigation uses its cached title. Activity marks
+reserve their width so arriving unread/working indicators do not rewrap titles.
+Expanded recaps stay expanded during refresh. Ideas disclosures clip their
+shrinking content to address the reviewed collapse overlap. System list headers
+preserve mixed case; static group labels use title case.
+
+The polish revision was compiled with the generic iOS Simulator SDK and four
+build jobs, and the four existing host system-model tests passed. Lane B was shut
+down and this task forbids booting it, so there was no simulator capture or runtime
+navigation pass. The Ticket and Review redesigns are integrated and preserved.
+Combined interaction review remains outstanding. Physical haptics, motion,
+all-detail tab restoration and live regrouping still need runtime verification.
+No live write was sent. No tests were added for these presentation changes.
+
+## Accessibility polish
+
+Workspace keeps its default font sizes but scales them with Dynamic Type. Worker,
+settled and artifact rows wrap titles at accessibility sizes; worker group counts
+stack below their labels. Artifact file types move below the name. Deployment
+status can wrap, and Ticket has a full title in the scrollable content. Recaps
+show their full text at accessibility sizes or with VoiceOver enabled, without
+the measured clipping used by the compact preview. Settings, Feedback, Usage and
+VPS use menu pickers at accessibility sizes so segment titles do not truncate.
+
+Conversation rows expose their title with unread and working state as one
+VoiceOver stop. Worker groups announce count, unread count and expansion state.
+Workspace actions and artifact Share/Copy link have named accessibility actions;
+file and folder rows announce their type or item count. Main loading states name
+what they are loading.
+
+This pass was checked with a generic iOS Simulator SDK build and the four macOS
+host model tests, without booting a simulator or contacting the live server.
+Those checks do not verify rendered wrapping, VoiceOver focus/action behavior,
+or physical haptics. A device accessibility pass remains necessary. After integrating the Review screen, approval stages expose their selected state,
+approval and Send back retain labels while busy, and the revision field names its
+purpose. Review actions stack at accessibility sizes and proposal/recap controls
+expose their text to VoiceOver. No new tests were added for these
+view-only edits: the existing host tests cover model contracts, while actual text
+layout and assistive interaction require the deferred runtime check.
+
+## Loading and retry states
+
+Review, Workspace, Chief, Orchestrator, Ticket and artifact lists share a labeled
+initial loading state and a native retry screen when nothing has loaded. Failed
+refreshes keep the last content visible, including an empty result, with a small
+retry notice below the content. The notice does not insert a row above existing
+content. Retry buttons remain disabled until their request finishes. Artifact
+previews also retain their downloaded document after a failed reload.
+
+Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull
+feedback without an extra haptic. Workspace pull-to-refresh waits for its activity
+and Settled reads too; a failed activity read retains the last signal with an error
+notice. Review retains its quiet empty state, running-agent count and revisit action.
+Ticket retains its add-orientation action for an empty recap. Artifact image, PDF, media and Quick Look viewers keep the existing Reload
+menu; text, markdown and HTML retain their existing refresh gestures.
+
+These states are verified by a generic iOS Simulator SDK build only. The existing
+four macOS host model tests also pass, but do not exercise SwiftUI states. No new
+view-mirroring tests or connected hosts were added. Offline interaction, layout
+stability, animation and haptic feel still require a later runtime/device pass;
+this lane did not run a simulator or write to a live server.

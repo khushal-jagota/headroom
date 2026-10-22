@@ -1,5 +1,6 @@
 import UIKit
 
+/// Tabs select and navigation impacts lightly by owner preference. Writes acknowledge their result.
 @MainActor enum Haptics {
     static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
     static func medium() { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
