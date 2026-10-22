@@ -59,6 +59,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   (window as any).__layoutUpdate=(recap:string)=>{layoutRecap=recap;};
   (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
   import ManagerFrame from "../src/components/ManagerFrame.svelte";
+  import { conversationOverlay } from "../src/lib/conversation/layout/overlay";
   import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
@@ -616,14 +617,18 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         }}
       />
 {/snippet}
-<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
+<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled || ticketGestures}>
   {#if ticketGestures}
+    <div class="ticket-page" use:conversationOverlay>
+    <div class="ticket-reading">
     <main class="ticket-doc fixture-document" onpointerdowncapture={dismissTicketOnPointerDown}>
       <button type="button" data-ticket-behind>Ticket content</button>
     </main>
+    </div>
     <section class="conversation-layer" onpointerdowncapture={dismissTicketOnPointerDown}>
       <div class="conversation-column">{@render conversationPane()}</div>
     </section>
+    </div>
   {:else}
     <ManagerFrame bind:conversationState>
       <button type="button" data-ticket-behind>Ticket content</button>
