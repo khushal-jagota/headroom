@@ -35,6 +35,8 @@
     </div>
   </div>
   <div class="ticket-artifact-body">
-    <FileDocument {target} {reloadSignal} />
+    <div class="ticket-artifact-slot">
+      <FileDocument {target} {reloadSignal} />
+    </div>
   </div>
 </aside>
