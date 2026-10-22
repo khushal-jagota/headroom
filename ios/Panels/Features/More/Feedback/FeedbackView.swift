@@ -115,6 +115,7 @@ struct FeedbackView: View {
             if let label = note.pageLabel, !label.isEmpty {
                 if let destination = FeedbackPageDestination.parse(note.pageAddress) {
                     NavigationLink { pageDestination(destination) } label: { Text(label) }
+                        .simultaneousGesture(TapGesture().onEnded { Haptics.light() })
                 } else { Text(label) }
             }
             Text(Date(timeIntervalSince1970: note.createdAt), style: .relative)

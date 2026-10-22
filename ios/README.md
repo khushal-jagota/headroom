@@ -151,9 +151,11 @@ Review supports approval and send-back through its API adapter; see
 `Review.md` for its behavior and focused verification. Live-server simulator
 verification remains read-only; mutation verification uses a mocked transport.
 
-Haptic helpers offer light, success, error and selection. Navigation, tabs,
-back swipes, disclosures and read retries are silent; pull refresh and context
-menus retain system feedback. Selection acknowledges a changed control value.
+Haptic helpers offer light, success, error and selection. By the owner’s
+2026-10-22 override, tabs give selection feedback and shell push/back changes
+give a light impact, including Workspace navigation. Disclosures and read retries
+are silent; pull refresh and context menus retain system feedback. Selection also
+acknowledges a changed control value.
 Ideas and Feedback use light feedback when submitting and success or error on
 the result; page context actions and edits acknowledge the result only. Copy and
 local Settings saves acknowledge completion. Background updates never buzz.
@@ -235,7 +237,7 @@ Reduce Motion removes layout animation.
 Long press previews the full title, recap and manifest-derived stage sentence.
 Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
 orchestrator. These use existing endpoints. Failed or uncertain actions show an
-error; confirmed actions give success haptics. Pushes and the Settled toggle are
+error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle is
 silent, and pull refresh/context menus use system feedback. Every shared route
 destination hides the tab bar; returning to a tab root restores it. Physical haptic feel
 still needs a device. Conversation contents remain the shared placeholder.
@@ -290,7 +292,7 @@ preserve mixed case; static group labels use title case.
 The polish revision was compiled with the generic iOS Simulator SDK and four
 build jobs, and the four existing host system-model tests passed. Lane B was shut
 down and this task forbids booting it, so there was no simulator capture or runtime
-navigation pass. The incoming Ticket and Review redesigns were not in this base;
-their integrated interaction review remains outstanding. Physical haptics, motion,
+navigation pass. The Ticket and Review redesigns are integrated and preserved.
+Combined interaction review remains outstanding. Physical haptics, motion,
 all-detail tab restoration and live regrouping still need runtime verification.
 No live write was sent. No tests were added for these presentation changes.

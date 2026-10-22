@@ -28,7 +28,7 @@ struct SettingsView: View {
             default: notificationPreferences
             }
             Section {
-                Button { showingServer = true } label: {
+                Button { Haptics.light(); showingServer = true } label: {
                     LabeledContent("Server", value: store.baseURL.host ?? store.baseURL.absoluteString)
                 }.foregroundStyle(PanelsTheme.text)
             }.listRowBackground(PanelsTheme.raised)
@@ -86,7 +86,7 @@ struct SettingsView: View {
                                     LabeledContent("Worker", value: schedule.workerType.replacingOccurrences(of: "_", with: " ").capitalized)
                                 }.listRowBackground(PanelsTheme.raised)
                                 if !schedule.kickoffNote.isEmpty { Section("Kickoff Note") { Text(schedule.kickoffNote).textSelection(.enabled) }.listRowBackground(PanelsTheme.raised) }
-                            }.navigationTitle(schedule.title).navigationBarTitleDisplayMode(.inline).panelsScreen()
+                            }.navigationTitle(schedule.title).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
                         } label: {
                             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                                 Text(schedule.title)
@@ -165,7 +165,7 @@ private struct SettingsAgentDetail: View {
             }
             Section { Text("Manage configuration on the web.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
                 .listRowBackground(PanelsTheme.raised)
-        }.navigationTitle(title).panelsScreen()
+        }.navigationTitle(title).panelsScreen().onAppear { Haptics.light() }
     }
 }
 private struct SettingsSkillDetail: View {
@@ -176,7 +176,7 @@ private struct SettingsSkillDetail: View {
                 Text(skill.description).font(PanelsTheme.TypeScale.heading)
                 Text(skill.markdownBody).font(PanelsTheme.TypeScale.body).textSelection(.enabled)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.lg)
-        }.navigationTitle(skill.name).navigationBarTitleDisplayMode(.inline).panelsScreen()
+        }.navigationTitle(skill.name).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
     }
 }
 
@@ -198,7 +198,7 @@ struct ServerAddressSheet: View {
                 }.listRowBackground(PanelsTheme.raised)
             }.navigationTitle("Server").navigationBarTitleDisplayMode(.inline).panelsScreen()
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { Haptics.light(); dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") {
                             guard let url = SettingsServerAddress.validated(address) else {

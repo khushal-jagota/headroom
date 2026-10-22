@@ -66,6 +66,7 @@ struct WorkspaceView: View {
         .overlay { if store.isLoading && store.chief == nil { ProgressView().controlSize(.large) } }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selectedRoute) { old, new in if old != new { Haptics.light() } }
         .navigationDestination(item: $selectedRoute) { RouteDestination(route: $0) }
         .panelsScreen()
         .onChange(of: store.revision, initial: true) { _, _ in updateGroups() }

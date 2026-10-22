@@ -40,6 +40,11 @@ struct AppShell: View {
             }
                 .tabItem { Label("More", systemImage: "ellipsis") }.tag(AppTab.more)
         }
+        // Owner override: tabs select; pushes and back navigation give a light impact.
+        .onChange(of: selectedTab) { _, _ in Haptics.selection() }
+        .onChange(of: reviewPath) { old, new in if old != new { Haptics.light() } }
+        .onChange(of: workspacePath) { old, new in if old != new { Haptics.light() } }
+        .onChange(of: morePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
             if scenePhase == .active { await store.run() }
