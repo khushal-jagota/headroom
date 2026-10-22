@@ -35,6 +35,17 @@ describe("deployment status precedence and expiry", () => {
       }
     }
   });
+  it("keeps a full day of success within the browser timer limit and expires at its boundary", () => {
+    const expiry = now + 24 * 60 * 60 * 1000;
+    const recovered = status({ state: "back_up", outcome: "succeeded", valid_until: new Date(expiry).toISOString() });
+    const delay = deploymentStatusExpiryDelay(recovered, now);
+    expect(delay).toBe(86_400_001);
+    expect(delay).toBeLessThan(2 ** 31 - 1);
+    expect(resolveDeploymentStatus(recovered, "connected", expiry - 1)).toBe("back_up");
+    expect(deploymentStatusExpiryDelay(recovered, expiry - 1)).toBe(2);
+    expect(resolveDeploymentStatus(recovered, "connected", expiry)).toBe("connected");
+    expect(deploymentStatusExpiryDelay(recovered, expiry)).toBeNull();
+  });
   it("requires a live connection for recovery and returns to connection status after expiry", () => {
     const recovered = status({ state: "back_up", outcome: "succeeded", valid_until: new Date(now + 1000).toISOString() });
     expect(resolveDeploymentStatus(recovered, "connected", now)).toBe("back_up");

@@ -88,3 +88,23 @@ def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_su
     assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]
     assert '"$hermes_source[acp]"' in hermes["run"]
     assert "ffmpeg" in steps["Bootstrap disposable hosted runner"]["run"]
+
+
+def test_every_run_is_supervised_after_activation_except_direct_finalization() -> None:
+    job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["deploy"]
+    shell = "python3 scripts/deployment_progress.py {0}"
+    assert job["defaults"]["run"]["shell"] == shell
+    steps = {step.get("name"): step for step in job["steps"] if "run" in step}
+    start = steps["Start deployment lifecycle"]["run"]
+    activation = 'echo "PANELS_DEPLOYMENT_PROGRESS_ACTIVE=true" >> "$GITHUB_ENV"'
+    assert start.count(activation) == 1
+    assert start.index(activation) > start.index('"${prior_args[@]}"')
+    for name, step in steps.items():
+        if name == "Finalize deployment lifecycle":
+            assert step["shell"] == "bash"
+        elif name in (
+            "Remove production deployment temporary state", "Remove rehearsal temporary state",
+        ):
+            assert step["shell"] == shell.replace(" {0}", " --cleanup {0}")
+        else:
+            assert "shell" not in step

@@ -31,6 +31,9 @@ jobs:
     env:
       PANELS_REHEARSAL: ${{ inputs.rehearsal && 'true' || 'false' }}
       PANELS_BASELINE_SHA: ${{ inputs.baseline_sha }}
+    defaults:
+      run:
+        shell: python3 scripts/deployment_progress.py {0}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -125,6 +128,7 @@ jobs:
             --requested-sha "$PANELS_REQUESTED_SHA" \
             "${expected_args[@]}" \
             "${prior_args[@]}"
+          echo "PANELS_DEPLOYMENT_PROGRESS_ACTIVE=true" >> "$GITHUB_ENV"
       - name: Prove exact temporary source
         run: |
           printf '%s\n' "$PANELS_REQUESTED_SHA" | grep -Eq '^[0-9a-f]{40}$' || {
@@ -360,9 +364,11 @@ jobs:
             --codex-home "$PANELS_APP_HOME/.codex" \
             --claude-home "$PANELS_APP_HOME/.claude"
       - name: Remove production deployment temporary state
+        shell: python3 scripts/deployment_progress.py --cleanup {0}
         if: ${{ always() && !inputs.rehearsal }}
         run: &cleanup_deployment_state python3 scripts/deployment_rehearsal.py cleanup
       - name: Finalize deployment lifecycle
+        shell: bash
         if: always()
         env:
           PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
@@ -400,5 +406,6 @@ jobs:
           path: ${{ env.PANELS_GATE_DIR }}
           if-no-files-found: error
       - name: Remove rehearsal temporary state
+        shell: python3 scripts/deployment_progress.py --cleanup {0}
         if: ${{ always() && inputs.rehearsal }}
         run: *cleanup_deployment_state

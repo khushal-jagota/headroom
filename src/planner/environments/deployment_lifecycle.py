@@ -15,8 +15,9 @@ import re
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, TextIO, cast
@@ -28,8 +29,10 @@ MAX_DETAIL_LENGTH = 500
 MAX_CODE_LENGTH = 64
 
 NONTERMINAL_TTL = timedelta(minutes=15)
-SUCCESS_TTL = timedelta(minutes=5)
+SUCCESS_TTL = timedelta(hours=24)
 PROBLEM_TTL = timedelta(days=30)
+RENEW_LOCK_TIMEOUT_SECONDS = 5.0
+RENEW_LOCK_POLL_SECONDS = 0.05
 
 DeploymentPhase = Literal[
     "preparing",
@@ -195,6 +198,35 @@ class DeploymentLifecycleStore:
                 code=code,
                 updated_at=now,
                 expires_at=now + NONTERMINAL_TTL,
+            )
+            _atomic_write(self.path, lifecycle.to_public_dict())
+            return lifecycle
+
+    def renew(
+        self,
+        deployment_id: str,
+        *,
+        lock_timeout_seconds: float = RENEW_LOCK_TIMEOUT_SECONDS,
+    ) -> DeploymentLifecycle:
+        """Refresh active evidence without changing progress or reviving expired work."""
+        _validate_deployment_id(deployment_id)
+        with _exclusive_lock(self.lock_path, timeout_seconds=lock_timeout_seconds):
+            current_read = _read_lifecycle(self.path)
+            if not current_read.available or current_read.lifecycle is None:
+                raise DeploymentLifecycleConflict("there is no readable lifecycle to renew")
+            current = current_read.lifecycle
+            if current.deployment_id != deployment_id:
+                raise DeploymentLifecycleConflict(
+                    f"stale deployment {deployment_id!r}; current is "
+                    f"{current.deployment_id!r}"
+                )
+            if current.phase not in _NONTERMINAL_PHASES:
+                return current
+            now = _utc_now(self._now)
+            if now >= current.expires_at:
+                raise DeploymentLifecycleConflict("deployment lifecycle expired before renewal")
+            lifecycle = replace(
+                current, updated_at=now, expires_at=now + NONTERMINAL_TTL
             )
             _atomic_write(self.path, lifecycle.to_public_dict())
             return lifecycle
@@ -502,8 +534,9 @@ def _open_regular_readonly(path: Path) -> int:
 
 
 class _exclusive_lock:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, timeout_seconds: float | None = None) -> None:
         self.path = path
+        self.timeout_seconds = timeout_seconds
         self.stream: TextIO | None = None
 
     def __enter__(self) -> None:
@@ -519,12 +552,32 @@ class _exclusive_lock:
             os.close(descriptor)
             raise DeploymentLifecycleError("lifecycle lock must be a regular file")
         self.stream = os.fdopen(descriptor, "r+", encoding="utf-8")
-        fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX)
+        try:
+            if self.timeout_seconds is None:
+                fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX)
+            else:
+                deadline = time.monotonic() + self.timeout_seconds
+                while True:
+                    try:
+                        fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise DeploymentLifecycleError(
+                                "timed out acquiring deployment lifecycle renewal lock"
+                            ) from None
+                        time.sleep(min(RENEW_LOCK_POLL_SECONDS, remaining))
+        except BaseException:
+            self.stream.close()
+            raise
 
     def __exit__(self, *_: object) -> None:
         assert self.stream is not None
-        fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
-        self.stream.close()
+        try:
+            fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.stream.close()
 
 
 def _atomic_write(path: Path, payload: dict[str, object]) -> None:
@@ -584,6 +637,10 @@ def _cli_parser() -> argparse.ArgumentParser:
     transition.add_argument("--code")
     transition.add_argument("--preserve-terminal", action="store_true")
 
+    renew = subparsers.add_parser("renew")
+    renew.add_argument("--path", type=Path, required=True)
+    renew.add_argument("--deployment-id", required=True)
+
     read = subparsers.add_parser("read")
     read.add_argument("--path", type=Path, required=True)
 
@@ -618,6 +675,8 @@ def main(argv: list[str] | None = None) -> int:
                 preserve_terminal=arguments.preserve_terminal,
             )
             payload = lifecycle.to_public_dict()
+        elif arguments.command == "renew":
+            payload = store.renew(arguments.deployment_id).to_public_dict()
         elif arguments.command == "read":
             read = store.read()
             payload = (
