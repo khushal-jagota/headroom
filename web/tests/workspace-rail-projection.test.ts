@@ -175,19 +175,21 @@ describe("manager rail projection", () => {
 
   it("acknowledges manual folds during a frozen rail exit and admits late pages without another entrance", async () => {
     let presented: WorkspaceRailPresentation = {rail:buildWorkspaceRail([card("departing")]), settledOpen:false, settledMessages:{}};
-    const plays: {node:string; duration:number; delay:number; canceled:boolean; finish:()=>void}[] = [];
+    const plays: {node:string; frames:Keyframe[]; duration:number; delay:number; canceled:boolean; finish:()=>void}[] = [];
     const attributes = new Set<string>();
     let focused: unknown = null;
+    let bodyHeight = 80;
     let prefersReduced = false;
     class Surface {
+      activeHeight: {effect:{target:Surface}|null; frames:Keyframe[]} | null = null;
       dataset: Record<string,string> = {};
       parentElement = null;
-      style = {overflow:"", setProperty() {}, removeProperty() { this.overflow = ""; }};
+      style = {overflow:"", height:"", setProperty() {}, removeProperty(key:string) { if (key === "overflow" || key === "height") this[key] = ""; }};
       classList = {add() {}, remove() {}, contains:()=>false};
       constructor(readonly name:string) { this.dataset.railMotion = name; }
       getBoundingClientRect() {
         const bodyOpen = presented.settledBodyOpen ?? presented.settledOpen;
-        return {height:this.name === "settled-section" ? 20 + (bodyOpen && presented.rail.settledItems.length ? 80 : 0) : 20, top:0,left:0};
+        return {height:this.name === "settled-section" && this.activeHeight?.effect ? parseFloat(String(this.activeHeight.frames[0].height)) : this.name === "settled-section" && this.style.height ? parseFloat(this.style.height) : this.name === "settled-section" ? 20 + (bodyOpen && presented.rail.settledItems.length ? bodyHeight : 0) : 20, top:0,left:0};
       }
       closest() { return null; }
       contains(value:unknown) { return this === body && value === focused; }
@@ -199,12 +201,17 @@ describe("manager rail projection", () => {
         if (selector === "[data-settled-scroll]") return (presented.settledBodyOpen ?? presented.settledOpen) ? body : null;
         return null;
       }
-      animate(_frames:Keyframe[], options:KeyframeAnimationOptions) {
+      animate(frames:Keyframe[], options:KeyframeAnimationOptions) {
         let finish!:()=>void;
         const finished = new Promise<void>(resolve => finish = resolve);
-        const play = {node:this.name,duration:Number(options.duration),delay:options.delay ?? 0,canceled:false,finish};
+        const play = {node:this.name,frames,duration:Number(options.duration),delay:options.delay ?? 0,canceled:false,finish};
         plays.push(play);
-        return {finished,effect:{target:this},cancel:()=>{play.canceled=true;finish();}};
+        const animation = {finished,frames,effect:{target:this} as {target:Surface}|null,cancel:()=>{play.canceled=true;if(this.activeHeight===animation)this.activeHeight=null;finish();}};
+        if (frames[0].height !== undefined) {
+          this.activeHeight = animation;
+          void finished.then(()=>{if(this.activeHeight===animation)this.activeHeight=null;});
+        }
+        return animation;
       }
     }
     const section = new Surface("settled-section"), header = new Surface("header"), chevron = new Surface("chevron"), body = new Surface("body");
@@ -243,14 +250,38 @@ describe("manager rail projection", () => {
       motion.update(page);
       expect(presented.rail.settledItems.map(item=>item.id)).toEqual(["late"]);
       expect(presented.settledOpen).toBe(true);
-      expect(plays).toHaveLength(3);
+      await flush();
+      const lateResize = plays[3];
+      expect(lateResize.node).toBe("settled-section");
+      expect(lateResize.frames).toEqual([{height:"20px"}, {height:"100px"}]);
+      expect(lateResize.duration).toBe(340);
+      // A signal-only refresh retains its beat; new natural geometry retargets
+      // only height, and an obsolete completion cannot release the new owner.
+      motion.update(page);
+      await flush();
+      expect(plays).toHaveLength(4);
+      expect(lateResize.canceled).toBe(false);
+      bodyHeight = 120;
+      motion.update(page);
+      await flush();
+      const retarget = plays[4];
+      expect(lateResize.canceled).toBe(true);
+      expect(retarget.node).toBe("settled-section");
+      expect(retarget.frames[1]).toEqual({height:"140px"});
+      lateResize.finish();
+      await flush();
+      expect(section.style.overflow).toBe("hidden");
+      retarget.finish();
+      await flush();
+      expect(section.style.height).toBe("");
+      expect(section.style.overflow).toBe("");
       focused = {};
       motion.setSettledOpen(false);
       expect(presented.settledOpen).toBe(false);
       expect(presented.settledBodyOpen).toBe(true);
       expect(focused).toBe(header);
       await flush();
-      const closing = plays.slice(3);
+      const closing = plays.slice(5);
       expect(closing.map(play=>[play.duration,play.delay])).toEqual([[340,0],[340,0],[340,0]]);
       // Board clears message demand immediately, then navigation withdraws
       // the settled scope. Neither update can empty a body mid-fade.
@@ -273,7 +304,7 @@ describe("manager rail projection", () => {
       expect(presented.rail.settledItems[0].title).toBe("Fresh page");
       expect(presented.settledMessages.late[0].title).toBe("Fresh message");
       await flush();
-      for (const play of plays.slice(6)) play.finish();
+      for (const play of plays.slice(8)) play.finish();
       await flush();
       expect(presented.settledOpen).toBe(true);
       expect(presented.settledBodyOpen).toBe(true);
