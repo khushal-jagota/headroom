@@ -22,6 +22,7 @@
 		397C054454D53D07F27B46A8 /* ArtifactFileRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA3C5CFBD0D7EA7E6423717B /* ArtifactFileRow.swift */; };
 		3A4F11BA595CDD3DBBFB589A /* IdeasAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F9EF972A1EF8BB5CC7F4BF /* IdeasAPI.swift */; };
 		3CC611801A3DAC67251F8483 /* ChiefAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D14AD8472650E2F9A169B8B /* ChiefAPI.swift */; };
+		3D9900C116293186EA65BD95 /* TicketWorkerSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9C963E6F4250D8ED290A379 /* TicketWorkerSetup.swift */; };
 		3E90EAD8718A7CC68F1E9D6B /* managers.json in Resources */ = {isa = PBXBuildFile; fileRef = D00C1733528B6700CE613C4A /* managers.json */; };
 		4421B3D01E0666FF976EEABD /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4FCDBCAD742D3FCA6B73F0 /* Theme.swift */; };
 		46FFCE736C04E0C0C636B343 /* ArtifactReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E95EDB8BA52A28A035E0314D /* ArtifactReader.swift */; };
@@ -53,6 +54,7 @@
 		7D12E534E3E83816275B63C2 /* WorkspaceGrouping.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0ECD7AEF51D48B7F98759CD /* WorkspaceGrouping.swift */; };
 		829B5037242BAB5E5ADA8FF9 /* UsageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A23FBCA302828E0CFB0C48C /* UsageModels.swift */; };
 		85EB4A27FABBB5B9E9C7224E /* DeploymentStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761B3507C34F559D58C84476 /* DeploymentStrip.swift */; };
+		879EEAAEAC965C8C99800D5E /* TicketProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03DBCE9A46181847779DEAE1 /* TicketProposalCard.swift */; };
 		899DF94735CFE95536C8149E /* UsageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A9D0A1C2870A01499137AB /* UsageView.swift */; };
 		89D67A459D954F01FBB525F3 /* ArtifactWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D511DD068442406687AA4FB /* ArtifactWebView.swift */; };
 		8ED06170C52B93C072C0FC71 /* ReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0612B955BAA1970756E2915B /* ReviewView.swift */; };
@@ -73,6 +75,7 @@
 		CF61FCBA5DF7048739A170EF /* RecapAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19076135E62A3ADAC15BC4E2 /* RecapAPI.swift */; };
 		D051ED49F0870C1000840B7B /* ArtifactImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C54D786EA56D45854D6EFDE9 /* ArtifactImageView.swift */; };
 		D167E7BF146E779606455478 /* WorkspacePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADB52188776E5136E566E076 /* WorkspacePresentationTests.swift */; };
+		D1C05703E2F502D775656AEA /* TicketTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E4714669F1A2E56D0CBAFD /* TicketTextEditor.swift */; };
 		D7A0E00FFBF4883BBB6C28D8 /* TicketPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4C3CD047D6C91BA010C488 /* TicketPresentation.swift */; };
 		D863C2DB0472D5E5C45BC142 /* FeedbackPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4947C201978999EE83C7707 /* FeedbackPresentation.swift */; };
 		D8759A19CECC7DF6FE887A2F /* manager.json in Resources */ = {isa = PBXBuildFile; fileRef = 84958E18FFD4BF0F350CDDA3 /* manager.json */; };
@@ -102,6 +105,7 @@
 
 /* Begin PBXFileReference section */
 		01D73A7F608F5039244AFEEC /* ArtifactMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactMarkdown.swift; sourceTree = "<group>"; };
+		03DBCE9A46181847779DEAE1 /* TicketProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketProposalCard.swift; sourceTree = "<group>"; };
 		0485F7682F6F961D6F2780E8 /* TicketStepRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketStepRow.swift; sourceTree = "<group>"; };
 		050F4E53EA9313A8C93AC324 /* ticket-full.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "ticket-full.json"; sourceTree = "<group>"; };
 		0612B955BAA1970756E2915B /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
@@ -132,6 +136,7 @@
 		490342327C1A28E38841549F /* tickets.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tickets.json; sourceTree = "<group>"; };
 		4C8B9D9D1FE5DC39AC9839B9 /* ChiefModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChiefModels.swift; sourceTree = "<group>"; };
 		52AB95DA1ED9D0782197ADB9 /* MoreModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreModels.swift; sourceTree = "<group>"; };
+		59E4714669F1A2E56D0CBAFD /* TicketTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketTextEditor.swift; sourceTree = "<group>"; };
 		5AD13A61A6505FE1B0CF1C75 /* workspace-chief.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "workspace-chief.png"; sourceTree = "<group>"; };
 		5C4C3CD047D6C91BA010C488 /* TicketPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketPresentation.swift; sourceTree = "<group>"; };
 		5D14AD8472650E2F9A169B8B /* ChiefAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChiefAPI.swift; sourceTree = "<group>"; };
@@ -181,6 +186,7 @@
 		E2D1EBF4975FAC19F5132CE4 /* ArtifactTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactTarget.swift; sourceTree = "<group>"; };
 		E45531870690CB1218B1AB0A /* ArtifactLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactLogicTests.swift; sourceTree = "<group>"; };
 		E95EDB8BA52A28A035E0314D /* ArtifactReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactReader.swift; sourceTree = "<group>"; };
+		E9C963E6F4250D8ED290A379 /* TicketWorkerSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketWorkerSetup.swift; sourceTree = "<group>"; };
 		ED602EDE1AA05EFF264B4944 /* Panels.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Panels.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F22692A1C4C2E8C12E2E3580 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		FE13519E521C9A6D6DD3A99A /* ChiefView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChiefView.swift; sourceTree = "<group>"; };
@@ -492,7 +498,10 @@
 			children = (
 				2A13357733DE7E9E23A232EA /* TicketApprovalLimitSheet.swift */,
 				3DC91552267EC6C54DBFE496 /* TicketExpandableText.swift */,
+				03DBCE9A46181847779DEAE1 /* TicketProposalCard.swift */,
 				0485F7682F6F961D6F2780E8 /* TicketStepRow.swift */,
+				59E4714669F1A2E56D0CBAFD /* TicketTextEditor.swift */,
+				E9C963E6F4250D8ED290A379 /* TicketWorkerSetup.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -785,8 +794,11 @@
 				F3784DFC79283CDE139D6BAC /* TicketLifecycle.swift in Sources */,
 				701B0B2A9B89BAC975737D3E /* TicketModels.swift in Sources */,
 				D7A0E00FFBF4883BBB6C28D8 /* TicketPresentation.swift in Sources */,
+				879EEAAEAC965C8C99800D5E /* TicketProposalCard.swift in Sources */,
 				97601D8C3EF558BB9D2755ED /* TicketStepRow.swift in Sources */,
+				D1C05703E2F502D775656AEA /* TicketTextEditor.swift in Sources */,
 				FDFE6ADACE950453A345B463 /* TicketView.swift in Sources */,
+				3D9900C116293186EA65BD95 /* TicketWorkerSetup.swift in Sources */,
 				829B5037242BAB5E5ADA8FF9 /* UsageModels.swift in Sources */,
 				899DF94735CFE95536C8149E /* UsageView.swift in Sources */,
 				2D3FB57182FBE92C75D051B5 /* VPSModels.swift in Sources */,

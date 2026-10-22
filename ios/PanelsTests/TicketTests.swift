@@ -43,6 +43,25 @@ final class TicketTests: XCTestCase {
         XCTAssertEqual(delivery.note, "Delivery uncertain · do not resend")
     }
 
+    func testEditorsAndProposalActionsUseNarrowBodiesAndDisplayedRevision() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TicketStubProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = APIClient(baseURL: URL(string: "https://edit-stub.invalid")!, session: session)
+        let ticket = try ticket()
+        let proposal = try XCTUnwrap(ticket.pendingProposal)
+        try await client.renameTicket(ticket.id, title: "Renamed")
+        try await client.editTicketRecap(ticket.id, recap: "Updated recap")
+        try await client.editTicketField(ticket.id, field: "brief", body: "Edited brief")
+        try await client.completeTicketField(ticket.id, field: "answer", body: "Owner answer")
+        try await client.acceptTicketProposal(ticket, proposal: proposal, ceiling: "done", holder: Principal(kind: "owner", id: "owner"), editedBody: proposal.body)
+        try await client.acceptTicketProposal(ticket, proposal: proposal, ceiling: "done", holder: Principal(kind: "owner", id: "owner"), editedBody: "Edited proposal")
+        try await client.returnTicketProposal(ticket.id, message: "Please revise")
+        try await client.removeTicketBlocker(ticket.id, blockerID: "t_blocker")
+        try await client.setTicketWorkerConfiguration(ticket.id, backend: "codex", model: nil, effort: nil)
+    }
+
     func testWriteFailureRemainsAnErrorAndRefusedRecapIsNotSuccess() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TicketStubProtocol.self]
@@ -86,6 +105,38 @@ private final class TicketStubProtocol: URLProtocol, @unchecked Sendable {
             if url.host == "refusal-stub.invalid" {
                 status = 409
                 response = #"{"error":{"message":"Ticket changed. Refresh before trying again."}}"#
+            } else if url.host == "edit-stub.invalid" {
+                switch url.path {
+                case "/api/tickets/t_02zd37tz":
+                    XCTAssertEqual(request.httpMethod, "PATCH")
+                    XCTAssertEqual(body.count, 1)
+                    if let title = body["title"] as? String { XCTAssertEqual(title, "Renamed") }
+                    else if let recap = body["recap"] as? String { XCTAssertEqual(recap, "Updated recap") }
+                    else { XCTAssertEqual(body["field_values"] as? [String: String], ["brief": "Edited brief"]) }
+                case "/api/tickets/t_02zd37tz/complete/answer":
+                    XCTAssertEqual(request.httpMethod, "POST")
+                    XCTAssertEqual(body as? [String: String], ["body": "Owner answer"])
+                case "/api/tickets/t_02zd37tz/accept/wireframe":
+                    XCTAssertEqual(request.httpMethod, "POST")
+                    XCTAssertEqual(body["expected_proposal_revision"] as? Int, 15)
+                    XCTAssertEqual(body["next_ceiling"] as? String, "done")
+                    XCTAssertEqual(body["next_holder"] as? [String: String], ["kind": "owner", "id": "owner"])
+                    XCTAssertEqual(body.keys.sorted(), body["edited_body"] == nil
+                        ? ["expected_proposal_revision", "next_ceiling", "next_holder"]
+                        : ["edited_body", "expected_proposal_revision", "next_ceiling", "next_holder"])
+                    if let edited = body["edited_body"] as? String { XCTAssertEqual(edited, "Edited proposal") }
+                case "/api/tickets/t_02zd37tz/reject":
+                    XCTAssertEqual(request.httpMethod, "POST")
+                    XCTAssertEqual(body as? [String: String], ["message": "Please revise"])
+                case "/api/collections/blockers/t_02zd37tz/t_blocker":
+                    XCTAssertEqual(request.httpMethod, "DELETE"); XCTAssertTrue(body.isEmpty)
+                case "/api/tickets/t_02zd37tz/employee-configuration":
+                    XCTAssertEqual(request.httpMethod, "PUT")
+                    XCTAssertEqual(body["employee_backend"] as? String, "codex")
+                    XCTAssertTrue(body["employee_launch_model"] is NSNull)
+                    XCTAssertTrue(body["employee_launch_reasoning_effort"] is NSNull)
+                default: XCTFail("Unexpected mutation: \(url.path)")
+                }
             } else if url.path.hasSuffix("/backlog") || url.path.hasSuffix("/resume") {
                 XCTAssertEqual(request.httpMethod, "POST")
                 XCTAssertTrue(["/api/tickets/t_02zd37tz/backlog", "/api/tickets/t_02zd37tz/resume"].contains(url.path))

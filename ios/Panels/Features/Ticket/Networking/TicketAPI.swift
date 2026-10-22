@@ -29,6 +29,57 @@ extension APIClient {
         return try Self.decoder().decode(TicketRecapDelivery.self, from: data)
     }
 
+    func renameTicket(_ id: String, title: String) async throws {
+        struct Body: Encodable { let title: String }
+        _ = try await ticketWrite("/api/tickets/\(id)", method: "PATCH", body: Body(title: title))
+    }
+
+    func editTicketRecap(_ id: String, recap: String) async throws {
+        struct Body: Encodable { let recap: String }
+        _ = try await ticketWrite("/api/tickets/\(id)", method: "PATCH", body: Body(recap: recap))
+    }
+
+    func editTicketField(_ id: String, field: String, body: String) async throws {
+        struct Body: Encodable { let field_values: [String: String] }
+        _ = try await ticketWrite("/api/tickets/\(id)", method: "PATCH", body: Body(field_values: [field: body]))
+    }
+
+    func completeTicketField(_ id: String, field: String, body: String) async throws {
+        struct Body: Encodable { let body: String }
+        _ = try await ticketWrite("/api/tickets/\(id)/complete/\(field)", method: "POST", body: Body(body: body))
+    }
+
+    func acceptTicketProposal(_ ticket: TicketDetail, proposal: TicketProposal, ceiling: String, holder: Principal, editedBody: String) async throws {
+        struct Body: Encodable {
+            let next_ceiling: String
+            let next_holder: Principal
+            let expected_proposal_revision: Int
+            let edited_body: String?
+        }
+        _ = try await ticketWrite("/api/tickets/\(ticket.id)/accept/\(proposal.field)", method: "POST",
+                                  body: Body(next_ceiling: ceiling, next_holder: holder,
+                                             expected_proposal_revision: proposal.revision,
+                                             edited_body: editedBody == proposal.body ? nil : editedBody))
+    }
+
+    func returnTicketProposal(_ id: String, message: String) async throws {
+        struct Body: Encodable { let message: String }
+        _ = try await ticketWrite("/api/tickets/\(id)/reject", method: "POST", body: Body(message: message))
+    }
+
+    func removeTicketBlocker(_ id: String, blockerID: String) async throws {
+        struct Body: Encodable {}
+        _ = try await ticketWrite("/api/collections/blockers/\(id)/\(blockerID)", method: "DELETE", body: Body())
+    }
+
+    func setTicketWorkerConfiguration(_ id: String, backend: String, model: String?, effort: String?) async throws {
+        // Explicit null resets a previous override to the backend default.
+        var body: [String: String?] = ["employee_backend": backend]
+        body["employee_launch_model"] = .some(model)
+        body["employee_launch_reasoning_effort"] = .some(effort)
+        _ = try await ticketWrite("/api/tickets/\(id)/employee-configuration", method: "PUT", body: body)
+    }
+
     private func ticketWrite<Body: Encodable>(_ path: String, method: String, body: Body) async throws -> Data {
         var request = URLRequest(url: try url(path))
         request.httpMethod = method

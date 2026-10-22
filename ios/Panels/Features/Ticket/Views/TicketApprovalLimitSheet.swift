@@ -2,15 +2,19 @@ import SwiftUI
 
 struct TicketApprovalLimitSheet: View {
     let presentation: TicketPresentation
-    let save: (String?, Principal) async -> Void
+    let approval: Bool
+    let save: (String?, Principal) async throws -> Void
+    @State private var busy = false
+    @State private var error: String?
     @Environment(\.dismiss) private var dismiss
     @State private var ceiling: String
     @State private var holder: Principal
 
-    init(presentation: TicketPresentation, save: @escaping (String?, Principal) async -> Void) {
+    init(presentation: TicketPresentation, approval: Bool = false, save: @escaping (String?, Principal) async throws -> Void) {
         self.presentation = presentation
         self.save = save
-        _ceiling = State(initialValue: presentation.ticket.ceiling)
+        self.approval = approval
+        _ceiling = State(initialValue: approval ? (presentation.manifest.advance?[presentation.ticket.stage] ?? presentation.ticket.ceiling) : presentation.ticket.ceiling)
         _holder = State(initialValue: presentation.ticket.ceilingHolder)
     }
 
@@ -19,11 +23,11 @@ struct TicketApprovalLimitSheet: View {
             Form {
                 Section("Approved until") {
                     Picker("Approval limit", selection: $ceiling) {
-                        Text("No further").tag("none")
+                        if !approval { Text("No further").tag("none") }
                         if !presentation.ceilingOptions.contains(where: { $0.id == presentation.ticket.ceiling }), presentation.ticket.ceiling != "none" {
                             Text(presentation.ceilingLabel).tag(presentation.ticket.ceiling)
                         }
-                        ForEach(presentation.ceilingOptions) { stage in Text(stage.label).tag(stage.id) }
+                        ForEach(approval ? Array(presentation.ceilingOptions.dropFirst()) : presentation.ceilingOptions) { stage in Text(stage.label).tag(stage.id) }
                     }.pickerStyle(.inline).labelsHidden().accessibilityIdentifier("ticket-ceiling-picker")
                 }
                 Section("Then reviews") {
@@ -33,23 +37,27 @@ struct TicketApprovalLimitSheet: View {
                         }
                     }.pickerStyle(.inline).labelsHidden()
                 }
-            }.panelsScreen().navigationTitle("Approval limit").navigationBarTitleDisplayMode(.inline)
+                if let error { Text(error).foregroundStyle(PanelsTheme.error) }
+            }.disabled(busy).panelsScreen().navigationTitle(approval ? "Approve" : "Approval limit").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { Haptics.light(); dismiss() }
+                        Button("Cancel") { dismiss() }.disabled(busy)
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            Haptics.medium()
-                            let changedCeiling = ceiling == presentation.ticket.ceiling ? nil : ceiling
-                            dismiss()
-                            Task { await save(changedCeiling, holder) }
-                        }.disabled(ceiling == presentation.ticket.ceiling && holder == presentation.ticket.ceilingHolder)
+                        Button(approval ? "Approve" : "Save") {
+                            guard !busy else { return }
+                            busy = true; error = nil; Haptics.light()
+                            let changedCeiling = !approval && ceiling == presentation.ticket.ceiling ? nil : ceiling
+                            Task {
+                                do { try await save(changedCeiling, holder); Haptics.success(); dismiss() }
+                                catch { self.error = error.localizedDescription; Haptics.error() }
+                                busy = false
+                            }
+                        }.disabled(busy || (!approval && ceiling == presentation.ticket.ceiling && holder == presentation.ticket.ceilingHolder))
                     }
                 }
         }
         .presentationDragIndicator(.visible)
-        .onChange(of: ceiling) { _, _ in Haptics.selection() }
-        .onChange(of: holder) { _, _ in Haptics.selection() }
+        .interactiveDismissDisabled(busy)
     }
 }

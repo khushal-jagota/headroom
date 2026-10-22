@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct TicketView: View {
     let ticketID: String
@@ -11,11 +12,15 @@ struct TicketView: View {
     @State private var artifactError: String?
     @State private var actionNote: String?
     @State private var busy = false
-    @State private var stepsOpen = false
-    @State private var artifactsOpen = false
     @State private var scopeOpen = false
+    @State private var recapEditorOpen = false
+    @State private var configurationOpen = false
+    @State private var renaming = false
+    @State private var titleDraft = ""
+    @State private var completionDraft = ""
+    @State private var titleVisible = true
     @State private var loadGeneration = 0
-
+    @State private var linkedArtifact: AppRoute?
     private var owner: ArtifactOwner { ArtifactOwner(kind: .ticket, id: ticketID) }
     private var presentation: TicketPresentation? {
         guard let detail, let manifest else { return nil }
@@ -30,34 +35,69 @@ struct TicketView: View {
                     masthead(detail)
                     if let presentation {
                         stageCard(presentation)
-                        bands(presentation)
+                        steps(presentation)
+                        artifactRow
                     }
-                    ConversationPlaceholder()
                 } else if error == nil {
                     ProgressView("Loading ticket…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
-            }
-            .frame(maxWidth: 720, alignment: .leading)
-            .padding(.horizontal, PanelsTheme.Space.xl)
-            .padding(.vertical, PanelsTheme.Space.xl)
-            .frame(maxWidth: .infinity)
+            }.frame(maxWidth: 720, alignment: .leading)
+                .padding(.horizontal, PanelsTheme.Space.xl).padding(.vertical, PanelsTheme.Space.lg)
+                .frame(maxWidth: .infinity)
         }
-        .navigationTitle("Ticket")
+        .navigationTitle(titleVisible ? "" : detail?.title ?? "Ticket")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar { ToolbarItem(placement: .primaryAction) { ticketMenu } }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ConversationPlaceholder().padding(.horizontal, PanelsTheme.Space.lg).padding(.vertical, PanelsTheme.Space.sm)
+                .background(PanelsTheme.surface)
+        }
         .panelsScreen()
-        .refreshable { Haptics.light(); await load(); await loadArtifacts() }
+        .refreshable { await load(); await loadArtifacts() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
+        .task(id: detail?.stage) {
+            if let presentation, let field = presentation.currentField { completionDraft = detail?.fieldValues[field] ?? "" }
+        }
         .sheet(isPresented: $scopeOpen) {
             if let presentation {
                 TicketApprovalLimitSheet(presentation: presentation) { ceiling, holder in
-                    await perform {
-                        try await store.client.setTicketApprovalLimit(ticketID, ceiling: ceiling, holder: holder)
-                        return nil
-                    }
+                    try await store.client.setTicketApprovalLimit(ticketID, ceiling: ceiling, holder: holder)
+                    await load(); await store.refresh()
                 }
             }
         }
+        .sheet(isPresented: $recapEditorOpen) {
+            TicketTextEditor(title: "Recap", save: { text in
+                try await store.client.editTicketRecap(ticketID, recap: text)
+                await load(); await store.refresh()
+            }, text: detail?.recap ?? "")
+        }
+        .sheet(isPresented: $configurationOpen) {
+            if let detail { TicketWorkerSetup(ticket: detail) { await load() } }
+        }
+        .navigationDestination(item: $linkedArtifact) { RouteDestination(route: $0) }
+        .environment(\.openURL, OpenURLAction { url in
+            if let route = TicketArtifactRoute.linkedDestination(url, title: url.lastPathComponent) { linkedArtifact = route; return .handled }
+            return .systemAction
+        })
+    }
+
+    private var ticketMenu: some View {
+        Menu {
+            if let detail, presentation?.terminal == false {
+                Button("Ask for a recap", systemImage: "arrow.clockwise") { requestRecap() }
+                Button(detail.isBacklogged ? "Resume ticket" : "Backlog ticket", systemImage: detail.isBacklogged ? "play" : "pause") { changeBacklog(detail) }
+            }
+            Button("Copy link", systemImage: "doc.on.doc") {
+                var components = URLComponents(url: store.baseURL, resolvingAgainstBaseURL: false)
+                components?.fragment = "/workspace/\(ticketID)"
+                UIPasteboard.general.url = components?.url
+                Haptics.success()
+            }
+        } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }
+            .disabled(busy).accessibilityLabel("Ticket actions").accessibilityIdentifier("ticket-actions")
     }
 
     private func masthead(_ detail: TicketDetail) -> some View {
@@ -65,150 +105,130 @@ struct TicketView: View {
             HStack(spacing: PanelsTheme.Space.sm) {
                 Text("\(detail.project ?? "No project")  ·  \(manifest?.label ?? detail.workerType.replacingOccurrences(of: "_", with: " ").capitalized)")
                     .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                if detail.conversationSignal?.working == true {
-                    ProgressView().controlSize(.small).tint(PanelsTheme.accent).accessibilityLabel("Working")
-                }
+                Spacer(minLength: PanelsTheme.Space.sm)
                 if detail.conversationSignal?.messageForOwner == true {
-                    Image(systemName: "circle.fill").font(PanelsTheme.TypeScale.caption)
-                        .foregroundStyle(PanelsTheme.accent).accessibilityLabel("Unread message")
+                    Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).accessibilityLabel("Unread message")
+                }
+                if detail.conversationSignal?.working == true {
+                    ProgressView().controlSize(.mini).tint(PanelsTheme.faint).frame(width: 12, height: 12).accessibilityLabel("Working")
                 }
             }
-            Text(detail.title).font(PanelsTheme.TypeScale.title).foregroundStyle(PanelsTheme.strong)
-                .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
-            TicketExpandableText(text: detail.recap, emptyText: "No recap yet.")
-            if let presentation, !presentation.terminal {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: PanelsTheme.Space.md) { lifecycleActions(detail) }
-                    VStack(alignment: .leading, spacing: 0) { lifecycleActions(detail) }
-                }
-                .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-                .buttonStyle(.plain)
-                .disabled(busy)
-                if detail.isBacklogged {
-                    Text("Backlogged. Automatic work is paused. Messages and approvals remain available.")
-                        .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                }
+            if renaming {
+                TextField("Title", text: $titleDraft, axis: .vertical).font(.title.weight(.semibold))
+                Button("Save title") {
+                    Task { await perform { try await store.client.renameTicket(ticketID, title: titleDraft); renaming = false; return nil } }
+                }.disabled(busy || titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Cancel") { renaming = false }
+            } else {
+                Text(detail.title).font(.title.weight(.semibold)).foregroundStyle(PanelsTheme.strong)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+                    .onScrollVisibilityChange(threshold: 0.1) { visible in
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { titleVisible = visible }
+                    }
+                    .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = detail.title; renaming = true } }
             }
-            if let actionNote {
-                Text(actionNote).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-                    .accessibilityIdentifier("ticket-action-note")
+            Group {
+                if detail.recap.isEmpty {
+                    Button("+ add orientation") { recapEditorOpen = true }.foregroundStyle(PanelsTheme.faint)
+                } else { TicketExpandableText(text: detail.recap, emptyText: "") }
             }
+                .contextMenu {
+                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = detail.recap; Haptics.success() }
+                    Button("Edit", systemImage: "pencil") { recapEditorOpen = true }
+                    Button("Ask for a fresh recap", systemImage: "arrow.clockwise") { requestRecap() }
+                }
             if let blockers = detail.blockerSummary?.blockedBy, !blockers.isEmpty {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                     Text("Blocked by").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     ForEach(blockers, id: \.ticketId) { blocker in
-                        NavigationLink(value: AppRoute.ticket(blocker.ticketId)) {
-                            Label(blocker.title, systemImage: "arrow.up.right")
-                        }.font(PanelsTheme.TypeScale.small).padding(.vertical, PanelsTheme.Space.xs)
+                        NavigationLink(value: AppRoute.ticket(blocker.ticketId)) { Text(blocker.title) }
+                            .font(PanelsTheme.TypeScale.small).padding(.vertical, PanelsTheme.Space.xs)
+                            .contextMenu {
+                                Button("Remove blocker", systemImage: "minus.circle", role: .destructive) {
+                                    Task { await perform { try await store.client.removeTicketBlocker(ticketID, blockerID: blocker.ticketId); return nil } }
+                                }
+                            }
                     }
                 }
             }
-        }
-    }
-
-    @ViewBuilder private func lifecycleActions(_ detail: TicketDetail) -> some View {
-        Button("Ask for a recap") {
-            Haptics.light()
-            Task { await perform { try await store.client.requestTicketRecap(ticketID).note } }
-        }.frame(minHeight: 44).accessibilityIdentifier("ticket-request-recap")
-        Button(detail.isBacklogged ? "Resume ticket" : "Backlog ticket") {
-            Haptics.medium()
-            Task {
-                await perform {
-                    try await store.client.setTicketBacklogged(detail, backlogged: !detail.isBacklogged)
-                    return nil
-                }
+            if detail.isBacklogged {
+                HStack {
+                    Text("Backlogged. Automatic work is paused.").foregroundStyle(PanelsTheme.faint)
+                    Button("Resume") { changeBacklog(detail) }.fontWeight(.semibold).disabled(busy)
+                }.font(PanelsTheme.TypeScale.small)
             }
-        }.frame(minHeight: 44).accessibilityIdentifier("ticket-backlog")
+            if let actionNote {
+                Text(actionNote).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
+                    .accessibilityIdentifier("ticket-action-note")
+            }
+        }
     }
 
     private func stageCard(_ presentation: TicketPresentation) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
-            Text(presentation.heading).font(PanelsTheme.TypeScale.heading).foregroundStyle(PanelsTheme.strong)
-                .accessibilityAddTraits(.isHeader)
             if let proposal = detail?.pendingProposal, proposal.field == presentation.currentField {
-                Text(detail?.awaitingApproval == true ? "Awaiting your approval" : "Awaiting an agent’s approval")
-                    .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.accent)
-                TicketExpandableText(text: proposal.body, emptyText: "")
+                TicketProposalCard(presentation: presentation, proposal: proposal) { await load(); await store.refresh() }
+                    .id("\(proposal.field):\(proposal.revision)")
+            } else {
+                Text(presentation.heading).font(PanelsTheme.TypeScale.heading)
+                    .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.error : PanelsTheme.strong)
+                    .accessibilityAddTraits(.isHeader)
+                if presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField {
+                    TextEditor(text: $completionDraft).frame(minHeight: 120).scrollContentBackground(.hidden)
+                        .padding(PanelsTheme.Space.sm).background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
+                        .accessibilityLabel("Value")
+                    Button("Complete") {
+                        Haptics.light()
+                        Task { await perform { try await store.client.completeTicketField(ticketID, field: field, body: completionDraft); return nil } }
+                    }.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).disabled(busy || completionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } else if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
+                    Button { scopeOpen = true } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
+                            Text("Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")
+                                .multilineTextAlignment(.leading)
+                            Image(systemName: "chevron.down").font(PanelsTheme.TypeScale.caption)
+                        }.font(PanelsTheme.TypeScale.small).frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
+                    }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("ticket-approval-limit")
+                }
             }
-            if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
-                Button {
-                    Haptics.selection(); scopeOpen = true
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
-                        Text("Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")
-                            .multilineTextAlignment(.leading)
-                        Image(systemName: "chevron.down").font(PanelsTheme.TypeScale.caption)
-                    }.frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("ticket-approval-limit")
-            }
-        }
-        .padding(PanelsTheme.Space.xl)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
-    }
-
-    private func bands(_ presentation: TicketPresentation) -> some View {
-        VStack(spacing: 0) {
-            Divider().overlay(PanelsTheme.border)
-            disclosure("Steps", count: "\(presentation.completedCount) of \(presentation.manifest.fields.count) done", open: $stepsOpen)
-            if stepsOpen {
-                VStack(spacing: 0) {
-                    ForEach(presentation.manifest.fields) { field in
-                        TicketStepRow(field: field, presentation: presentation)
-                    }
-                }.padding(.bottom, PanelsTheme.Space.md)
-            }
-            Divider().overlay(PanelsTheme.border)
-            disclosure("Artifacts", count: artifacts.map { String($0.total) } ?? "…", open: $artifactsOpen)
-            if artifactsOpen {
-                artifactRows.padding(.bottom, PanelsTheme.Space.md)
-            }
-            Divider().overlay(PanelsTheme.border)
-        }
-        .onChange(of: artifactsOpen) { _, open in if open { Task { await loadArtifacts() } } }
-    }
-
-    private func disclosure(_ title: String, count: String, open: Binding<Bool>) -> some View {
-        Button {
-            Haptics.selection()
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.base)) { open.wrappedValue.toggle() }
-        } label: {
-            HStack {
-                Text(title).fontWeight(.semibold)
-                Spacer()
-                Text(count).foregroundStyle(PanelsTheme.faint)
-                Image(systemName: "chevron.right").font(PanelsTheme.TypeScale.caption)
-                    .rotationEffect(.degrees(open.wrappedValue ? 90 : 0))
-            }.font(PanelsTheme.TypeScale.small).frame(minHeight: 52).contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityValue(open.wrappedValue ? "Expanded" : "Collapsed")
-            .accessibilityIdentifier("ticket-\(title.lowercased())")
-    }
-
-    @ViewBuilder private var artifactRows: some View {
-        if let artifactError { LoadErrorView(message: artifactError) { await loadArtifacts() } }
-        if let artifacts {
-            if artifacts.entries.isEmpty {
-                Text("No artifacts yet.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, PanelsTheme.Space.sm)
-            }
-            ForEach(artifacts.entries) { entry in
-                NavigationLink(value: TicketArtifactRoute.destination(entry, owner: owner)) {
-                    HStack(spacing: PanelsTheme.Space.md) {
-                        Image(systemName: entry.directory == nil ? "doc.text" : "folder").foregroundStyle(PanelsTheme.faint)
-                        Text(entry.label).lineLimit(2)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
-                    }.font(PanelsTheme.TypeScale.small).frame(minHeight: 48).contentShape(Rectangle())
+            if presentation.ticket.employeeConfigurationEditable {
+                Button { configurationOpen = true } label: {
+                    Text([presentation.ticket.employeeBackend.capitalized, presentation.ticket.employeeLaunchModel, presentation.ticket.employeeLaunchReasoningEffort?.capitalized].compactMap { $0 }.joined(separator: " · "))
+                        .font(PanelsTheme.TypeScale.small).frame(minHeight: 44)
                 }.buttonStyle(.plain)
             }
-            if artifacts.total > artifacts.entries.count {
-                NavigationLink("View all \(artifacts.total) artifacts", value: AppRoute.artifacts(owner: owner, directory: ""))
-                    .font(PanelsTheme.TypeScale.small).frame(minHeight: 44)
-            }
-        } else if artifactError == nil { ProgressView().padding(PanelsTheme.Space.md) }
+        }.padding(PanelsTheme.Space.xl).frame(maxWidth: .infinity, alignment: .leading)
+            .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
     }
 
+    private func steps(_ presentation: TicketPresentation) -> some View {
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+            HStack {
+                Text("STEPS").fontWeight(.semibold).tracking(1)
+                Spacer()
+                Text("\(presentation.completedCount) of \(presentation.manifest.fields.count) done")
+            }.font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
+            ForEach(presentation.manifest.fields) { field in TicketStepRow(field: field, presentation: presentation) }
+        }.accessibilityIdentifier("ticket-steps")
+    }
+
+    @ViewBuilder private var artifactRow: some View {
+        if let artifactError { LoadErrorView(message: artifactError) { await loadArtifacts() } }
+        if let artifacts, artifacts.total > 0 {
+            VStack(spacing: 0) {
+                Divider().overlay(PanelsTheme.border)
+                NavigationLink(value: AppRoute.artifacts(owner: owner, directory: "")) {
+                    HStack { Text("Artifacts"); Spacer(); Text(String(artifacts.total)).foregroundStyle(PanelsTheme.faint) }
+                        .font(PanelsTheme.TypeScale.body).frame(minHeight: 50).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityIdentifier("ticket-artifacts")
+            }
+        }
+    }
+
+    private func requestRecap() { Task { await perform { try await store.client.requestTicketRecap(ticketID).note } } }
+    private func changeBacklog(_ ticket: TicketDetail) {
+        Task { await perform { try await store.client.setTicketBacklogged(ticket, backlogged: !ticket.isBacklogged); return nil } }
+    }
     private func load() async {
         loadGeneration += 1
         let generation = loadGeneration
@@ -219,11 +239,8 @@ struct TicketView: View {
             try Task.checkCancellation()
             guard generation == loadGeneration, client.baseURL == store.baseURL else { return }
             detail = result; manifest = type; error = nil
-        } catch {
-            if !Task.isCancelled && generation == loadGeneration { self.error = error.localizedDescription }
-        }
+        } catch { if !Task.isCancelled && generation == loadGeneration { self.error = error.localizedDescription } }
     }
-
     private func loadArtifacts() async {
         let client = store.client
         do {
@@ -233,16 +250,14 @@ struct TicketView: View {
             artifacts = result; artifactError = nil
         } catch { if !Task.isCancelled { artifactError = error.localizedDescription } }
     }
-
     private func perform(_ action: () async throws -> String?) async {
         guard !busy else { return }
         busy = true; actionNote = nil
         defer { busy = false }
         do {
             actionNote = try await action()
-            if actionNote == nil { Haptics.success() }
-            await load()
-            await store.refresh()
-        } catch { actionNote = error.localizedDescription }
+            if actionNote == nil { Haptics.success() } else { Haptics.error() }
+            await load(); await store.refresh()
+        } catch { actionNote = error.localizedDescription; Haptics.error() }
     }
 }

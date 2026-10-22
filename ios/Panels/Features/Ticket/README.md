@@ -1,47 +1,47 @@
 # Ticket page
 
-The native ticket page reads the existing full ticket endpoint and that ticket's
-worker-type manifest. The manifest supplies stage names, step order, completion
-counts and the approval-limit options. A worker that still owns a step keeps its
-“Currently working on” heading even between turns; only a live conversation signal
-shows the spinner. Working and unread marks sit beside the project and worker type,
-above the title. The recap has five visible lines before Show more, following the
-owner's design update.
+The ticket page reads the full ticket endpoint and worker-type manifest. The
+manifest supplies labels, step ordering, completion counts, approval limits and
+the next stage after accepting a proposal. Only the conversation's live working
+signal animates a spinner. The project/type line keeps working and unread marks
+on its trailing edge; the title scrolls into the native navigation bar.
 
-The recap and step bodies expand in place. The approval limit opens a native sheet;
-Cancel discards its selections and Save writes the selected limit and reviewer.
-Changing only the reviewer does not send a ceiling. Backlog and Resume include the
-record hash that the server checks. Asking for a recap reports refused or uncertain
-delivery without claiming success. These actions retain the existing API behavior.
-The page reloads after a successful command and follows the shell's live revision.
+The recap shows eight lines with a fade and expands on tap. Long-press it to copy,
+edit or request a fresh recap. Long-press the title to rename it. The action menu
+contains recap, backlog/resume and copy-link actions. Blocker links open their
+tickets and offer removal in a context menu. Backlog/resume carry the record hash.
 
-The artifact band reads its own catalog on arrival, expansion and pull-to-refresh,
-since file writes need not produce a database change. It opens the shared typed
-artifact routes. The conversation remains the foundation's placeholder. Proposal
-text can be read here; proposal approval and return controls belong to Review.
+The stage card shows the current work, a proposal with approval and send-back
+actions, or an owner step with an explicit Complete action. Approval opens a native
+sheet; accepting sends the displayed proposal revision and defaults to the next
+gate, without advancing twice. A reviewer-only scope change omits the ceiling.
+Editors remain open on errors. Send-back requires a nonempty note and an existing
+conversation, and is unavailable for Brief. Pristine tickets can edit worker setup
+using the existing backend/model catalogue. There are no backend changes.
 
-Local expansion uses the shared short motion duration and respects Reduce Motion.
-Navigation and the approval sheet use native transitions. Controls use the shared
-haptic helper; physical-device haptics are not verified by Simulator captures.
+Steps are always visible and push dedicated reading pages. Completed fields offer
+Edit/Done. Managed artifact links preserve their actual ticket or manager owner.
+The artifact count row opens the shared artifact list; it is hidden when empty.
+The conversation slot remains the foundation placeholder, with no transcript or
+composer. File inventory refreshes on arrival and pull-to-refresh.
+
+The page uses native pushes and sheets. Recap expansion respects Reduce Motion.
+Navigation, disclosure and menus are silent; writes acknowledge success or failure
+through the shared haptic helper. Simulator captures cannot verify physical haptics.
 
 ## Focused checks
 
-`PanelsTests/TicketTests.swift` reuses the foundation's full-ticket fixture and adds
-four small tests with no server or browser host:
+`PanelsTests/TicketTests.swift` reuses the foundation's full-ticket fixture and one
+URLProtocol stub. Five small tests add no server or browser host:
 
-- Manifest ordering and renamed labels: the existing decoding checks do not prove
-  completion counts or approval-option floors. One pure presentation check covers
-  this distinct risk with a small worker manifest.
-- Mutation contracts: a URLProtocol stub checks backlog/resume hashes, recap target,
-  and reviewer-only versus ceiling changes. Foundation tests were read-only, so
-  they could not catch an incorrect write endpoint or overbroad payload.
-- Failure outcomes: a stubbed stale-record rejection must remain an error, and a
-  refused or uncertain recap must not appear successful. This uses the same stub
-  and fixture and makes no live writes.
-- Cross-ticket artifacts: the live catalog includes links owned by another ticket.
-  One pure route check prevents opening that path under the wrong ticket; the
-  existing artifact decoding check does not cover navigation ownership.
+- Manifest ordering and renamed labels cover completion counts and approval floors
+  that the foundation's decoding tests cannot establish.
+- Lifecycle/scope payloads cover record hashes, recap targets and omitted ceilings.
+- Editor/proposal payloads cover the new write endpoints, displayed proposal revision,
+  unchanged versus edited bodies and explicit null worker defaults.
+- Stale-record and refused/uncertain recap outcomes must not appear successful.
+- Cross-ticket artifact routes must preserve ownership rather than use this ticket.
 
-The external capture harness is task proof, not an additional maintained test
-suite. It opens real ticket data on PanelsLaneB, expands sections, and cancels the
-approval sheet without saving. Artifact viewing is a separate worker's route.
+The external capture harness is task proof, not a maintained test suite. It uses
+real data on the locked PanelsLaneB and exercises only read-only navigation,
+expansion and cancellation. Every mutation is tested only against the stub.

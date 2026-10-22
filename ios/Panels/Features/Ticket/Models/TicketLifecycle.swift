@@ -21,6 +21,7 @@ struct TicketWorkerType: Decodable, Sendable {
     let label: String
     let stages: [Stage]
     let fields: [Field]
+    var advance: [String: String]? = nil
 }
 
 struct TicketRecapDelivery: Decodable, Sendable {
