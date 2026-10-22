@@ -561,7 +561,7 @@ def verify_conversation_overlay(browser, url):
         final_box = final.bounding_box()
         # Wheel over uncovered document space above the full-column card.
         uncovered_point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + card_peek['y'])/2}
-        assert page.evaluate('point=>document.elementFromPoint(point.x,point.y)?.closest(".ticket-doc,.manager-doc")!==null', uncovered_point), (name, uncovered_point)
+        assert page.evaluate('point=>Boolean(document.elementFromPoint(point.x,point.y)?.closest(".ticket-doc,.manager-doc"))', uncovered_point), (name, uncovered_point)
         page.mouse.move(uncovered_point['x'], uncovered_point['y'])
         page.mouse.wheel(0, final_box['y'] + final_box['height'] - card_peek['y'] + 24)
         page.wait_for_timeout(180)
@@ -632,7 +632,7 @@ def verify_conversation_overlay(browser, url):
         draft_before_dismissal = box.input_value()
         doc_before_dismissal = document.evaluate('e=>e.scrollTop')
         point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + pane.bounding_box()['y'])/2}
-        hit = page.evaluate('''point=>document.elementFromPoint(point.x,point.y)?.closest('.ticket-doc,.manager-doc')!==null''', point)
+        hit = page.evaluate('''point=>Boolean(document.elementFromPoint(point.x,point.y)?.closest('.ticket-doc,.manager-doc'))''', point)
         assert hit, (name,point)
         page.mouse.click(point['x'], point['y'])
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
