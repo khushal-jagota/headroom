@@ -57,7 +57,8 @@ function snapshot(root: HTMLElement | null): Map<string, Part> {
 /** Defer structure during motion or hover; conversation facts stay live during hover. */
 export function createRailMotionController(root: () => HTMLElement | null,
   read: () => WorkspaceRailPresentation, apply: (presentation: WorkspaceRailPresentation) => void,
-  flushPageRestoration: () => boolean = () => false) {
+  flushPageRestoration: () => boolean = () => false,
+  capturePageRestoration: () => void = () => {}) {
   let pending: WorkspaceRailPresentation | null = null;
   let frozen = false;
   let busy = false;
@@ -229,6 +230,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
       markBusy();
       return;
     }
+    capturePageRestoration();
     const heldSection = !directFold() ? holdSection() : null;
     present(next);
     await tick();
