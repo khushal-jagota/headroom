@@ -16,13 +16,17 @@ struct AgentRecap: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             if !recap.isEmpty {
-                recapText.lineLimit(expanded ? nil : 8)
-                    .background { GeometryReader { geometry in Color.clear.onChange(of: geometry.size.height, initial: true) { _, height in if !expanded { clampedHeight = height } } } }
+                // Keep each text layout stable while only the clipping frame animates.
+                // Animating lineLimit makes SwiftUI interpolate glyphs between lines.
+                recapText.lineLimit(8)
+                    .background { GeometryReader { geometry in Color.clear.onChange(of: geometry.size.height, initial: true) { _, height in clampedHeight = height } } }
+                    .hidden().accessibilityHidden(true)
                     .overlay(alignment: .topLeading) {
                         recapText.fixedSize(horizontal: false, vertical: true)
                             .background { GeometryReader { geometry in Color.clear.onChange(of: geometry.size.height, initial: true) { _, height in fullHeight = height } } }
-                            .hidden().accessibilityHidden(true)
                     }
+                    .frame(height: fullHeight > 0 ? (expanded ? fullHeight : clampedHeight) : nil, alignment: .top)
+                    .clipped()
                 if fullHeight > clampedHeight + 1 || expanded {
                     Button(expanded ? "Show less" : "Show more") {
                         withAnimation(reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow)) { expanded.toggle() }
