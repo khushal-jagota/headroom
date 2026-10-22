@@ -1854,7 +1854,8 @@ def _run(browser, urls):
         return { columnWidth: column.width, viewportWidth: innerWidth,
             paneLeft: pane.left, paneRight: pane.right, controls };
     }""")
-    assert abs(phone_bounds["columnWidth"] - phone_bounds["viewportWidth"]) <= 1, phone_bounds
+    # The card uses the title/text channel, with 24px outside each edge.
+    assert abs(phone_bounds["columnWidth"] - min(720, phone_bounds["viewportWidth"] - 48)) <= 1, phone_bounds
     assert (
         0 <= phone_bounds["paneLeft"] < phone_bounds["paneRight"] <= phone_bounds["viewportWidth"]
     ), phone_bounds
