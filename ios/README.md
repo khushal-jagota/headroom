@@ -5,8 +5,9 @@ Native SwiftUI foundation, iOS 18 minimum. The app defaults to
 HTTPS server address. The Mac must be able to reach the server over Tailscale.
 No backend changes or third-party packages are needed.
 
-Workspace is the initial tab. Review, Workspace and More each own their navigation
-stack. Navigation uses `AppRoute`; every destination has a separate source file.
+Workspace is the initial tab. Review and Workspace each own their navigation stack. More opens a native sheet
+with its own navigation stack, grouped into Work and System. Choosing a destination
+expands the sheet; dismissing returns to the previous tab. Navigation uses `AppRoute`; every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets/{id}/workspace` endpoint returned HTTP 500 for the sampled tickets;
 `/api/tickets?detail=full&id=…` succeeded. This adapter deliberately uses that
@@ -106,13 +107,19 @@ writes need not emit a database change.
 `ConversationPlaceholder` is the clearly named integration slot on Chief,
 Orchestrator and Ticket. No transcript, composer, read marker, or conversation
 layout has been implemented; the agreed conversation design comes later. Artifact
-viewing and Ideas remain placeholders. Usage, VPS and Settings now have native
-read-only screens. Feedback implements the Open/Handled inbox, grouped Ticket
-links, page context links and Dismiss/Reopen actions through its API adapter. It
-follows foreground change revisions and supports pull-to-refresh. Its empty state
-omits the web's capture button instruction because native global feedback capture
-is not yet implemented. Feedback writes are exercised only with an injected stub
+viewing remains a placeholder. Usage, VPS and Settings have native read-only
+screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
+context links and Dismiss/Reopen actions through its API adapter. It follows
+foreground change revisions and supports pull-to-refresh. Its empty state omits
+the web's capture button instruction because native global feedback capture is
+not yet implemented. Feedback writes are exercised only with an injected stub
 or URLProtocol interception.
+
+Ideas reads the live idea list and project catalogue, expands captured detail,
+and captures a title with optional detail and project assignment. Return in the
+title field captures; project chips assign the new idea, matching the web. Failed
+captures keep the draft. The capture POST lives behind `IdeasServing`; its tests
+use a stub transport, and simulator verification never submits a live capture.
 
 Haptic helpers offer light, medium, success and selection. Navigation and tab
 changes use them, as does saving Settings. Native navigation transitions supply
@@ -161,3 +168,18 @@ For this delivery, firstmate explicitly deferred all simulator testing and Gemin
 motion review. Verification is a generic iOS Simulator SDK compile, these host
 unit tests, and decoding eight read-only endpoint snapshots. No iOS interaction,
 motion, or physical haptic behavior is claimed as verified.
+
+## Ideas verification
+
+`IdeasTests` covers three distinct gaps: blank submissions and failed writes must
+preserve a draft without accidental requests; acknowledged captures must display
+the server record and reset their draft; and the API adapter must send the exact
+POST payload (`project_id`, omitted blank optional fields) and decode the response.
+These are fast unit tests using an actor stub and URLProtocol, with no backend or
+browser host. The read-only simulator walkthrough is an external capture harness,
+not an added UI suite. Haptics still need physical-device verification.
+
+After Feedback and the system screens were integrated, Ideas was rebased while
+preserving every More destination. Firstmate requested compile-only verification
+and the existing host tests for that integration; no simulator was used for the
+rebase checks.
