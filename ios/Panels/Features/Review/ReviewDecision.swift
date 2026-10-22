@@ -6,6 +6,7 @@ import Observation
     var ticket: TicketDetail?
     var manifest: ReviewWorkerManifest?
     var draft = ""
+    var revisionDraft = ""
     var error: String?
     var changed = false
     var loading = false
@@ -53,6 +54,18 @@ import Observation
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
         }
+    }
+
+    func rename(api: APIClient, title: String) async -> Bool {
+        guard !busy, let ticket, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        busy = true
+        defer { busy = false }
+        do {
+            try await api.renameReviewTicket(ticket.id, title: title)
+            self.ticket = try await api.ticket(ticket.id)
+            error = nil
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
 
     func approve(api: APIClient, ceiling: String, holder: Principal) async -> Bool {

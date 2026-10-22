@@ -3,6 +3,24 @@ import XCTest
 
 /// No live writes. The real adapter runs against URLProtocol's in-memory transport.
 @MainActor final class ReviewDecisionTests: XCTestCase {
+    // A stale deployment must never look healthy or reserve permanent screen space.
+    func testDeploymentCapsuleExpiresAndPreservesFailure() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        func status(_ state: String, expiry: String? = "1970-01-01T00:20:00Z", outcome: String? = nil) -> DeploymentStatus {
+            DeploymentStatus(state: state, deployedSha: nil, targetSha: nil, outcome: outcome, detail: nil, validUntil: expiry)
+        }
+        func visible(_ value: DeploymentStatus, connected: Bool = true, at date: Date = Date(timeIntervalSince1970: 1_000)) -> DeploymentCapsuleState? {
+            DeploymentCapsuleState.resolve(value, connected: connected, readFailed: false, now: date)
+        }
+        XCTAssertNil(visible(status("idle")))
+        XCTAssertEqual(visible(status("preparing")), .deploying)
+        XCTAssertEqual(visible(status("preparing", expiry: nil)), .reconnecting)
+        XCTAssertEqual(visible(status("back_up")), .deployed)
+        XCTAssertNil(visible(status("back_up"), at: now.addingTimeInterval(201)))
+        XCTAssertEqual(visible(status("back_up"), connected: false), .reconnecting)
+        XCTAssertEqual(visible(status("idle", outcome: "rolled_back")), .problem)
+    }
+
     private func fixture(_ name: String) throws -> Data {
         try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "json")))
     }
@@ -79,6 +97,19 @@ import XCTest
         XCTAssertTrue(success)
     }
 
+    func testVoiceUsesExistingTranscriptionContractAndAppendsWithoutLosingDraft() async throws {
+        let (_, api, _) = try await setupDecision()
+        let audio = Data([1, 2, 3])
+        let transcript = try await api.transcribeReviewAudio(audio)
+        XCTAssertEqual(transcript, "Add the opened state.")
+        let request = try XCTUnwrap(ReviewStub.state.writes.first)
+        XCTAssertEqual(request.url?.path, "/api/conversation/voice-transcriptions")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String])
+        XCTAssertEqual(body, ["audio": "AQID", "media_type": "audio/mp4"])
+        XCTAssertEqual(ReviewVoiceCapture.append(transcript, to: "Typed guidance."), "Typed guidance.\n\nAdd the opened state.")
+        XCTAssertEqual(ReviewVoiceCapture.append("", to: " Keep this "), " Keep this ")
+    }
+
     func testSkipIsLocalAndNewProposalIdentityReturns() {
         let old = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 1)
         let new = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 2)
@@ -125,6 +156,7 @@ private final class ReviewStubState: @unchecked Sendable {
                     request.httpBody = data
                 }
                 recorded.append(request)
+                if request.url!.path.hasSuffix("voice-transcriptions") { return (200, Data("{\"transcript\":\"Add the opened state.\"}".utf8)) }
                 return failing ? (409, Data("{\"error\":{\"message\":\"Proposal changed\"}}".utf8)) : (200, Data("{}".utf8))
             }
             return (200, request.url!.path.contains("manifest") ? manifest : ticket)
