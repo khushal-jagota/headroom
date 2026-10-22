@@ -38,6 +38,7 @@
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
+<div class="manager-card-slot">
 <section use:visibility use:navigationScrollWindow={{window:navigationWindow,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
   <div class="identity">
     {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
@@ -56,9 +57,11 @@
     </div>
   {/each}
 </section>
+</div>
 <style>
-  .manager-card { position:relative; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); padding:11px var(--space-3) var(--space-3); transition:border-color var(--motion-fast) var(--motion-ease); }
-  :global(.manager-card) + .manager-card { margin-top:var(--space-3); }
+  .manager-card-slot { min-width:0; }
+  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-3); }
+  .manager-card { box-sizing:border-box; position:relative; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); padding:11px var(--space-3) var(--space-3); transition:border-color var(--motion-fast) var(--motion-ease); }
   .manager-card:hover, .manager-card:focus-within { border-color:rgb(from var(--border-color) r g b / .26); }
   .manager-card.selected, .manager-card.selected:hover, .manager-card.selected:focus-within { border-color:var(--accent-bright); }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }

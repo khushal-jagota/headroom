@@ -83,6 +83,25 @@ export function createRailMotionController(root: () => HTMLElement | null,
     else root()?.removeAttribute("data-rail-motion-busy");
   }
   const animations = new Set<Animation>();
+  const cardSizeCleanups = new Set<() => void>();
+  function clearCardSizes() {
+    for (const cleanup of cardSizeCleanups) cleanup();
+  }
+  function resizeCard(node: HTMLElement, from: number, to: number): Promise<void> {
+    const slot = node.parentElement;
+    if (!slot?.classList.contains("manager-card-slot") || reduced()) return Promise.resolve();
+    // The slot owns final layout space. Only the real border changes size, so
+    // neighboring FLIP travel does not also inherit an in-flow height animation.
+    slot.style.height = `${to}px`;
+    node.style.height = `${to}px`;
+    const cleanup = () => {
+      slot.style.removeProperty("height");
+      node.style.removeProperty("height");
+      cardSizeCleanups.delete(cleanup);
+    };
+    cardSizeCleanups.add(cleanup);
+    return animate(node, [{height:`${from}px`}, {height:`${to}px`}], RAIL_MOTION.space).finally(cleanup);
+  }
   let surfaces = new Map<HTMLElement, MotionSurface>();
   let sectionGeneration = 0;
   let sectionBusy = false;
@@ -132,7 +151,11 @@ export function createRailMotionController(root: () => HTMLElement | null,
     return parts;
   }
   let media: MediaQueryList | null = null;
-  const motionPreferenceChanged = () => { if (media?.matches) for (const animation of animations) animation.cancel(); };
+  const motionPreferenceChanged = () => {
+    if (!media?.matches) return;
+    for (const animation of animations) animation.cancel();
+    clearCardSizes();
+  };
   const reduced = () => {
     if (!media) {
       media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -237,7 +260,12 @@ export function createRailMotionController(root: () => HTMLElement | null,
     const isRow = (key: string) => key.startsWith("row:") || key.startsWith("settled:");
     const rowArrival = [...last.keys()].some((key) => isRow(key) && !first.has(key) && !(directFold() && settledPart(key)));
     const rowExit = [...first.keys()].some((key) => isRow(key) && !last.has(key) && !(directFold() && settledPart(key)));
-    const duration = rowExit || rowArrival ? RAIL_MOTION.space : railMoveDuration(distance);
+    const resizedCards = [...last].filter(([key, part]) => {
+      const old = first.get(key);
+      return key.startsWith("card:") && old?.node === part.node && Math.abs(old.rect.height - part.rect.height) > .5;
+    });
+    const duration = resizedCards.length || rowExit || rowArrival ? RAIL_MOTION.space : railMoveDuration(distance);
+    for (const [key, part] of resizedCards) plays.push(resizeCard(part.node, first.get(key)!.rect.height, part.rect.height));
     for (const [key, part] of last) {
       if (key === "settled-section" || (directFold() && settledPart(key))) continue;
       const old = first.get(key);
@@ -339,6 +367,6 @@ export function createRailMotionController(root: () => HTMLElement | null,
       if (value && pending && !disposed) present(signalsOnly(pending));
       if (!value) void drain();
     },
-    dispose() { ++sectionGeneration; root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("height"); root()?.removeAttribute("data-rail-motion-busy"); root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("overflow"); disposed = true; ++foldGeneration; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
+    dispose() { ++sectionGeneration; root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("height"); root()?.removeAttribute("data-rail-motion-busy"); root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("overflow"); disposed = true; ++foldGeneration; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); clearCardSizes(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };
 }

@@ -340,7 +340,7 @@ describe("manager rail projection", () => {
         : selector==='.reopen' ? title('Reopen',row.id==='newer'?reopenLabel:`Reopen ${row.title}`) : null}));
     const chief={querySelectorAll:()=>[],querySelector:(selector:string)=>selector==='.item-head .item-title'?title('Chief of Staff',''):{querySelector:()=>null}};
     let visible=rows;
-    const root={querySelectorAll:(selector:string)=>selector==='.active-work-scroll > .manager-card'?[chief]:visible,
+    const root={querySelectorAll:(selector:string)=>selector==='.active-work-scroll > .manager-card-slot > .manager-card'?[chief]:visible,
       querySelector:(selector:string)=>selector==='[data-settled-count]'?title('(2)',''):message?{}:null} as unknown as HTMLElement;
     const matches=(open=true)=>railDomMatches(root,rail,null,open);
     expect(matches()).toBe(true);

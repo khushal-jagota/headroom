@@ -19,7 +19,7 @@ function ticketMatches(row:HTMLElement,ticket:WorkItemTicketFacts) {
 }
 /** Read actual rendered values, including motion-controlled membership and marks. */
 export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:WorkspaceChief | null | undefined,settledOpen:boolean,settledCount=rail.settledItems.length):boolean {
-  const cards=[...root.querySelectorAll<HTMLElement>('.active-work-scroll > .manager-card')];
+  const cards=[...root.querySelectorAll<HTMLElement>('.active-work-scroll > .manager-card-slot > .manager-card')];
   if(cards.length!==rail.items.length+1) return false;
   const head=(card:HTMLElement,title:string,signal:Partial<ConversationSignal> | undefined,id:string | null | undefined)=>
     card.querySelector('.item-head .item-title')?.textContent===title
