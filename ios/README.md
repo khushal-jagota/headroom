@@ -107,8 +107,7 @@ writes need not emit a database change.
 
 `ConversationPlaceholder` is the clearly named integration slot on Chief,
 Orchestrator and Ticket. No transcript, composer, read marker, or conversation
-layout has been implemented; the agreed conversation design comes later. Artifact
-viewing remains a placeholder. Usage, VPS and Settings have native read-only
+layout has been implemented; the agreed conversation design comes later. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
 context links and Dismiss/Reopen actions through its API adapter. It follows
 foreground change revisions and supports pull-to-refresh. Its empty state omits
@@ -229,3 +228,36 @@ Four focused Workspace tests reuse the existing ticket fixture and an in-process
 URLProtocol stub. They cover attention precedence, hidden-ticket exclusion, stable
 section ordering, and write methods/payloads including uncertain recap delivery.
 They add no backend or browser host. Live Simulator verification invokes no writes.
+
+## Artifact integration
+
+Ticket and Orchestrator screens open `AppRoute.artifacts(owner:directory:)`, with
+an empty directory for the root. `ArtifactListView(owner:directory:)` is also
+available directly inside a navigation stack with the app's route destinations.
+`ArtifactsRow(owner:count:)` supplies the approved 50pt entry row with count and
+no chevron; it is absent at zero. Page owners supply the catalog count.
+`AppRoute.artifact(owner:path:title:)` opens a specific managed file. Catalog links
+retain their actual owner, including links to files on another ticket.
+
+The list reads the selected directory on arrival and pull-to-refresh. HTML runs
+inside a sandboxed frame in a nonpersistent WKWebView, with relative file assets
+and native navigation for managed links. Folder sections show five files before
+expanding, with image thumbnails and Open/Share/Copy link context menus.
+Markdown uses native text, and images support pinch, pan and double-tap zoom.
+PDF uses continuous PDFKit scrolling, supported media uses AVKit, and other
+supported files use Quick Look. Text wraps and previews at most 256 KB.
+Sharing sends the downloaded file through the system share sheet. Temporary files
+are removed when their preview and share sheet release them. Files too large for
+the HTML/markdown preview remain available to Quick Look or sharing. Copy link
+copies the web preview address. Artifact pushes and zooms are silent; Copy link
+uses success feedback and reload errors use error feedback. The shared shell
+retains ownership of global navigation feedback and deployment chrome. The
+viewer reserves the existing conversation placeholder for non-image files;
+callers opening from Review can set `showsConversationPlaceholder: false`. No
+conversation state or composer is created. The app never writes
+to the server when listing, opening, reloading or sharing artifacts.
+
+The three artifact logic tests cover cross-owner URLs and encoding, unsafe file
+paths, and preservation of markdown code blocks. They reuse the existing XCTest
+target and require no server. Simulator captures are a separate read-only smoke
+pass, and do not establish physical-device haptics or frame-rate performance.
