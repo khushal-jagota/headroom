@@ -33,14 +33,17 @@
   let slot = $state<HTMLDivElement | null>(null);
   let resize: Animation | null = null;
 
-  // The slot's open and close is a 0fr to 1fr row. That cannot carry a swap between two
-  // open occupants: both ends are 1fr, so a one line card replaced by a wrapped sentence
-  // jumps to its new intrinsic height. Animate that one distance the way the rail does.
-  // One owner for every scripted height the slot takes. `from` is always the size on
-  // screen, so a handover never shows a size the user was not already looking at.
+  // The slot's height has one lifecycle and one rule: every handover starts from the
+  // size on screen. The 0fr to 1fr row carries an entrance and an exit on its own, but
+  // it cannot carry a swap between two open occupants, and it cannot be handed a
+  // different starting size part way through one. So three moments take the height
+  // here — a swap, a collapse, and a return during that collapse — and each reads the
+  // rendered size first. Opposite directions share the rule, so neither can expose a
+  // size the user was not already looking at.
+  //
   // A cancelled animation settles its promise after the replacement is already in
   // hand, so cleanup releases the handle only while it still owns it. Otherwise a
-  // later swap or the collapse has nothing to cancel, and a stale effect outlives both.
+  // later handover has nothing to cancel, and a stale effect outlives it.
   function animateHeight(from: number, to: number, delay = 0): void {
     dropResize();
     if (!slot || typeof slot.animate !== "function") return;
@@ -71,6 +74,17 @@
     animateHeight(slot.getBoundingClientRect().height, 0, RAIL_MOTION.exit);
   }
 
+  // A card returning during the collapse. The row reverses on its own, but the scripted
+  // collapse is what is on screen, so the return leaves from there and lands where the
+  // row lands: the restored card's own height, taken from the card rather than the slot,
+  // because the row is still travelling.
+  function reopenHeight(previous: number): void {
+    const card = slot?.querySelector<HTMLElement>(".status-card");
+    if (!card) { dropResize(); return; }
+    const spacing = window.getComputedStyle(card).marginBottom;
+    animateHeight(previous, card.getBoundingClientRect().height + (parseFloat(spacing) || 0));
+  }
+
   function dropResize(): void {
     resize?.cancel();
     resize = null;
@@ -99,9 +113,9 @@
       // the row glide already carries it.
       const replacing = untrack(() => open && displayedWord !== null && displayedWord !== word);
       const previousHeight = replacing && slot ? slot.getBoundingClientRect().height : null;
-      // A reversal during the exit restores the card. The row transition owns that, so
-      // any collapse still in hand must let go of the height.
-      if (!replacing) dropResize();
+      // A return during the collapse keeps the size the collapse had reached.
+      const returningHeight = untrack(() =>
+        !replacing && !open && resize !== null && slot ? slot.getBoundingClientRect().height : null);
       displayedWord = word;
       closing = false;
       // Establish collapsed layout before entrance. Updates retain the card,
@@ -110,7 +124,13 @@
         if (obsolete) return;
         if (previousHeight !== null) { glideHeight(previousHeight); return; }
         if (slot) void slot.offsetHeight;
-        frame = window.requestAnimationFrame(() => { if (!obsolete) open = true; });
+        frame = window.requestAnimationFrame(() => {
+          if (obsolete) return;
+          open = true;
+          if (returningHeight === null) { dropResize(); return; }
+          // Take the height only once the row is open, so the restored card is measurable.
+          void tick().then(() => { if (!obsolete) reopenHeight(returningHeight); });
+        });
       });
     } else {
       collapseHeight();

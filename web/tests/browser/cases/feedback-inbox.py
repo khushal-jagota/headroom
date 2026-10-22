@@ -285,6 +285,7 @@ def run(browser, urls):
         problem: () => window.__deployment('problem'),
         ready: () => window.__release('shipped'),
         close: () => { window.__deployment('idle'); window.__release('booted'); },
+        returning: () => window.__deployment('problem'),
       };
       window.__slotStart = (duration, action) => {
         const slot = document.querySelector('.rail-foot [data-shell-status]');
@@ -379,6 +380,7 @@ def run(browser, urls):
         page.wait_for_function("window.__slotDone")
         return page.evaluate("window.__slotFrames")
 
+    interrupted: dict[str, object] = {}
     # Clear the earlier hold and the Problem card, so this starts from a ready update.
     page.evaluate("window.__release('booted'); window.__deployment('idle')")
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
@@ -396,6 +398,45 @@ def run(browser, urls):
                for previous, current in zip(closing, closing[1:], strict=False)), closing
     assert overlapped[-1]["height"] < 1, overlapped[-4:]
     assert overlapped[-1]["heightEffects"] == 0, overlapped[-4:]
+
+    # A card returning mid-close reverses the row, but the scripted collapse is what is
+    # on screen. Cancelling it there exposed the taller grid height before the reopen.
+    def continuous(samples, label, interrupted_at):
+        assert all(abs(current["height"] - previous["height"]) < 8
+                   for previous, current in zip(samples, samples[1:], strict=False)), (label, samples)
+        # The return has to travel. Cancelling the scripted collapse instead handed the
+        # height straight to the row, which during the exit delay is still at full size,
+        # so the slot arrived within a frame or two rather than easing there.
+        resumed = [sample for sample in samples if sample["ms"] > interrupted_at]
+        assert len(resumed) >= 8, (label, resumed)
+        low = min(resumed[0]["height"], samples[-1]["height"])
+        high = max(resumed[0]["height"], samples[-1]["height"])
+        travelling = [sample for sample in resumed if low + 1 < sample["height"] < high - 1]
+        assert len(travelling) >= 3, (label, low, high, resumed)
+        assert samples[-1]["height"] > 1, (label, samples[-4:])
+        assert samples[-1]["heightEffects"] == 0, (label, samples[-4:])
+
+    settled_open = """() => {
+      const slot=document.querySelector('.rail-foot [data-shell-status]');
+      const card=document.querySelector('.rail-foot .status-card');
+      return slot && card && slot.getBoundingClientRect().height >= card.getBoundingClientRect().height - 1;
+    }"""
+    # The close must interrupt a swap, because only then is a scripted collapse what is
+    # on screen for the return to interrupt in turn.
+    for label, at in [("returnDuringExitDelay", 200), ("returnDuringCollapse", 420)]:
+        page.evaluate("window.__release('booted'); window.__deployment('idle')")
+        expect(page.locator(".rail-foot .status-card")).to_have_count(0)
+        page.evaluate("window.__release('shipped')")
+        expect(status).to_contain_text("New version ready")
+        page.wait_for_function(settled_open)
+        frames = overlap([[0, "held"], [120, "close"], [at, "returning"]], duration=1200)
+        expect(status).to_have_text("Problem")
+        continuous(frames, label, at)
+        interrupted[label] = frames
+        card = status.bounding_box()
+        assert card and abs(frames[-1]["height"] - (card["height"] + 8)) < 2, (label, card, frames[-1])
+    page.evaluate("window.__release('booted'); window.__deployment('idle')")
+    expect(page.locator(".rail-foot .status-card")).to_have_count(0)
 
     # The same overlap under reduced motion runs with no timed effect at all.
     page.emulate_media(reduced_motion="reduce")
@@ -431,6 +472,7 @@ def run(browser, urls):
         "reducedMotionHeldToProblem": reduced,
         "overlappingSwapsThenClose": overlapped,
         "reducedMotionOverlap": reduced_overlap,
+        **interrupted,
     }, indent=2))
 
     # The hold survives every swap, including the overlapping ones above: the reload
