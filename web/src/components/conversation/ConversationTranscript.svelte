@@ -6,6 +6,8 @@
    * end and disappears the moment its finished row lands.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
+  import { MessageExits } from "../../lib/conversation/messageExits";
+  import ViewItem from "./view/ViewItem.svelte";
   import UserMessage from "./UserMessage.svelte";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import MessagePieces from "./MessagePieces.svelte";
@@ -87,10 +89,14 @@
   );
 
   type Display = { key: string; item: ThreadItem | null; local: OutgoingMessage | null; afterKey: string | null };
+  const exits = new MessageExits<Display>();
+  let exitRevision = $state(0);
+  let previousDisplay: Display[] = [];
   let localSlots: Display[] = [];
   let slotsConversation: string | null = null;
   const display = $derived.by(() => {
-    if (slotsConversation !== conversationId) { localSlots = []; slotsConversation = conversationId; }
+    exitRevision;
+    if (slotsConversation !== conversationId) { localSlots = []; previousDisplay = []; slotsConversation = conversationId; }
     const locals = new Map(outgoingMessages.map(message => [message.displayMessageId ?? message.messageId, message]));
     const records = new Map(shown.flatMap(item => item.kind === 'row' && 'senderMessageId' in item.row && item.row.senderMessageId ? [[item.row.senderMessageId, item] as const] : []));
     const claimed = new Set<string>();
@@ -114,7 +120,10 @@
       const position = slot.afterKey === null ? -1 : result.findIndex(entry=>entry.item?.key===slot.afterKey);
       result.splice(position + 1,0,slot);
     }
-    return result;
+    const retained = exits.retain(result, previousDisplay, () => { exitRevision += 1; });
+    localSlots = retained.filter(slot=>slot.local!==null);
+    previousDisplay = retained;
+    return retained;
   });
 
   function runValuesLine(model: string | null, reasoningEffort: string | null): string {
@@ -141,7 +150,9 @@
   {#each display as slot (slot.key)}
     {@const item = slot.item}
     {#if slot.local !== null}
+      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
       <UserMessage row={item?.kind === 'row' && (item.row.kind === 'prompt' || item.row.kind === 'prompt_refused' || item.row.kind === 'prompt_uncertain' || item.row.kind === 'prompt_discarded') ? item.row : null} local={slot.local} {conversationId} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
+      </ViewItem>
     {:else if item !== null}
     {#if item.kind === "turn"}
       <TurnAnchor

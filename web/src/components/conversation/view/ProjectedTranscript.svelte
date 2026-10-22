@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MessageExits } from '../../../lib/conversation/messageExits';
   import { reconcileDisplaySlots, isMessageRow, type MessageDisplaySlot } from '../../../lib/conversation/displaySlots';
   import type { OutgoingMessage } from '../../../lib/conversation/outgoing';
   import ProjectedMessage from './ProjectedMessage.svelte';
@@ -32,13 +33,19 @@
       for (const item of page.items)
           map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call')) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
+  const exits = new MessageExits<MessageDisplaySlot>();
+  let exitRevision = $state(0);
+  let previousDisplay: MessageDisplaySlot[] = [];
   let ledger: MessageDisplaySlot[] = [];
   let ledgerConversation: string | null = null;
   const displaySlots = $derived.by(() => {
-    if (ledgerConversation !== reader.id) { ledger = []; ledgerConversation = reader.id; }
+    exitRevision;
+    if (ledgerConversation !== reader.id) { ledger = []; previousDisplay = []; ledgerConversation = reader.id; }
     const next = reconcileDisplaySlots(ledger, items, outgoingMessages, acknowledgedMessageIds);
-    ledger = next.filter(slot => slot.local !== null);
-    return next;
+    const retained = exits.retain(next, previousDisplay, () => { exitRevision += 1; });
+    ledger = retained.filter(slot => slot.local !== null);
+    previousDisplay = retained;
+    return retained;
   });
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
@@ -112,9 +119,10 @@
       direction: 'older' | 'newer';
   }) {
       let current = request;
-      const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting && !['loading','placing','error'].includes(reader.entryPhase))
+      const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting && !reader.entryHeld && !['loading','placing','error'].includes(reader.entryPhase))
           void reader.load(current.scope, current.cursor, current.direction); }, { root: node.closest('[data-conversation-thread]'), rootMargin: '50% 0px' });
       observer.observe(node);
+      $effect(() => { reader.entryHeld; reader.entryPhase; observer.unobserve(node); observer.observe(node); });
       return { destroy: () => observer.disconnect(), update: (next: typeof request) => { current = next; observer.unobserve(node); observer.observe(node); } };
   }
   /** Ask for this head's own bounded scope, but only once it is near the reader.
@@ -126,7 +134,7 @@
       if (item.kind !== 'turn' && item.kind !== 'work_group') return { destroy: () => { } };
       const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
       const ask = (): void => {
-          if (['loading','placing','error'].includes(reader.entryPhase)) return;
+          if (reader.entryHeld || ['loading','placing','error'].includes(reader.entryPhase)) return;
           if (reader.lens !== 'full' && !reader.isExpanded(scope)) return;
           if (reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key)) return;
           void reader.expand(scope, true);
@@ -134,6 +142,7 @@
       const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting) ask(); },
           { root: node.closest('[data-conversation-thread]'), rootMargin: '100% 0px' });
       observer.observe(node);
+      $effect(() => { reader.entryHeld; reader.entryPhase; observer.unobserve(node); observer.observe(node); });
       return { destroy: () => observer.disconnect() };
   }
 </script>
@@ -145,7 +154,7 @@
   {#each displaySlots as slot (slot.key)}
     {@const item = slot.item}
     {#if slot.local !== null || item !== null && isMessageRow(item)}
-      <ViewItem itemKey={item?.key ?? slot.key}>
+      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
         <ProjectedMessage item={item?.kind === 'row' ? item : null} local={slot.local} {reader} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
       </ViewItem>
     {:else if item !== null}
