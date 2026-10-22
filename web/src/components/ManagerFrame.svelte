@@ -44,5 +44,5 @@
 
 <style>
   .manager-doc { scrollbar-gutter:auto; }
-  .manager-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }
+  .manager-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; }
 </style>

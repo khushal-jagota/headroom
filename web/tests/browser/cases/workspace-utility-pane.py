@@ -455,7 +455,7 @@ def verify_conversation_overlay(browser, url):
         body = values.get(key, {})
         route.fulfill(json={"key": key, "epoch": "overlay", "revision": "1", "body": body} if path == "/api/resource-body" else body)
 
-    for name, width, height in (("wide-chief", 1440, 900), ("phone-chief", 390, 844), ("narrow-ticket", 960, 900)):
+    for name, width, height in (("wide-chief", 1800, 900), ("phone-chief", 390, 844), ("narrow-ticket", 960, 900)):
         ticket_host = name == "narrow-ticket"
         print("OVERLAY_HOST " + name, flush=True)
         context = browser.new_context(viewport={"width": width, "height": height}, reduced_motion="reduce")
@@ -506,15 +506,16 @@ def verify_conversation_overlay(browser, url):
         page.wait_for_timeout(250)
         doc_open = document.bounding_box()
         card_open = pane.bounding_box()
-        column = page.locator('.conversation-column').bounding_box()
-        assert abs(card_open['x'] - column['x']) <= 1 and abs(card_open['width'] - column['width']) <= 1, (name, card_open, column)
+        title = document.locator('.ticket-title' if ticket_host else '.manager-workspace-title').bounding_box()
+        assert abs(card_open['x'] - title['x']) <= 1, (name, card_open, title)
+        assert abs(card_open['x'] + card_open['width'] - title['x'] - title['width']) <= 1, (name, card_open, title)
         assert doc_before == doc_open, (name, doc_before, doc_open)
         assert document.evaluate('e=>e.scrollTop') == scroll_before
         assert card_open['y'] < doc_open['y'] + doc_open['height'] and card_open['y'] + card_open['height'] > doc_open['y']
         host = page.locator('.ticket-page' if ticket_host else '.chief-workspace.manager-page').bounding_box()
         assert card_open['width'] <= host['width'] and card_open['x'] >= host['x']
-        if width > 1000:
-            assert host['width'] < width * .8, (name, host)
+        if name == 'wide-chief':
+            assert 1152 < host['width'] < width and host['x'] > 0, (name, host)
         if ticket_host:
             assert host['width'] < 500, host
         # The transcript owns its own trailing clearance and follows its final row.
@@ -628,7 +629,7 @@ def verify_conversation_overlay(browser, url):
             artifact.locator('[data-ticket-artifact-close]').click()
             expect(artifact).to_have_count(0)
             assert document.evaluate('e=>e.scrollTop') == doc_scroll_before_artifact
-        proof['hosts'].append({'name':name,'host':host,'column':column,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
+        proof['hosts'].append({'name':name,'host':host,'titleChannel':title,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
         draft_before_dismissal = box.input_value()
         doc_before_dismissal = document.evaluate('e=>e.scrollTop')
         point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + pane.bounding_box()['y'])/2}

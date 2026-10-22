@@ -6,6 +6,7 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
   let clearance = 0;
   let card: HTMLElement | null = null;
   let composer: HTMLElement | null = null;
+  let documentScroller: HTMLElement | null = null;
   let frame = 0;
   const viewport = window.visualViewport;
   const set = (name: string, value: number) => {
@@ -26,12 +27,23 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
       composer = nextComposer;
       if (composer) sizes.observe(composer);
     }
+    const nextDocumentScroller = host.querySelector<HTMLElement>('.ticket-doc, .manager-doc');
+    if (nextDocumentScroller !== documentScroller) {
+      if (documentScroller) sizes.unobserve(documentScroller);
+      documentScroller = nextDocumentScroller;
+      if (documentScroller) sizes.observe(documentScroller);
+    }
     const rect = host.getBoundingClientRect();
     const bounds = visibleHostBounds(rect, { top: viewport?.offsetTop ?? 0, left: viewport?.offsetLeft ?? 0, width: viewport?.width ?? window.innerWidth, height: viewport?.height ?? window.innerHeight });
     set('--conversation-visible-top', bounds.top);
     set('--conversation-visible-bottom', bounds.bottom);
-    set('--conversation-visible-left', bounds.left);
-    set('--conversation-visible-right', bounds.right);
+    // Match the actual text channel even when a native scrollbar consumes width.
+    const documentLeft = documentScroller
+      ? documentScroller.getBoundingClientRect().left - rect.left + documentScroller.clientLeft : 0;
+    const documentRight = documentScroller
+      ? rect.width - documentLeft - documentScroller.clientWidth : 0;
+    set('--conversation-visible-left', Math.max(bounds.left, documentLeft));
+    set('--conversation-visible-right', Math.max(bounds.right, documentRight));
     set('--conversation-visible-height', bounds.height);
     const shortTicket = host.classList.contains('ticket-page') && rect.width <= SHORT_LANDSCAPE_WIDTH && rect.height <= SHORT_LANDSCAPE_HEIGHT;
     set('--conversation-peek-height', rect.height * (shortTicket ? TICKET_SHORT_LANDSCAPE_PEEK_FRACTION : CONVERSATION_PEEK_FRACTION));

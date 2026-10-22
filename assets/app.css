@@ -3819,54 +3819,17 @@ a.artifact-chip:hover,
   }
 }
 
-/* --- The page's one column ------------------------------------------------ */
-/* Header, body and conversation are the same column, so it is stated once here, after
- * all three, and they cannot drift apart again. The Manager's two columns are the
- * same column as well: an Item and a Ticket open in the same slot, one after the other,
- * and a second formula for the same measure is what makes them step apart there.
- *
- * The column is measured against its pane and never the window, because both routes
- * also render in the Workspace right pane, which is around 500px narrower than the
- * window around it. That is what `cqi` reads and what `.ticket-screen` and
- * `.manager-page` declare. `cqi` takes the nearest container either way, so each
- * selector measures against its own pane and this stays one rule.
- *
- * On a pane wide enough for them the column is the pane less a 192px gutter each side.
- * Below that it keeps the fixed measure it has today. The two arms cross at a 1152px
- * pane, so the column grows continuously and this needs no breakpoint. The outer min()
- * is the document's own scrollbar: inside it 100% is a little less than the pane, and
- * the column is never wider than what draws it. */
+/* --- One document text channel ------------------------------------------- */
+/* The title, document text, and card's outer edge share this exact measure.
+ * Available width is the document's client area, including its scrollbar reservation.
+ * The overlay mirrors that client area; the card keeps its own inner text padding. */
 .ticket-head,
 .ticket-col,
 .conversation-column,
 .manager-column {
-  width: min(
-    100%,
-    max(
-      min(100cqi, var(--ticket-column-measure)),
-      calc(100cqi - 2 * var(--ticket-column-gutter))
-    )
-  );
+  width: min(var(--document-channel-measure), calc(100% - 2 * var(--space-5)));
   margin-inline: auto;
-}
-
-/* Once the column is fluid, the header and body take the conversation's inset, so all
- * three read against one edge. Below the crossover they keep the tighter inset they have
- * today, and t_crmfy66x still owns the narrow gutters.
- *
- * The document reserves its scrollbar on both edges here too, so its centre line is the
- * pane's centre line and the ticket column sits exactly above the conversation column.
- * At 768px that offset was half a scrollbar and invisible; against a column this wide and
- * this far out it is a visible step between the two. */
-@container ticket-pane (min-width: 1152px) {
-  .ticket-head,
-  .ticket-col {
-    padding-inline: var(--space-7);
-  }
-
-  .ticket-doc {
-    scrollbar-gutter: stable both-edges;
-  }
+  padding-inline: 0;
 }
 
 /* --- Ticket serif voice (t_ui02) ----------------------------------------- */
@@ -4156,25 +4119,6 @@ a.artifact-chip:hover,
 
 .manager-column {
   padding-bottom: var(--space-6);
-  padding-inline: var(--page-gutter);
-}
-
-/* The Item pane crosses over where the Ticket pane does, for the same two reasons: past
- * it the column takes the conversation's inset so both read against one edge, and the
- * document reserves its scrollbar on both edges so the two columns share a centre line.
- *
- * It is a second block and not a second selector list because the query names the pane it
- * asks about, and an unnamed one would quietly re-point at the first container anyone put
- * in between. It has to sit after the rule above: `@container` adds no specificity, so
- * source order is all that decides between them. */
-@container manager-pane (min-width: 1152px) {
-  .manager-column {
-    padding-inline: var(--space-7);
-  }
-
-  .manager-doc {
-    scrollbar-gutter: stable both-edges;
-  }
 }
 
 .manager-workspace-head {

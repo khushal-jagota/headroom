@@ -677,7 +677,6 @@
 </section>
 
 <style>
-  .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; }
   .ticket-head { padding-top:48px; }

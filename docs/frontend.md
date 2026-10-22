@@ -724,9 +724,12 @@ hand-rolling the same shapes per screen. Each does one job:
   Reopening from rest lands on the newest unanswered request or the end of the conversation.
   Every state keeps whatever the person had half-typed.
 
-  The card spans its column's full width without an outer horizontal inset. The text
-  keeps the card's inner padding. The document retains its full height beneath the card
-  in all three states.
+  The title and document text define one channel: at most 720px wide, with 24px
+  margins when the pane is narrower. The card's outer edges start and end on that
+  channel, including in Chief and Manager panes. The card keeps its own inner text
+  padding. Its horizontal bounds follow the document's client area so a native
+  scrollbar cannot shift it away from the title. The document retains its full height
+  beneath the card in all three states.
   Peeked uses 60% of its host pane (52% for a short landscape Ticket); opened fits between
   the pane's top and bottom gaps. The host intersects its own rectangle with the browser's
   visual viewport, including keyboard displacement, and bounds the card within it.
