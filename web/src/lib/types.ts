@@ -405,6 +405,7 @@ export type BoardResponse = {
 // A Manager's own identity and its manager's conversation. No card answers for
 // the Item's own worker, so the mark on an Item title comes from here.
 export type BoardManager = {
+  updated_at: number;
   conversation_signal?: ConversationSignal;
   settled?: boolean;
   project_id?: string;

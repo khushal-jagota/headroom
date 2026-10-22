@@ -135,7 +135,9 @@ def _members(
                 add(
                     "settled" if value["settled"] else "rail_parents",
                     None,
-                    rank=int(value["created_at"]),
+                    rank=-int(value["updated_at"])
+                    if value["settled"]
+                    else int(value["created_at"]),
                     title_key=b"",
                 )
             elif kind == "ticket":

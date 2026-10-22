@@ -24,10 +24,8 @@
   import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import { parseUtilityPath, type UtilityHref, type WorkspaceUtility } from "../lib/utilityAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
-  import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
-  import WorkspaceMessages from "../components/WorkspaceMessages.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import LazyRegion from "../components/LazyRegion.svelte";
@@ -114,9 +112,14 @@
     const parents=new Set([...(parentWindow?.members ?? []),...(settledWindow?.members ?? [])].map(key=>key.id));
     const childIds=new Set(workspace.viewWindows.filter(window=>window.request.section==='rail_tickets').flatMap(window=>window.members.map(key=>key.id)));
     const cards=allCards.filter(card=>childIds.has(card.id));
-    return buildWorkspaceRail(cards,[...workspace.managers,...workspace.settledManagers].filter(item=>parents.has(item.id)).map(item=>({...item,tickets:item.tickets.filter(ticket=>childIds.has(ticket.id))})));
+    const projected=buildWorkspaceRail(cards,[...workspace.managers,...workspace.settledManagers].filter(item=>parents.has(item.id)).map(item=>({...item,tickets:item.tickets.filter(ticket=>childIds.has(ticket.id))})));
+    // The scoped window owns order, including the server identity tie-break.
+    const settledById=new Map(projected.settledItems.map(item=>[item.id,item]));
+    return {...projected,settledItems:(settledWindow?.members ?? []).flatMap(key=>{
+      const item=settledById.get(key.id);return item ? [item] : [];
+    })};
   });
-  let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false, settledMessages:{}});
+  let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false});
   let rail = $derived(presentation.rail);
   let settledOpen = $derived(presentation.settledOpen);
   let requestedSettledOpen = $state(false);
@@ -127,14 +130,11 @@
     navigation.owner.setDemand('workspace-rail',{windows});
   });
   onDestroy(()=>navigation.owner.setDemand('workspace-rail',undefined));
-  let messages = $derived(workspace?.messages ?? []);
   let itemPane = $derived(opening.markedManagerId !== null);
   let railElement = $state<HTMLElement | null>(null);
   const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next);
   $effect(() => {
-    const next = {rail:desiredRail, settledOpen:requestedSettledOpen,
-      settledMessages:Object.fromEntries((requestedSettledOpen ? desiredRail.settledItems : []).map((item) =>
-        [item.id, [...(workspace?.scopedRailMessagesByParent.get(item.id) ?? [])]]))};
+    const next = {rail:desiredRail, settledOpen:requestedSettledOpen};
     untrack(() => motion.update(next));
   });
   function freezeRows(event: PointerEvent, leaving: boolean): void {
@@ -155,7 +155,6 @@
   let hoverTarget = $state<HTMLElement | null>(null);
   let hoverTitle = $state("");
   let hoverKicker = $state("");
-  let hoverConversationIdOverride = $state<string | null>(null);
   let hoverWorkerId = $state<string | null>(null);
   let hoverItemId = $state<string | null>(null);
   let hoverChief = $state(false);
@@ -163,8 +162,7 @@
     const ticket = allCards.find((card) => card.id === hoverWorkerId)
       ?? [...desiredRail.items,...desiredRail.settledItems].flatMap(item => item.tickets).find(ticket => ticket.id === hoverWorkerId);
     if (!ticket) return null;
-    return hoverConversationIdOverride === null ? ticket : {...ticket,conversation_id:hoverConversationIdOverride,
-      conversation_signal:workspace?.conversationSignals.get(hoverConversationIdOverride)};
+    return ticket;
   });
   const hoverBody=selectedRecap(()=>rawHoverWorker?.recap_reference ?? hoveredItem?.recap_reference,()=>hoverVisible);
   let hoverWorker=$derived(rawHoverWorker && hoverBody.body!==undefined?{...rawHoverWorker,recap:hoverBody.body}:rawHoverWorker);
@@ -177,9 +175,8 @@
   });
   let hoverRecap = $derived(hoverChief ? workspaceListRecap(chiefSettings.data?.recap)
     : workspaceListRecap(hoverBody.body ?? hoveredItem?.recap));
-  let hoverSignal = $derived(hoverConversationIdOverride !== null ? workspace?.conversationSignals.get(hoverConversationIdOverride)
-    : hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
-  let hoverConversationId = $derived(hoverConversationIdOverride ?? (hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId));
+  let hoverSignal = $derived(hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
+  let hoverConversationId = $derived(hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId);
   // Every agent the panel can show keeps a recap, so every one of them can be asked.
   let hoverRecapTarget = $derived<{ kind: "ticket" | "manager" | "chief"; id: string } | null>(
     hoverWorker ? { kind: "ticket", id: hoverWorker.id }
@@ -195,10 +192,9 @@
     return card && (card.manager?.kind === "chief" || (!card.manager && !card.manager_id))
       ? workspace?.chief?.label ?? "Chief of Staff" : "Worker";
   });
-  const hover = createRailHoverController<{ target: HTMLElement; title: string; kicker: string; worker?: WorkItemTicketFacts; itemId?: string; chief?: boolean; conversationId?:string }>((value, instant) => {
+  const hover = createRailHoverController<{ target: HTMLElement; title: string; kicker: string; worker?: WorkItemTicketFacts; itemId?: string; chief?: boolean }>((value, instant) => {
     if (!value.target.isConnected) return;
     hoverTarget = value.target; hoverTitle = value.title; hoverKicker = value.kicker;
-    hoverConversationIdOverride = value.conversationId ?? null;
     hoverWorkerId = value.worker?.id ?? null; hoverItemId = value.itemId ?? null; hoverChief = value.chief ?? false;
     hoverInstant = instant; hoverVisible = true;
     if (instant) requestAnimationFrame(() => requestAnimationFrame(() => hoverInstant = false));
@@ -252,16 +248,6 @@
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts, immediate = false): void {
     hover.enter({ target, title:worker.title, kicker:"Worker", worker }, immediate);
   }
-  function hoverMessageRow(target: HTMLElement, message: WorkspaceMessageConversation, immediate = false): void {
-    if (message.kind === "chief") { hover.enter({target,title:message.title,kicker:"Chief of Staff",chief:true,conversationId:message.conversationId}, immediate); return; }
-    if (message.kind === "manager" && workspace?.managersById.has(message.id)) { hover.enter({target,title:message.title,kicker:"Manager",itemId:message.id,conversationId:message.conversationId}, immediate); return; }
-    const worker = allCards.find((card) => card.id === message.id)
-      ?? [...desiredRail.items, ...desiredRail.settledItems].flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
-    if (worker) {
-        hover.enter({target,title:worker.title,kicker:"Worker",worker,conversationId:message.conversationId},immediate);
-    }
-    else hover.enter({target, title:message.title, kicker:"Worker"}, immediate);
-  }
   $effect(() => {
     const publication = displayedPublication;
     const effective = navigation.selectors.effective;
@@ -277,7 +263,7 @@
     void tick().then(() => {
       if (obsolete || !root.isConnected || displayedPublication !== publication
         || navigation.state.generation !== generation || navigation.selectors.effective !== effective) return;
-      if (railDomMatches(root,target,chief,open,messages,allCards,workspace?.globalCounts?.settled,workspace?.globalCounts ? workspace.scopedRailMessagesByParent : undefined)) railObserver.acknowledgeRender(publication,observation);
+      if (railDomMatches(root,target,chief,open,workspace?.globalCounts?.settled)) railObserver.acknowledgeRender(publication,observation);
     });
     return () => { obsolete = true; };
   });
@@ -352,10 +338,9 @@
                 {#each rail.settledItems as item (item.id)}
                   <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
                   <div class="settled-row">
-                    <button class="settled-title" type="button" onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
+                    <button class="settled-title" type="button" aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                     <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                   </div>
-                  <WorkspaceMessages parentId={item.id} conversations={presentation.settledMessages[item.id] ?? []} motionPrefix={item.id} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
                   </div>
                 {/each}
                 </div>

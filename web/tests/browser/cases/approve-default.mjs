@@ -57,7 +57,7 @@ import {viewWindow} from '../src/lib/navigation/views/owner';
   const previous=current.publication!;
   if(response.coverage.revision===previous.continuity.revision)return;
   const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
-  const frame:any={event:'patch',wire_version:3,projection_version:3,view_id:response.view_id,
+  const frame:any={event:'patch',wire_version:3,projection_version:4,view_id:response.view_id,
     scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
     coverage:response.coverage,previous_coverage:previous.continuity,authority:response.authority,
     content_version:response.content_version,previous_content_version:previous.view!.contentVersion,

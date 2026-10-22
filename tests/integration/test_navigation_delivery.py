@@ -99,7 +99,7 @@ def continuity(revision: str = "0") -> Continuity:
     return {
         "scope": "workspace",
         "schema_version": 8,
-        "semantics": "attention-knowledge-v8-manager",
+        "semantics": "attention-knowledge-v8-manager-updated-at",
         "epoch": "epoch",
         "revision": revision,
     }

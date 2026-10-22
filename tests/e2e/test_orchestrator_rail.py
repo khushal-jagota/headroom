@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
@@ -26,8 +27,9 @@ from tests.support.connected_rows import _bind, _conversation, _message, _post
 from tests.support.server_fixtures import rail_server as rail_server
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
+from planner.core.db import connect
 
-EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_9fh1vzxc/artifacts/rail")
+EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_0kjtqmge/artifacts/rail")
 LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this long approval row"
 
 
@@ -154,6 +156,10 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(card.locator(".manager-eyebrow")).to_contain_text("Rail proof")
     expect(left.locator(f'[data-manager="{empty["id"]}"]')).to_be_visible()
     api.direct_patch(server, f"/api/managers/{empty['id']}/settled", {"settled": True})
+    # The host clock is fixed. Give this older update a distinct stored timestamp.
+    with closing(connect(str(server.db_path))) as conn:
+        conn.execute("UPDATE managers SET updated_at=updated_at-1 WHERE id=?", (empty["id"],))
+        conn.commit()
     expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
@@ -194,7 +200,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(lean_title).to_be_visible(timeout=WAIT_MS)
     page.wait_for_function(
         "id => JSON.stringify(window.__railOrchestratorFields[id]) === "
-        "JSON.stringify(['conversation_id','created_at','settled','title'])",
+        "JSON.stringify(['conversation_id','created_at','settled','title','updated_at'])",
         arg=empty["id"],
         timeout=WAIT_MS,
     )
@@ -206,6 +212,14 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(page.locator("[data-rail-hover-panel]")).to_have_attribute("aria-hidden", "true")
     capture_success(page, str(EVIDENCE / "settled-lean-no-popover.png"))
     scoped_parent = left.locator(f'[data-settled-item="{item["id"]}"]')
+    expect(scoped_parent).to_be_visible(timeout=WAIT_MS)
+    expect(left.locator('[data-settled-item] .settled-title > span')).to_have_text(
+        [item["title"], empty["title"]]
+    )
+    expect(left.locator('[data-settled-scroll] [data-message-conversation]')).to_have_count(0)
+    expect(left.locator('[data-settled-scroll] [data-workspace-messages]')).to_have_count(0)
+    expect(scoped_parent.get_by_role("button", name=f"Reopen {item['title']}")).to_be_visible()
+    capture_success(page, str(EVIDENCE / "settled-managers-only.png"))
     scoped_parent.locator(".settled-title").click()
     scoped_pane = page.locator(f'[data-manager-workspace="{item["id"]}"]')
     scoped_row = scoped_pane.locator(f'[data-worker-ticket-id="{ticket["id"]}"]')
