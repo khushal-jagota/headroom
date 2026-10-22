@@ -425,6 +425,31 @@ def _preview_lifecycle(browser, url):
         page.close()
 
 
+def _settle_conversation_layout(page):
+    # Endpoint assertions follow the actual coordinator, not a fixed frame count.
+    # Two idle, unchanged frames also let ResizeObserver and reconciliation settle.
+    page.evaluate("""() => new Promise((resolve, reject) => {
+      const started = performance.now();
+      let previous = '', quiet = 0;
+      const sample = () => {
+        const pane = document.querySelector('[data-conversation-pane]');
+        const thread = pane?.querySelector('[data-conversation-thread]');
+        const box = pane?.getBoundingClientRect();
+        const geometry = JSON.stringify([box?.top, box?.height, thread?.clientHeight,
+          thread?.scrollTop, thread?.scrollHeight]);
+        const active = pane?.hasAttribute('data-conversation-motion')
+          || pane?.getAnimations({subtree:true}).some(animation =>
+            animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        quiet = !active && geometry === previous ? quiet + 1 : 0;
+        previous = geometry;
+        if (quiet >= 2) return resolve();
+        if (performance.now() - started > 10000) return reject(Error('Conversation did not reach an idle layout: ' + geometry));
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    })""")
+
+
 def _run(browser, urls):
     controls_only = __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'controls'
     if not controls_only:
@@ -486,28 +511,7 @@ def _run(browser, urls):
         return restored
 
     def settled(page):
-        # Endpoint assertions follow the actual coordinator, not a fixed frame count.
-        # Two idle, unchanged frames also let ResizeObserver and reconciliation settle.
-        page.evaluate("""() => new Promise((resolve, reject) => {
-          const started = performance.now();
-          let previous = '', quiet = 0;
-          const sample = () => {
-            const pane = document.querySelector('[data-conversation-pane]');
-            const thread = pane?.querySelector('[data-conversation-thread]');
-            const box = pane?.getBoundingClientRect();
-            const geometry = JSON.stringify([box?.top, box?.height, thread?.clientHeight,
-              thread?.scrollTop, thread?.scrollHeight]);
-            const active = pane?.hasAttribute('data-conversation-motion')
-              || pane?.getAnimations({subtree:true}).some(animation =>
-                animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
-            quiet = !active && geometry === previous ? quiet + 1 : 0;
-            previous = geometry;
-            if (quiet >= 2) return resolve();
-            if (performance.now() - started > 10000) return reject(Error('Conversation did not reach an idle layout: ' + geometry));
-            requestAnimationFrame(sample);
-          };
-          requestAnimationFrame(sample);
-        })""")
+        _settle_conversation_layout(page)
 
     def newest_reading(page):
         return page.locator(THREAD).evaluate("""thread => {
@@ -2576,7 +2580,7 @@ def _overlay_menu_bounds(browser, url):
     })()""")
     proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
     def settle():
-        page.evaluate("() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        _settle_conversation_layout(page)
     def hit(item):
         item.scroll_into_view_if_needed()
         settle()
@@ -2886,6 +2890,9 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'overlay':
+            _overlay_menu_bounds(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') in ('legacy', 'controls'):
             _run(browser, urls)
             return
