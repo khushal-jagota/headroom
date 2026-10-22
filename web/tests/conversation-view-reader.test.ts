@@ -315,11 +315,16 @@ it('freezes unread entry at its captured cursor and waits for placement before r
   expect(Source.all).toHaveLength(2);
 });
 
-it('offers retry after failed unread admission and keeps the original watermark', async () => {
-  const fetch = vi.fn(async (_url: string) => new Response('', { status: 503 }));
+it.each(['HTTP 503', 'active transport cancellation'])('offers retry after %s and keeps the original watermark', async (failure) => {
+  const fetch = vi.fn(async (_url: string) => {
+    if (failure === 'active transport cancellation') throw new DOMException('Entry transport cancelled', 'AbortError');
+    return new Response('', { status: 503 });
+  });
   vi.stubGlobal('fetch', fetch);
   const reader = await startEntry(10);
   await vi.waitFor(() => expect(reader.entryPhase).toBe('error'));
+  expect(reader.loading).toBe(false);
+  expect(reader.entryTarget).toBeNull();
   fetch.mockImplementation(async () => new Response(JSON.stringify(viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page)));
   reader.retryEntry();
   await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
