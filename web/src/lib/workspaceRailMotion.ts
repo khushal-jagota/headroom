@@ -205,7 +205,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     markBusy();
     const section = railRoot?.querySelector<HTMLElement>(".settled");
     const oldCount = railRoot?.querySelector<HTMLElement>("[data-settled-count]")?.textContent;
-    const first = measure();
+    const beforeExit = measure();
     // Exit while the old space still exists. Headings leave with their last row.
     const remaining = new Set<string>(["card:chief", "settled-section", ...next.rail.items.map((item) => `card:${item.id}`)]);
     for (const [id, groups] of [["chief", next.rail.chiefGroups], ...next.rail.items.map((item) => [item.id, item.groups] as const)] as const) {
@@ -219,7 +219,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
 
     }
     const settledPart = (key: string) => key.startsWith("settled:");
-    const exits = [...first].filter(([key]) => !remaining.has(key) && !(directFold() && settledPart(key)));
+    const exits = [...beforeExit].filter(([key]) => !remaining.has(key) && !(directFold() && settledPart(key)));
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
     if (disposed) return;
     // A pointer can arrive during an exit. Restore it, and defer the whole structure.
@@ -230,6 +230,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
       markBusy();
       return;
     }
+    // Exit fades preserve layout, but the user can scroll before they finish.
+    // Measure that newer viewport before publication so FLIP does not undo it.
+    const first = measure();
     capturePageRestoration();
     const heldSection = !directFold() ? holdSection() : null;
     present(next);
