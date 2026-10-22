@@ -1539,6 +1539,7 @@ def test_notice_admission_serializes_with_canonical_resolution(
         first_result = first.result(timeout=5)
         second_result = second.result(timeout=5)
     decisions = second_result if winner == "resolution" else first_result
+    assert decisions is not None
     assert decisions[0].suppression_reason == (
         "proposal_resolved" if winner == "resolution" else None
     )
