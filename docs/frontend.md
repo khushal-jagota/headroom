@@ -112,6 +112,8 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+  Both lists scroll vertically only. Long Settled titles and rail project labels wrap
+  within their available width, with room for the Reopen and Settle controls.
   Manual fold toggles respond immediately, independently of queued rail updates. Height,
   chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
   another row arrival animation. The section resizes from its visible height when those

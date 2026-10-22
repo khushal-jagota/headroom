@@ -9,7 +9,8 @@ from dataclasses import replace
 from datetime import datetime
 from typing import cast
 
-from planner.core.contracts import OWNER_PRINCIPAL
+from planner.core import authority
+from planner.core.contracts import OWNER_PRINCIPAL, Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.scheduled_tickets import data
 from planner.scheduled_tickets.contracts import (
@@ -80,12 +81,14 @@ def _validate_template(
 def create_schedule(
     conn: sqlite3.Connection,
     *,
+    principal: Principal,
     enabled: bool,
     cadence: ScheduleCadence,
     local_time: str,
     template: ScheduledTicketTemplate,
     now: int,
 ) -> ScheduledTicketSchedule:
+    authority.require_above(conn, principal, authority.owner_only("scheduled_ticket_schedules"))
     if cadence is not ScheduleCadence.daily:
         raise PlannerError(ErrorCode.validation, "calendar planning cadences are retired")
     with data.transaction(conn):
@@ -115,8 +118,10 @@ def update_schedule(
     schedule_id: str,
     changes: Mapping[str, object],
     *,
+    principal: Principal,
     now: int,
 ) -> ScheduledTicketSchedule:
+    authority.require_above(conn, principal, authority.owner_only("scheduled_ticket_schedules"))
     with data.transaction(conn):
         return _update_schedule_locked(conn, schedule_id, changes, now=now)
 
@@ -230,6 +235,9 @@ def _settle_occurrence(
                 return existing_occurrence
             manager_id = schedule.template.manager_id
             project_id = schedule.template.project_id
+            # Due execution is trusted scheduler work over stored configuration.
+            # Mutation admission is owner-or-Chief only. It does not certify historical authorship.
+            # OWNER_PRINCIPAL preserves ordinary Ticket creation and approval gates.
             ticket = tickets_actions.create_ticket(
                 conn,
                 locale=schedule.template.locale,
