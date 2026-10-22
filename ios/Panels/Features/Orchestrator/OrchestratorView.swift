@@ -41,7 +41,6 @@ struct OrchestratorView: View {
                             }.frame(minHeight: 50).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }.font(PanelsTheme.TypeScale.body)
-                    ConversationPlaceholder()
                 } else if error == nil {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
@@ -59,6 +58,7 @@ struct OrchestratorView: View {
         }
         .navigationTitle(headerCollapsed ? detail?.title ?? "Orchestrator" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
+        .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId)
         .toolbar { ToolbarItem(placement: .topBarTrailing) {
             AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
         } }

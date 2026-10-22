@@ -4,7 +4,17 @@ import SwiftUI
     @State private var store = AppStore()
     var body: some Scene {
         WindowGroup {
-            AppShell().environment(store)
+            Group {
+#if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--conversation-smoke") {
+                    ConversationSmokeView()
+                } else {
+                    AppShell()
+                }
+#else
+                AppShell()
+#endif
+            }.environment(store)
                 .preferredColorScheme(.dark)
                 .tint(PanelsTheme.accent)
         }
