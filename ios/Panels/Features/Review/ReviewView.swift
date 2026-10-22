@@ -15,7 +15,7 @@ struct ReviewView: View {
             } else if store.review != nil {
                 ScrollView {
                     VStack(spacing: PanelsTheme.Space.lg) {
-                        Circle().stroke(PanelsTheme.faint, lineWidth: 1.5).frame(width: 10, height: 10)
+                        Circle().stroke(PanelsTheme.faint, lineWidth: 1.5).frame(width: 10, height: 10).accessibilityHidden(true)
                         Text("There is nothing to review right now.").font(ReviewStyle.empty).multilineTextAlignment(.center)
                         if let count = store.review?.runningWorkerCount {
                             Text("\(count) \(count == 1 ? "agent" : "agents") in progress").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
@@ -49,6 +49,7 @@ private struct ReviewProposalView: View {
     let onSkip: () -> Void
     let onResolved: () -> Void
     @Environment(AppStore.self) private var store
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var decision = ReviewDecision()
     @State private var sheet: ReviewSheet?
@@ -74,14 +75,17 @@ private struct ReviewProposalView: View {
                         if let openTicket { Button(action: openTicket) { ticketTitle } }
                         else { NavigationLink(value: AppRoute.ticket(item.ticketId)) { ticketTitle } }
                     }.buttonStyle(.plain).accessibilityIdentifier("review.openTicket")
+                        .accessibilityHint("Opens ticket for review")
                         .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = decision.ticket?.title ?? item.title; renaming = true } }
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                         if let recap = decision.ticket?.recap, !recap.isEmpty {
                             Button { withAnimation(.easeOut(duration: PanelsTheme.Motion.base)) { recapExpanded.toggle() } } label: {
                                 Text((try? AttributedString(markdown: recap)) ?? AttributedString(recap))
-                                    .font(.subheadline).foregroundStyle(PanelsTheme.muted).lineLimit(recapExpanded ? nil : 4)
+                                    .font(.subheadline).foregroundStyle(PanelsTheme.muted).lineLimit(recapExpanded || typeSize.isAccessibilitySize ? nil : 4)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                            }.buttonStyle(.plain).accessibilityLabel(recapExpanded ? "Collapse recap" : "Expand recap")
+                            }.buttonStyle(.plain).accessibilityLabel("Recap")
+                                .accessibilityValue(recap)
+                                .accessibilityHint(recapExpanded ? "Collapses recap" : "Expands recap")
                         }
                         if decision.proposal != nil { proposalCard }
                         else if decision.loading { ProgressView("Loading proposal").frame(maxWidth: .infinity, minHeight: 180) }
@@ -152,7 +156,8 @@ private struct ReviewProposalView: View {
     }
 
     private var ticketTitle: some View {
-        Text(decision.ticket?.title ?? item.title).font(ReviewStyle.title).foregroundStyle(PanelsTheme.strong)
+        Text(decision.ticket?.title ?? item.title).font(ReviewStyle.title)
+            .fixedSize(horizontal: false, vertical: true).foregroundStyle(PanelsTheme.strong)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -161,7 +166,8 @@ private struct ReviewProposalView: View {
             Button { openApproval() } label: {
                 (Text(fieldLabel).fontWeight(.semibold).foregroundStyle(PanelsTheme.strong) + Text(" — for \(reviewer) to approve").foregroundStyle(PanelsTheme.muted))
                     .font(.title3).frame(maxWidth: .infinity, alignment: .leading)
-            }.buttonStyle(.plain).accessibilityLabel("Who reviews: \(reviewer)").disabled(!decision.ready)
+            }.buttonStyle(.plain).accessibilityLabel("\(fieldLabel), for \(reviewer) to approve")
+                .accessibilityHint("Opens approval options").disabled(!decision.ready)
             if editing {
                 TextField("Proposal", text: $decision.draft, axis: .vertical).lineLimit(5...30)
                     .font(.body).lineSpacing(6).focused($editorFocused).accessibilityIdentifier("review.editor")
@@ -169,7 +175,8 @@ private struct ReviewProposalView: View {
                 Button {
                     editing = true; editorFocused = true
                 } label: { ReviewProse(text: decision.draft) }
-                    .buttonStyle(.plain).accessibilityLabel("Edit proposal").accessibilityIdentifier("review.edit")
+                    .buttonStyle(.plain).accessibilityLabel("Proposal").accessibilityValue(decision.draft)
+                    .accessibilityHint("Edits proposal").accessibilityIdentifier("review.edit")
                     .disabled(decision.busy || decision.loading || decision.changed)
             }
         }
@@ -181,7 +188,7 @@ private struct ReviewProposalView: View {
     }
 
     private var actionBar: some View {
-        HStack(spacing: PanelsTheme.Space.sm) {
+        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
             Button("Approve") { openApproval() }
                 .frame(maxWidth: .infinity, minHeight: ReviewStyle.actionHeight)
                 .background(PanelsTheme.accent, in: Capsule()).foregroundStyle(PanelsTheme.ink)
@@ -239,18 +246,22 @@ private struct ReviewApprovalSheet: View {
                             HStack { Text(stage.label).foregroundStyle(PanelsTheme.text); Spacer(); if ceiling == stage.id { Image(systemName: "checkmark").foregroundStyle(PanelsTheme.accent) } }
                                 .frame(minHeight: 46).contentShape(Rectangle())
                         }.buttonStyle(.plain)
+                            .accessibilityLabel(stage.label)
+                            .accessibilityAddTraits(ceiling == stage.id ? .isSelected : [])
                         Divider().overlay(PanelsTheme.border)
                     }
                 }
                 Text("Who reviews").reviewEyebrow().padding(.top, PanelsTheme.Space.sm)
                 Picker("Who reviews", selection: $holder) {
                     ForEach(holders, id: \.1) { Text($0.0).tag($0.1) }
-                }.pickerStyle(.segmented)
+                }.accessibleSegmentedPicker()
                 Button {
                     Haptics.light(); Task { await onApprove(ceiling, holder) }
                 } label: {
                     HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.ink) } else { Text("Approve until \(selectedLabel)") }; Spacer() }.frame(minHeight: ReviewStyle.actionHeight)
                 }.background(PanelsTheme.accent, in: Capsule()).foregroundStyle(PanelsTheme.ink)
+                    .accessibilityLabel("Approve until \(selectedLabel)")
+                    .accessibilityValue(decision.busy ? "Approving" : "")
                     .disabled(!decision.ready || ceiling.isEmpty).accessibilityIdentifier("review.confirmApproval")
                 if let error = decision.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
             }.padding(ReviewStyle.gutter).padding(.top, PanelsTheme.Space.lg)
@@ -273,7 +284,7 @@ private struct ReviewReturnSheet: View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
             Text("Send back · \(fieldLabel)").reviewEyebrow()
             TextField("Tell the worker what to change…", text: $decision.revisionDraft, axis: .vertical)
-                .lineLimit(3...6).font(.body).focused($focused).accessibilityIdentifier("review.revision")
+                .lineLimit(3...6).font(.body).focused($focused).accessibilityLabel("Changes for the worker").accessibilityIdentifier("review.revision")
                 .disabled(voice.phase != .idle || decision.busy)
             if voice.phase != .idle { voiceStatus }
             HStack(spacing: PanelsTheme.Space.md) {
@@ -289,6 +300,8 @@ private struct ReviewReturnSheet: View {
                 }.background(PanelsTheme.accent, in: Capsule()).foregroundStyle(PanelsTheme.ink)
                     .disabled(!decision.ready || decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || voice.phase != .idle)
                     .opacity(decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
+                    .accessibilityLabel("Send back")
+                    .accessibilityValue(decision.busy ? "Sending revision to worker" : "")
                     .accessibilityIdentifier("review.confirmReturn")
             }
             if let error = decision.error ?? voice.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
@@ -325,5 +338,5 @@ private struct ReviewReturnSheet: View {
 }
 
 private extension Text {
-    func reviewEyebrow() -> some View { self.font(.caption2.weight(.semibold)).foregroundStyle(PanelsTheme.faint) }
+    func reviewEyebrow() -> some View { self.font(.caption2.weight(.semibold)).foregroundStyle(PanelsTheme.faint).accessibilityAddTraits(.isHeader) }
 }

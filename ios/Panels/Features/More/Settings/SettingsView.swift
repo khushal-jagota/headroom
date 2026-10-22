@@ -18,7 +18,7 @@ struct SettingsView: View {
                     Text("Config").tag("Config")
                     Text("Scheduled").tag("Scheduled")
                     Text("Notifications").tag("Notifications")
-                }.pickerStyle(.segmented)
+                }.accessibleSegmentedPicker()
             }.listRowBackground(PanelsTheme.raised)
             if let error { Section { LoadErrorView(message: error) { await load() } } }
             if loading && !hasData { ProgressView("Reading settings…") }

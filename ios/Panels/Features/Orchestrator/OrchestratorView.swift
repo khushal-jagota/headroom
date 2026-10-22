@@ -46,7 +46,7 @@ struct OrchestratorView: View {
                         }.buttonStyle(.plain)
                     }.font(PanelsTheme.TypeScale.body)
                 } else if error == nil {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
+                    ProgressView("Loading orchestrator…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
@@ -105,5 +105,7 @@ struct AgentEyebrow: View {
             Spacer()
             WorkerSignalMark(signal: signal)
         }.frame(minHeight: 18).padding(.top, PanelsTheme.Space.sm)
+            .conversationAccessibility(label: title.isEmpty ? "Chief activity" : title, signal: signal)
+            .accessibilityHidden(title.isEmpty && signal?.working != true && signal?.messageForOwner != true)
     }
 }

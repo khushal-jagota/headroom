@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct WorkspaceView: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var groups: [String: [WorkspaceTicketGroup]] = [:]
@@ -63,7 +64,7 @@ struct WorkspaceView: View {
             if !scrolling { updateGroups() }
         }
         .refreshable { await store.refresh() }
-        .overlay { if store.isLoading && store.chief == nil { ProgressView().controlSize(.large) } }
+        .overlay { if store.isLoading && store.chief == nil { ProgressView("Loading workspace…").controlSize(.large) } }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: selectedRoute) { old, new in if old != new { Haptics.light() } }
@@ -92,7 +93,7 @@ struct WorkspaceView: View {
                     Text("Settled").foregroundStyle(PanelsTheme.text)
                     if let settled { Text(String(settled.page.matchCount)).foregroundStyle(PanelsTheme.faint) }
                     Spacer()
-                }.font(.system(size: 17)).frame(minHeight: 44).contentShape(Rectangle())
+                }.panelsScaledFont(size: 17).frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .accessibilityIdentifier("workspace-settled")
                 .accessibilityValue(settledOpen ? "Expanded" : "Collapsed")
@@ -103,18 +104,19 @@ struct WorkspaceView: View {
                     ForEach(settled.managers) { manager in
                         NavigationLink(value: AppRoute.orchestrator(manager.id)) {
                             HStack {
-                                Text(manager.title).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                                Text(manager.title).lineLimit(typeSize.isAccessibilitySize ? nil : 1).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                                 WorkspaceSignalMark(signal: manager.conversationSignal)
-                            }.font(.system(size: 16)).foregroundStyle(PanelsTheme.faint).frame(minHeight: 44)
+                            }.panelsScaledFont(size: 16).foregroundStyle(PanelsTheme.faint).frame(minHeight: 44)
                         }.buttonStyle(.plain)
+                            .conversationAccessibility(label: manager.title, signal: manager.conversationSignal)
                     }
                     if settled.managers.isEmpty { Text("No settled orchestrators").foregroundStyle(PanelsTheme.faint) }
                     if settled.page.nextOffset != nil {
                         Button("Load more settled") { Task { await loadMoreSettled() } }
                             .frame(minHeight: 44).disabled(settledLoading)
                     }
-                } else if settledError == nil { ProgressView() }
-                if settledLoading { ProgressView() }
+                } else if settledError == nil { ProgressView("Loading settled orchestrators…") }
+                if settledLoading { ProgressView("Loading more settled orchestrators…") }
             }
         }.padding(.horizontal, 16)
     }

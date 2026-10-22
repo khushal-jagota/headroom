@@ -37,8 +37,9 @@ struct WorkspaceCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     if !chief {
                         HStack {
-                            Text(project ?? "").font(.system(size: 13)).foregroundStyle(PanelsTheme.faint)
-                                .lineLimit(1)
+                            Text(project ?? "").panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.faint)
+                                .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
                             WorkspaceSignalMark(signal: signal)
                         }
@@ -49,7 +50,7 @@ struct WorkspaceCard: View {
                                 .frame(width: 28, height: 28).clipShape(RoundedRectangle(cornerRadius: 6))
                                 .accessibilityHidden(true)
                         }
-                        Text(title).font(.system(size: 20, weight: .semibold))
+                        Text(title).panelsScaledFont(size: 20, relativeTo: .title3, weight: .semibold)
                             .foregroundStyle(signal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
                             .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -58,6 +59,7 @@ struct WorkspaceCard: View {
                 }.frame(minHeight: 44, alignment: .top).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .conversationAccessibility(label: [project, title].compactMap { $0 }.joined(separator: ", "), signal: signal)
             .accessibilityIdentifier(chief ? "workspace-chief" : "workspace-orchestrator")
             .modifier(WorkspaceContextMenu(route: route, title: title, parent: project, ticket: nil,
                                            signal: signal, previewChanged: previewChanged, open: open))
@@ -65,7 +67,7 @@ struct WorkspaceCard: View {
                 switch row {
                 case .heading(let section):
                     Text(section.title)
-                        .font(.system(size: 11, weight: .semibold))
+                        .panelsScaledFont(size: 11, relativeTo: .caption2, weight: .semibold)
                         .foregroundStyle(PanelsTheme.faint)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,16 +79,17 @@ struct WorkspaceCard: View {
                 case .ticket(let ticket, let section):
                     NavigationLink(value: AppRoute.ticket(ticket.id)) {
                         HStack(spacing: 12) {
-                            Text(ticket.title).font(.system(size: 16))
+                            Text(ticket.title).panelsScaledFont(size: 16)
                                 .foregroundStyle(section.needsAttention || ticket.conversationSignal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
                                 .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             WorkspaceSignalMark(signal: ticket.conversationSignal)
                         }.frame(minHeight: 44).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("workspace-ticket-\(ticket.id)")
-                    .accessibilityLabel(ticket.title)
+                    .conversationAccessibility(label: ticket.title, signal: ticket.conversationSignal)
                     .modifier(WorkspaceContextMenu(route: .ticket(ticket.id), title: ticket.title,
                                                    parent: title, ticket: ticket, signal: ticket.conversationSignal,
                                                    previewChanged: previewChanged, open: open))

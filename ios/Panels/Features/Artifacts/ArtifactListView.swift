@@ -107,16 +107,19 @@ private struct ArtifactFolderSection: View {
                 if let directory = entry.directory {
                     NavigationLink(value: AppRoute.artifacts(owner: owner, directory: directory)) {
                         Label(entry.label, systemImage: "folder")
-                    }.listRowBackground(Color.clear)
+                    }.accessibilityLabel(entry.label)
+                        .accessibilityValue("Folder, \(entry.childCount) items")
+                        .listRowBackground(Color.clear)
                 } else { ArtifactFileRow(owner: owner, entry: entry, open: open) }
             }
             if let error { LoadErrorView(message: error) { await load() }.listRowBackground(Color.clear) }
-            if loading && entries.isEmpty { ProgressView().listRowBackground(Color.clear) }
+            if loading && entries.isEmpty { ProgressView("Loading folder…").listRowBackground(Color.clear) }
             if search.isEmpty && total > visible.count {
                 Button("\(total - visible.count) more") {
                     withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded = true }
                     if entries.count < total { Task { await load(more: true) } }
                 }.disabled(loading).listRowBackground(Color.clear)
+                    .accessibilityLabel("Show \(total - visible.count) more files in \(folder.label)")
             }
         } header: { Text(folder.label.prefix(1).uppercased() + folder.label.dropFirst()).textCase(nil).font(.caption2).foregroundStyle(PanelsTheme.faint) }
         .task(id: refreshVersion) { await load() }

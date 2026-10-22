@@ -16,8 +16,8 @@ struct DeploymentStrip: View {
     }
     var body: some View {
         HStack(spacing: PanelsTheme.Space.sm) {
-            Circle().fill(store.deployment?.state == "problem" ? PanelsTheme.error : PanelsTheme.accent).frame(width: 5, height: 5)
-            Text(label).font(PanelsTheme.TypeScale.caption).lineLimit(1)
+            Circle().fill(store.deployment?.state == "problem" ? PanelsTheme.error : PanelsTheme.accent).frame(width: 5, height: 5).accessibilityHidden(true)
+            Text(label).font(PanelsTheme.TypeScale.caption).fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
         .foregroundStyle(PanelsTheme.muted)

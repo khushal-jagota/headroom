@@ -31,3 +31,32 @@ struct ConversationPlaceholder: View {
             .accessibilityLabel("Conversation surface awaiting design")
     }
 }
+
+extension View {
+    /// A row is one stop; its visual marks are announced as state, not separate controls.
+    func conversationAccessibility(label: String, signal: ConversationSignal?) -> some View {
+        accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityValue([
+                signal?.messageForOwner == true ? "Unread message" : nil,
+                signal?.working == true ? "Working" : nil
+            ].compactMap { $0 }.joined(separator: ", "))
+    }
+}
+
+/// Segments cannot wrap their titles; a menu keeps every choice readable at larger sizes.
+private struct AccessibleSegmentedPicker: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if typeSize.isAccessibilitySize {
+            content.pickerStyle(.menu)
+        } else {
+            content.pickerStyle(.segmented)
+        }
+    }
+}
+
+extension View {
+    func accessibleSegmentedPicker() -> some View { modifier(AccessibleSegmentedPicker()) }
+}
