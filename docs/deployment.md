@@ -418,6 +418,18 @@ supervisor identifies adopted descendants directly and uses PID handles when sig
 them, so a reused PID cannot select an unrelated process. Service-manager apps are
 outside this owned tree. There is no independent heartbeat that can outlive the work.
 
+Each renewal receipt reports the deployment, phase, and exact saved timestamps.
+When reconciliation succeeds, every committed renewal has one receipt.
+If the command exits before the writer reports its commit, the
+supervisor stops the writer and recovers that receipt under the same lock. A competing
+transition cannot supply the receipt. Recovery never extends the lease and has a bounded
+wait. An attempt that stops before a commit produces no receipt.
+
+If recovery cannot prove the commit, the step reports failure explicitly. A recovered
+receipt does not erase a writer error. The command keeps its own nonzero exit status.
+Status cards read the saved lifecycle file directly. Their freshness does not depend
+on these log receipts.
+
 Renewal lock acquisition is limited to five seconds. A refused renewal prevents an
 ordinary command from starting. If renewal fails during a command, the supervisor stops
 renewing and lets that command finish before failing the step; it must not interrupt an
