@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deploymentStatusExpiry, deploymentStatusExpiryDelay, resolveDeploymentStatus } from "../src/lib/deploymentStatus";
+import { deploymentStatusExpiry, deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard } from "../src/lib/deploymentStatus";
+import type { ReleaseSnapshot } from "../src/lib/releaseMonitor";
 import type { DeploymentStatus } from "../src/lib/types";
 
 const now = Date.parse("2026-10-21T12:00:00Z");
@@ -54,5 +55,33 @@ describe("deployment status precedence and expiry", () => {
     expect(resolveDeploymentStatus(status(), "connected", now)).toBe("connected");
     expect(resolveDeploymentStatus(undefined, "connected", now)).toBe("reconnecting");
     expect(deploymentStatusExpiryDelay(status(), now)).toBeNull();
+  });
+});
+
+const release = (changes: Partial<ReleaseSnapshot> = {}): ReleaseSnapshot => ({
+  updateAvailable: false, compositionActive: false, reloadRequested: false, ...changes
+});
+
+describe("the one status card", () => {
+  it("lets a failed deploy displace a ready update, which outranks the rest", () => {
+    // A rolled back release still differs from the booted one, so the update prompt
+    // would otherwise invite a reload into the deploy that just failed.
+    expect(resolveStatusCard("problem", release({ updateAvailable: true }))).toBe("Problem");
+    for (const state of ["preparing", "restarting", "back_up", "reconnecting", "connected"] as const) {
+      expect(resolveStatusCard(state, release({ updateAvailable: true }))).toBe("update-ready");
+    }
+  });
+  it("holds the update while a message is composed, and only once a reload was asked for", () => {
+    const composing = release({ updateAvailable: true, compositionActive: true });
+    expect(resolveStatusCard("connected", composing)).toBe("update-ready");
+    expect(resolveStatusCard("connected", { ...composing, reloadRequested: true })).toBe("update-held");
+    expect(resolveStatusCard("connected", release({ updateAvailable: true, reloadRequested: true }))).toBe("update-ready");
+  });
+  it("narrates the deploy when no update is waiting", () => {
+    expect(resolveStatusCard("preparing", release())).toBe("Deploying");
+    expect(resolveStatusCard("restarting", release())).toBe("Deploying");
+    expect(resolveStatusCard("back_up", release())).toBe("Deployed");
+    expect(resolveStatusCard("reconnecting", release())).toBe("Reconnecting");
+    expect(resolveStatusCard("connected", release())).toBeNull();
   });
 });

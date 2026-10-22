@@ -1,7 +1,6 @@
 /** A finite indexed-page transport for browser lifecycle and scroll admission checks. */
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
-export function installConversationViewReaderFixture():void {
-  const id='bounded-reader';
+export function installConversationViewReaderFixture(id='bounded-reader'):void {
   const ownerWidth=new URLSearchParams(location.search).get('owner-width');
   const widthBody=JSON.stringify({kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:1,content:[{piece:'text',text:'Short prompt.'}]});
   let releaseOwnerBody: (()=>void)|null=null;
@@ -93,6 +92,7 @@ export function installConversationViewReaderFixture():void {
   window.fetch=async(input,init)=>{
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,location.origin);
+    if(url.pathname==='/api/conversation/backends')return Response.json({backends:[]});
     if(ownerWidth&&url.pathname.endsWith('/view/body/content'))return ownerWidth==='immediate'?new Response(widthBody):await new Promise<Response>(resolve=>{releaseOwnerBody=()=>resolve(new Response(widthBody));});
     if(expiry&&url.pathname.endsWith('/view/body/content')&&deferredExpired)return Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410});
     if(expiry&&url.pathname.endsWith('/view/body/content'))return await new Promise<Response>(resolve=>{completeBody=()=>resolve(new Response(delayedBody));});

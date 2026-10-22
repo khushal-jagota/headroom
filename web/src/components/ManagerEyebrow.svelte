@@ -16,7 +16,8 @@
   .settle { margin-left:auto; display:inline-flex; align-items:center; gap:5px; color:var(--text-faint); white-space:nowrap; background:none; border:0; font:inherit; cursor:pointer; padding:0; transition:opacity var(--motion-fast) var(--motion-ease); }
   .settle svg { width:12px; height:12px; flex:none; }
   .rail { line-height:normal; }
-  .rail .settle { opacity:0; }
+  .rail > span { min-width:0; overflow-wrap:anywhere; }
+  .rail .settle { flex-shrink:0; opacity:0; }
   :global(.manager-card:hover) .settle, :global(.manager-card:focus-within) .settle, .settle:focus-visible { opacity:1; }
   .settle:hover { color:var(--text-strong); }
   .settle:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:3px; }
