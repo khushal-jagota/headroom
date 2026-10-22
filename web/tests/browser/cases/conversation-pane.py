@@ -1325,12 +1325,40 @@ def _run(browser, urls):
     after_growth = wait_for_anchor(page, after_removal)
     assert after_growth["scrollTop"] > after_removal["scrollTop"], (after_removal, after_growth)
 
-    # Latest resumes following, and a newly appended line stays in sight.
-    page.locator('button[aria-label="Jump to latest message"]').click()
-    page.wait_for_function("""() => {
-      const thread = document.querySelector('[data-conversation-thread]');
-      return thread.scrollHeight - thread.scrollTop - thread.clientHeight <= 2;
-    }""")
+    # Latest removes the active control. Both activation paths return the keyboard
+    # to the reading region without moving the newest line out of sight.
+    latest = page.get_by_role("button", name="Jump to latest message", exact=True)
+    for activation in ("pointer", "keyboard", "focus-elsewhere"):
+        if activation != "pointer":
+            thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        latest.wait_for()
+        if activation == "pointer":
+            latest.click()
+        elif activation == "keyboard":
+            latest.focus()
+            page.keyboard.press("Enter")
+        else:
+            latest.evaluate("""button => {
+              button.focus();button.click();
+              document.querySelector('[data-conversation-input]').focus({preventScroll:true});
+            }""")
+        page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
+        page.wait_for_function("""elsewhere => document.activeElement === document.querySelector(
+          elsewhere ? '[data-conversation-input]' : '[data-conversation-thread]')""",
+          arg=activation == "focus-elsewhere")
+        page.wait_for_function("""() => {
+          const thread = document.querySelector('[data-conversation-thread]');
+          const newest = [...thread.querySelectorAll('[data-conversation-row="agent_message"]')].at(-1);
+          return newest.getBoundingClientRect().bottom <= thread.getBoundingClientRect().bottom + 1;
+        }""")
+        print("LATEST_FOCUS_PROOF", activation, page.evaluate("""() => ({
+          tag:document.activeElement.tagName,label:document.activeElement.getAttribute('aria-label'),
+          latestPresent:!!document.querySelector('button[aria-label="Jump to latest message"]')})"""), flush=True)
+        if activation == "keyboard" and os.environ.get("PANELS_E2E_FAILURE_DIR"):
+            from pathlib import Path
+            output = Path(os.environ["PANELS_E2E_FAILURE_DIR"]).parent
+            page.screenshot(path=str(output / "latest-focus.png"))
+    # Preserve the existing following proof after the explicit jump.
     before = thread.evaluate("node => node.scrollTop")
     page.evaluate("window.__appendConversationLine()")
     page.get_by_text("Newest appended line 28", exact=True).wait_for()
@@ -1959,8 +1987,19 @@ def _owner_width_frames(browser, url):
 
 
 def _bounded_reader(browser, url):
+    from playwright.sync_api import expect
+
     page = browser.new_page(viewport={"width": 1000, "height": 900})
+    page.route("**/api/deployment-interruptions", lambda route: route.fulfill(json={"accounts": [{
+        "deployment_id": "deploy", "capture_state": "captured", "detail": None,
+        "entries": [{"interruption_id": "notice", "deployment_id": "deploy",
+            "conversation_id": "bounded-reader", "display_name": "Worker", "owner_kind": "ticket",
+            "owner_id": "worker", "original_status": "active", "recovery_state": "awaiting_action",
+            "detail": "The deploy ended this turn. Inspect current work before another action.",
+            "can_restart": False}]
+    }]}))
     page.goto(url + "?reader=1")
+    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_contain_text("The deploy ended this turn.")
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
     page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
     # What the reader retains is what is drawn. One bound, not two: a row that is
@@ -1973,11 +2012,33 @@ def _bounded_reader(browser, url):
     page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
     assert page.locator('[data-conversation-view-key]').count() <= 300
     assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
+    # A delayed latest-page read must respect focus moved during the request.
+    page.evaluate("""() => {
+      const original = window.fetch;
+      window.fetch = async (...args) => {
+        const path = String(args[0]);
+        const url = new URL(path, location.origin);
+        if (url.pathname.endsWith('/view/pages') && !url.searchParams.has('cursor')) {
+          window.fetch = original;
+          await new Promise(resolve => {window.__releaseLatestPage = resolve;});
+        }
+        return original(...args);
+      };
+    }""")
+    latest = page.get_by_role("button", name="Jump to latest message", exact=True)
+    latest.click()
+    page.wait_for_function("typeof window.__releaseLatestPage === 'function'")
+    page.locator('[data-conversation-input]').focus()
+    page.evaluate("window.__releaseLatestPage()")
+    page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
+    page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
     page.evaluate("() => window.__readerState('rest')")
     page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
+    expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     assert page.locator('[data-conversation-view-key]').count() == 0
     page.evaluate("() => window.__readerState('opened')")
     page.wait_for_selector('[data-conversation-thread]')
+    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_be_visible()
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     # Persisted projected prompts must retain the same bubble layout as outgoing
@@ -2260,10 +2321,39 @@ def _conversation_repairs(browser, url):
     page.close()
 
 
+def _manager_recap_header(browser, url):
+    """The real header must remeasure its recap after its typography changes."""
+    import time
+
+    from playwright.sync_api import expect
+
+    started = time.perf_counter()
+    page = browser.new_page(viewport={"width": 1100, "height": 800})
+    try:
+        page.goto(url + "?manager-layout=1", wait_until="domcontentloaded")
+        recap = page.get_by_role("textbox", name="Manager recap", exact=True)
+        toggle = page.locator("[data-manager-recap-toggle]")
+        expect(recap).to_have_text("The recap belongs below the title.")
+        assert page.evaluate("window.__layoutHeaderMatches()")
+        page.evaluate("window.__layoutUpdate('A long recap paragraph with enough text to span several measured lines. '.repeat(30))")
+        expect(toggle).to_be_visible()
+        toggle.click()
+        expect(toggle).to_have_text("Show less")
+        page.evaluate("window.__layoutUpdate('')")
+        expect(recap).to_be_empty()
+        expect(recap).to_have_attribute("data-ph", "Write a concise recap for this manager…")
+        expect(toggle).to_have_count(0)
+        assert page.evaluate("window.__layoutHeaderMatches()")
+    finally:
+        page.close()
+        print(f"Manager recap header browser scenario: {time.perf_counter() - started:.3f}s", flush=True)
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _manager_recap_header(browser, urls[0])
         _owner_width_frames(browser, urls[0])
         _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])

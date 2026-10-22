@@ -57,7 +57,7 @@ import {viewWindow} from '../src/lib/navigation/views/owner';
   const previous=current.publication!;
   if(response.coverage.revision===previous.continuity.revision)return;
   const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
-  const frame:any={event:'patch',wire_version:3,projection_version:3,view_id:response.view_id,
+  const frame:any={event:'patch',wire_version:3,projection_version:4,view_id:response.view_id,
     scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
     coverage:response.coverage,previous_coverage:previous.continuity,authority:response.authority,
     content_version:response.content_version,previous_content_version:previous.view!.contentVersion,
@@ -107,7 +107,8 @@ client.setDefaultOptions({queries:{retry:false}});
 let address = $state<import('../src/lib/workspaceAddress').WorkspaceAddress>({selection:{kind:'ticket',id:'t_coding'},view:'tickets',openFile:null});
 (window as any).__workspaceAddressChange = () => { address = {...address,view:'managers',openFile:null}; };
 </script>
-<QueryClientProvider {client}><BoardRoute {address} /></QueryClientProvider>
+{#snippet railFoot()}<div class="rail-foot"><nav class="rail-utilities" aria-label="Destinations"><a href="#/review">Review</a></nav></div>{/snippet}
+<QueryClientProvider {client}><BoardRoute {address} {railFoot} /></QueryClientProvider>
 <style>:global(html),:global(body),:global(#app){height:100%;margin:0;overflow:hidden;}</style>`);
   const existingMain = await (await import('node:fs/promises')).readFile(main, 'utf8');
   await writeFile(workspaceMain, existingMain.replace(`./${stem}.svelte`, `./${stem}-workspace.svelte`));

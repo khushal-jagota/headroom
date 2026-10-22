@@ -112,9 +112,14 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+  Both lists scroll vertically only. Long Settled titles and rail project labels wrap
+  within their available width, with room for the Reopen and Settle controls.
   Manual fold toggles respond immediately, independently of queued rail updates. Height,
   chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
-  another arrival animation. Closing returns focus to the header when necessary.
+  another row arrival animation. The section resizes from its visible height when those
+  rows arrive, even after the original fold beat ends. A content refresh retargets that
+  resize to the new height within the existing cap. Each resize uses the same 340
+  millisecond timing and easing. Closing returns focus to the header when necessary.
   Reduced motion skips that beat. Settle/Reopen retains its separate row choreography.
 
   Settling fades the active card and its rows out over 160 milliseconds before
@@ -123,7 +128,7 @@ One screen per part of the system:
   first, then its Workers. Layout changes share the existing 340 millisecond
   space adjustment. A closed Settled section stays closed and its count crossfades.
   Manual fold requests bypass that structural queue. Coherent settled page updates
-  do not restart the fold animation. The latest manual choice wins during rapid reversal.
+  do not restart the chevron or body fade. The latest manual choice wins during rapid reversal.
 
   Manager pages show active groups first, then Backlogged and Done headers.
   Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
@@ -188,7 +193,7 @@ One screen per part of the system:
   inheriting the old conversation's reading. A failed advance over-shows attention rather
   than hiding a reply.
 
-  On screens wider than 960px, the right side starts with a quiet invitation. An Item
+  On screens wider than 720px, the right side starts with a quiet invitation. An Item
   title opens the existing Manager workspace at `#/workspace/item/<item-id>`.
   A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. A Ticket
   opened from inside an Item, in the rail or in the Item workspace, writes
@@ -196,8 +201,8 @@ One screen per part of the system:
   Which of the two views the rail shows rides along as `?view=tickets` or `?view=items`,
   and only when the reader asked for the view the selection does not already imply. All
   of these addresses survive refresh, sharing, and browser history. A stale Item drops
-  out of the address, keeping a Ticket that was open beside it. At 960px or less, an
-  Item workspace or a Worker replaces the rail. Its inline eyebrow supplies the way back.
+  out of the address, keeping a Ticket that was open beside it. At 720px or less, an
+  Item workspace or a Worker replaces the rail. The Workspace action in the bottom bar supplies the way back.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
   the ones in manager views and Review, uses the Workspace address. The old
@@ -226,15 +231,19 @@ One screen per part of the system:
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
   Backlog and Resume remain the deferral controls.
-- **Manager** — project and parent navigation, title, goal, labelled recap, the ask
+- **Manager** — project and parent navigation, title, recap, the ask
   for a fresh recap, and a Settle control
   above grouped Workers. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate
   Messages group: unread Workers appear in their ordinary group with their own dot.
   Global Messages and rail discovery remain unchanged. Closed group headers include
-  distinct unread-conversation counts as text. Artifacts occupy their own closed band
-  below the Workers. Chief shares the same header, reading column, and conversation layer.
+  distinct unread-conversation counts as text. The recap sits directly under the title,
+  without a label, at 17px with the same clamp and edit controls as before.
+  Goal and Artifacts form two adjacent bands below the Workers, both closed by default.
+  Goal opens its editable Markdown in full, without a clamp or a separate surface.
+  The bands share their summary style, right-aligned indicator, and one border between them.
+  Chief shares the same header, reading column, and conversation layer. Chief has no Goal band.
   Chief keeps an editable recap in its managed settings, through the same header control.
   Chief cannot settle and has no Project or parent navigation.
 - **Chief children** — the Chief and ordinary Managers show one scoped Worker list.
@@ -281,16 +290,32 @@ The workspace keeps its resize handle within its own visual layer. Open shell me
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
 
-The shell retains Review and Workspace navigation. The Workspace footer supplies Settings,
-Ideas, Feedback, and Usage/Backends icons. Each has an accessible name, tooltip, and keyboard
-focus. Feedback retains its count. More supplies fallback destinations when the footer is
-absent, including compact selected panes. A visible footer suppresses duplicate More links.
-Settings replaces separate Config, Scheduled tasks, and Notifications entries.
+Every destination shares one persistent Workspace rail and one pane. The rail keeps its
+scroll, width preference, Settled section, and running conversations while the pane changes.
+The former top bar and mobile title are gone. Review, Usage, Ideas, Feedback, VPS, and
+Settings appear in that order at the foot of the rail, with labels on hover or keyboard
+focus. Only Review carries a queue count. VPS is a placeholder for its separate screen.
+Settings groups Config, Scheduled tasks, and Notifications. Existing links, including
+Workspace utility aliases, continue to open the same details.
 
-The Feedback control is the last item in the status strip on every page. It opens a
-desktop popover or a phone sheet and saves a text note with optional page context. A
-device-local draft survives a close. The Feedback page and agent CLI read the durable
-record from the server.
+At 720px and below, the selected pane replaces the rail above a bottom bar containing
+Review, Workspace, and More. Workspace returns to the rail. More groups Ideas and
+Feedback under Work, and Usage, VPS, and Settings under System. Inner pane and
+conversation layouts keep their own breakpoints.
+
+A filled status card sits above the destination icons or compact bar. It says Deploying
+for fresh preparation and restart, Reconnecting for connection loss or expired progress,
+and Problem for failure or rollback. Failure takes precedence over connection loss.
+Healthy operation and successful recovery show no card. The card opens space before
+arriving and leaves before that space closes; reduced motion removes the animation.
+
+The rail's Feedback icon and More's Feedback item open the same persistent composer.
+It appears above the complete foot, including its status card, outside the rail's clipped
+content. On phones it uses a sheet above the bar and visible keyboard. Saving records
+a text note with optional page context. A device-local draft survives dismissal and
+navigation. Closing returns keyboard focus to the visible Feedback control, or More on
+phones. The composer count link and save notification open the Feedback pane. The
+Feedback page and agent CLI read the durable record from the server.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -300,13 +325,21 @@ share.
 
 The root document carries the deployed app SHA that booted the browser. The browser
 checks `/api/meta` without cache reuse when it loads and when a retained page resumes.
-If the server reports a different SHA, Panels shows an **Update now** action. Panels
-never reloads for a new release without that action.
+If the server reports a different SHA, the deploy status card reads **New version
+ready** with an **Update** action. Panels never reloads for a new release without that
+action.
+
+The card is one slot with one occupant, because the deploy it narrates is what produces
+the release. A failed deploy shows **Problem** and displaces the update, since a rolled
+back release still differs from the booted one. Otherwise a waiting update outranks
+Deploying, Deployed and Reconnecting. One monitor serves the whole app, so the card
+reports the same update at both breakpoints.
 
 Conversation composers publish `panels:composition-state` on `document`, with an
 `active` boolean. If the user requests an update during active composition, Panels
-waits. It checks the server identity again when composition becomes inactive, then
-applies the requested update. The push-only service worker and its subscription remain
+waits, and the card reads **Update applies when this message is safe**. It checks the
+server identity again when composition becomes inactive, then applies the requested
+update. The push-only service worker and its subscription remain
 in place across this page reload.
 
 **Usage** at `#/backends` offers Tokens, Cost, Limits, and Config as tabs. The explicit
@@ -675,6 +708,8 @@ hand-rolling the same shapes per screen. Each does one job:
   The browser holds the top line when it can. If content above or within the view
   grows, text below it can move. Panels does not restore an exact paragraph offset.
   Opening the conversation, sending a message, and Latest each place the view once.
+  Latest returns focus to the Conversation region after the button disappears.
+  If the reader moves focus elsewhere before the jump completes, that focus stays there.
   An explicit send places the sent prompt near the top, even during a layer resize.
   If a shorter transcript clamps the view to the end, later content follows the end.
   Latest reflects the actual content, separately from the answer room below a sent

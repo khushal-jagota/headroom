@@ -51,7 +51,9 @@ const SCREEN_LABELS: Record<string, string> = {
   feedback: "Feedback",
   config: "Config",
   settings: "Settings",
-  backends: "Backends",
+  backends: "Usage",
+  usage: "Usage",
+  vps: "VPS",
   notifications: "Notifications",
   "scheduled-tasks": "Scheduled tasks",
   preview: "Preview"
@@ -77,6 +79,11 @@ export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPag
     return { address, label: `Settings · ${SCREEN_LABELS[section] || decoded(section)}` };
   }
   if (screen === "workspace") {
+    if (segments[1] === "utility" && segments[2]) {
+      const utility = segments[2];
+      const label = SCREEN_LABELS[utility] || decoded(utility);
+      return { address, label: utility === "settings" ? `${label} · ${SCREEN_LABELS[segments[3] || "config"] || decoded(segments[3])}` : label };
+    }
     if (segments[1] === "chief-of-staff") return { address, label: "Chief of Staff" };
     if (["manager", "item"].includes(segments[1]) && segments.length === 3) {
       return { address, label: title ? `Manager · ${title}` : "Manager" };

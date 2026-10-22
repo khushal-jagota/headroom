@@ -49,7 +49,7 @@ they do not change how transcript content is generated.
 The notebook keeps completed receipts. A separate conversation-owned source keeps
 version 1 facts about turns, external attempts, and requests. These facts contain
 identities and outcomes, without message content, process handles, or callbacks.
-Turn numbers come from a database transaction and do not repeat after a restart.
+Turn numbers come from a database transaction. Durable occurrence identifiers also distinguish turns across a deployment rollback.
 Public request IDs include that durable turn identity. A live runtime maps them to
 the provider's request IDs. An old answer cannot address a later request that reuses
 the same provider ID.
@@ -90,6 +90,16 @@ Restart restores no queue content or callbacks. It sends no prompt or answer and
 no interrupted work. Queue persistence, replay, and automatic continuation remain separate
 product decisions. The source contract lives in `conversation/lifecycle.py` and its
 transaction and terminal-transition rules live beside the conversation store.
+
+## Sessions that a deploy ends
+
+A deploy leaves a durable account of the sessions that it interrupts. The account stays outside the application backup and restore set. A rollback therefore keeps evidence from both the old application and its replacement. Missing evidence means that the account is unavailable. It never means that no sessions were interrupted.
+
+The shell keeps an expandable session list after the deployment status expires. Each entry names the agent, explains the interruption, and states the recovery status. The shared conversation pane shows the same notice. Removed conversations remain historical entries with no broken conversation link.
+
+Recovery stays manual. An authorized supervisor or Khushal can restart an eligible Worker through the existing action. Other conversations use their existing composer. Backlogged and completed Tickets receive no restart action. A conversation that changed since capture cannot authorize a restart of its replacement.
+
+The next authorized prompt tells the agent that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. A queued receipt does not count as resumption. Only a new turn with the notice in its actual prompt counts. Refusal or uncertain delivery remains explicit and receives no automatic retry.
 
 ## Exercising permission requests
 
@@ -204,6 +214,13 @@ Each Worker, Manager, and Chief exposes the same `conversation_signal` from its 
 conversation. `working` means that its runtime is running. `message_for_owner` means that
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
+
+The three boolean runtime checks — whether a turn is running, a permission ask is
+pending, or user input is pending — inspect existing live state without reading a stored
+record or waiting for a conversation lock. A conversation absent from this runtime has
+no live work or pending answers. Opening or sending still loads its stored record when
+needed. These checks still reject reads when the runtime has shut down or Signal is
+unavailable.
 
 Each conversation shows one indicator: an unread message dot takes precedence over the
 working spinner. Reading the latest message reveals the spinner if work is still running.
@@ -472,8 +489,33 @@ exact pending operation and accepted ownership. Operator inspection through
 `recording_failures` exposes the actual error. `resume_recording` resumes persistence
 explicitly after repair. This in-memory seam does not survive process loss.
 
-Prompt/model/attention/skill receipts remain one atomic transaction. Ancillary notice
-classification occurs before dispatch. After commit, local state uses the returned rows.
+Prompt/model/attention/skill receipts remain one atomic transaction. Internal proposal
+review notices receive final admission after model and session preparation, immediately
+before prompt composition or steering. The notice domain checks current revision and
+effective reviewer in the same SQLite write transaction that records any discard. This
+commit orders admission against canonical proposal writes; no database transaction spans
+backend I/O. Admission wins if resolution commits later.
+
+Admission uses durable conversation and sender message identity, never notice wording or
+sender labels. Each queued message is checked before survivors are combined. Reply
+obligations and automatic-notice classification are composed from survivors only. A
+replacement session gets a fresh check before its write. If no message survives, no turn
+starts, and a newly prepared replacement child is released without changing the durable
+model or effort.
+
+A suppressed delivery is an intentional pre-wire outcome, with its reason on the exact
+`prompt_discarded` receipt. Its attempt ends as `suppressed`; it is neither accepted work
+nor a failed backend write. Repeating the sender identity returns that same suppressed
+outcome without another write or a new explicit reply acknowledgment. The notice audit
+also preserves each obsolete source's original and current review facts and reason in
+`manager_wake_suppressions`, so operators can count what stopped and inspect why.
+
+Recovery settles exact durable receipts first. Known-held work receives admission on its
+next departure. A crash after admission without a receipt remains uncertain; historical
+dispatching or uncertain work is never reclassified as safely unsent or replayed merely
+because its proposal has since changed.
+
+After commit, local state uses the returned rows.
 A live-tail publication error does not invalidate the receipt or append it again.
 
 Historical uncertainty remains in the notebook. Reviewed, message-specific provider

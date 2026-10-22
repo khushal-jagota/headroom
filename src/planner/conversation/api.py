@@ -56,6 +56,7 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
     backend_supports_steer,
 )
@@ -1193,6 +1194,8 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             return {"fate": "injected"}
         case PromptDeliveryRefused(refusal_reason=reason):
             return {"fate": "refused", "refusal_reason": str(reason)}
+        case PromptDeliverySuppressed(reason=reason):
+            return {"fate": "suppressed", "reason": reason}
         case PromptDeliveryUncertain():
             return {"fate": "uncertain"}
         case _:  # pragma: no cover - the fate type is closed

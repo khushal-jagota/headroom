@@ -347,6 +347,8 @@ export function fateSentence(fate: PromptDeliveryFate): string | null {
       return `not delivered · ${refusalSentence(fate.refusal_reason)}`;
     case "uncertain":
       return "delivery uncertain · do not resend";
+    case "suppressed":
+      return `not sent · ${fate.reason}`;
   }
 }
 

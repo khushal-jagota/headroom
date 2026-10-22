@@ -50,6 +50,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let catalogSelected=$state<string|null>(null);
   let catalogOwner=$state("t_catalog");
   (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
+  import ManagerHeader from "../src/components/ManagerHeader.svelte";
+  import InlineEdit from "../src/components/InlineEdit.svelte";
+  import { workspaceHeaderDomMatches } from "../src/lib/managerWorkspaceDom";
+  const managerLayoutOnly=new URLSearchParams(window.location.search).has("manager-layout");
+  let layoutRecap=$state("The recap belongs below the title.");
+  const headerFacts={project:"Panels",title:"Workspace clarity",settled:false,conversation_id:null};
+  (window as any).__layoutUpdate=(recap:string)=>{layoutRecap=recap;};
+  (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
   import ManagerFrame from "../src/components/ManagerFrame.svelte";
   import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
@@ -505,7 +513,16 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-{#if readerOnly}
+{#if managerLayoutOnly}
+<QueryClientProvider client={catalogClient}>
+  <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
+    <ManagerHeader recap={layoutRecap} onSaveRecap={async(value)=>{layoutRecap=value;}}>
+      {#snippet eyebrow()}<div class="page-eyebrow"><span>Panels</span><button class="page-settle" aria-label="Settle Workspace clarity">Settle</button></div>{/snippet}
+      {#snippet title()}<InlineEdit value={headerFacts.title} ariaLabel="Manager title" onSave={async()=>{}} />{/snippet}
+    </ManagerHeader>
+  </main>
+</QueryClientProvider>
+{:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
   </div>

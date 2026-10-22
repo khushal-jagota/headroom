@@ -74,6 +74,7 @@
   let stateHasBeenDrawn = false;
   let pendingOpen = false;
   let pendingLatest = false;
+  let latestFocusButton: HTMLButtonElement | null = null;
   let sentMessageToPlace: string | null = null;
   let answerRoomMessageId: string | null = null;
   let dirty = false;
@@ -141,10 +142,17 @@
     saveLogicalAnchor(thread);
   }
 
-  async function jumpToTheNewestLine(): Promise<void> {
+  async function jumpToTheNewestLine(button: HTMLButtonElement): Promise<void> {
+    const startedIn = generation;
+    latestFocusButton = button;
     if(reader!==null)await reader.load({kind:"timeline",key:null},null,"older",true);
+    if (disposed || startedIn !== generation) return;
     pendingLatest = true;
     requestReconciliation();
+  }
+
+  function onFocusIn(event: FocusEvent): void {
+    if (event.target !== latestFocusButton && event.target !== document.body) latestFocusButton = null;
   }
 
   function requestWaitingOnThePerson(thread: HTMLDivElement): HTMLElement | null {
@@ -224,12 +232,23 @@
         }
         settledOnOpening = true;
         pendingOpen = false;
+        const focusButton = pendingLatest ? latestFocusButton : null;
         pendingLatest = false;
         sentMessageToPlace = null;
         takeTheReading(geometry.read(reservedSpacePixels));
         jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels);
         withTheNewestLineBeforeTheWrite = !jumpVisible;
         saveLogicalAnchor(thread);
+        if (focusButton !== null && !jumpVisible) {
+          // Wait for Latest to leave the DOM before returning the keyboard to the thread.
+          await tick();
+          if (startedIn !== generation || disposed || thread !== threadElement) return;
+          if (latestFocusButton === focusButton &&
+              (document.activeElement === focusButton || document.activeElement === document.body)) {
+            thread.focus({ preventScroll: true });
+          }
+          latestFocusButton = null;
+        }
       }
     } finally {
       queued = false;
@@ -250,6 +269,7 @@
       sentMessageToPlace = null;
       pendingOpen = true;
       pendingLatest = false;
+      latestFocusButton = null;
       withTheNewestLineBeforeTheWrite = true;
       requestReconciliation();
     });
@@ -307,10 +327,12 @@
       if (document.visibilityState === "visible" && dirty) requestReconciliation();
     };
     document.addEventListener("visibilitychange", onVisible);
+    document.addEventListener("focusin", onFocusIn);
     return () => {
       disposed = true;
       generation += 1;
       document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("focusin", onFocusIn);
     };
   });
 </script>
@@ -374,7 +396,7 @@
       type="button"
       class="chat-jump"
       aria-label="Jump to latest message"
-      onclick={() => void jumpToTheNewestLine()}
+      onclick={(event) => void jumpToTheNewestLine(event.currentTarget)}
     ><span>Latest</span><span aria-hidden="true">↓</span></button>
   {/if}
 </div>

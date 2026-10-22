@@ -17,7 +17,10 @@ from tests.integration.test_navigation_signal_publication import (
     actual_binding as actual_binding,
 )
 from tests.integration.test_navigation_transactions import add_conversation, add_parent, add_ticket
-from tests.support.navigation_current import current_navigation_database
+from tests.support.navigation_current import (
+    current_navigation_database,
+    prepared_navigation_database,
+)
 
 from planner.navigation.views.configuration import DEFAULT_CONFIG
 from planner.navigation.views.contracts import (
@@ -27,10 +30,11 @@ from planner.navigation.views.contracts import (
     ViewWindowRequest,
 )
 from planner.navigation.views.delivery import difference
-from planner.navigation.views.logic import compact, digest
+from planner.navigation.views.logic import compact, digest, section_key
 from planner.navigation.views.projection import rebuild
 from planner.navigation.views.read import read_content, request
 from planner.navigation.views.schema import prepare
+from planner.tickets.views import _review_items, review_view
 
 
 def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
@@ -45,7 +49,7 @@ def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
     }
     return request(
         {
-            "projection_version": 3,
+            "projection_version": 4,
             "scope_generation": 1,
             "locale": "en-US",
             "selected": None if selected is None else {"kind": "ticket", "id": selected},
@@ -60,6 +64,240 @@ def activate(conn: sqlite3.Connection) -> None:
     prepare(conn)
     rebuild(conn)
     conn.commit()
+
+
+def add_review_tickets(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN")
+    for identity in ("active-a", "active-b", "backlogged-a", "backlogged-b"):
+        add_ticket(conn, identity)
+    proposal = json.dumps(
+        {"field": "implementation", "body": "Review me", "proposed_by": "worker", "created_at": 1}
+    )
+    conn.execute("UPDATE tickets SET pending_proposal=?,pending_proposal_revision=1", (proposal,))
+    conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id LIKE 'backlogged-%'")
+    conn.commit()
+
+
+def assert_review_queue(conn: sqlite3.Connection, expected: set[str]) -> None:
+    assert {item["ticket_id"] for item in _review_items(conn)} == expected
+    assert {item["ticket_id"] for item in review_view(conn)["items"]} == expected
+    query = descriptor()
+    query["windows"] = [
+        {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+    ]
+    for current in (True, False):
+        _, content = read_content(conn, query, current=current)
+        assert {item["id"] for item in content["windows"][0]["members"]} == expected
+        assert content["windows"][0]["total"] == len(expected)
+        assert content["counts"]["review"] == len(expected)
+
+
+def test_backlog_changes_review_membership_and_counts_without_removing_proposals(
+    tmp_path: Path,
+) -> None:
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        add_review_tickets(conn)
+        proposals = list(conn.execute("SELECT id,pending_proposal FROM tickets ORDER BY id"))
+        assert_review_queue(conn, {"active-a", "active-b"})
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET is_backlogged=0 WHERE id='backlogged-a'")
+        conn.commit()
+        assert_review_queue(conn, {"active-a", "active-b", "backlogged-a"})
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id='backlogged-a'")
+        conn.commit()
+        assert_review_queue(conn, {"active-a", "active-b"})
+        assert (
+            list(conn.execute("SELECT id,pending_proposal FROM tickets ORDER BY id")) == proposals
+        )
+
+
+def test_signal_install_repairs_persisted_backlogged_review_memberships(tmp_path: Path) -> None:
+    path = tmp_path / "db"
+    with current_navigation_database(path) as conn:
+        activate(conn)
+        add_review_tickets(conn)
+        proposals = [
+            tuple(row)
+            for row in conn.execute("SELECT id,pending_proposal FROM tickets ORDER BY id")
+        ]
+    review_section = section_key("review", None, "all", "all")
+    # Persist the old bug's derived state without a canonical write or rebuild.
+    # Both backlogged Tickets already retain their unchanged pending proposals.
+    with sqlite3.connect(path) as stale:
+        stale.execute("UPDATE navigation_view_index SET review=1 WHERE kind='ticket'")
+        for identity in ("backlogged-a", "backlogged-b"):
+            stale.execute(
+                "INSERT INTO navigation_view_memberships "
+                "SELECT section_key,profile,locale,kind,?,rank,title_key,? "
+                "FROM navigation_view_memberships WHERE section_key=? AND id='active-a'",
+                (identity, identity.encode(), review_section),
+            )
+        stale.execute(
+            "UPDATE navigation_view_counts SET value=4 WHERE section_key=?", (review_section,)
+        )
+        stale.execute("UPDATE navigation_view_globals SET value=4 WHERE name='review'")
+    # Physical preparation alone must leave the stale state intact. Only the
+    # canonical Signal installation in the next context can repair it.
+    with prepared_navigation_database(path) as persisted:
+        assert (
+            persisted.execute(
+                "SELECT value FROM navigation_view_globals WHERE name='review'"
+            ).fetchone()[0]
+            == 4
+        )
+        assert (
+            persisted.execute(
+                "SELECT count(*) FROM navigation_view_index WHERE review=1"
+            ).fetchone()[0]
+            == 4
+        )
+        assert {
+            tuple(row)
+            for row in persisted.execute(
+                "SELECT value FROM navigation_view_counts WHERE section_key=?", (review_section,)
+            )
+        } == {(4,)}
+        assert {
+            tuple(row)
+            for row in persisted.execute(
+                "SELECT id FROM navigation_view_memberships WHERE section_key=?", (review_section,)
+            )
+        } == {(identity,) for identity in ("active-a", "active-b", "backlogged-a", "backlogged-b")}
+    # The real producer installation on reopen must repair every derived surface.
+    with current_navigation_database(path) as reopened:
+        assert_review_queue(reopened, {"active-a", "active-b"})
+        assert set(
+            tuple(row)
+            for row in reopened.execute("SELECT id FROM navigation_view_index WHERE review=1")
+        ) == {("active-a",), ("active-b",)}
+        assert [
+            tuple(row)
+            for row in reopened.execute("SELECT id,pending_proposal FROM tickets ORDER BY id")
+        ] == proposals
+
+
+def test_settled_update_order_pages_and_live_changes_preserve_active_order(tmp_path: Path) -> None:
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        conn.execute("BEGIN")
+        for identity, created_at, updated_at, settled in (
+            ("a", 10, 100, 1),
+            ("b", 20, 300, 1),
+            ("c", 30, 300, 1),
+            ("d", 40, 200, 1),
+            ("x", 60, 900, 0),
+            ("y", 50, 100, 0),
+        ):
+            add_parent(conn, identity)
+            conn.execute(
+                "UPDATE managers SET created_at=?,updated_at=?,settled=? WHERE id=?",
+                (created_at, updated_at, settled, identity),
+            )
+        conn.commit()
+        query = descriptor(limit=2)
+        settled_window: ViewWindowRequest = {
+            **query["windows"][0],
+            "section": "settled",
+            "owner": None,
+            "child_filter": "all",
+        }
+        query["windows"] = [settled_window]
+        for current in (True, False):
+            _, first = read_content(conn, query, current=current)
+            assert [row["id"] for row in first["windows"][0]["members"]] == ["b", "c"]
+            page = {**query, "windows": [{**settled_window, "anchor": first["windows"][0]["next"]}]}
+            _, second = read_content(conn, cast(ViewRequest, page), current=current)
+            assert [row["id"] for row in second["windows"][0]["members"]] == ["d", "a"]
+            previous = {
+                **query,
+                "windows": [
+                    {
+                        **settled_window,
+                        "anchor": second["windows"][0]["previous"],
+                        "direction": "before",
+                    }
+                ],
+            }
+            _, back = read_content(conn, cast(ViewRequest, previous), current=current)
+            assert back["windows"][0]["members"] == first["windows"][0]["members"]
+            assert first["counts"]["settled"] == second["windows"][0]["total"] == 4
+        conn.execute("BEGIN")
+        conn.execute("UPDATE managers SET updated_at=400 WHERE id='a'")
+        conn.commit()
+        for current in (True, False):
+            _, changed = read_content(conn, query, current=current)
+            assert [row["id"] for row in changed["windows"][0]["members"]] == ["a", "b"]
+            manager = next(
+                row for row in changed["records"] if row["kind"] == "manager" and row["id"] == "a"
+            )
+            assert manager["value"]["updated_at"] == 400
+            query["windows"] = [{**settled_window, "section": "rail_parents"}]
+            _, active = read_content(conn, query, current=current)
+            assert [row["id"] for row in active["windows"][0]["members"]] == ["y", "x"]
+            query["windows"] = [settled_window]
+
+
+def test_signal_install_repairs_old_settled_records_order_and_cursors(tmp_path: Path) -> None:
+    path = tmp_path / "db"
+    query = descriptor(limit=1)
+    query["windows"] = [
+        {**query["windows"][0], "section": "settled", "owner": None, "child_filter": "all"}
+    ]
+    with current_navigation_database(path) as conn:
+        activate(conn)
+        conn.execute("BEGIN")
+        for identity, created_at, updated_at in (("a", 10, 100), ("b", 20, 200)):
+            add_parent(conn, identity)
+            conn.execute(
+                "UPDATE managers SET settled=1,created_at=?,updated_at=? WHERE id=?",
+                (created_at, updated_at, identity),
+            )
+        conn.commit()
+        before, content = read_content(conn, query, current=True)
+        old_anchor = content["windows"][0]["next"]
+    settled_section = section_key("settled", None)
+    # Reproduce the prior build's persisted wire shape and creation-time ranks.
+    with sqlite3.connect(path) as stale:
+        for identity, created_at in (("a", 10), ("b", 20)):
+            raw = json.loads(
+                stale.execute(
+                    "SELECT value FROM navigation_records WHERE kind='manager' AND id=?",
+                    (identity,),
+                ).fetchone()[0]
+            )
+            del raw["updated_at"]
+            stale.execute(
+                "UPDATE navigation_records SET value=? WHERE kind='manager' AND id=?",
+                (json.dumps(raw), identity),
+            )
+            stale.execute(
+                "UPDATE navigation_view_memberships SET rank=? WHERE section_key=? AND id=?",
+                (created_at, settled_section, identity),
+            )
+    with prepared_navigation_database(path) as prepared:
+        assert {
+            row[0]
+            for row in prepared.execute(
+                "SELECT rank FROM navigation_view_memberships WHERE section_key=?",
+                (settled_section,),
+            )
+        } == {10, 20}
+    with current_navigation_database(path) as reopened:
+        after, content = read_content(reopened, query, current=True)
+        assert after["epoch"] != before["epoch"]
+        assert [row["id"] for row in content["windows"][0]["members"]] == ["b"]
+        assert (
+            next(row for row in content["records"] if row["kind"] == "manager")["value"][
+                "updated_at"
+            ]
+            == 200
+        )
+        stale_query = {**query, "windows": [{**query["windows"][0], "anchor": old_anchor}]}
+        _, rebased = read_content(reopened, cast(ViewRequest, stale_query), current=True)
+        assert rebased["windows"][0]["request"]["anchor"] is None
+        assert rebased["windows"][0]["members"] == content["windows"][0]["members"]
 
 
 def test_indexed_windows_counts_and_scope_eviction_are_atomic(tmp_path: Path) -> None:
@@ -136,7 +374,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         assert footprint == {"globals": False, "keys": [], "sections": []}
         common = {
             "wire_version": 3,
-            "projection_version": 3,
+            "projection_version": 4,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -230,7 +468,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         runtime = ScopedDeliveryRuntime(host.delivery)
         query = descriptor(selected="t")
         current, access = asyncio.run(runtime.snapshot(query))
-        assert current["projection_version"] == 3
+        assert current["projection_version"] == 4
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
@@ -241,7 +479,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
             asyncio.run(runtime.snapshot(query, captured=captured))
         degraded, _ = asyncio.run(runtime.snapshot(query))
         assert degraded["mode"] == "degraded"
-        assert degraded["projection_version"] == 3
+        assert degraded["projection_version"] == 4
         assert degraded["authority"]["permit"] is None
         assert degraded["content"]["counts"]["running_conversations"] is None
         assert degraded["content"]["counts"]["unread"] == 1
@@ -290,7 +528,7 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
             for owner in ("o000", "o001", "o002")
         )
         _, lean = read_content(conn, query, current=True)
-        expected_fields = {"title", "created_at", "settled", "conversation_id"}
+        expected_fields = {"title", "created_at", "updated_at", "settled", "conversation_id"}
         managers = [row for row in lean["records"] if row["kind"] == "manager"]
         assert len(managers) == 60
         assert all(set(row["value"]) == expected_fields for row in managers)
@@ -431,7 +669,8 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
             assert refused["windows"][1]["total"] == 1
             assert not any(row["kind"] in ("project", "address") for row in refused["records"])
             assert all(
-                set(row["value"]) == {"title", "created_at", "settled", "conversation_id"}
+                set(row["value"])
+                == {"title", "created_at", "updated_at", "settled", "conversation_id"}
                 for row in refused["records"]
                 if row["kind"] == "manager"
             )
@@ -440,7 +679,7 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
 def test_scoped_request_refuses_the_retired_projection() -> None:
     query = descriptor(limit=0)
     with pytest.raises(ValueError, match="invalid view generation"):
-        request({**query, "projection_version": 1})
+        request({**query, "projection_version": 3})
 
 
 def test_byte_budget_shrinks_pages_fairly_and_overlap_keeps_cursor_neighbors(
@@ -515,8 +754,7 @@ def test_cursor_domain_rebase_empty_edge_and_all_count_scopes(tmp_path: Path) ->
         # Ordinary documents need up to 138 distinct count identities.
         query = descriptor(limit=0)
         query["windows"] = [
-            {**query["windows"][0], "owner": {"kind": "manager", "id": f"o{i}"}}
-            for i in range(138)
+            {**query["windows"][0], "owner": {"kind": "manager", "id": f"o{i}"}} for i in range(138)
         ]
         checked = request(query)
         _, counts = read_content(conn, checked, current=True)

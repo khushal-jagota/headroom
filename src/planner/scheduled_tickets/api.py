@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from planner.core import authority
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.managers.assignment import normalize_assignment
@@ -17,6 +18,7 @@ from planner.scheduled_tickets.contracts import (
 )
 from planner.tickets.api import (
     Clk,
+    Ctx,
     DbConn,
     ModelResolver,
     body_opt_str,
@@ -119,8 +121,9 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
 
 @router.post("/schedules")
 async def create_schedule(
-    raw: dict[str, Any], conn: DbConn, clk: Clk, model_resolver: ModelResolver
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, model_resolver: ModelResolver
 ) -> JsonDict:
+    authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
     raw = normalize_assignment(raw)
     _reject_unknown(raw, _CREATE_KEYS)
     template = _template_from_create(raw, conn)
@@ -133,6 +136,7 @@ async def create_schedule(
     )
     schedule = actions.create_schedule(
         conn,
+        principal=ctx.principal,
         enabled=_body_bool(raw, "enabled", True),
         cadence=parse_enum(
             ScheduleCadence,
@@ -161,8 +165,14 @@ async def get_schedule(schedule_id: str, conn: DbConn) -> JsonDict:
 
 @router.patch("/schedules/{schedule_id}")
 async def patch_schedule(
-    schedule_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk, model_resolver: ModelResolver
+    schedule_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    model_resolver: ModelResolver,
 ) -> JsonDict:
+    authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
     raw = normalize_assignment(raw)
     _reject_unknown(raw, _PATCH_KEYS)
     if not raw:
@@ -217,5 +227,7 @@ async def patch_schedule(
                 {"employee_backend", "employee_launch_model"} & changes.keys()
             ),
         )
-    schedule = actions.update_schedule(conn, schedule_id, changes, now=clk.now_unix())
+    schedule = actions.update_schedule(
+        conn, schedule_id, changes, principal=ctx.principal, now=clk.now_unix()
+    )
     return views.schedule_json(schedule, data.list_occurrences(conn, schedule_id))

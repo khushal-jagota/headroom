@@ -54,6 +54,14 @@
         "skeleton-regions"
       ],
       "companions": []
+    },
+    {
+      "id": "vps",
+      "path": "web/tests/vps-browser.test.mjs",
+      "cases": [
+        "vps-page"
+      ],
+      "companions": []
     }
   ]
 }

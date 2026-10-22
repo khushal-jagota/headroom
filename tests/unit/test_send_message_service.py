@@ -15,7 +15,10 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationSystem,
+    ConversationTurnReference,
     PromptDeliveryMode,
+    PromptDeliveryStarted,
+    PromptDeliverySuppressed,
 )
 from planner.conversation.events import ExplicitReplyMissingEventPayload, PromptEventPayload
 from planner.conversation.in_memory_conversation_system import (
@@ -34,6 +37,19 @@ from planner.message_delivery import recap_request, service
 from planner.runtime import conversation_start
 from planner.runtime.conversation_start import DeliveredMessage
 from planner.tickets import data as tickets_data
+
+ACTIVE_TURN_TIMEOUT_SECONDS = 10
+
+
+async def _wait_for_active_turn(
+    system: ConversationSystem, conversation_id: str
+) -> ConversationTurnReference:
+    async with asyncio.timeout(ACTIVE_TURN_TIMEOUT_SECONDS):
+        while True:
+            turn = await system.active_turn_reference(conversation_id)
+            if turn is not None:
+                return turn
+            await asyncio.sleep(0)
 
 
 def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a_loop(
@@ -135,6 +151,22 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
         )
         conversations.complete_running_turn("c_chief")
 
+        # A pre-wire suppression cannot answer this turn, even when a caller supplies
+        # the default freshness flag. Only a real accepted message pays the reply debt.
+        async def suppressed_send(*args: object, **kwargs: object) -> DeliveredMessage:
+            return DeliveredMessage("c_chief", PromptDeliverySuppressed("obsolete"))
+
+        with monkeypatch.context() as suppression_patch:
+            suppression_patch.setattr(
+                conversation_start, "send_to_agent_conversation", suppressed_send
+            )
+            suppressed = await service.send_message(
+                conversations, tmp_db, fake_clock, RequestContext(worker), chief,
+                "Obsolete reply",
+            )
+            assert isinstance(suppressed.fate, PromptDeliverySuppressed)
+            assert await conversations.turn_expects_reply(worker_turn, chief)
+
         await service.send_message(
             conversations,
             tmp_db,
@@ -229,6 +261,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
                 await service.send_message(
                     subject.system, tmp_db, fake_clock, RequestContext(sender), recipient, text
                 )
+                await subject.settle()
                 events = await subject.recorded_events(f"c_{recipient.id}")
                 prompts = [e.payload for e in events if isinstance(e.payload, PromptEventPayload)]
                 assert len(prompts) == 1
@@ -242,8 +275,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
             assert first_wire.endswith("Manager si_first:\nCoordinate")
             reply_wire = (await subject.backend_writes("c_si_first"))[-1].text
             assert reply_wire == "Manager si_second:\nAgreed"
-            turn = await subject.system.active_turn_reference("c_si_second")
-            assert turn is not None
+            turn = await _wait_for_active_turn(subject.system, "c_si_second")
             assert not await subject.system.turn_expects_reply(turn, first)
 
     asyncio.run(exercise())
@@ -251,6 +283,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
 
 def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_message(
     tmp_db: Connection,
+    tmp_path: Path,
     fake_clock: PlannerTestClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -309,18 +342,20 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
                     conversation_id="c_worker",
                     backend_key=ConversationBackendKey.codex,
                     model="test-model",
+                    workspace_folder=tmp_path,
                 )
             )
-            await service.send_message(
+            result = await service.send_message(
                 subject.system, tmp_db, fake_clock, RequestContext(owner), worker, "Work"
             )
-            owner_turn = await subject.system.active_turn_reference("c_worker")
-            assert owner_turn is not None
+            assert isinstance(result.fate, PromptDeliveryStarted), result.fate
+            owner_turn = await _wait_for_active_turn(subject.system, "c_worker")
             assert await subject.system.turn_expects_reply(owner_turn, owner)
             await subject.tell_agent("c_worker", {"command": "reject_steer"})
             await recap_request.request_recap(
                 subject.system, tmp_db, fake_clock, RequestContext(owner), worker
             )
+            await subject.settle()
             assert modes == [PromptDeliveryMode.queue, PromptDeliveryMode.steer]
             assert len(await subject.backend_writes("c_worker")) == 1
             await subject.complete_running_turn("c_worker")

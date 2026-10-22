@@ -11,6 +11,7 @@ from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.logic import GROUPS, compact, digest, group, project, section_key
 from planner.navigation.views.ordering import ORDERING_GENERATION, sort_key
 from planner.navigation.views.schema import prepared
+from planner.tickets.logic.review import eligible_for_owner_review
 
 Key = tuple[str, str]
 Member = tuple[str, str, str, str, str, int, bytes, bytes]
@@ -44,11 +45,14 @@ def _metadata(
     current = attention and attention["current"]
     review = (
         kind == "ticket"
-        and value["ticket_status"] == "awaiting_approval"
-        and value["ceiling_holder"] == {"kind": "owner", "id": "owner"}
-        and all(
-            value[name] is not None
-            for name in ("gating_field", "proposal_field", "proposal_created_at")
+        and eligible_for_owner_review(
+            ticket_status=value["ticket_status"],
+            is_backlogged=value["is_backlogged"],
+            holder_is_owner=value["ceiling_holder"] == {"kind": "owner", "id": "owner"},
+            has_gating_field=value["gating_field"] is not None,
+            has_proposal=all(
+                value[name] is not None for name in ("proposal_field", "proposal_created_at")
+            ),
         )
     )
     unread = (
@@ -131,7 +135,9 @@ def _members(
                 add(
                     "settled" if value["settled"] else "rail_parents",
                     None,
-                    rank=int(value["created_at"]),
+                    rank=-int(value["updated_at"])
+                    if value["settled"]
+                    else int(value["created_at"]),
                     title_key=b"",
                 )
             elif kind == "ticket":

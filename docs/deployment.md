@@ -406,13 +406,39 @@ to a same-directory temporary file, synced, atomically replaced, and followed by
 directory sync. Panels rejects links, non-regular files, oversized files, unsupported
 versions, malformed fields, and invalid SHAs rather than guessing.
 
+Each workflow command runs under a foreground supervisor from the control checkout.
+After lifecycle start succeeds, the workflow enables renewal for subsequent commands.
+The supervisor renews before each command and every 60 seconds while it runs, changing
+only the timestamps on fresh evidence for that deployment. The file remains version 1,
+so an already-running compatible app reads the renewed timestamps before any restart.
+Renewal stops on a terminal record, command completion, cancellation, or loss of the
+runner parent. Cancellation and parent loss shut down and reap the owned command
+and its descendants, including check servers that create their own sessions. The
+supervisor identifies adopted descendants directly and uses PID handles when signaling
+them, so a reused PID cannot select an unrelated process. Service-manager apps are
+outside this owned tree. There is no independent heartbeat that can outlive the work.
+
+Renewal lock acquisition is limited to five seconds. A refused renewal prevents an
+ordinary command from starting. If renewal fails during a command, the supervisor stops
+renewing and lets that command finish before failing the step; it must not interrupt an
+app swap or rollback just because status storage failed. Cleanup has a narrow exception
+that allows it to start after renewal refusal, still returns failure afterward, and
+renews throughout healthy long cleanup. Cancellation and parent checks still apply.
+The lifecycle finalizer uses Bash directly so renewal refusal cannot prevent the failure
+record. Production cleanup remains before finalization; rehearsal proof and cleanup
+retain their existing order and isolated paths.
+
 `GET /api/deployment-status` projects that evidence into `idle`, `preparing`,
 `restarting`, `back_up`, `problem`, or `unknown`. Preparation and restart evidence
-expires if the runner disappears. A proved success appears as `back_up` only briefly
-and only when the running app SHA exactly matches the requested SHA. Failure and
+expires 15 minutes after the runner last renews it. A proved success appears as
+`back_up` for 24 hours and only when the running app SHA exactly matches the requested SHA. Failure and
 rollback remain problems until a later deployment supersedes them. The server watches
 the lifecycle path and sends the existing contentless change signal after create,
 replace, change, or deletion, so connected browsers re-read the canonical file.
+The connected shell shows “Deployed” for fresh success, with a steady status mark.
+It removes that confirmation at expiry, even without another response from the server.
+The 24-hour window schedules a browser timer for at most 86,400,001 milliseconds,
+which is below the signed 32-bit limit of 2,147,483,647 milliseconds.
 
 An app deployed before this lifecycle feature cannot expose the new status endpoints or
 observe runner updates while that old app is serving. The current workflow tool and
@@ -458,6 +484,24 @@ transaction removes the fallback.
 Code rollback uses the same workflow with an earlier full SHA. Because database
 migrations may be destructive, automatic failure recovery restores the pre-cutover
 snapshot; a later intentional rollback deploy does not independently rewind data.
+
+## Interrupted agent sessions
+
+The operator-owned deployment path now invokes a supervised capture helper after a replacement or rollback stop. This adds a read-only database capture and an atomic diagnostic write to each stop window.
+
+The helper takes the existing conversation ownership lease without a wait. It captures exact unresolved turn occurrences and their current associations. It never initializes the application or migrates the stopped database. An unchanged-commit deployment does not stop Panels and does not invoke capture.
+
+The helper has a two-second budget per stop. Timeout cleanup targets only that helper process. The deployment log reports capture duration and cleanup duration separately. Measurements must test this budget before a review accepts the added stop duration.
+
+Capture failure does not veto deployment. The existing backup, exact-SHA health, and rollback gates keep their current effect. A successful release can still report an unavailable interruption account. Missing or invalid evidence never means zero interruptions.
+
+Evidence lives in `data/deploy-interruptions`, outside the application replacement tree and the database-and-files restore set. Each stop receives a distinct capture identity under the deployment identity. A partial rollback account remains unavailable even if another capture for that deployment succeeds.
+
+At boot, admitted conversation reconciliation imports exact occurrences and marks matching outstanding Worker claims errored. It does not send prompts, replay uncertain actions, or wake a Manager for automatic recovery. Completed turns and changed claims remain intact.
+
+The shell retains an interrupted-session list after the brief deployment indicator expires. Khushal can use the existing Restart Worker action or send an authorized message. Panels includes the interruption explanation in the actual backend prompt. A queued receipt does not count as resumption.
+
+An older deployment tool cannot supply missing capture evidence. A crash between service stop and capture leaves the cause unknown. After rollback removes a candidate conversation, its named historical entry explains that the conversation is unavailable.
 
 ## Existing-host precondition
 

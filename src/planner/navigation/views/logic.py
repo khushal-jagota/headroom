@@ -50,7 +50,7 @@ def project(
                 "id": record["id"],
                 "value": {
                     name: value[name]
-                    for name in ("title", "created_at", "settled", "conversation_id")
+                    for name in ("title", "created_at", "updated_at", "settled", "conversation_id")
                 },
             },
         )
