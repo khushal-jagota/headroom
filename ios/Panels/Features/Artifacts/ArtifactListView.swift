@@ -12,36 +12,37 @@ struct ArtifactListView: View {
     @State private var isLoading = false
     @State private var error: String?
     @State private var hasLoaded = false
+    @State private var selectedArtifact: ArtifactTarget?
+    @State private var search = ""
+    @State private var refreshVersion = 0
+    private var fileCount: Int { entries.reduce(0) { $0 + ($1.directory == nil ? 1 : $1.childCount) } }
 
     var body: some View {
+        searchContent
+            .navigationDestination(item: $selectedArtifact) { target in
+                ArtifactViewerView(owner: target.owner, path: target.path, title: target.title)
+            }
+            .navigationTitle("Artifacts")
+            .navigationBarTitleDisplayMode(.inline)
+            .panelsScreen()
+            .task { await load() }
+            .refreshable { await load(); refreshVersion += 1 }
+    }
+    @ViewBuilder private var searchContent: some View {
+        if fileCount > 12 { list.searchable(text: $search, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Find a file") }
+        else { list }
+    }
+    private var list: some View {
         List {
             if let error { LoadErrorView(message: error) { await load() }.listRowBackground(Color.clear) }
-            ForEach(entries) { entry in
-                HStack(spacing: PanelsTheme.Space.md) {
-                    if let target = ArtifactTarget.from(entry: entry, owner: owner, baseURL: store.baseURL) {
-                        NavigationLink(value: AppRoute.artifact(owner: target.owner, path: target.path, title: target.title)) {
-                            row(entry, symbol: target.kind.symbol)
-                        }
-                        if let folder = entry.directory {
-                            NavigationLink(value: AppRoute.artifacts(owner: owner, directory: folder)) {
-                                Image(systemName: "folder").padding(.vertical, PanelsTheme.Space.sm)
-                            }.accessibilityLabel("Browse \(entry.label), \(entry.childCount) items")
-                                .buttonStyle(.borderless)
-                        }
-                    } else if let folder = entry.directory {
-                        NavigationLink(value: AppRoute.artifacts(owner: owner, directory: folder)) {
-                            row(entry, symbol: "folder")
-                        }
-                    } else {
-                        row(entry, symbol: "doc").foregroundStyle(PanelsTheme.faint)
-                    }
-                }.listRowBackground(Color.clear)
-                    .listRowSeparatorTint(PanelsTheme.border)
-                    .padding(.vertical, PanelsTheme.Space.xs)
+            ForEach(entries.filter { $0.directory != nil }) { folder in
+                ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { selectedArtifact = $0 })
             }
+            fileSection(entries.filter { $0.directory == nil && !$0.key.hasPrefix("linked:") }, title: directory.isEmpty ? "Files" : (directory as NSString).lastPathComponent)
+            fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From fields")
             if hasLoaded && nextOffset < total {
-                Button { Haptics.light(); Task { await load(more: true) } } label: {
-                    HStack { Text("Load more"); Spacer(); if isLoading { ProgressView() } }
+                Button { Task { await load(more: true) } } label: {
+                    HStack { Text("More files"); Spacer(); if isLoading { ProgressView() } }
                 }.disabled(isLoading).listRowBackground(Color.clear)
             }
         }
@@ -52,25 +53,14 @@ struct ArtifactListView: View {
                 ContentUnavailableView("No artifacts yet", systemImage: "folder", description: Text("Files will appear here when they are added."))
             }
         }
-        .navigationTitle(directory.isEmpty ? "Artifacts" : (directory as NSString).lastPathComponent)
-        .navigationBarTitleDisplayMode(.inline)
-        .panelsScreen()
-        .task { await load() }
-        .refreshable { Haptics.light(); await load() }
     }
-
-    private func row(_ entry: ArtifactEntry, symbol: String) -> some View {
-        HStack(spacing: PanelsTheme.Space.lg) {
-            Image(systemName: symbol).font(.title3).foregroundStyle(PanelsTheme.accent)
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                Text(entry.label).font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.strong).lineLimit(2)
-                Text(entry.href == nil ? "\(entry.childCount) items" : entry.kind.uppercased())
-                    .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
-            }.padding(.vertical, PanelsTheme.Space.sm)
-        }.frame(minHeight: 44)
+    @ViewBuilder private func fileSection(_ files: [ArtifactEntry], title: String) -> some View {
+        if !files.isEmpty {
+            Section { ForEach(files.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }) { entry in
+                ArtifactFileRow(owner: owner, entry: entry, open: { selectedArtifact = $0 })
+            } } header: { Text(title.uppercased()).font(.caption2).foregroundStyle(PanelsTheme.faint) }
+        }
     }
-
     private func load(more: Bool = false) async {
         guard !isLoading else { return }
         isLoading = true
@@ -88,6 +78,60 @@ struct ArtifactListView: View {
             } else { entries = page.entries }
             nextOffset = page.offset + page.entries.count
             total = page.total; revision = page.revision; hasLoaded = true; error = nil
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+}
+
+private struct ArtifactFolderSection: View {
+    let owner: ArtifactOwner
+    let folder: ArtifactEntry
+    let search: String
+    let refreshVersion: Int
+    let open: (ArtifactTarget) -> Void
+    @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var entries: [ArtifactEntry] = []
+    @State private var total = 0
+    @State private var revision: String?
+    @State private var expanded = false
+    @State private var loading = false
+    @State private var error: String?
+    private var visible: [ArtifactEntry] {
+        if !search.isEmpty { return entries.filter { $0.label.localizedCaseInsensitiveContains(search) } }
+        return expanded ? entries : Array(entries.prefix(5))
+    }
+    var body: some View {
+        Section {
+            ForEach(visible) { entry in
+                if let directory = entry.directory {
+                    NavigationLink(value: AppRoute.artifacts(owner: owner, directory: directory)) {
+                        Label(entry.label, systemImage: "folder")
+                    }.listRowBackground(Color.clear)
+                } else { ArtifactFileRow(owner: owner, entry: entry, open: open) }
+            }
+            if let error { LoadErrorView(message: error) { await load() }.listRowBackground(Color.clear) }
+            if loading && entries.isEmpty { ProgressView().listRowBackground(Color.clear) }
+            if search.isEmpty && total > visible.count {
+                Button("\(total - visible.count) more") {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) { expanded = true }
+                    if entries.count < total { Task { await load(more: true) } }
+                }.disabled(loading).listRowBackground(Color.clear)
+            }
+        } header: { Text(folder.label.uppercased()).font(.caption2).foregroundStyle(PanelsTheme.faint) }
+        .task(id: refreshVersion) { await load() }
+    }
+    private func load(more: Bool = false) async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            var page = try await store.client.artifacts(owner: owner, directory: folder.directory ?? folder.path, offset: more ? entries.count : 0)
+            try Task.checkCancellation()
+            let append = more && revision == page.revision
+            if more && !append { page = try await store.client.artifacts(owner: owner, directory: folder.directory ?? folder.path) }
+            try Task.checkCancellation()
+            entries = append ? entries + page.entries.filter { item in !entries.contains { $0.id == item.id } } : page.entries
+            total = page.total; revision = page.revision; error = nil
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }

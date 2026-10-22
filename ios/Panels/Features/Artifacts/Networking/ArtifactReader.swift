@@ -38,7 +38,13 @@ extension APIClient {
             if [.html, .markdown, .text].contains(target.kind) {
                 let size = try localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 // Large source files remain shareable without allocating an unbounded text view.
-                if size <= 8 * 1_024 * 1_024 { text = try? String(contentsOf: localURL, encoding: .utf8) }
+                if target.kind == .text {
+                    let handle = try FileHandle(forReadingFrom: localURL)
+                    defer { try? handle.close() }
+                    let prefix = try handle.read(upToCount: 256 * 1_024) ?? Data()
+                    text = String(decoding: prefix, as: UTF8.self)
+                    if size > 256 * 1_024 { text! += "\n\n[Preview limited to 256 KB. Share exports the whole file.]" }
+                } else if size <= 8 * 1_024 * 1_024 { text = try? String(contentsOf: localURL, encoding: .utf8) }
             }
             return ArtifactDocument(localURL: localURL, remoteURL: remoteURL, text: text)
         } catch {

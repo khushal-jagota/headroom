@@ -8,8 +8,9 @@ struct ArtifactWebView: UIViewRepresentable {
     let openLink: (URL) -> Void
     let failed: (String) -> Void
     let ready: () -> Void
+    let reload: () -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(openLink: openLink, failed: failed, ready: ready) }
+    func makeCoordinator() -> Coordinator { Coordinator(openLink: openLink, failed: failed, ready: ready, reload: reload) }
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
@@ -20,6 +21,10 @@ struct ArtifactWebView: UIViewRepresentable {
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
         view.isInspectable = false
+        view.scrollView.alwaysBounceVertical = true
+        let refresh = UIRefreshControl()
+        refresh.addTarget(context.coordinator, action: #selector(Coordinator.refresh(_:)), for: .valueChanged)
+        view.scrollView.refreshControl = refresh
         return view
     }
     func updateUIView(_ view: WKWebView, context: Context) {
@@ -64,7 +69,9 @@ struct ArtifactWebView: UIViewRepresentable {
         let openLink: (URL) -> Void
         let failed: (String) -> Void
         let ready: () -> Void
-        init(openLink: @escaping (URL) -> Void, failed: @escaping (String) -> Void, ready: @escaping () -> Void) { self.openLink = openLink; self.failed = failed; self.ready = ready }
+        let reload: () -> Void
+        @objc func refresh(_ control: UIRefreshControl) { reload(); control.endRefreshing() }
+        init(openLink: @escaping (URL) -> Void, failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void) { self.openLink = openLink; self.failed = failed; self.ready = ready; self.reload = reload }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
             if action.navigationType == .linkActivated, let url = action.request.url {
                 if url.scheme == "about" { return .allow }

@@ -9,6 +9,9 @@ final class ArtifactLogicTests: XCTestCase {
         let target = try XCTUnwrap(ArtifactTarget.from(entry: entry, owner: .init(kind: .ticket, id: "t_catalog"), baseURL: base))
         XCTAssertEqual(target.owner, .init(kind: .manager, id: "si_other"))
         XCTAssertEqual(target.path, "artifacts/Plan #1.html")
+        let copied = try XCTUnwrap(ArtifactTarget.from(target.previewURL(baseURL: base), baseURL: base))
+        XCTAssertEqual(copied.owner, target.owner)
+        XCTAssertEqual(copied.path, target.path)
         XCTAssertEqual(try APIClient(baseURL: base).artifactURL(target).absoluteString, "https://panels.example/files/managers/si_other/artifacts/Plan%20%231.html")
         let preview = URL(string: "https://panels.example/#/preview?source=ticket&ticket=t_linked&path=artifacts%2FPlan%20%231.md")!
         let previewTarget = try XCTUnwrap(ArtifactTarget.from(preview, baseURL: base))

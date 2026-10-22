@@ -44,6 +44,16 @@ struct ArtifactTarget: Hashable, Identifiable, Sendable {
         return nil
     }
 
+    func previewURL(baseURL: URL) -> URL {
+        var preview = URLComponents()
+        preview.path = "/preview"
+        preview.queryItems = [URLQueryItem(name: "source", value: owner.kind.rawValue),
+                              URLQueryItem(name: owner.kind == .ticket ? "ticket" : "manager", value: owner.id),
+                              URLQueryItem(name: "path", value: path)]
+        var result = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        result.percentEncodedFragment = preview.string
+        return result.url!
+    }
     var kind: ArtifactKind { ArtifactKind(path: path) }
 }
 
@@ -51,7 +61,7 @@ enum ArtifactKind: Equatable, Sendable {
     case html, markdown, image, text, file
     init(path: String) {
         switch (path as NSString).pathExtension.lowercased() {
-        case "html", "htm": self = .html
+        case "html", "htm", "svg": self = .html
         case "md", "markdown": self = .markdown
         case "png", "jpg", "jpeg", "heic", "heif", "webp", "bmp", "avif": self = .image
         case "txt", "json", "jsonl", "csv", "tsv", "log", "yaml", "yml", "swift", "py", "css", "js": self = .text
@@ -60,7 +70,7 @@ enum ArtifactKind: Equatable, Sendable {
     }
     var symbol: String {
         switch self {
-        case .html: "globe"
+        case .html: "chevron.left.forwardslash.chevron.right"
         case .markdown, .text: "doc.text"
         case .image: "photo"
         case .file: "doc"

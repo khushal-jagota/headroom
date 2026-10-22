@@ -234,16 +234,27 @@ They add no backend or browser host. Live Simulator verification invokes no writ
 Ticket and Orchestrator screens open `AppRoute.artifacts(owner:directory:)`, with
 an empty directory for the root. `ArtifactListView(owner:directory:)` is also
 available directly inside a navigation stack with the app's route destinations.
+`ArtifactsRow(owner:count:)` supplies the approved 50pt entry row with count and
+no chevron; it is absent at zero. Page owners supply the catalog count.
 `AppRoute.artifact(owner:path:title:)` opens a specific managed file. Catalog links
 retain their actual owner, including links to files on another ticket.
 
 The list reads the selected directory on arrival and pull-to-refresh. HTML runs
 inside a sandboxed frame in a nonpersistent WKWebView, with relative file assets
-and native navigation for managed links. Markdown uses native text, and images
-support pinch, pan and double-tap zoom. Other supported files use Quick Look.
+and native navigation for managed links. Folder sections show five files before
+expanding, with image thumbnails and Open/Share/Copy link context menus.
+Markdown uses native text, and images support pinch, pan and double-tap zoom.
+PDF uses continuous PDFKit scrolling, supported media uses AVKit, and other
+supported files use Quick Look. Text wraps and previews at most 256 KB.
 Sharing sends the downloaded file through the system share sheet. Temporary files
 are removed when their preview and share sheet release them. Files too large for
-the text preview remain available to Quick Look or sharing. The app never writes
+the HTML/markdown preview remain available to Quick Look or sharing. Copy link
+copies the web preview address. Artifact pushes and zooms are silent; Copy link
+uses success feedback and reload errors use error feedback. The shared shell
+retains ownership of global navigation feedback and deployment chrome. The
+viewer reserves the existing conversation placeholder for non-image files;
+callers opening from Review can set `showsConversationPlaceholder: false`. No
+conversation state or composer is created. The app never writes
 to the server when listing, opening, reloading or sharing artifacts.
 
 The three artifact logic tests cover cross-owner URLs and encoding, unsafe file

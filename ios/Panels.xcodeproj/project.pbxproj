@@ -17,6 +17,7 @@
 		23C2B5D08DA29C319EDD15F4 /* ArtifactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCEE66ABADAB38227077931 /* ArtifactListView.swift */; };
 		2B76A62CFB6F9FF7119EBA2B /* ChiefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE13519E521C9A6D6DD3A99A /* ChiefView.swift */; };
 		2D3FB57182FBE92C75D051B5 /* VPSModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AAEB17AE9D48BF59E962F0F /* VPSModels.swift */; };
+		397C054454D53D07F27B46A8 /* ArtifactFileRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA3C5CFBD0D7EA7E6423717B /* ArtifactFileRow.swift */; };
 		3A4F11BA595CDD3DBBFB589A /* IdeasAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F9EF972A1EF8BB5CC7F4BF /* IdeasAPI.swift */; };
 		3CC611801A3DAC67251F8483 /* ChiefAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D14AD8472650E2F9A169B8B /* ChiefAPI.swift */; };
 		3E90EAD8718A7CC68F1E9D6B /* managers.json in Resources */ = {isa = PBXBuildFile; fileRef = D00C1733528B6700CE613C4A /* managers.json */; };
@@ -149,6 +150,7 @@
 		AD8BD0258E05C85BEB58764E /* OrchestratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrchestratorView.swift; sourceTree = "<group>"; };
 		ADB52188776E5136E566E076 /* WorkspacePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePresentationTests.swift; sourceTree = "<group>"; };
 		B0434C98350BF77AD359C7B6 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		BA3C5CFBD0D7EA7E6423717B /* ArtifactFileRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactFileRow.swift; sourceTree = "<group>"; };
 		BB95C680FF6CF50767A7CE6A /* FeedbackAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackAPI.swift; sourceTree = "<group>"; };
 		C54D786EA56D45854D6EFDE9 /* ArtifactImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactImageView.swift; sourceTree = "<group>"; };
 		C7D9B0CB8A6B3EA62C937A4E /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -512,6 +514,7 @@
 		D4149E90CC4F5D61038CC2E0 /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				BA3C5CFBD0D7EA7E6423717B /* ArtifactFileRow.swift */,
 				C54D786EA56D45854D6EFDE9 /* ArtifactImageView.swift */,
 				2FFCB07FFB8DF995300C644E /* ArtifactMarkdownView.swift */,
 				D29C8CDDC8655C079CF659EB /* ArtifactSystemPreview.swift */,
@@ -676,6 +679,7 @@
 				A4208FFEBA30998FD7DB60E3 /* AgentRecap.swift in Sources */,
 				521BBB6845A8EB2A56CDAD2B /* AppShell.swift in Sources */,
 				4DBA282D2CC61CAA1445B83A /* AppStore.swift in Sources */,
+				397C054454D53D07F27B46A8 /* ArtifactFileRow.swift in Sources */,
 				D051ED49F0870C1000840B7B /* ArtifactImageView.swift in Sources */,
 				23C2B5D08DA29C319EDD15F4 /* ArtifactListView.swift in Sources */,
 				AFFE3EDD867BCE1EA25DFBFC /* ArtifactMarkdown.swift in Sources */,

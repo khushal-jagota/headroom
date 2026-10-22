@@ -14,6 +14,7 @@ final class ZoomImageScrollView: UIScrollView, UIScrollViewDelegate {
     init(image: UIImage) {
         picture = UIImageView(image: image)
         super.init(frame: .zero)
+        backgroundColor = UIColor(white: 0.043, alpha: 1)
         delegate = self
         maximumZoomScale = 5
         minimumZoomScale = 1
@@ -38,9 +39,7 @@ final class ZoomImageScrollView: UIScrollView, UIScrollViewDelegate {
         }
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { picture }
-    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) { Haptics.selection() }
     @objc private func doubleTap(_ recognizer: UITapGestureRecognizer) {
-        Haptics.light()
         let animated = !UIAccessibility.isReduceMotionEnabled
         if zoomScale > 1 { setZoomScale(1, animated: animated) }
         else {
