@@ -25,8 +25,15 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
   }];
   const requests: any[] = [];
   let deployment = {state:"preparing", deployed_sha:null,target_sha:"abc",outcome:null,detail:null,valid_until:new Date(Date.now()+600000).toISOString()};
+  // The release the deploy produces. The monitor rechecks on pageshow.
+  let servedSha = "booted";
+  (window as any).__release = (sha: string) => {
+    servedSha = sha;
+    window.dispatchEvent(new Event("pageshow"));
+  };
   (window as any).__deployment = async (state: string) => {
-    deployment = {...deployment, state};
+    // Each call renews the window, so a state is capturable at any point in the case.
+    deployment = {...deployment, state, valid_until:new Date(Date.now()+600000).toISOString()};
     await queryClient.invalidateQueries({queryKey:["deployment-status"]});
   };
   let interruptions = {accounts: [] as any[]};
@@ -60,6 +67,7 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
       if (key === "/api/deployment-status") return json({ key, epoch: "fixture", revision: "1", body: deployment });
       if (key === "/api/feedback/count") return json({ key, epoch: "fixture", revision: String(response().open_count), body: { open_count: response().open_count } });
     }
+    if (path.startsWith("/api/meta")) return json({ app_sha: servedSha });
     if (path === "/api/deployment-interruptions") return json(interruptions);
     if (path === "/api/tickets/worker/restart-worker" && method === "POST") {
       interruptions.accounts[0].entries[0].recovery_state = "resumed";
@@ -93,7 +101,7 @@ import "../../assets/tokens.css";
 import "../../assets/app.css";
 mount(Host, { target: document.getElementById("app")! });
 `, "utf8");
-  await writeFile(indexPath, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body><div id="app"></div><script type="module" src="./${mainPath.split("/").at(-1)}"></script></body></html>`, "utf8");
+  await writeFile(indexPath, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="panels-app-sha" content="booted"></head><body><div id="app"></div><script type="module" src="./${mainPath.split("/").at(-1)}"></script></body></html>`, "utf8");
 
   return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./feedback-inbox.py", import.meta.url))};
 }
