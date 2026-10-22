@@ -17,7 +17,6 @@ struct ChiefView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                if let error { LoadErrorView(message: error) { await load() } }
                 if let chief {
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                         AgentEyebrow(title: "", signal: chief.conversationSignal)
@@ -43,8 +42,6 @@ struct ChiefView: View {
                         }
                     }
                     ConversationPlaceholder()
-                } else if error == nil {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
@@ -58,13 +55,14 @@ struct ChiefView: View {
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 80 } action: { _, collapsed in
             withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { headerCollapsed = collapsed }
         }
-        .navigationTitle(headerCollapsed ? chief?.label ?? "Chief of Staff" : "")
+        .navigationTitle((chief == nil || headerCollapsed) ? chief?.label ?? "Chief of Staff" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
         .toolbar { ToolbarItem(placement: .topBarTrailing) {
             AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
         } }
         .task(id: store.revision) { await load() }
-        .refreshable { Haptics.light(); await load() }
+        .refreshable { await load() }
+        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error) { await load() }
         .accessibilityIdentifier("chief-screen")
     }
 
