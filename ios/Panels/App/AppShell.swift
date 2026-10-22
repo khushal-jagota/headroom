@@ -24,8 +24,12 @@ struct AppShell: View {
         })) {
             NavigationStack(path: $reviewPath) {
                 ReviewView(openTicket: { id in
-                    selectedTab = .workspace
-                    workspacePath.append(.ticket(id))
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        workspacePath.append(.ticket(id))
+                        selectedTab = .workspace
+                    }
                 })
                     .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }

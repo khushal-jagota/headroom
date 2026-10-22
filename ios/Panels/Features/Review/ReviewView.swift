@@ -3,7 +3,6 @@ import SwiftUI
 struct ReviewView: View {
     var openTicket: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queue = ReviewQueue()
 
     var body: some View {
@@ -12,7 +11,7 @@ struct ReviewView: View {
                 ReviewProposalView(item: item, openTicket: openTicket.map { action in { action(item.ticketId) } }, onSkip: { advance(item, resolved: false) }, onResolved: {
                     advance(item, resolved: true)
                     Task { await store.refresh() }
-                }).id(item.id).transition(.opacity)
+                }).id(item.id).transition(.identity)
             } else if store.review != nil {
                 ScrollView {
                     VStack(spacing: PanelsTheme.Space.lg) {
@@ -36,7 +35,9 @@ struct ReviewView: View {
     }
 
     private func advance(_ item: ReviewItem, resolved: Bool) {
-        withAnimation(.easeOut(duration: reduceMotion ? 0 : PanelsTheme.Motion.base)) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
             if resolved { queue.resolve(item) } else { queue.skip(item) }
         }
     }
@@ -94,6 +95,7 @@ private struct ReviewProposalView: View {
                             }.disabled(decision.busy)
                         }
                     }
+                    .animation(reduceMotion ? nil : ReviewStyle.entrance, value: decision.proposal != nil)
                     .offset(x: reduceMotion ? 0 : drag)
                     .opacity(leaving ? 0 : 1)
                     .simultaneousGesture(DragGesture(minimumDistance: 24)
@@ -114,8 +116,13 @@ private struct ReviewProposalView: View {
             }
             .refreshable { await store.refresh(); await decision.load(item: item, api: store.client) }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("Skip") { skip(width: 12, button: true) }.foregroundStyle(PanelsTheme.muted).disabled(decision.busy || leaving).accessibilityIdentifier("review.skip") }
-                ToolbarItemGroup(placement: .keyboard) { if editing { Spacer(); Button("Done") { editorFocused = false; editing = false } } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if editing {
+                        Button("Done") { editorFocused = false; editing = false }
+                    } else {
+                        Button("Skip") { skip(width: 12, button: true) }.foregroundStyle(PanelsTheme.muted).disabled(decision.busy || leaving).accessibilityIdentifier("review.skip")
+                    }
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { actionBar }

@@ -8,7 +8,7 @@ items brings them back. A new proposal on the same ticket appears again.
 The approved Round 1 design puts Skip in the top bar, the title in bundled
 Newsreader, and Approve and Send back in a pinned bottom bar. The title opens the
 ticket in Workspace; its long-press menu offers Rename. Recaps expand in place.
-Tapping the proposal edits it in place, with Done above the keyboard. Approval
+Tapping the proposal edits it in place, with Done in the navigation bar. Approval
 sends the edited text together with the exact revision that was read. If the
 proposal changes during editing, Review keeps the draft and requires a reload.
 
@@ -38,7 +38,9 @@ has no conditional revision parameter, so another writer can change the proposal
 between that check and the send-back request; this is not an atomic guarantee.
 
 This screen does not implement the pending conversation redesign. The title opens
-its ticket in Workspace. Group labels retain normal title case. Every pushed
+its ticket in Workspace. Cross-tab navigation sets the destination without an
+intermediate Workspace-root animation. Queue replacement does not cross-fade
+the outgoing and incoming titles or action bars. Group labels retain normal title case. Every pushed
 route hides the tab bar; returning to a tab root restores it.
 
 The shell uses a small deployment capsule inside each root and detail page's safe
