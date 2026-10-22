@@ -6,7 +6,7 @@ import type { DeploymentStatus } from "../src/lib/types";
 const now = Date.parse("2026-10-21T12:00:00Z");
 const status = (changes: Partial<DeploymentStatus> = {}): DeploymentStatus => ({
   state: "idle", deployed_sha: null, target_sha: null, outcome: null,
-  detail: null, valid_until: null, ...changes
+  detail: null, valid_until: null, success_display_until: null, ...changes
 });
 
 describe("deployment status precedence and expiry", () => {
@@ -36,22 +36,34 @@ describe("deployment status precedence and expiry", () => {
       }
     }
   });
-  it("keeps a full day of success within the browser timer limit and expires at its boundary", () => {
-    const expiry = now + 24 * 60 * 60 * 1000;
-    const recovered = status({ state: "back_up", outcome: "succeeded", valid_until: new Date(expiry).toISOString() });
-    const delay = deploymentStatusExpiryDelay(recovered, now);
-    expect(delay).toBe(86_400_001);
-    expect(delay).toBeLessThan(2 ** 31 - 1);
-    expect(resolveDeploymentStatus(recovered, "connected", expiry - 1)).toBe("back_up");
-    expect(deploymentStatusExpiryDelay(recovered, expiry - 1)).toBe(2);
-    expect(resolveDeploymentStatus(recovered, "connected", expiry)).toBe("connected");
-    expect(deploymentStatusExpiryDelay(recovered, expiry)).toBeNull();
-  });
-  it("requires a live connection for recovery and returns to connection status after expiry", () => {
-    const recovered = status({ state: "back_up", outcome: "succeeded", valid_until: new Date(now + 1000).toISOString() });
-    expect(resolveDeploymentStatus(recovered, "connected", now)).toBe("back_up");
+  it("requires both success deadlines and wakes at the earlier boundary", () => {
+    const validUntil = now + 86_400_000;
+    const displayUntil = now + 300_000;
+    const recovered = status({ state: "back_up", outcome: "succeeded",
+      valid_until: new Date(validUntil).toISOString(),
+      success_display_until: new Date(displayUntil).toISOString() });
+    expect(deploymentStatusExpiryDelay(recovered, now)).toBe(300_001);
+    expect(resolveDeploymentStatus(recovered, "connected", displayUntil - 1)).toBe("back_up");
+    expect(resolveDeploymentStatus(recovered, "connected", displayUntil)).toBe("connected");
+    expect(deploymentStatusExpiryDelay(recovered, displayUntil)).toBeNull();
+    const shorterRecord = { ...recovered, valid_until: new Date(now + 1000).toISOString() };
+    expect(deploymentStatusExpiry(shorterRecord, now)).toBe(now + 1000);
+    expect(resolveDeploymentStatus(shorterRecord, "connected", now + 1000)).toBe("connected");
+    // Older API bodies can omit the new field. Neither absence nor malformed
+    // evidence must turn record retention back into card visibility.
+    for (const field of ["valid_until", "success_display_until"] as const) {
+      for (const value of [null, undefined, "invalid", new Date(now).toISOString()]) {
+        const unusable = { ...recovered, [field]: value } as DeploymentStatus;
+        expect(resolveDeploymentStatus(unusable, "connected", now)).toBe("connected");
+        expect(deploymentStatusExpiry(unusable, now)).toBeNull();
+      }
+    }
+    // Disconnection hides success. Reconnection uses the original deadline.
     expect(resolveDeploymentStatus(recovered, "reconnecting", now)).toBe("reconnecting");
-    expect(resolveDeploymentStatus(recovered, "connected", now + 1000)).toBe("connected");
+    expect(deploymentStatusExpiryDelay(recovered, now, "reconnecting")).toBeNull();
+    expect(resolveDeploymentStatus(recovered, "connected", now + 1000)).toBe("back_up");
+    expect(deploymentStatusExpiry(recovered, now + 1000)).toBe(displayUntil);
+    expect(resolveDeploymentStatus(recovered, "reconnecting", displayUntil)).toBe("reconnecting");
     expect(resolveDeploymentStatus(status(), "connected", now)).toBe("connected");
     expect(resolveDeploymentStatus(undefined, "connected", now)).toBe("reconnecting");
     expect(deploymentStatusExpiryDelay(status(), now)).toBeNull();
