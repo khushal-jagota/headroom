@@ -17,6 +17,10 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.panels.ios
+        CODE_SIGN_ENTITLEMENTS: Panels/Panels.entitlements
+        APNS_ENVIRONMENT: development
+        APNS_REGISTRATION_ENABLED: NO
+        INFOPLIST_FILE: Panels/Info.plist
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
@@ -35,6 +39,18 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.panels.ios.tests
         GENERATE_INFOPLIST_FILE: YES
+  PanelsNotificationUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [PanelsNotificationUITests]
+    dependencies:
+      - target: Panels
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.panels.ios.notification-uitests
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
+        TEST_TARGET_NAME: Panels
 schemes:
   Panels:
     build:
@@ -42,3 +58,9 @@ schemes:
         Panels: all
     test:
       targets: [PanelsTests]
+  PanelsNotifications:
+    build:
+      targets:
+        Panels: all
+    test:
+      targets: [PanelsTests, PanelsNotificationUITests]

@@ -1,0 +1,12 @@
+{
+  "aps": {
+    "alert": {
+      "title": "iOS app \u00b7 Needs approval",
+      "body": "The implementation is ready. Review and approve the proposal."
+    },
+    "sound": "default",
+    "thread-id": "panels-review"
+  },
+  "server_url": "https://panels-vps.tail687c57.ts.net",
+  "route": "/#/review?ticket=notify-ticket"
+}

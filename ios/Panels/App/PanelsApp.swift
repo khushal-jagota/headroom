@@ -1,6 +1,8 @@
 import SwiftUI
 
 @main struct PanelsApp: App {
+    @UIApplicationDelegateAdaptor(PanelsNotificationDelegate.self) private var notificationDelegate
+    @State private var notifications = NotificationController.shared
     @State private var store = AppStore()
     var body: some Scene {
         WindowGroup {
@@ -14,7 +16,7 @@ import SwiftUI
 #else
                 AppShell()
 #endif
-            }.environment(store)
+            }.environment(store).environment(notifications)
                 .preferredColorScheme(.dark)
                 .tint(PanelsTheme.accent)
         }
