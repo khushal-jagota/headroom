@@ -295,6 +295,7 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
         "recap": "",
         "recap_preview": "",
         "created_at": 13,
+        **({"updated_at": 14} if renamed else {}),
         "project_id": "fixture-project",
         "settled": False,
         "conversation_id": None,
@@ -457,7 +458,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
             _assert_canonical(conn)
             records = _assert_projection(conn, activated=True)
             installed = snapshot(conn)
-            assert installed["semantics"] == "attention-knowledge-v8-manager"
+            assert installed["semantics"] == "attention-knowledge-v8-manager-updated-at"
             assert installed["epoch"] != physical["epoch"]
             assert installed["scope"] == physical["scope"]
             assert installed["revision"] == "0"
