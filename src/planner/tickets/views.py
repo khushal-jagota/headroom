@@ -32,6 +32,7 @@ from planner.tickets.derivation import TicketFacts
 from planner.tickets.logic import fields_codec, machine, proposal_routing
 from planner.tickets.logic.creation_receipt import supervision_receipt
 from planner.tickets.logic.recap import recap_preview
+from planner.tickets.logic.review import eligible_for_owner_review
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # --- serializers ---------------------------------------------------------------
@@ -591,8 +592,15 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
         if field is None:
             continue
         proposal = fields_codec.proposal_from_json(row["pending_proposal"])
-        if proposal is None:
+        if not eligible_for_owner_review(
+            ticket_status=facts.ticket_status,
+            is_backlogged=bool(row["is_backlogged"]),
+            holder_is_owner=holder == {"kind": "owner", "id": "owner"},
+            has_gating_field=field is not None,
+            has_proposal=proposal is not None,
+        ):
             continue
+        assert proposal is not None
         items.append(
             {
                 "review_item_type": "proposal",
