@@ -12,6 +12,7 @@
   const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
   const statusWord = $derived(
     statusState === "preparing" || statusState === "restarting" ? "Deploying"
+      : statusState === "back_up" ? "Deployed"
       : statusState === "problem" ? "Problem"
       : statusState === "reconnecting" ? "Reconnecting" : null
   );
@@ -66,7 +67,7 @@
   aria-hidden={statusWord === null ? "true" : undefined} style={motionStyle}>
   <div>
     {#if displayedWord !== null}
-      <div class="status-card" data-state={displayedWord === "Problem" ? "wrong" : "changing"}
+      <div class="status-card" data-state={displayedWord === "Problem" ? "wrong" : displayedWord === "Deployed" ? "settled" : "changing"}
         data-connection-status data-connection-state={connectionState} data-status-state={statusState}
         role="status" aria-live="polite">
         <span class="status-mark" aria-hidden="true"></span>

@@ -138,7 +138,10 @@
         "tests/unit/test_related_checks.py",
         "tests/unit/test_deployment_gate.py",
         "tests/unit/test_deployment_check_report.py",
-        "tests/integration/test_candidate_bootstrap.py"
+        "tests/integration/test_candidate_bootstrap.py",
+        "tests/unit/test_deployment_progress.py",
+        "tests/unit/test_deployment_workflow.py",
+        "scripts/deployment_progress.py"
       ],
       "tests": {
         "unit": [
@@ -154,7 +157,9 @@
           "tests/unit/test_environment_lifecycle.py",
           "tests/unit/test_environment_repository_runtime.py",
           "tests/unit/test_environment_runtime_port.py",
-          "tests/unit/test_related_checks.py"
+          "tests/unit/test_related_checks.py",
+          "tests/unit/test_deployment_progress.py",
+          "tests/unit/test_deployment_workflow.py"
         ],
         "integration": [
           "tests/integration/test_cli_verbs.py",

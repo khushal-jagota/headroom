@@ -164,4 +164,20 @@ def run(browser, urls):
     phone.keyboard.press("Escape")
     expect(phone.locator('[data-feedback-trigger]')).to_be_focused()
     phone_context.close()
+
+    # A resolved back_up state must produce a visible card, then remove itself
+    # on expiry without another fetch. Reuse the same shell and browser host.
+    page.clock.install()
+    page.evaluate("window.__deployment('back_up')")
+    expect(status).to_have_text("Deployed")
+    expect(status).to_be_visible()
+    assert status.locator('.status-mark').evaluate("node => getComputedStyle(node).animationName") == "none"
+    page.screenshot(animations="disabled", path=str(evidence / "deploy-success-desktop.png"))
+    page.evaluate("window.__connection('reconnecting')")
+    expect(status).to_have_text("Reconnecting")
+    page.evaluate("window.__connection('connected')")
+    expect(status).to_have_text("Deployed")
+    # The fixture expires ten minutes after its initial load.
+    page.clock.fast_forward(600_001)
+    expect(status).to_have_count(0)
     pass  # Shared runner owns the browser lifecycle.
