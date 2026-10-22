@@ -864,6 +864,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
     # The same mounted App and scoped transport now pause an overlap response.
     # Native wheel input continues after the request, protecting the gap left by
     # immediate-publication coverage above. No additional browser host is created.
+    continued_scroll_started = time.perf_counter()
     for queued in [False, True]:
         page.reload(wait_until="domcontentloaded")
         expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
@@ -920,12 +921,12 @@ def verify_rail_pagination(page, url, fixture, evidence):
             # Further native movement occurred while the new page was already
             # queued. Leaving the row publishes the still-deferred card once.
             assert members('rail_tickets') == [key['id'] for key in prior['members']]
-        page.mouse.move(900, 600)
         (evidence / ('queued-publication-before-wait.json' if queued else 'delayed-publication-before-wait.json')).write_text(json.dumps({
             'prior':prior,'continued':continued,'frames':page.evaluate('window.__navigationFrames'),
             'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
             'heldFrames':page.evaluate('window.__heldNavigationFrames'),
             'members':members('rail_tickets')},indent=2))
+        page.mouse.move(900, 600)
         if queued:
             page.wait_for_function("""()=>document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
               .some(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k))""")
@@ -994,6 +995,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
     proof.append({'name':'same-task-publication-before-native-scroll-dispatch','movement':'programmatic',
                   'expected':expected,'after':top('[data-ticket-id="page_worker_17"]'),'eventOrder':order})
 
+    continued_scroll_seconds = time.perf_counter() - continued_scroll_started
     # Restore the initial page before retaining the existing completion and parent
     # overlap proofs below.
     page.reload(wait_until="domcontentloaded")
@@ -1048,7 +1050,8 @@ def verify_rail_pagination(page, url, fixture, evidence):
     page.mouse.move(900, 600)
     page.screenshot(path=str(evidence / 'rail-pagination-final.png'))
     (evidence / 'rail-pagination.json').write_text(json.dumps({
-        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,
+        "continuedScrollSeconds":round(continued_scroll_seconds,3),"flows":proof,
     }, indent=2))
 
 
