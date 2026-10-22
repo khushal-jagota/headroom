@@ -64,9 +64,9 @@ struct WorkspaceCard: View {
             ForEach(rows) { row in
                 switch row {
                 case .heading(let section):
-                    Text(section.title.uppercased())
+                    Text(section.title)
                         .font(.system(size: 11, weight: .semibold))
-                        .tracking(1.3).foregroundStyle(PanelsTheme.faint)
+                        .foregroundStyle(PanelsTheme.faint)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
