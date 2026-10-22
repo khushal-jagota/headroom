@@ -246,3 +246,61 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
     response = client.patch(f"/api/tickets/{ticket['id']}", json=conflict)
     assert response.status_code == 400, response.text
     assert _snapshot(db_path) == before
+
+
+def test_deploy_interruption_summary_uses_request_connection_on_its_own_thread(
+    create_api: tuple[TestClient, Path],
+) -> None:
+    client, db_path = create_api
+    with closing(connect(str(db_path))) as conn:
+        conn.execute(
+            "INSERT INTO deploy_interruption_accounts "
+            "(capture_id,deployment_id,captured_at,capture_state,detail) "
+            "VALUES ('capture','deployment',1,'unavailable','Capture timed out.')"
+        )
+        conn.commit()
+    response = client.get("/api/deployment-interruptions")
+    assert response.status_code == 200
+    assert response.json() == {
+        "accounts": [
+            {
+                "deployment_id": "deployment",
+                "capture_state": "unavailable",
+                "detail": "Capture timed out.",
+                "entries": [],
+            }
+        ]
+    }
+
+
+def test_create_refuses_holders_without_authority_before_kickoff_routing(
+    create_api: tuple[TestClient, Path],
+) -> None:
+    client, db_path = create_api
+    manager = client.post(
+        "/api/managers", json={"title": "Unrelated Manager", "project_id": "project_vylo"}
+    )
+    reviewer = client.post(
+        "/api/tickets", json={"title": "Ordinary Ticket", "worker_type": "coding"}
+    )
+    assert manager.status_code == reviewer.status_code == 200
+    for holder in (
+        {"kind": "manager", "id": manager.json()["id"]},
+        {"kind": "ticket", "id": reviewer.json()["id"]},
+    ):
+        before = _snapshot(db_path)
+        refused = client.post(
+            "/api/tickets",
+            json={
+                "title": "Invalid reviewer", "worker_type": "coding",
+                "brief": "This Brief must not normalize the invalid holder to owner.",
+                "ceiling_holder": holder,
+            },
+        )
+        assert refused.status_code == 400, refused.text
+        error = refused.json()["error"]
+        assert error["code"] == "validation"
+        assert error["message"] == "ceiling holder must have authority to decide this Ticket"
+        assert error["detail"]["holder"] == holder
+        assert error["detail"]["ticket_id"]
+        assert _snapshot(db_path) == before

@@ -1,5 +1,4 @@
-import { workspaceRailChildMessageConversations, type WorkspaceTicket, type WorkspaceRail, type WorkspaceChief, type WorkspaceTicketGroup } from './workspaceRail';
-import type { WorkspaceMessageConversation } from './types';
+import { type WorkspaceRail, type WorkspaceChief, type WorkspaceTicketGroup } from './workspaceRail';
 import type { WorkItemTicketFacts } from './workItemPresentation';
 import type { ConversationSignal } from './conversationSignal';
 import { actualMark, expectedMark } from './conversationSignalDom';
@@ -19,8 +18,8 @@ function ticketMatches(row:HTMLElement,ticket:WorkItemTicketFacts) {
     && JSON.stringify(actualMark(row))===JSON.stringify(expectedMark(ticket.conversation_signal,ticket.conversation_id));
 }
 /** Read actual rendered values, including motion-controlled membership and marks. */
-export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:WorkspaceChief | null | undefined,settledOpen:boolean,messages:readonly WorkspaceMessageConversation[],tickets:readonly WorkspaceTicket[],settledCount=rail.settledItems.length,expectedMessagesByParent?:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>):boolean {
-  const cards=[...root.querySelectorAll<HTMLElement>('.active-work-scroll > .manager-card')];
+export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:WorkspaceChief | null | undefined,settledOpen:boolean,settledCount=rail.settledItems.length):boolean {
+  const cards=[...root.querySelectorAll<HTMLElement>('.active-work-scroll > .manager-card-slot > .manager-card')];
   if(cards.length!==rail.items.length+1) return false;
   const head=(card:HTMLElement,title:string,signal:Partial<ConversationSignal> | undefined,id:string | null | undefined)=>
     card.querySelector('.item-head .item-title')?.textContent===title
@@ -32,19 +31,15 @@ export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:Workspa
     && cards[index+1].querySelector('.settle')?.getAttribute('aria-label')===`Settle ${item.title}`
     && head(cards[index+1],item.title,item.conversationSignal,item.conversationId) && groupsMatch(cards[index+1],item.groups))) return false;
   if(root.querySelector('[data-settled-count]')?.textContent!==`(${settledCount})`) return false;
+  if(root.querySelector('.settled [data-message-conversation]')) return false;
   const settled=[...root.querySelectorAll<HTMLElement>('[data-settled-item]')];
   return settledOpen ? settled.length===rail.settledItems.length && rail.settledItems.every((item,index)=>
     settled[index].dataset.settledItem===item.id && settled[index].querySelector('.settled-title > span')?.textContent===item.title
       && JSON.stringify(actualMark(settled[index].querySelector('.settled-title')!))===JSON.stringify(expectedMark(item.conversationSignal,item.conversationId))
-      && messagesMatch(settled[index],expectedMessagesByParent ? expectedMessagesByParent.get(item.id) ?? [] : workspaceRailChildMessageConversations(messages,{...item,settled:item.settled},tickets))) : settled.length===0;
+      && settled[index].querySelector('.settled-title')?.getAttribute('aria-label')===`Open ${item.title}`
+      && settled[index].querySelector('.reopen')?.getAttribute('aria-label')===`Reopen ${item.title}`) : settled.length===0;
 }
 
-function messagesMatch(root:Element,expected:readonly WorkspaceMessageConversation[]):boolean {
-  const rows=[...root.querySelectorAll<HTMLElement>('[data-message-conversation]')];
-  return rows.length===expected.length && expected.every((row,index)=>rows[index].dataset.messageConversation===row.conversationId
-    && rows[index].dataset.messageKind===row.kind && rows[index].querySelector('.ticket-row-title')?.textContent===row.title
-    && JSON.stringify(actualMark(rows[index]))===JSON.stringify(expectedMark(row.conversationSignal,row.conversationId)));
-}
 export function hoverDomMatches(root:HTMLElement,title:string,recap:string,stage:string,signal:Partial<ConversationSignal> | undefined,
   conversationId:string | null | undefined,kicker:string):boolean {
   return root.querySelector('.kicker')?.textContent===kicker && root.getAttribute('aria-hidden')==='false' && root.querySelector('.title > span')?.textContent===title

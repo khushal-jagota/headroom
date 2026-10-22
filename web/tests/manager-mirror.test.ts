@@ -100,7 +100,7 @@ function workspace(rows: ManagerWorkspaceTicket[]): ManagerWorkspace {
 function boardItem(rows: ManagerWorkspaceTicket[]): BoardManager {
   const full = workspace(rows);
   return { id: full.id, title: full.title, recap: "",recap_preview: "",
-    created_at: full.created_at, conversation_id: null, tickets: rows,
+    created_at: full.created_at, updated_at:full.created_at, conversation_id: null, tickets: rows,
     ticket_rollup: quiet, ...quiet };
 }
 

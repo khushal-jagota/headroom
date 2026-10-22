@@ -14,9 +14,30 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   await writeFile(
     hostPath,
     String.raw`<script lang="ts">
-  import { tick } from "svelte";
+  import { tick, flushSync } from "svelte";
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
   import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
+  import {ConversationViewReader} from "../src/lib/conversation/view/reader.svelte";
+  const intentOnly=new URLSearchParams(window.location.search).has("intent");
+  const intentLoads: ((admitted:boolean)=>void)[]=[];
+  function makeIntentReader() {
+    const value=new ConversationViewReader('same-conversation','focus',true);
+    value.pages=[{scope:{kind:'timeline',key:null},older:null,newer:null,
+      items:Array.from({length:30},(_,index)=>({kind:'row' as const,key:'intent-'+index,
+        row_kind:'agent_message' as const,order:{sequence:index,slot:0},source_sequence:index,
+        sender_message_id:null,changed_through_sequence:index,created_at:index,
+        turn_key:null,work_group_key:null,fold_rule:'never' as const,
+        body:{kind:'inline' as const,value:{kind:'agent_message' as const,to_owner:true,
+          content:[{piece:'text' as const,text:('Intent row '+index+'. ').repeat(30)}]}}}))}];
+    value.load=(_scope,_cursor,_direction,replace)=>replace
+      ?new Promise<boolean>(resolve=>intentLoads.push(resolve)):Promise.resolve(false);
+    return value;
+  }
+  let intentReader=$state.raw(makeIntentReader());
+  (window as any).__intentProbe={loads:intentLoads,
+    finish:(index:number,admitted:boolean)=>intentLoads[index](admitted),
+    swap:()=>{intentReader=makeIntentReader();},
+    swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
   const readerOnly=new URLSearchParams(window.location.search).has("reader");
   let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":"opened");
   if(readerOnly)installConversationViewReaderFixture();
@@ -59,6 +80,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   (window as any).__layoutUpdate=(recap:string)=>{layoutRecap=recap;};
   (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
   import ManagerFrame from "../src/components/ManagerFrame.svelte";
+  import { conversationOverlay } from "../src/lib/conversation/layout/overlay";
   import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
@@ -522,6 +544,11 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     </ManagerHeader>
   </main>
 </QueryClientProvider>
+{:else if intentOnly}
+  <div style="height:700px;width:700px;display:flex;flex-direction:column">
+    <ConversationPane conversationId="same-conversation" conversationExists conversationState="opened"
+      reader={intentReader} rows={[]} lens="focus" running={false} />
+  </div>
 {:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
@@ -616,14 +643,18 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         }}
       />
 {/snippet}
-<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
+<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled || ticketGestures}>
   {#if ticketGestures}
+    <div class="ticket-page" use:conversationOverlay>
+    <div class="ticket-reading">
     <main class="ticket-doc fixture-document" onpointerdowncapture={dismissTicketOnPointerDown}>
       <button type="button" data-ticket-behind>Ticket content</button>
     </main>
+    </div>
     <section class="conversation-layer" onpointerdowncapture={dismissTicketOnPointerDown}>
       <div class="conversation-column">{@render conversationPane()}</div>
     </section>
+    </div>
   {:else}
     <ManagerFrame bind:conversationState>
       <button type="button" data-ticket-behind>Ticket content</button>

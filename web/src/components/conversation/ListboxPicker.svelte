@@ -304,6 +304,14 @@
   function onPanelKeydown(event: KeyboardEvent): void {
     const target = event.target;
     if (!(target instanceof HTMLButtonElement) || !target.hasAttribute("data-listbox-picker-action")) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      // A rail action can remove its own button (Models does). Keep focus inside
+      // the surviving list before that removal, so focusout cannot close the picker.
+      list?.focus();
+      target.click();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       close();

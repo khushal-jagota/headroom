@@ -11,6 +11,11 @@ export type DeploymentStatusState =
 
 export type DeploymentOutcome = "succeeded" | "failed" | "rolled_back";
 
+export type SuccessPresentation = {
+  state: "connected" | "reconnecting" | "back_up";
+  wakeAt: number | null;
+};
+
 export type DeploymentStatus = {
   state: DeploymentStatusState;
   deployed_sha: string | null;
@@ -18,6 +23,7 @@ export type DeploymentStatus = {
   outcome: DeploymentOutcome | null;
   detail: string | null;
   valid_until: string | null;
+  success_display_until: string | null;
 };
 
 export type VpsMetricState = "healthy" | "warning" | "critical" | "unavailable";
@@ -405,6 +411,7 @@ export type BoardResponse = {
 // A Manager's own identity and its manager's conversation. No card answers for
 // the Item's own worker, so the mark on an Item title comes from here.
 export type BoardManager = {
+  updated_at: number;
   conversation_signal?: ConversationSignal;
   settled?: boolean;
   project_id?: string;

@@ -35,6 +35,7 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
@@ -69,6 +70,7 @@ type WorkerStepDeliveryFate = Literal[
     "injected",
     "refused",
     "uncertain",
+    "suppressed",
 ]
 
 
@@ -98,6 +100,8 @@ class WorkerStepStartResult:
                 return cls(started=True, delivery_fate="injected")
             case PromptDeliveryRefused():
                 return cls(started=False, delivery_fate="refused")
+            case PromptDeliverySuppressed():
+                return cls(started=False, delivery_fate="suppressed")
             case PromptDeliveryUncertain():
                 return cls(started=False, delivery_fate="uncertain")
 
@@ -227,6 +231,11 @@ async def start_ready_worker_step(
             give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
+        if isinstance(fate, PromptDeliverySuppressed):
+            remove_tentative_bindings()
+            give_the_claim_back()
+            return WorkerStepStartResult.from_delivery_fate(fate)
+
         if isinstance(fate, PromptDeliveryUncertain):
             # The backend can have admitted this opener, so returning the claim would
             # permit an unsafe automatic replay. Keep it visible for the supervisor's
@@ -342,6 +351,8 @@ async def tell_a_worker_it_lost_its_memory(
                     conversation_id,
                     delivered.fate.refusal_reason.value,
                 )
+                return False
+            if isinstance(delivered.fate, PromptDeliverySuppressed):
                 return False
             return True
         finally:

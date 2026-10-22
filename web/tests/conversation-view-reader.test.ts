@@ -138,7 +138,7 @@ it('cancels queued page demand on reset and admits fresh demand after the replac
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { complete = resolve; })));
   const loading = reader.load();
   Source.all[0].send('reset', {});
-  await loading;
+  expect(await loading).toBe(false);
   // What is on screen stays on screen until its replacement exists.
   expect(reader.pages).toHaveLength(1);
   await vi.advanceTimersByTimeAsync(1500);
@@ -169,4 +169,121 @@ it('distinguishes a canonical expired body from an unrelated HTTP 410 failure', 
   await expect(reader.body(reference, new AbortController().signal)).rejects.toThrow('This diagnostic detail expired.');
   vi.stubGlobal('fetch', vi.fn(async () => new Response('Gone', {status:410})));
   await expect(reader.body(reference, new AbortController().signal)).rejects.toThrow('Conversation body: 410');
+});
+
+// These reader proofs cover admission and ownership. Visible placement belongs to
+// the browser destination proof, which must keep automatic recovery unavailable.
+const timeline = { kind: 'timeline' as const, key: null };
+const cursor = (sequence: number) => ({ projection_version: snapshot().page.projection_version, lens: 'focus' as const, scope: { ...timeline }, order: { sequence, slot: 0 } });
+function holdPages() {
+  const pending: { signal: AbortSignal; complete: (response: Response) => void }[] = [];
+  const fetch = vi.fn((_url: string, options: RequestInit) => new Promise<Response>(complete => {
+    // Deliberately ignore abort: a late response must still fail the identity guard.
+    pending.push({ signal: options.signal as AbortSignal, complete });
+  }));
+  vi.stubGlobal('fetch', fetch);
+  return { fetch, pending };
+}
+async function flushDemand() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
+
+it('coalesces equivalent request values and refuses incompatible ordinary demand', async () => {
+  const reader = await start();
+  const { fetch, pending } = holdPages();
+  const first = reader.load(timeline, cursor(10), 'older');
+  const equivalent = reader.load({ ...timeline }, cursor(10), 'older');
+  expect(await reader.load(timeline, cursor(11), 'older')).toBe(false);
+  expect(await reader.load(timeline, cursor(10), 'newer')).toBe(false);
+  await flushDemand();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(pending[0].signal.aborted).toBe(false);
+  pending[0].complete(Response.json(snapshot().page));
+  expect(await first).toBe(true);
+  expect(await equivalent).toBe(true);
+});
+
+it('distinguishes replacement intent and keeps the successor owned after obsolete completion', async () => {
+  const reader = await start();
+  const { fetch, pending } = holdPages();
+  const history = reader.load(timeline, cursor(10), 'older');
+  await flushDemand();
+  // Even an otherwise identical request has different semantics when it replaces.
+  const replacement = reader.load(timeline, cursor(10), 'older', true);
+  expect(pending[0].signal.aborted).toBe(true);
+  const oldPage = snapshot().page;
+  oldPage.items = oldPage.items.map(item => ({ ...item, key: 'obsolete' }));
+  pending[0].complete(Response.json(oldPage));
+  expect(await history).toBe(false);
+  await flushDemand();
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(reader.pages.flatMap(page => page.items).some(item => item.key === 'obsolete')).toBe(false);
+  // The obsolete finally must not delete the successor's scope reservation.
+  expect(await reader.load(timeline, cursor(11), 'older')).toBe(false);
+  const equivalent = reader.load({ ...timeline }, cursor(10), 'older', true);
+  pending[1].complete(Response.json(snapshot().page));
+  expect(await replacement).toBe(true);
+  expect(await equivalent).toBe(true);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('replaces incompatible cursored replacement demand with an actual newest-page read', async () => {
+  const reader = await start();
+  const { fetch, pending } = holdPages();
+  const restore = reader.load(timeline, cursor(10), 'older', true);
+  await flushDemand();
+  const latest = reader.load(timeline, null, 'older', true);
+  expect(pending[0].signal.aborted).toBe(true);
+  pending[0].complete(Response.json(snapshot().page));
+  expect(await restore).toBe(false);
+  await flushDemand();
+  const url = new URL(fetch.mock.calls[1][0], 'http://local');
+  expect(url.searchParams.has('cursor')).toBe(false);
+  expect(url.searchParams.get('direction')).toBe('older');
+  pending[1].complete(Response.json(snapshot().page));
+  expect(await latest).toBe(true);
+});
+
+it('reuses a scope slot at twenty demands and preserves unrelated queued scopes', async () => {
+  const reader = await start();
+  const { fetch, pending } = holdPages();
+  const history = reader.load(timeline, cursor(10));
+  await flushDemand();
+  const scopes = Array.from({ length: 19 }, (_, i) => ({ kind: 'turn' as const, key: `turn:${i}` }));
+  const others = scopes.map(scope => reader.load(scope));
+  expect(await reader.load({ kind: 'turn', key: 'overflow' })).toBe(false);
+  const latest = reader.load(timeline, null, 'older', true);
+  expect(pending[0].signal.aborted).toBe(true);
+  pending[0].complete(Response.json(snapshot().page));
+  expect(await history).toBe(false);
+  for (let i = 0; i < scopes.length; i++) {
+    await flushDemand();
+    expect(pending[i + 1].signal.aborted).toBe(false);
+    pending[i + 1].complete(Response.json({ ...snapshot().page, scope: scopes[i] }));
+    expect(await others[i]).toBe(true);
+  }
+  await flushDemand();
+  pending[20].complete(Response.json(snapshot().page));
+  expect(await latest).toBe(true);
+  expect(fetch).toHaveBeenCalledTimes(21);
+  expect(reader.pages.length).toBeLessThanOrEqual(20);
+});
+
+it('returns false for failed, invalid, canceled, and disposed admission', async () => {
+  const reader = await start();
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network'); }));
+  expect(await reader.load()).toBe(false);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...snapshot().page, conversation_id: 'other' })));
+  expect(await reader.load()).toBe(false);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...snapshot().page, scope: { kind: 'turn', key: 'wrong' } })));
+  expect(await reader.load()).toBe(false);
+  const { pending } = holdPages();
+  const scope = { kind: 'turn' as const, key: 'turn:canceled' };
+  const canceled = reader.load(scope);
+  await flushDemand();
+  await reader.expand(scope, false);
+  pending[0].complete(Response.json({ ...snapshot().page, scope }));
+  expect(await canceled).toBe(false);
+  const disposed = reader.load();
+  reader.close();
+  expect(await disposed).toBe(false);
+  expect(await reader.load()).toBe(false);
 });
