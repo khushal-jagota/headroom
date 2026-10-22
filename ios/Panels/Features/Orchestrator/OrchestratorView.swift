@@ -81,7 +81,7 @@ struct AgentPageTitle: View {
     let title: String
     var signal: ConversationSignal? = nil
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .center) {
             Text(title).font(.title.weight(.semibold)).foregroundStyle(PanelsTheme.strong)
                 .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
             Spacer(minLength: PanelsTheme.Space.sm)
