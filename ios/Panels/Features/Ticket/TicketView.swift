@@ -45,7 +45,7 @@ struct TicketView: View {
                 .padding(.horizontal, 20).padding(.vertical, PanelsTheme.Space.lg)
                 .frame(maxWidth: .infinity)
         }
-        .navigationTitle(titleVisible ? "" : detail?.title ?? "Ticket")
+        .navigationTitle(titleVisible ? "" : detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar { ToolbarItem(placement: .primaryAction) { ticketMenu } }
@@ -120,7 +120,7 @@ struct TicketView: View {
                 Text(detail.title).font(.title.weight(.semibold)).foregroundStyle(PanelsTheme.strong)
                     .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
                     .onScrollVisibilityChange(threshold: 0.1) { visible in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { titleVisible = visible }
+                        withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { titleVisible = visible }
                     }
                     .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = detail.title; renaming = true } }
             }

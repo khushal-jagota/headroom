@@ -15,7 +15,7 @@ struct LoadErrorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             Text(message).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-            Button("Try again") { Haptics.light(); Task { await retry() } }
+            Button("Try again") { Task { await retry() } }
         }.padding(.vertical, PanelsTheme.Space.sm)
     }
 }

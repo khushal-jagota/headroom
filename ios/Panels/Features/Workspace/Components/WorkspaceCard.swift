@@ -111,8 +111,8 @@ struct WorkspaceSignalMark: View {
                 Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8)
                     .accessibilityLabel("Unread message")
             }
-        }.frame(minWidth: 20, alignment: .trailing)
-            .animation(.easeInOut(duration: 0.15), value: signal?.messageForOwner)
-            .animation(.easeInOut(duration: 0.15), value: signal?.working)
+        }.frame(width: 32, alignment: .trailing)
+            .animation(PanelsTheme.Motion.fade, value: signal?.messageForOwner)
+            .animation(PanelsTheme.Motion.fade, value: signal?.working)
     }
 }

@@ -14,7 +14,7 @@ struct WorkspaceView: View {
     @State private var chiefSignalError: String?
     @State private var loadingMore = false
 
-    private var motion: Animation? { reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow) }
+    private var motion: Animation? { reduceMotion ? nil : PanelsTheme.Motion.disclosure }
 
     @GestureState private var fingerDown = false
     @State private var pendingSettled: ManagersResponse?
@@ -66,6 +66,7 @@ struct WorkspaceView: View {
         .overlay { if store.isLoading && store.chief == nil { ProgressView().controlSize(.large) } }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selectedRoute) { old, new in if old != new { Haptics.light() } }
         .navigationDestination(item: $selectedRoute) { RouteDestination(route: $0) }
         .panelsScreen()
         .onChange(of: store.revision, initial: true) { _, _ in updateGroups() }

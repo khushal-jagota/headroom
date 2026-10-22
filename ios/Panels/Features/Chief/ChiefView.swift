@@ -18,12 +18,12 @@ struct ChiefView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 if let error { LoadErrorView(message: error) { await load() } }
-                if let chief {
-                    VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                        AgentEyebrow(title: "", signal: chief.conversationSignal)
-                        AgentPageTitle(title: chief.label)
-                        AgentRecap(recap: chief.recap, target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
-                    }
+                VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
+                    AgentEyebrow(title: "", signal: chief?.conversationSignal)
+                    AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff")
+                    AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
+                }
+                if chief != nil {
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                         if let active {
                             if active.tickets.isEmpty {
@@ -55,7 +55,7 @@ struct ChiefView: View {
             }
         }
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 80 } action: { _, collapsed in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { headerCollapsed = collapsed }
+            withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
         }
         .navigationTitle(headerCollapsed ? chief?.label ?? "Chief of Staff" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
@@ -64,14 +64,13 @@ struct ChiefView: View {
             AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
         } }
         .task(id: store.revision) { await load() }
-        .refreshable { Haptics.light(); await load() }
+        .refreshable { await load() }
         .accessibilityIdentifier("chief-screen")
     }
 
     @ViewBuilder private func loadMoreButton(page: PageFacts, filter: TicketFilter) -> some View {
         if let offset = page.nextOffset {
             Button {
-                Haptics.light()
                 Task { await loadMore(filter: filter, offset: offset) }
             } label: {
                 HStack {
