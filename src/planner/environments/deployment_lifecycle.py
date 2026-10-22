@@ -21,7 +21,19 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, TextIO, cast
+from typing import TYPE_CHECKING, Literal, TextIO, cast
+
+# The deployment workflow also executes this file without its package installed.
+if __package__ or TYPE_CHECKING:
+    from .deployment_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
+else:
+    # Direct-file execution has only this directory on sys.path. importlib keeps
+    # the same configuration source without a second statically named module.
+    from importlib import import_module
+
+    DEPLOYMENT_SUCCESS_DISPLAY_SECONDS = import_module(
+        "deployment_configuration"
+    ).DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
 
 LIFECYCLE_VERSION = 1
 MAX_LIFECYCLE_BYTES = 16 * 1024
@@ -133,6 +145,7 @@ class LifecycleProjection:
     outcome: DeploymentOutcome | None
     detail: str | None = None
     valid_until: str | None = None
+    success_display_until: str | None = None
 
     def to_public_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -306,6 +319,11 @@ class DeploymentLifecycleStore:
         lifecycle = read.lifecycle
         now = _utc_now(self._now)
         valid_until = _format_time(lifecycle.expires_at)
+        success_display_until = (
+            lifecycle.updated_at + timedelta(seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS)
+            if lifecycle.phase == "succeeded"
+            else None
+        )
         if lifecycle.phase in _NONTERMINAL_PHASES and now >= lifecycle.expires_at:
             return LifecycleProjection(
                 state="unknown",
@@ -343,6 +361,11 @@ class DeploymentLifecycleStore:
             target_sha=lifecycle.requested_sha,
             outcome=outcome,
             detail=detail,
+            success_display_until=(
+                _format_time(success_display_until)
+                if success_display_until is not None and state == "back_up"
+                else None
+            ),
             valid_until=(
                 valid_until
                 if lifecycle.phase in _NONTERMINAL_PHASES

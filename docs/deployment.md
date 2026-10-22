@@ -443,14 +443,19 @@ retain their existing order and isolated paths.
 `GET /api/deployment-status` projects that evidence into `idle`, `preparing`,
 `restarting`, `back_up`, `problem`, or `unknown`. Preparation and restart evidence
 expires 15 minutes after the runner last renews it. A proved success appears as
-`back_up` for 24 hours and only when the running app SHA exactly matches the requested SHA. Failure and
+a brief Deployed confirmation. The interval starts at the recorded success time,
+so reads and reconnects never extend it. Existing records use that same time without
+migration. Record evidence remains valid for 24 hours, independently of the card.
+The record must prove that the requested release was served, and the responding
+server must run that release. An open tab can still run the previous release.
+Its update prompt takes priority over Deployed. Failure and
 rollback remain problems until a later deployment supersedes them. The server watches
 the lifecycle path and sends the existing contentless change signal after create,
 replace, change, or deletion, so connected browsers re-read the canonical file.
 The connected shell shows “Deployed” for fresh success, with a steady status mark.
 It removes that confirmation at expiry, even without another response from the server.
-The 24-hour window schedules a browser timer for at most 86,400,001 milliseconds,
-which is below the signed 32-bit limit of 2,147,483,647 milliseconds.
+The shell uses the earlier of record expiry and the confirmation deadline.
+Missing or invalid confirmation evidence returns the shell to its connection status.
 
 An app deployed before this lifecycle feature cannot expose the new status endpoints or
 observe runner updates while that old app is serving. The current workflow tool and

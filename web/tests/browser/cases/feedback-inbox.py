@@ -178,13 +178,19 @@ def run(browser, urls):
     expect(status).to_have_text("Reconnecting")
     page.evaluate("window.__connection('connected')")
     expect(status).to_have_text("Deployed")
-    # The fixture expires ten minutes after its initial load.
-    page.clock.fast_forward(600_001)
+    # Notices coexist with success, and an older bundle still sees the ready
+    # update above Deployed. Neither event restarts the recorded success window.
+    page.evaluate("window.__interruptions()")
+    interruption = page.locator('.rail-foot [data-deployment-interruptions]')
+    expect(interruption).to_contain_text("2 interrupted sessions")
+    page.evaluate("window.__release('shipped')")
+    expect(status).to_contain_text("New version ready")
+    page.evaluate("window.__release('booted')")
+    expect(status).to_have_text("Deployed")
+    page.clock.fast_forward(300_001)
     expect(status).to_have_count(0)
     # Durable notices survive status expiry. A queued or requested action alone
     # does not supply the displayed recovery state: the summary does.
-    page.evaluate("window.__interruptions()")
-    interruption = page.locator('.rail-foot [data-deployment-interruptions]')
     expect(interruption).to_contain_text("2 interrupted sessions")
     interruption.locator("summary").click()
     expect(interruption).to_contain_text("Interruption account unavailable. Capture timed out.")

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from planner.environments import deployment_lifecycle as lifecycle_module
+from planner.environments.deployment_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
 from planner.environments.deployment_lifecycle import (
     DeploymentLifecycleConflict,
     DeploymentLifecycleError,
@@ -106,7 +107,9 @@ def test_renewal_preserves_terminal_bytes_even_after_expiry(
     assert store.path.read_bytes() == before
 
 
-def test_success_has_exact_sha_proof_and_twenty_four_hour_visibility(tmp_path: Path) -> None:
+def test_first_release_derives_brief_success_from_record_and_keeps_day_of_evidence(
+    tmp_path: Path,
+) -> None:
     clock = Clock()
     store = DeploymentLifecycleStore(tmp_path / "lifecycle.json", now=clock)
     store.start("deploy", SHA)
@@ -116,10 +119,39 @@ def test_success_has_exact_sha_proof_and_twenty_four_hour_visibility(tmp_path: P
     store.transition("deploy", "app_healthy", serving_sha=SHA)
     succeeded = store.transition("deploy", "succeeded")
     assert succeeded.expires_at == clock.value + timedelta(hours=24)
+    # The first fresh record and the stale pre-change record share this format:
+    # no display field is persisted, so there is no migration default to guess.
+    assert "success_display_until" not in json.loads(store.path.read_text())
+    before = store.path.read_bytes()
+    deadline = succeeded.updated_at + timedelta(
+        seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
+    )
+    clock.value = deadline - timedelta(microseconds=1)
+    projection = store.project(SHA)
+    assert projection.state == "back_up"
+    assert projection.success_display_until == deadline.isoformat().replace("+00:00", "Z")
+    assert projection.valid_until == succeeded.expires_at.isoformat().replace("+00:00", "Z")
+    mismatch = store.project(PRIOR_SHA)
+    assert mismatch.state == "problem"
+    assert mismatch.success_display_until is None
+    assert store.renew("deploy") == succeeded
+    assert store.project(SHA) == projection
+    assert store.path.read_bytes() == before
+    clock.value = deadline
+    assert store.project(SHA) == projection
+    # A stale legacy record remains available to interruption accounting after clearance.
+    clock.value = succeeded.updated_at + timedelta(hours=12)
+    assert store.project(SHA) == projection
+    assert store.read().lifecycle == succeeded
+    assert store.path.read_bytes() == before
     clock.value = succeeded.expires_at - timedelta(microseconds=1)
     assert store.project(SHA).state == "back_up"
-    assert store.project(PRIOR_SHA).state == "problem"
     clock.value = succeeded.expires_at
+    assert store.project(SHA).state == "idle"
+    # Shorter record validity remains an independent upper bound on presentation.
+    shortened = replace(succeeded, expires_at=succeeded.updated_at + timedelta(seconds=1))
+    store.path.write_text(json.dumps(shortened.to_public_dict()))
+    clock.value = shortened.expires_at
     assert store.project(SHA).state == "idle"
 
 

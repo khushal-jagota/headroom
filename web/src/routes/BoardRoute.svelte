@@ -139,7 +139,7 @@
   let itemPane = $derived(opening.markedManagerId !== null);
   let railElement = $state<HTMLElement | null>(null);
   const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next,
-    () => scrollCoordinator.flush());
+    () => scrollCoordinator.flush(), () => scrollCoordinator.captureBeforePublication());
   $effect(() => {
     const next = {rail:desiredRail, settledOpen:requestedSettledOpen,
       scrollPublication:{publicationId:displayedPublication?.publicationId ?? null,windows:workspace?.viewWindows ?? []}};

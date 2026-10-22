@@ -98,7 +98,7 @@
   $effect(() => {
     const now = Date.now();
     clock = now;
-    const delay = deploymentStatusExpiryDelay(deployment.data, now);
+    const delay = deploymentStatusExpiryDelay(deployment.data, now, connectionState);
     if (delay === null) return;
     const timer = window.setTimeout(() => { clock = Date.now(); }, delay);
     return () => window.clearTimeout(timer);
