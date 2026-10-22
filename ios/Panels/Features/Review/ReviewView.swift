@@ -114,6 +114,7 @@ private struct ReviewProposalView: View {
                             } else { withAnimation(.smooth(duration: ReviewStyle.enter, extraBounce: 0)) { drag = 0 } }
                             crossedThreshold = false
                         })
+                    actionBar
                 }.padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.md).padding(.bottom, PanelsTheme.Space.xl)
             }
             .refreshable { await store.refresh(); await decision.load(item: item, api: store.client) }
@@ -127,7 +128,6 @@ private struct ReviewProposalView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { actionBar }
         .task(id: "\(store.baseURL):\(store.revision)") {
             guard sheet == nil, !editing, drag == 0 else { return }
             await decision.load(item: item, api: store.client)
@@ -187,18 +187,18 @@ private struct ReviewProposalView: View {
 
     private var actionBar: some View {
         (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
-            Button("Approve") { openApproval() }
-                .frame(maxWidth: .infinity, minHeight: ReviewStyle.actionHeight)
-                .background(PanelsTheme.accent, in: Capsule()).foregroundStyle(PanelsTheme.ink)
-                .accessibilityIdentifier("review.approve").disabled(!decision.ready || leaving)
-                .opacity(decision.ready ? 1 : 0.45)
             if decision.canReturn {
                 Button("Send back") { editorFocused = false; editing = false; sheet = .sendBack }
-                    .foregroundStyle(PanelsTheme.muted).frame(minHeight: ReviewStyle.actionHeight)
-                    .disabled(!decision.ready || leaving).accessibilityIdentifier("review.sendBack")
+                    .accessibilityIdentifier("review.sendBack")
             }
-        }.padding(.horizontal, ReviewStyle.gutter).padding(.vertical, PanelsTheme.Space.lg).background(PanelsTheme.surface)
+            Button("Approve") { openApproval() }
+                .accessibilityIdentifier("review.approve")
+        }
+        .buttonStyle(ReviewActionStyle())
+        .disabled(!decision.ready || leaving)
+        .opacity(decision.ready ? 1 : 0.45)
     }
+
     private func openApproval() { guard decision.ready else { return }; editorFocused = false; editing = false; sheet = .approve }
     private func complete() { Haptics.success(); sheet = nil; onResolved() }
     private func skip(width: CGFloat, button: Bool) {
@@ -256,8 +256,8 @@ private struct ReviewApprovalSheet: View {
                 Button {
                     Haptics.light(); Task { await onApprove(ceiling, holder) }
                 } label: {
-                    HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.ink) } else { Text("Approve until \(selectedLabel)") }; Spacer() }.frame(minHeight: ReviewStyle.actionHeight)
-                }.background(PanelsTheme.accent, in: Capsule()).foregroundStyle(PanelsTheme.ink)
+                    HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.accentText) } else { Text("Approve until \(selectedLabel)") }; Spacer() }.frame(minHeight: ReviewStyle.actionHeight)
+                }.buttonStyle(ReviewActionStyle())
                     .accessibilityLabel("Approve until \(selectedLabel)")
                     .accessibilityValue(decision.busy ? "Approving" : "")
                     .disabled(!decision.ready || ceiling.isEmpty).accessibilityIdentifier("review.confirmApproval")

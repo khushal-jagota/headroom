@@ -5,8 +5,9 @@ shared change stream. Skip keeps a proposal out of this visit's queue without
 changing it on the server. When every remaining item was skipped, Revisit skipped
 items brings them back. A new proposal on the same ticket appears again.
 
-The approved Round 1 design puts Skip in the top bar, the title in bundled
-Newsreader, and Approve and Send back in a pinned bottom bar. The title opens the
+Review uses the system font throughout. Skip stays in the top bar. Send back and
+Approve have equal weight at the end of the scrollable proposal, with Approve on
+the right. Both use the app's accent text and surface colours. The title opens the
 ticket in Workspace; its long-press menu offers Rename. Recaps expand in place.
 Tapping the proposal edits it in place, with Done in the navigation bar. Approval
 sends the edited text together with the exact revision that was read. If the
@@ -18,7 +19,7 @@ Nothing is written until Approve until <Stage> is pressed. The worker type's
 served manifest supplies the available gates; Review does not assume coding stages.
 
 Swipe left past 30% of the screen to skip, or use the Skip button. The swipe never
-approves. The title and pinned actions stay still. Reduced Motion removes the
+approves. The title and actions do not move sideways with the proposal. Reduced Motion removes the
 positional part of the transition. Writes give a light haptic on submission and
 success or error feedback when the server responds. Skip uses selection feedback;
 crossing the swipe threshold uses a light impact.
