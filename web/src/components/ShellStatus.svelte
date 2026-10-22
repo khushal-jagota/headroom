@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ConnectionStatus } from "../lib/changeStream";
   import { deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard, type StatusCardKey } from "../lib/deploymentStatus";
@@ -37,16 +37,30 @@
   // open occupants: both ends are 1fr, so a one line card replaced by a wrapped sentence
   // jumps to its new intrinsic height. Animate that one distance the way the rail does.
   function glideHeight(previous: number): void {
-    resize?.cancel();
-    resize = null;
+    dropResize();
     if (!slot || typeof slot.animate !== "function") return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const next = slot.getBoundingClientRect().height;
     if (Math.abs(next - previous) <= 0.5) return;
-    resize = slot.animate([{ height: `${previous}px` }, { height: `${next}px` }],
+    // A cancelled animation settles its promise after the replacement is already in
+    // hand, so cleanup releases the handle only while it still owns it. Otherwise a
+    // later swap or the collapse has nothing to cancel, and a stale height effect
+    // outlives them both.
+    const animation = slot.animate([{ height: `${previous}px` }, { height: `${next}px` }],
       { duration: RAIL_MOTION.space, easing: RAIL_MOTION.ease });
-    void resize.finished.catch(() => {}).then(() => { resize = null; });
+    resize = animation;
+    void animation.finished.catch(() => {}).then(() => {
+      if (resize === animation) resize = null;
+    });
   }
+
+  function dropResize(): void {
+    resize?.cancel();
+    resize = null;
+  }
+
+  // The slot leaves with the component. A detached node keeps a running effect alive.
+  onDestroy(dropResize);
   const motionStyle = `--glide-space:${RAIL_MOTION.space}ms;--glide-fade:${RAIL_MOTION.fadeIn}ms;--glide-delay:${RAIL_MOTION.fadeDelay}ms;--glide-exit:${RAIL_MOTION.exit}ms;--glide-ease:${RAIL_MOTION.ease};--glide-enter:${RAIL_MOTION.enter};--glide-leave:${RAIL_MOTION.leave}`;
 
   $effect(() => {
@@ -80,8 +94,7 @@
       });
     } else {
       // The collapse owns the height from here.
-      resize?.cancel();
-      resize = null;
+      dropResize();
       open = false;
       closing = true;
       timer = window.setTimeout(() => {

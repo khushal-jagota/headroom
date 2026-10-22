@@ -283,6 +283,8 @@ def run(browser, urls):
           document.querySelector('.rail-foot .status-card').click();
         },
         problem: () => window.__deployment('problem'),
+        ready: () => window.__release('shipped'),
+        close: () => { window.__deployment('idle'); window.__release('booted'); },
       };
       window.__slotStart = (duration, action) => {
         const slot = document.querySelector('.rail-foot [data-shell-status]');
@@ -301,12 +303,23 @@ def run(browser, urls):
             utilitiesTop: Number(utilities.top.toFixed(2)),
             footTop: Number(foot.top.toFixed(2)),
             effects: slot.getAnimations().length,
+            // The collapse is a grid-template-rows transition. Only a scripted effect
+            // on the slot can be a height animation that outlived its swap.
+            heightEffects: slot.getAnimations()
+              .filter((animation) => animation.transitionProperty === undefined).length,
           });
           if (ms < duration) requestAnimationFrame(step);
           else { window.__slotFrames = samples; window.__slotDone = true; }
         };
         requestAnimationFrame(step);
         window.__slotActions[action]();
+      };
+      // A swap landing on a swap, then a close. Each stage interrupts the one before.
+      window.__slotOverlap = (duration, stages) => {
+        window.__slotStart(duration, stages[0][1]);
+        for (const [at, action] of stages.slice(1)) {
+          setTimeout(() => window.__slotActions[action](), at);
+        }
       };
     }""")
 
@@ -354,22 +367,76 @@ def run(browser, urls):
     expect(status).to_contain_text("Update applies when this message is safe")
     reduced = swap("problem", duration=200)
     expect(status).to_have_text("Problem")
-    assert all(sample["effects"] == 0 for sample in reduced), reduced
+    assert all(sample["heightEffects"] == 0 for sample in reduced), reduced
     assert abs(reduced[0]["height"] - reduced[-1]["height"]) < 2, reduced
     page.emulate_media(reduced_motion="no-preference")
 
-    # The hold survives every swap: the reload lands only once the message is safe.
-    page.evaluate("window.__deployment('idle')")
-    expect(status).to_contain_text("Update applies when this message is safe")
-    page.evaluate("window.__heldNarrow = true")
+    # Overlapping swaps: a cancelled resize settles its promise after its replacement
+    # exists, so cleanup that does not check identity releases the wrong handle. The
+    # collapse then has nothing to cancel and a stale height effect overrides it.
+    def overlap(stages, duration=1100):
+        page.evaluate("([d,s]) => window.__slotOverlap(d,s)", [duration, stages])
+        page.wait_for_function("window.__slotDone")
+        return page.evaluate("window.__slotFrames")
+
+    # Clear the earlier hold and the Problem card, so this starts from a ready update.
+    page.evaluate("window.__release('booted'); window.__deployment('idle')")
+    expect(page.locator(".rail-foot .status-card")).to_have_count(0)
+    page.evaluate("window.__release('shipped')")
+    expect(status).to_contain_text("New version ready")
+    overlapped = overlap([[0, "held"], [120, "problem"], [260, "close"]])
+    expect(page.locator(".rail-foot .status-card")).to_have_count(0)
+    closing = [sample for sample in overlapped if sample["ms"] >= 300]
+    assert all(sample["heightEffects"] == 0 for sample in closing), closing
+    assert overlapped[-1]["height"] < 1, overlapped[-4:]
+    assert all(current["height"] <= previous["height"] + 1
+               for previous, current in zip(closing, closing[1:], strict=False)), closing
+
+    # The same overlap under reduced motion runs with no timed effect at all.
+    page.emulate_media(reduced_motion="reduce")
+    page.evaluate("window.__release('shipped')")
+    expect(status).to_contain_text("New version ready")
+    reduced_overlap = overlap([[0, "held"], [120, "problem"], [260, "close"]], duration=700)
+    expect(page.locator(".rail-foot .status-card")).to_have_count(0)
+    assert all(sample["heightEffects"] == 0 for sample in reduced_overlap), reduced_overlap
+    assert reduced_overlap[-1]["height"] < 1, reduced_overlap[-4:]
+    page.emulate_media(reduced_motion="no-preference")
+
+    # The action is reachable again afterwards: the reopened slot is neither hidden
+    # nor inert, so the card takes focus and keeps it.
     page.evaluate(
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
     )
-    page.wait_for_function("() => window.__heldNarrow === undefined")
+    page.evaluate("window.__release('shipped')")
+    expect(status).to_contain_text("New version ready")
+    slot_element = page.locator(".rail-foot [data-shell-status]")
+    assert slot_element.get_attribute("aria-hidden") is None
+    assert slot_element.locator("> div").get_attribute("inert") is None
+    status.focus()
+    assert status.evaluate("node => node === document.activeElement")
+    # The card's own entrance transition is expected. No scripted height effect is.
+    assert slot_element.evaluate(
+        "node => node.getAnimations().filter(a => a.transitionProperty === undefined).length"
+    ) == 0
 
     (evidence / "status-slot-frames.json").write_text(json.dumps({
         "railWidth": 232,
         "readyToHeld": ready_to_held,
         "heldToProblem": held_to_problem,
         "reducedMotionHeldToProblem": reduced,
+        "overlappingSwapsThenClose": overlapped,
+        "reducedMotionOverlap": reduced_overlap,
     }, indent=2))
+
+    # The hold survives every swap, including the overlapping ones above: the reload
+    # lands only once the message is safe. This discards the page, so it runs last.
+    page.evaluate(
+        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
+    )
+    status.click()
+    expect(status).to_contain_text("Update applies when this message is safe")
+    page.evaluate("window.__heldNarrow = true")
+    page.evaluate(
+        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
+    )
+    page.wait_for_function("() => window.__heldNarrow === undefined")
