@@ -67,12 +67,14 @@ struct WorkspaceCard: View {
                 switch row {
                 case .heading(let section):
                     Text(section.title)
-                        .panelsScaledFont(size: 11, relativeTo: .caption2, weight: .semibold)
-                        .foregroundStyle(PanelsTheme.faint)
+                        .panelsScaledFont(size: 13, relativeTo: .caption, weight: .semibold)
+                        .foregroundStyle(PanelsTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
-                        .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 4))
+                        .frame(minHeight: 32)
+                        .padding(.horizontal, 16)
+                        .background(PanelsTheme.raised)
+                        .padding(.horizontal, -16)
                         .padding(.top, section == groups.first?.section ? 16 : 8)
                         .accessibilityAddTraits(.isHeader)
                         .transition(.opacity)

@@ -5,6 +5,9 @@ enum ReviewStyle {
     static let gutter: CGFloat = 20
     static let actionHeight: CGFloat = 50
     static let enter = 0.32
+    static let fadeOut = PanelsTheme.Motion.exit
+    static let fadeIn = 0.20
+    static let swipeOut = 0.15
     static let swipeFraction: CGFloat = 0.30
     static let title = Font.title
     static let empty = Font.title3
@@ -20,8 +23,9 @@ struct ReviewActionStyle: ButtonStyle {
         configuration.label
             .font(PanelsTheme.TypeScale.body)
             .frame(maxWidth: .infinity, minHeight: ReviewStyle.actionHeight)
-            .foregroundStyle(approval ? PanelsTheme.ink : PanelsTheme.accentText)
-            .background(approval ? PanelsTheme.accent : PanelsTheme.accentSurface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
+            .foregroundStyle(approval ? PanelsTheme.ink : PanelsTheme.strong)
+            .background(approval ? PanelsTheme.accent : PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
+            .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(approval ? Color.clear : PanelsTheme.border, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

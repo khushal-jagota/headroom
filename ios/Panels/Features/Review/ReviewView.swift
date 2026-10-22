@@ -4,11 +4,16 @@ struct ReviewView: View {
     var openTicket: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
     @State private var queue = ReviewQueue()
+    @State private var displayedItem: ReviewItem?
+    @State private var decisions: [String: ReviewDecision] = [:]
+    @State private var cardHeight: CGFloat = 180
+    @State private var emptyVisible = false
+    private var pending: [ReviewItem] { (store.review?.items ?? []).filter { !queue.skipped.contains($0.id) && !queue.resolved.contains($0.id) } }
 
     var body: some View {
         Group {
-            if let item = queue.current(in: store.review?.items ?? []) {
-                ReviewProposalView(item: item, openTicket: openTicket.map { action in { action(item.ticketId) } }, onSkip: { advance(item, resolved: false) }, onResolved: {
+            if let item = displayedItem ?? queue.current(in: store.review?.items ?? []) {
+                ReviewProposalView(item: item, decision: decisions[item.id] ?? ReviewDecision(), cardHeight: $cardHeight, openTicket: openTicket.map { action in { action(item.ticketId) } }, onSkip: { advance(item, resolved: false) }, onResolved: {
                     advance(item, resolved: true)
                     Task { await store.refresh() }
                 }).id(item.id).transition(.identity)
@@ -25,11 +30,27 @@ struct ReviewView: View {
                         }
                     }.frame(maxWidth: .infinity).padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.hero * 4)
                 }.refreshable { await store.refresh() }
+                    .opacity(emptyVisible ? 1 : 0)
+                    .task { withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { emptyVisible = true } }
+                    .onDisappear { emptyVisible = false }
             } else { ScrollView { Color.clear.frame(height: 1) }.refreshable { await store.refresh() } }
         }
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
-        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue() }
+        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:] }
+        .task(id: "\(store.baseURL):\(pending.prefix(2).map(\.id).joined(separator: ","))") {
+            // Pin the visible ask until its exit finishes, including when the server
+            // removes it from the live queue while its approval sheet is closing.
+            if displayedItem == nil { displayedItem = queue.current(in: store.review?.items ?? []) }
+            // Keep the next complete ask ready before the current one leaves.
+            for item in pending.prefix(2) {
+                let decision = decisions[item.id] ?? ReviewDecision()
+                decisions[item.id] = decision
+                if decision.proposal == nil { await decision.load(item: item, api: store.client) }
+            }
+            let ids = Set((store.review?.items ?? []).map(\.id))
+            decisions = decisions.filter { ids.contains($0.key) || $0.key == displayedItem?.id }
+        }
     }
 
     private func advance(_ item: ReviewItem, resolved: Bool) {
@@ -37,19 +58,21 @@ struct ReviewView: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             if resolved { queue.resolve(item) } else { queue.skip(item) }
+            displayedItem = queue.current(in: store.review?.items ?? [])
         }
     }
 }
 
 private struct ReviewProposalView: View {
     let item: ReviewItem
+    @Bindable var decision: ReviewDecision
+    @Binding var cardHeight: CGFloat
     let openTicket: (() -> Void)?
     let onSkip: () -> Void
     let onResolved: () -> Void
     @Environment(AppStore.self) private var store
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var decision = ReviewDecision()
     @State private var sheet: ReviewSheet?
     @State private var editing = false
     @FocusState private var editorFocused: Bool
@@ -57,9 +80,15 @@ private struct ReviewProposalView: View {
     @State private var drag: CGFloat = 0
     @State private var crossedThreshold = false
     @State private var leaving = false
+    @State private var visible = false
+    @State private var returning = false
+    @State private var actionsVisible = true
+    @State private var changingActions = false
+    @State private var resolvedAfterDismiss = false
+    @State private var observedRevision: Int?
     @State private var renaming = false
     @State private var titleDraft = ""
-    private enum ReviewSheet: String, Identifiable { case approve, sendBack; var id: String { rawValue } }
+    private enum ReviewSheet: String, Identifiable { case approve; var id: String { rawValue } }
     private var fieldLabel: String { decision.manifest?.fields.first(where: { $0.id == item.field })?.label ?? item.field.capitalized }
     private var reviewer: String {
         switch decision.ticket?.ceilingHolder.kind { case "chief": "Chief"; case "manager": "Manager"; case "ticket": "Worker"; default: "User" }
@@ -85,8 +114,11 @@ private struct ReviewProposalView: View {
                                 .accessibilityValue(recap)
                                 .accessibilityHint(recapExpanded ? "Collapses recap" : "Expands recap")
                         }
-                        if decision.proposal != nil { proposalCard }
-                        else if decision.loading { ProgressView("Loading proposal").frame(maxWidth: .infinity, minHeight: 180) }
+                        if decision.proposal != nil {
+                            proposalCard
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
+                                .transition(.opacity)
+                        } else { ProgressView("Loading proposal").frame(maxWidth: .infinity, minHeight: cardHeight) }
                         if decision.proposal?.field != "brief", decision.proposal != nil, !decision.canReturn {
                             Text("No existing Worker conversation to send a revision to.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                         }
@@ -97,59 +129,77 @@ private struct ReviewProposalView: View {
                             }.disabled(decision.busy)
                         }
                     }
-                    .animation(reduceMotion ? nil : ReviewStyle.entrance, value: decision.proposal != nil)
-                    .offset(x: reduceMotion ? 0 : drag)
-                    .opacity(leaving ? 0 : 1)
+                    actionBar
+                }.padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.md).padding(.bottom, PanelsTheme.Space.xl)
+                    .offset(x: drag)
+                    .opacity(visible && !leaving ? 1 : 0)
                     .simultaneousGesture(DragGesture(minimumDistance: 24)
                         .onChanged { value in
-                            guard !editing, !decision.busy, !leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                            guard !editing, !returning, !decision.busy, !leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
                             drag = min(0, value.translation.width)
                             let crossed = -drag > geometry.size.width * ReviewStyle.swipeFraction
                             if crossed && !crossedThreshold { Haptics.light() }
                             crossedThreshold = crossed
                         }
                         .onEnded { value in
+                            guard !returning, !editing, !decision.busy, !leaving else { return }
                             if -drag > geometry.size.width * ReviewStyle.swipeFraction, abs(value.translation.width) > abs(value.translation.height) * 1.5 {
                                 skip(width: geometry.size.width, button: false)
                             } else { withAnimation(.smooth(duration: ReviewStyle.enter, extraBounce: 0)) { drag = 0 } }
                             crossedThreshold = false
                         })
-                    actionBar
-                }.padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.md).padding(.bottom, PanelsTheme.Space.xl)
             }
+            .scrollDismissesKeyboard(.interactively)
             .refreshable { await store.refresh(); await decision.load(item: item, api: store.client) }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if editing {
-                        Button("Done") { editorFocused = false; editing = false }
-                    } else {
-                        Button("Skip") { skip(width: 12, button: true) }.foregroundStyle(PanelsTheme.muted).disabled(decision.busy || leaving).accessibilityIdentifier("review.skip")
-                    }
-                }
-            }
+            .toolbar { reviewToolbar }
+
         }
         .task(id: "\(store.baseURL):\(store.revision)") {
-            guard sheet == nil, !editing, drag == 0 else { return }
+            guard sheet == nil, !editing, !returning, drag == 0 else { return }
+            let firstAppearance = observedRevision == nil
+            observedRevision = store.revision
+            // A prefetched ask is ready to reveal; do not immediately dim its actions
+            // with a redundant load. Subsequent server revisions still refresh it.
+            if firstAppearance, decision.proposal != nil { return }
             await decision.load(item: item, api: store.client)
         }
+        .onAppear { withAnimation(.timingCurve(0.2, 0.7, 0.3, 1, duration: reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.fadeIn)) { visible = true } }
         .alert("Rename ticket", isPresented: $renaming) {
             TextField("Title", text: $titleDraft)
             Button("Cancel", role: .cancel) {}
             Button("Save") { Haptics.light(); Task { if await decision.rename(api: store.client, title: titleDraft) { Haptics.success() } else { ReviewStyle.error() } } }
         }
-        .sheet(item: $sheet) { selected in
+        .sheet(item: $sheet, onDismiss: {
+            if resolvedAfterDismiss { resolvedAfterDismiss = false; leave(resolved: true) }
+        }) { selected in
             switch selected {
             case .approve:
                 ReviewApprovalSheet(decision: decision) { ceiling, holder in
                     if await decision.approve(api: store.client, ceiling: ceiling, holder: holder) { complete() }
                     else { ReviewStyle.error() }
                 }
-            case .sendBack:
-                ReviewReturnSheet(decision: decision, fieldLabel: fieldLabel, api: store.client) {
-                    if await decision.sendBack(api: store.client, message: decision.revisionDraft) { complete() }
-                    else { ReviewStyle.error() }
-                }
+
             }
+        }
+    }
+
+    @ToolbarContentBuilder private var reviewToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarTrailing) { toolbarAction }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarTrailing) { toolbarAction }
+        }
+    }
+
+    @ViewBuilder private var toolbarAction: some View {
+        if editing {
+            Button("Done") { editorFocused = false; editing = false }.buttonStyle(.plain)
+        } else {
+            Button("Skip") { skip(width: 12, button: true) }
+                .buttonStyle(.plain).foregroundStyle(PanelsTheme.muted)
+                .disabled(decision.busy || leaving || returning)
+                .accessibilityIdentifier("review.skip")
         }
     }
 
@@ -186,28 +236,67 @@ private struct ReviewProposalView: View {
     }
 
     private var actionBar: some View {
-        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
-            if decision.canReturn {
-                Button("Send back") { editorFocused = false; editing = false; sheet = .sendBack }
-                    .accessibilityIdentifier("review.sendBack")
+        Group {
+            if returning {
+                ReviewReturnComposer(decision: decision, fieldLabel: fieldLabel, api: store.client, onCancel: { changeActions(returning: false) }) {
+                    if await decision.sendBack(api: store.client, message: decision.revisionDraft) { complete() }
+                    else { ReviewStyle.error() }
+                }
+            } else {
+                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
+                    if decision.canReturn {
+                        Button("Send back") {
+                            Haptics.light(); editorFocused = false; editing = false
+                            changeActions(returning: true)
+                        }.accessibilityIdentifier("review.sendBack")
+                    }
+                    Button("Approve") { openApproval() }
+                        .buttonStyle(ReviewActionStyle(approval: true))
+                        .accessibilityIdentifier("review.approve")
+                }
+                .buttonStyle(ReviewActionStyle())
+                .disabled(!decision.ready || leaving || changingActions)
+                .opacity(decision.ready ? 1 : 0.45)
             }
-            Button("Approve") { openApproval() }
-                .buttonStyle(ReviewActionStyle(approval: true))
-                .accessibilityIdentifier("review.approve")
-        }
-        .buttonStyle(ReviewActionStyle())
-        .disabled(!decision.ready || leaving)
-        .opacity(decision.ready ? 1 : 0.45)
+        }.opacity(actionsVisible ? 1 : 0)
     }
 
-    private func openApproval() { guard decision.ready else { return }; editorFocused = false; editing = false; sheet = .approve }
-    private func complete() { Haptics.success(); sheet = nil; onResolved() }
-    private func skip(width: CGFloat, button: Bool) {
-        guard !decision.busy, !leaving else { return }
-        if button { Haptics.selection() }
-        withAnimation(.easeOut(duration: PanelsTheme.Motion.base)) { leaving = true; drag = reduceMotion ? 0 : -width }
-        Task { try? await Task.sleep(for: .seconds(PanelsTheme.Motion.base)); onSkip() }
+    private func changeActions(returning next: Bool) {
+        guard !changingActions else { return }
+        changingActions = true
+        withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { actionsVisible = false }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(ReviewStyle.fadeOut))
+            guard !Task.isCancelled else { return }
+            returning = next
+            withAnimation(.easeOut(duration: reduceMotion ? ReviewStyle.fadeOut : PanelsTheme.Motion.base)) { actionsVisible = true }
+            changingActions = false
+        }
     }
+    private func openApproval() { guard decision.ready else { return }; Haptics.light(); editorFocused = false; editing = false; sheet = .approve }
+    private func complete() {
+        Haptics.success()
+        if sheet != nil { resolvedAfterDismiss = true; sheet = nil }
+        else { leave(resolved: true) }
+    }
+    private func skip(width: CGFloat, button: Bool) {
+        guard !decision.busy, !leaving, !returning else { return }
+        if button { Haptics.selection() }
+        leave(resolved: false, swipeWidth: button ? nil : width)
+    }
+    private func leave(resolved: Bool, swipeWidth: CGFloat? = nil) {
+        let duration = swipeWidth == nil || reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.swipeOut
+        withAnimation(.easeOut(duration: duration)) {
+            leaving = true
+            if let swipeWidth, !reduceMotion { drag = -swipeWidth }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled else { return }
+            if resolved { onResolved() } else { onSkip() }
+        }
+    }
+
 }
 
 private struct ReviewProse: View {
@@ -271,32 +360,38 @@ private struct ReviewApprovalSheet: View {
     }
 }
 
-private struct ReviewReturnSheet: View {
+private struct ReviewReturnComposer: View {
     @Bindable var decision: ReviewDecision
     let fieldLabel: String
     let api: APIClient
+    let onCancel: () -> Void
     let onReturn: () async -> Void
     @State private var voice = ReviewVoiceCapture()
     @FocusState private var focused: Bool
     var body: some View {
-        ScrollView {
-        VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
-            Text("Send back · \(fieldLabel)").reviewEyebrow()
-            TextField("Tell the worker what to change…", text: $decision.revisionDraft, axis: .vertical)
-                .lineLimit(3...6).font(.body).focused($focused).accessibilityLabel("Changes for the worker").accessibilityIdentifier("review.revision")
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+            Text("Send back · \(fieldLabel)".uppercased()).reviewEyebrow()
+            HStack(alignment: .bottom) {
+            if voice.phase == .idle { TextField("Tell the worker what to change…", text: $decision.revisionDraft, axis: .vertical)
+                .lineLimit(1...6).font(.body).focused($focused).accessibilityLabel("Changes for the worker").accessibilityIdentifier("review.revision")
                 .disabled(voice.phase != .idle || decision.busy)
-            if voice.phase != .idle { voiceStatus }
+            } else { voiceStatus }
+            if voice.phase == .idle {
+                Button { Haptics.light(); focused = false; Task { await voice.start() } } label: { Image(systemName: "mic").frame(width: 44, height: 44) }
+                    .buttonStyle(.plain).foregroundStyle(PanelsTheme.muted).accessibilityLabel("Record a revision").disabled(decision.busy)
+            }
+            }.padding(.leading, PanelsTheme.Space.md)
+                .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
+                .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(PanelsTheme.border))
             HStack(spacing: PanelsTheme.Space.md) {
-                if voice.phase == .idle {
-                    Button { focused = false; Task { await voice.start() } } label: { Image(systemName: "mic").frame(width: 44, height: 44) }
-                        .background(PanelsTheme.recessed, in: Circle()).foregroundStyle(PanelsTheme.muted).accessibilityLabel("Record a revision")
-                        .disabled(decision.busy)
-                }
+                Button("Cancel") { Haptics.selection(); focused = false; voice.cancel(); onCancel() }
+                    .buttonStyle(ReviewActionStyle()).disabled(decision.busy)
+                    .accessibilityIdentifier("review.cancelReturn")
                 Button {
-                    Haptics.light(); Task { await onReturn() }
+                    Haptics.light(); focused = false; Task { await onReturn() }
                 } label: {
                     HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.ink) } else { Text("Send back") }; Spacer() }.frame(minHeight: 44)
-                }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)).foregroundStyle(PanelsTheme.ink)
+                }.buttonStyle(ReviewActionStyle(approval: true))
                     .disabled(!decision.ready || decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || voice.phase != .idle)
                     .opacity(decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
                     .accessibilityLabel("Send back")
@@ -304,10 +399,8 @@ private struct ReviewReturnSheet: View {
                     .accessibilityIdentifier("review.confirmReturn")
             }
             if let error = decision.error ?? voice.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
-        }.padding(ReviewStyle.gutter).padding(.top, PanelsTheme.Space.lg).frame(maxWidth: .infinity, alignment: .leading)
-        }.scrollDismissesKeyboard(.interactively)
-            .background(PanelsTheme.raised).presentationDetents([.large]).presentationDragIndicator(.visible)
-            .interactiveDismissDisabled(decision.busy).onAppear { focused = true }.onDisappear { voice.cancel() }
+        }.padding(.bottom, PanelsTheme.Space.md)
+            .onAppear { focused = true }.onDisappear { voice.cancel() }
     }
     @ViewBuilder private var voiceStatus: some View {
         HStack(spacing: PanelsTheme.Space.md) {
@@ -320,7 +413,7 @@ private struct ReviewReturnSheet: View {
                     Text("recording \(elapsed / 60):\(String(format: "%02d", elapsed % 60))").monospacedDigit()
                 }
                 Spacer()
-                Button { Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: Circle()).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
+                Button { Haptics.light(); Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg)).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
             case .transcribing: Text("transcribing"); Spacer(); ProgressView()
             case .failed:
                 Text("transcription failed · kept").font(.footnote)
