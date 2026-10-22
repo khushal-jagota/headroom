@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -189,3 +190,85 @@ def test_renew_cli_outputs_public_lifecycle(
     assert payload == json.loads(path.read_text())
     assert payload["version"] == 1
     assert payload["phase"] == "preparing"
+
+
+def test_borrowed_lock_survives_renewal_and_readonly_receipt_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json", now=Clock())
+    original = store.start("deploy", SHA)
+    with lifecycle_module.renewal_lock(store.path) as owner:
+        baseline = lifecycle_module.open_renewal_baseline(store.path)
+        try:
+            assert lifecycle_module.recover_renewal_receipt(
+                store.path, "deploy", lock_fd=owner, baseline_fd=baseline,
+            ) == {"committed": False}
+            # The clock stays equal. Only the pinned inode proves the new commit.
+            assert store.renew("deploy", lock_fd=owner) == original
+            with store.lock_path.open("r+") as contender:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            before = store.path.read_bytes()
+            identity = store.path.stat().st_ino
+
+            def forbidden_write(_path: Path, _payload: dict[str, object]) -> None:
+                pytest.fail("receipt recovery must never write a renewal")
+
+            monkeypatch.setattr(lifecycle_module, "_atomic_write", forbidden_write)
+            assert lifecycle_module.recover_renewal_receipt(
+                store.path, "deploy", lock_fd=owner, baseline_fd=baseline,
+            ) == {"committed": True, "lifecycle": original.to_public_dict()}
+            assert store.path.read_bytes() == before
+            assert store.path.stat().st_ino == identity
+            with store.lock_path.open("r+") as contender:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(baseline)
+    with store.lock_path.open("r+") as contender:
+        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@pytest.mark.parametrize("wrong_descriptor", ["other-file", "contended-open-description"])
+def test_borrowed_lock_rejects_wrong_identity_or_contended_description(
+    tmp_path: Path, wrong_descriptor: str,
+) -> None:
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json", now=Clock())
+    store.start("deploy", SHA)
+    before = store.path.read_bytes()
+    with lifecycle_module.renewal_lock(store.path):
+        path = store.path if wrong_descriptor == "other-file" else store.lock_path
+        with path.open("r+") as foreign:
+            with pytest.raises((DeploymentLifecycleError, BlockingIOError)):
+                store.renew("deploy", lock_fd=foreign.fileno())
+            # Rejection closes only the borrowed copy, never the caller's descriptor.
+            assert os.fstat(foreign.fileno()).st_ino == path.stat().st_ino
+    assert store.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("replacement", ["transition", "other-deployment", "malformed"])
+def test_receipt_recovery_rejects_unattributable_replacement(
+    tmp_path: Path, replacement: str,
+) -> None:
+    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json", now=Clock())
+    original = store.start("deploy", SHA)
+    with lifecycle_module.renewal_lock(store.path) as owner:
+        baseline = lifecycle_module.open_renewal_baseline(store.path)
+        try:
+            payload = original.to_public_dict()
+            if replacement == "transition":
+                payload["phase"] = "failed"
+            elif replacement == "other-deployment":
+                payload["deployment_id"] = "someone-else"
+            else:
+                payload = {"version": 1}
+            # Simulate evidence that cannot belong to this attempt, despite a new inode.
+            lifecycle_module._atomic_write(store.path, payload)
+            before = store.path.read_bytes()
+            with pytest.raises(DeploymentLifecycleError):
+                lifecycle_module.recover_renewal_receipt(
+                    store.path, "deploy", lock_fd=owner, baseline_fd=baseline,
+                )
+            assert store.path.read_bytes() == before
+        finally:
+            os.close(baseline)
