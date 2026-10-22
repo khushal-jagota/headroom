@@ -1,5 +1,5 @@
 .vps-container { container-type:inline-size; min-width:0; }
-[data-screen="vps"] { padding:var(--space-5) var(--page-gutter) var(--space-7); }
+.screen[data-screen="vps"] { padding:var(--space-5) var(--page-gutter) var(--space-7); }
 [data-screen="vps"] :is(h1,h2,p) { margin:0; }
 [data-screen="vps"] .screen-header { margin-bottom:var(--space-5); }
 [data-screen="vps"] .screen-header-row { align-items:flex-end; }
