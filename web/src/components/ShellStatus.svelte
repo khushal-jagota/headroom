@@ -57,12 +57,23 @@
     });
   }
 
-  function glideHeight(previous: number): void {
-    // Cancel first, so the measurement is the new card's own height rather than the
-    // height the outgoing animation happens to be passing through.
-    dropResize();
-    if (!slot) return;
-    animateHeight(previous, slot.getBoundingClientRect().height);
+  // The endpoint is always the card's own height. The slot is not a reliable endpoint:
+  // its row can still be entering or reopening, so measuring it targets an intermediate
+  // size, and the height snaps to the full card when the effect ends. The card does not
+  // move with the row, because the row clips it rather than sizing it.
+  function cardHeight(): number | null {
+    const card = slot?.querySelector<HTMLElement>(".status-card");
+    if (!card) return null;
+    return card.getBoundingClientRect().height
+      + (parseFloat(window.getComputedStyle(card).marginBottom) || 0);
+  }
+
+  // One contract for a handoff that keeps the card: leave from the size on screen, land
+  // on the card's own height. A swap and a return during the collapse both use it.
+  function takeHeight(previous: number): void {
+    const target = cardHeight();
+    if (target === null) { dropResize(); return; }
+    animateHeight(previous, target);
   }
 
   // The collapse leaves from the size on screen. Cancelling the swap first would put
@@ -72,17 +83,6 @@
   function collapseHeight(): void {
     if (!resize || !slot) { dropResize(); return; }
     animateHeight(slot.getBoundingClientRect().height, 0, RAIL_MOTION.exit);
-  }
-
-  // A card returning during the collapse. The row reverses on its own, but the scripted
-  // collapse is what is on screen, so the return leaves from there and lands where the
-  // row lands: the restored card's own height, taken from the card rather than the slot,
-  // because the row is still travelling.
-  function reopenHeight(previous: number): void {
-    const card = slot?.querySelector<HTMLElement>(".status-card");
-    if (!card) { dropResize(); return; }
-    const spacing = window.getComputedStyle(card).marginBottom;
-    animateHeight(previous, card.getBoundingClientRect().height + (parseFloat(spacing) || 0));
   }
 
   function dropResize(): void {
@@ -122,14 +122,14 @@
       // including a reversal during exit.
       void tick().then(() => {
         if (obsolete) return;
-        if (previousHeight !== null) { glideHeight(previousHeight); return; }
+        if (previousHeight !== null) { takeHeight(previousHeight); return; }
         if (slot) void slot.offsetHeight;
         frame = window.requestAnimationFrame(() => {
           if (obsolete) return;
           open = true;
           if (returningHeight === null) { dropResize(); return; }
           // Take the height only once the row is open, so the restored card is measurable.
-          void tick().then(() => { if (!obsolete) reopenHeight(returningHeight); });
+          void tick().then(() => { if (!obsolete) takeHeight(returningHeight); });
         });
       });
     } else {

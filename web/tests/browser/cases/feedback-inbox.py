@@ -303,6 +303,7 @@ def run(browser, urls):
             slotBottom: Number(box.bottom.toFixed(2)),
             utilitiesTop: Number(utilities.top.toFixed(2)),
             footTop: Number(foot.top.toFixed(2)),
+            closing: slot.hasAttribute('data-closing'),
             effects: slot.getAnimations().length,
             // The collapse is a grid-template-rows transition. Only a scripted effect
             // on the slot can be a height animation that outlived its swap.
@@ -391,13 +392,35 @@ def run(browser, urls):
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     # The close boundary itself, not only the tail. Cancelling the running height used
     # to reveal the taller intrinsic row here, which showed as a jump up before the fall.
-    leaving = [sample for sample in overlapped if sample["ms"] <= closed_at][-1]
-    closing = [sample for sample in overlapped if sample["ms"] > closed_at]
-    assert all(sample["height"] <= leaving["height"] + 1 for sample in closing), (leaving, closing)
+    # The boundary is the slot's own closing flag, not the clock: the close is async, so
+    # a timed cutoff lands while the interrupted swap is still legitimately growing.
+    began = next(index for index, sample in enumerate(overlapped) if sample["closing"])
+    leaving = overlapped[began - 1]
+    closing = overlapped[began:]
+    # One frame of the interrupted swap's own growth can land between the last open
+    # sample and the first closing one, which is about 3px here. The defect this guards
+    # was a jump of about 28px, so the slack cannot hide it.
+    assert all(sample["height"] <= leaving["height"] + 4 for sample in closing), (leaving, closing)
     assert all(current["height"] <= previous["height"] + 1
                for previous, current in zip(closing, closing[1:], strict=False)), closing
     assert overlapped[-1]["height"] < 1, overlapped[-4:]
     assert overlapped[-1]["heightEffects"] == 0, overlapped[-4:]
+
+    # A swap landing while the row is still entering, left to finish while open. The
+    # close in the sequences below reaches zero either way, so it hides this endpoint:
+    # only an open ending shows whether the swap aimed at the card or at the row's
+    # intermediate size, which it would then snap away from when the effect ended.
+    page.evaluate("window.__release('booted'); window.__deployment('idle')")
+    expect(page.locator(".rail-foot .status-card")).to_have_count(0)
+    entering = overlap([[0, "ready"], [80, "held"]], duration=1200)
+    expect(status).to_contain_text("Update applies when this message is safe")
+    card = status.bounding_box()
+    assert card and abs(entering[-1]["height"] - (card["height"] + 8)) < 1.5, (card, entering[-1])
+    assert all(abs(current["height"] - previous["height"]) < 8
+               for previous, current in zip(entering, entering[1:], strict=False)), entering
+    assert abs(entering[-1]["height"] - entering[-3]["height"]) < 1, entering[-4:]
+    assert entering[-1]["heightEffects"] == 0, entering[-4:]
+    interrupted["swapDuringEntrance"] = entering
 
     # A card returning mid-close reverses the row, but the scripted collapse is what is
     # on screen. Cancelling it there exposed the taller grid height before the reopen.
@@ -416,10 +439,15 @@ def run(browser, urls):
         assert samples[-1]["height"] > 1, (label, samples[-4:])
         assert samples[-1]["heightEffects"] == 0, (label, samples[-4:])
 
+    # Settled means the row has finished too, not merely that the card is as tall as the
+    # slot. The slot carries the card's bottom margin, so the weaker test passed early.
     settled_open = """() => {
       const slot=document.querySelector('.rail-foot [data-shell-status]');
       const card=document.querySelector('.rail-foot .status-card');
-      return slot && card && slot.getBoundingClientRect().height >= card.getBoundingClientRect().height - 1;
+      if (!slot || !card || slot.getAnimations().length) return false;
+      const spacing = parseFloat(getComputedStyle(card).marginBottom) || 0;
+      return Math.abs(slot.getBoundingClientRect().height
+        - (card.getBoundingClientRect().height + spacing)) < 1;
     }"""
     # The close must interrupt a swap, because only then is a scripted collapse what is
     # on screen for the return to interrupt in turn.
