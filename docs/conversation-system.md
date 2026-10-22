@@ -489,8 +489,33 @@ exact pending operation and accepted ownership. Operator inspection through
 `recording_failures` exposes the actual error. `resume_recording` resumes persistence
 explicitly after repair. This in-memory seam does not survive process loss.
 
-Prompt/model/attention/skill receipts remain one atomic transaction. Ancillary notice
-classification occurs before dispatch. After commit, local state uses the returned rows.
+Prompt/model/attention/skill receipts remain one atomic transaction. Internal proposal
+review notices receive final admission after model and session preparation, immediately
+before prompt composition or steering. The notice domain checks current revision and
+effective reviewer in the same SQLite write transaction that records any discard. This
+commit orders admission against canonical proposal writes; no database transaction spans
+backend I/O. Admission wins if resolution commits later.
+
+Admission uses durable conversation and sender message identity, never notice wording or
+sender labels. Each queued message is checked before survivors are combined. Reply
+obligations and automatic-notice classification are composed from survivors only. A
+replacement session gets a fresh check before its write. If no message survives, no turn
+starts, and a newly prepared replacement child is released without changing the durable
+model or effort.
+
+A suppressed delivery is an intentional pre-wire outcome, with its reason on the exact
+`prompt_discarded` receipt. Its attempt ends as `suppressed`; it is neither accepted work
+nor a failed backend write. Repeating the sender identity returns that same suppressed
+outcome without another write or a new explicit reply acknowledgment. The notice audit
+also preserves each obsolete source's original and current review facts and reason in
+`manager_wake_suppressions`, so operators can count what stopped and inspect why.
+
+Recovery settles exact durable receipts first. Known-held work receives admission on its
+next departure. A crash after admission without a receipt remains uncertain; historical
+dispatching or uncertain work is never reclassified as safely unsent or replayed merely
+because its proposal has since changed.
+
+After commit, local state uses the returned rows.
 A live-tail publication error does not invalidate the receipt or append it again.
 
 Historical uncertainty remains in the notebook. Reviewed, message-specific provider

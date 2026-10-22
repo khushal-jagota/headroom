@@ -338,3 +338,132 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
                 await current.system.shutdown()
 
     _run(exercise)
+
+
+@pytest.mark.parametrize("rebind", [False, True])
+def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rebind: bool,
+) -> None:
+    import asyncio
+
+    from tests.unit.test_conversation_system import (
+        _FakeBackendChild,
+        _resolve_review,
+        _review_notice,
+    )
+
+    from planner.conversation.contracts import PromptDeliveryStarted, PromptDeliverySuppressed
+
+    path = tmp_path / "db.sqlite"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+
+    async def exercise() -> None:
+        await _start(original)
+        await original.store.reserve_turn("c")
+        write_manifest(path, _capture(path))
+        await original.system.shutdown()
+        restarted = _Harness(path)
+        try:
+            before = _entry(path)
+            assert before["recovery_state"] == "awaiting_action"
+            ticket_id, sender_id, message = _review_notice(path)
+            entered, release = asyncio.Event(), asyncio.Event()
+            original_start = _FakeBackendChild.start
+
+            async def delayed_start(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                await original_start(self, *args, **kwargs)
+                if restarted.backend("c").session_starts == (2 if rebind else 1):
+                    entered.set()
+                    await release.wait()
+
+            monkeypatch.setattr(_FakeBackendChild, "start", delayed_start)
+            restarted.backend("c").needs_rebind_once = rebind
+            sending = asyncio.create_task(restarted.system.send(
+                "c", text_message_content(message), sender_label="Chief",
+                sender_message_id=sender_id,
+            ))
+            await entered.wait()
+            _resolve_review(path, ticket_id)
+            release.set()
+            assert isinstance(await sending, PromptDeliverySuppressed)
+            assert restarted.backend("c").writes == []
+            assert not await restarted.system.is_running("c")
+            assert _entry(path) == before
+            with connect(str(path)) as conn:
+                assert conn.execute(
+                    "SELECT count(*) FROM deploy_interruption_deliveries"
+                ).fetchone()[0] == 0
+        finally:
+            await restarted.system.shutdown()
+
+        monkeypatch.setattr(_FakeBackendChild, "start", original_start)
+        # A further boot must not misclassify a pre-wire suppression as unknown recovery.
+        final = _Harness(path)
+        try:
+            assert _entry(path) == before
+            fate = await final.system.send(
+                "c", text_message_content("Inspect current work"), sender_label="Chief",
+                sender=CHIEF_PRINCIPAL, recipient=Principal(PrincipalKind.ticket, ticket_id),
+            )
+            assert isinstance(fate, PromptDeliveryStarted)
+            wire = final.backend("c").written_texts()[0]
+            assert wire.startswith("[Authenticated Panels reply requirement]")
+            assert wire.count("[Panels deployment interruption context]") == 1
+            assert wire.index("[Panels deployment interruption context]") < wire.index(
+                "Inspect current work"
+            )
+            assert _entry(path)["recovery_state"] == "resumed"
+            with connect(str(path)) as conn:
+                assert [row[0] for row in conn.execute(
+                    "SELECT status FROM deploy_interruption_deliveries"
+                )] == ["started"]
+        finally:
+            await final.system.shutdown()
+
+    _run(exercise)
+
+
+def test_rebind_preserves_interruption_context_in_the_actual_backend_prompt(tmp_path: Path) -> None:
+    from planner.conversation.contracts import PromptDeliveryStarted
+
+    path = tmp_path / "db.sqlite"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+
+    async def exercise() -> None:
+        await _start(original)
+        await original.store.reserve_turn("c")
+        write_manifest(path, _capture(path))
+        await original.system.shutdown()
+        restarted = _Harness(path)
+        try:
+            backend = restarted.backend("c")
+            backend.needs_rebind_once = True
+            fate = await restarted.system.send(
+                "c", text_message_content("Inspect after deploy"), sender_label="Chief",
+                sender=CHIEF_PRINCIPAL, recipient=Principal(PrincipalKind.ticket, "reviewer"),
+            )
+            assert isinstance(fate, PromptDeliveryStarted)
+            assert backend.session_starts == 2
+            assert len(backend.writes) == 1
+            wire = backend.writes[0].text
+            assert wire.startswith("[Authenticated Panels reply requirement]")
+            assert wire.count("[Panels deployment interruption context]") == 1
+            assert wire.index("[Panels deployment interruption context]") < wire.index(
+                "Inspect after deploy"
+            )
+            assert backend.writes[0].sender_content == text_message_content("Inspect after deploy")
+            assert _entry(path)["recovery_state"] == "resumed"
+            with connect(str(path)) as conn:
+                assert [row[0] for row in conn.execute(
+                    "SELECT status FROM deploy_interruption_deliveries"
+                )] == ["started"]
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)

@@ -280,6 +280,15 @@ def settle_delivery(
             or fact.operation is not LifecycleOperation.prompt
         ):
             continue
+        if fact.status is LifecycleStatus.suppressed:
+            # Admission proves that no prompt reached the wire. Release only this
+            # attempt's provisional binding so the next actual send retains context.
+            conn.execute(
+                "DELETE FROM deploy_interruption_deliveries WHERE conversation_id=? "
+                "AND turn_number=? AND status='intent'",
+                (conversation_id, fact.turn_number),
+            )
+            continue
         if fact.status not in (
             LifecycleStatus.started,
             LifecycleStatus.refused,

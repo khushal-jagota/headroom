@@ -37,6 +37,7 @@ from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationRoleMaterials,
+    PromptDispatchDecision,
     ResolvedConversationStart,
 )
 from planner.conversation.deploy_interruptions import data as interruption_data
@@ -565,6 +566,89 @@ class ConversationStore:
             owner_read_through_sequence,
             lifecycle,
         )
+
+    async def admit_sender_messages(
+        self,
+        conversation_id: str,
+        messages: tuple[PromptDiscardedEventPayload, ...],
+        *,
+        lifecycle_if_all_suppressed: tuple[LifecycleFact, ...] = (),
+    ) -> tuple[PromptDispatchDecision, ...]:
+        """Serialize current notice eligibility with exact discard and lifecycle records."""
+        return await self._write(
+            self._admit_sender_messages_sync,
+            conversation_id,
+            messages,
+            lifecycle_if_all_suppressed,
+        )
+
+    def _admit_sender_messages_sync(
+        self,
+        conversation_id: str,
+        messages: tuple[PromptDiscardedEventPayload, ...],
+        lifecycle_if_all_suppressed: tuple[LifecycleFact, ...],
+    ) -> tuple[PromptDispatchDecision, ...]:
+        with self._publication_connection() as (conn, admission):
+            try:
+                snapshot = self._begin_validated_attention_write(conn, conversation_id)
+                self._apply_signal_mutation(conn, admission)
+                decisions: list[PromptDispatchDecision] = []
+                discarded: list[PromptDiscardedEventPayload] = []
+                for message in messages:
+                    notice, reason = manager_wakes_data.admit_notice_batch(
+                        conn,
+                        conversation_id=conversation_id,
+                        sender_message_id=message.sender_message_id,
+                        now=self._integer_now(),
+                    )
+                    if reason is not None:
+                        previous = conn.execute(
+                            "SELECT payload FROM conversation_events WHERE conversation_id=? "
+                            "AND kind='prompt_discarded' "
+                            "AND json_extract(payload,'$.sender_message_id')=? "
+                            "ORDER BY sequence LIMIT 1",
+                            (conversation_id, message.sender_message_id),
+                        ).fetchone()
+                        if previous is None:
+                            discarded.append(replace(message, suppression_reason=reason))
+                        else:
+                            reason = (
+                                json.loads(str(previous["payload"])).get("suppression_reason")
+                                or reason
+                            )
+                    decisions.append(
+                        PromptDispatchDecision(message.sender_message_id, reason, notice)
+                    )
+                lifecycle = (
+                    lifecycle_if_all_suppressed
+                    if decisions
+                    and all(value.suppression_reason is not None for value in decisions)
+                    else ()
+                )
+                written: tuple[StoredConversationEvent, ...] = ()
+                if discarded or lifecycle:
+                    written = self._insert_rows(conn, conversation_id, tuple(discarded), lifecycle)
+                    if discarded:
+                        assert snapshot is not None
+                        attention = advance_conversation_attention(
+                            snapshot,
+                            tuple(discarded),
+                            owner_read_through_sequence=snapshot.owner_read_through_sequence,
+                            occurred_at=self._integer_now(),
+                        )
+                        capture_conversation_attention(
+                            conn, conversation_id, self._integer_now(), attention
+                        )
+                    self._participate_in_append(conn, conversation_id, written)
+                result = tuple(decisions)
+                self._record_signal_result(conn, result)
+                self._commit_rows(conn, tuple(discarded))
+                return result
+            except BaseException as error:
+                self._invalidate_signal_failure(error)
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
 
     async def mark_held_sender_messages_leaving_queue(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
@@ -1296,7 +1380,9 @@ class ConversationStore:
             tuple(
                 fact
                 for fact in lifecycle
-                if fact.status in (LifecycleStatus.refused, LifecycleStatus.unknown)
+                if fact.status in (
+                    LifecycleStatus.refused, LifecycleStatus.unknown, LifecycleStatus.suppressed
+                )
             ),
         )
         append_projection(conn, written)
@@ -1512,6 +1598,8 @@ class ConversationStore:
 
     @staticmethod
     def _encode_signal_result(result: object) -> object:
+        if isinstance(result, PromptDispatchDecision):
+            return {"dispatch_decision": asdict(result)}
         if isinstance(result, StoredConversationEvent):
             return {
                 "event": {
@@ -1538,6 +1626,8 @@ class ConversationStore:
     def _decode_signal_result(result: object) -> object:
         if not isinstance(result, dict):
             return result
+        if "dispatch_decision" in result:
+            return PromptDispatchDecision(**result["dispatch_decision"])
         if "event" in result:
             row = result["event"]
             kind = ConversationEventKind(row["kind"])
