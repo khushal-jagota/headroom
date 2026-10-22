@@ -63,6 +63,7 @@ def _schedule(
 ) -> str:
     created = actions.create_schedule(
         conn,
+        principal=OWNER_PRINCIPAL,
         enabled=True,
         cadence=cadence,
         local_time=local_time,
@@ -238,7 +239,7 @@ def test_retired_schedule_configuration_cannot_be_rewritten_then_enabled(
     )
     for changes in rewrites:
         with pytest.raises(PlannerError, match="retired"):
-            actions.update_schedule(tmp_db, original.id, changes, now=2)
+            actions.update_schedule(tmp_db, original.id, changes, principal=OWNER_PRINCIPAL, now=2)
         assert data.read_schedule(tmp_db, original.id) == original
 
     # Even an already-enabled historical row cannot supply a Ticket. This includes a
@@ -248,7 +249,9 @@ def test_retired_schedule_configuration_cannot_be_rewritten_then_enabled(
     assert actions.run_current_slot(tmp_db, local_now=now, now=int(now.timestamp())) == []
     assert data.list_occurrences(tmp_db, original.id) == []
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
-    disabled_again = actions.update_schedule(tmp_db, original.id, {"enabled": False}, now=4)
+    disabled_again = actions.update_schedule(
+        tmp_db, original.id, {"enabled": False}, principal=OWNER_PRINCIPAL, now=4
+    )
     assert disabled_again.enabled is False
     assert disabled_again.template == original.template
     assert disabled_again.cadence == original.cadence

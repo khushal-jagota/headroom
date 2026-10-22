@@ -14,6 +14,12 @@ Brief context, deadline, Project, explicit manager assignment, launch
 choice, resolved execution locale, and blockers. An assignment is either Chief or one ordinary Manager.
 The canonical wire field is `manager`, with `kind` and `id`.
 
+Only the owner and Chief can create or explicitly edit schedules. Assignment grants no
+schedule control. Managers and Workers retain their direct Ticket creation rights.
+[Schedule authority](authority.md#control-of-schedules) defines the narrow derived Project
+update and the limit on historical authorship. Existing rows and receipts remain intact.
+There is no automatic enable or new approval flow for activation.
+
 Sprint placement, Sprint cadences, and planning Worker templates are retired. The
 migration disables the old morning, midday, Sprint review, and Sprint checkpoint supply.
 Unrelated daily schedules retain their identity and time. No recurring review replaces
@@ -30,6 +36,11 @@ The occurrence key retains its timezone-aware local-minute format. Repeated poll
 restarts return the same durable receipt. A failure records its error and does not stop
 other schedules. Ordinary Ticket validation still checks registered Worker types,
 launch settings, blockers, and canonical creation rules.
+
+Due execution acts as the trusted scheduler over stored configuration. It uses owner
+authority for ordinary Ticket creation, with the usual approval gates and occurrence
+transaction. It does not reuse a prior request's caller or certify who authored a
+historical schedule. Owner-or-Chief admission controls future explicit mutations.
 
 There is no Day-based duplicate suppression. Two distinct schedules can supply the same
 Worker type or title. Neither a preexisting Ticket nor an old Day membership suppresses

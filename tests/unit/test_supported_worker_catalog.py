@@ -53,6 +53,7 @@ def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
         ),
         lambda: schedule_actions.create_schedule(
             tmp_db,
+            principal=OWNER_PRINCIPAL,
             enabled=False,
             cadence=ScheduleCadence.daily,
             local_time="14:30",
@@ -72,7 +73,9 @@ def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
     )
     for changes in ({"enabled": True}, {"title": "Changed"}):
         with pytest.raises(PlannerError, match="retired"):
-            schedule_actions.update_schedule(tmp_db, saved.id, changes, now=2)
+            schedule_actions.update_schedule(
+                tmp_db, saved.id, changes, principal=OWNER_PRINCIPAL, now=2
+            )
     assert (
         schedule_actions.run_current_slot(
             tmp_db,
@@ -87,6 +90,7 @@ def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
             tmp_db,
             saved.id,
             {"enabled": False},
+            principal=OWNER_PRINCIPAL,
             now=4,
         ).enabled
         is False
@@ -104,5 +108,6 @@ def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
             tmp_db,
             supported.id,
             {"worker_type": worker_type},
+            principal=OWNER_PRINCIPAL,
             now=5,
         )
