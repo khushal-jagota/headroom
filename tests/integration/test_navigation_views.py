@@ -239,6 +239,47 @@ def test_settled_update_order_pages_and_live_changes_preserve_active_order(tmp_p
             query["windows"] = [settled_window]
 
 
+@pytest.mark.parametrize("locale", ["en-US", "de-DE"])
+def test_locale_order_matches_manager_children_and_sidebar_tickets(
+    tmp_path: Path, locale: str
+) -> None:
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        conn.execute("BEGIN")
+        add_parent(conn, "manager")
+        # Match the frontend mirror corpus, including base-equivalent titles
+        # whose identifiers themselves need locale-sensitive comparison.
+        for identity, title, updated_at in (
+            ("t_zulu", "Zulu", 10),
+            ("t_z", "echo", 10),
+            ("t_latest", "Latest", 20),
+            ("t_å", "Écho", 10),
+            ("t_aland", "Åland", 10),
+        ):
+            add_ticket(conn, identity, "manager")
+            conn.execute(
+                "UPDATE tickets SET title=?,updated_at=? WHERE id=?",
+                (title, updated_at, identity),
+            )
+        conn.commit()
+
+        query = descriptor()
+        query["locale"] = locale
+        manager_window: ViewWindowRequest = {
+            **query["windows"][0],
+            "owner": {"kind": "manager", "id": "manager"},
+            "group": "empty",
+        }
+        query["windows"] = [
+            manager_window,
+            {**manager_window, "section": "rail_tickets", "child_filter": "all"},
+        ]
+        _, content = read_content(conn, request(query), current=True)
+        expected = ["t_latest", "t_aland", "t_å", "t_z", "t_zulu"]
+        assert [row["id"] for row in content["windows"][0]["members"]] == expected
+        assert [row["id"] for row in content["windows"][1]["members"]] == expected
+
+
 def test_signal_install_repairs_old_settled_records_order_and_cursors(tmp_path: Path) -> None:
     path = tmp_path / "db"
     query = descriptor(limit=1)

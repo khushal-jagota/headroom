@@ -1,5 +1,5 @@
 import { conversationSignalReading } from "./support/conversationSignalReading";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   BoardCard,
@@ -13,8 +13,11 @@ import {
   type WorkItemTicketFacts
 } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
+import { managerPageGroups } from "../src/lib/managerPage";
 import { workspaceHeading, managerHeading, ticketFacts } from "./support/screenReadings";
 import { feedbackTicketStateLabel } from "../src/lib/feedback";
+
+afterEach(() => vi.unstubAllGlobals());
 
 function ticket(
   id: string,
@@ -263,14 +266,21 @@ describe("the shared Item and Ticket presentation", () => {
     expect(conversationSignalReading(readReply)).not.toContain('data-conversation-signal="message"');
   });
 
-  it("returns identical groups, counts, marks, and activity order for both payload shapes", () => {
+  it("keeps Manager and sidebar order consistent for activity and locale-sensitive title and ID ties", () => {
+    vi.stubGlobal("navigator", { language: "sv-SE" });
     const rows = [
-      ticket("older", { assigned: true, agent_state: "working", activity_at: 10 }),
-      ticket("newer", { assigned: true, agent_state: "working", activity_at: 20 }),
+      ticket("t_zulu", { title: "Zulu", assigned: true, agent_state: "working", activity_at: 10 }),
+      ticket("t_z", { title: "echo", assigned: true, agent_state: "working", activity_at: 10 }),
+      ticket("t_latest", { title: "Latest", assigned: true, agent_state: "working", activity_at: 20 }),
+      ticket("t_å", { title: "Écho", assigned: true, agent_state: "working", activity_at: 10 }),
+      ticket("t_aland", { title: "Åland", assigned: true, agent_state: "working", activity_at: 10 }),
       ticket("reply", { awaiting_reply: true, activity_at: 30 })
     ];
+    const cards = rows.map((row) => boardCard(row));
+    const manager = boardItem(rows);
+    const before = structuredClone({ rows, cards, manager });
     const fromWorkspace = workItemTicketGroups(rows);
-    const fromBoard = workItemTicketGroups(rows.map((row) => boardCard(row)));
+    const fromBoard = workItemTicketGroups(cards);
     const reading = (groups: readonly {
       key: string;
       label: string;
@@ -282,8 +292,12 @@ describe("the shared Item and Ticket presentation", () => {
       tickets: group.tickets.map((row) => ({ id: row.id, signal: row.conversation_signal }))
     }));
     expect(reading(fromWorkspace)).toEqual(reading(fromBoard));
-    expect(fromWorkspace.find((group) => group.key === "assigned")?.tickets.map((row) => row.id))
-      .toEqual(["newer", "older"]);
+    const expected = ["t_latest", "t_aland", "t_å", "t_z", "t_zulu"];
+    expect(managerPageGroups(rows).find((group) => group.key === "assigned")?.tickets.map((row) => row.id))
+      .toEqual(expected);
+    expect(buildWorkspaceRail(cards, [manager]).items[0].groups.find((group) => group.key === "assigned")?.cards.map((row) => row.id))
+      .toEqual(expected);
+    expect({ rows, cards, manager }).toEqual(before);
     expect(fromWorkspace.map((group) => group.label)).toEqual([
       "Yours",
       "Messages"

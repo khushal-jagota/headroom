@@ -1,4 +1,4 @@
-import {describe,it,expect} from 'vitest';
+import {afterEach,describe,it,expect,vi} from 'vitest';
 import {parseFrame,applyFrame} from '../src/lib/navigation/views/validation';
 import {createNavigationPresentationCache} from '../src/lib/navigation/presentation';
 import {WORK_ITEM_TICKET_GROUPS} from '../src/lib/workItemPresentation';
@@ -14,17 +14,48 @@ function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapsh
     content_version:name,mode:'current',authority:authority(),proof:null,
     content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
 }
-function fixture() {
+function fixture(request?:ViewRequest) {
   const connections:{request:ViewRequest;send:(frame:ViewFrame)=>void;signal:AbortSignal;closed:boolean}[]=[];
   const transport:ViewTransport={
     snapshot:async(request)=>snapshot(request),
     connect(request,callbacks,signal){const connection={request,send:callbacks.frame,signal,closed:false};connections.push(connection);return()=>connection.closed=true;},
   };
-  const owner=createScopedNavigationOwner({transport,reconnectDelayMs:100000});
+  const owner=createScopedNavigationOwner({transport,request,reconnectDelayMs:100000});
   return {owner,connections};
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
+afterEach(()=>vi.unstubAllGlobals());
 describe('bounded navigation owner',()=>{
+  it.each([
+    ['sv-SE','en-US'],
+    ['de-AT','de-DE'],
+    ['en-US','en-US'],
+    [undefined,'en-US'],
+  ])('selects the supported locale for %s and retains it through demand changes',async(language,locale)=>{
+    vi.stubGlobal('navigator',language===undefined?undefined:{language});
+    const {owner,connections}=fixture();
+    try {
+      const started=owner.start();
+      expect(connections[0].request.locale).toBe(locale);
+      connections[0].send(snapshot(connections[0].request));await started;
+      owner.setDemand('selected',{selected:{kind:'ticket',id:'next'},windows:[]});await flush();
+      expect(connections[1].request.locale).toBe(locale);
+      connections[1].send(snapshot(connections[1].request));
+    } finally {owner.dispose();}
+  });
+  it('preserves an explicit request and locale override',async()=>{
+    vi.stubGlobal('navigator',{language:'sv-SE'});
+    const request={...defaultViewRequest('de-DE'),selected:{kind:'ticket' as const,id:'explicit'},scope_generation:7};
+    const {owner,connections}=fixture(request);
+    try {
+      const started=owner.start();
+      expect(connections[0].request).toEqual(request);
+      connections[0].send(snapshot(connections[0].request));await started;
+      owner.setDemand('selected',{selected:{kind:'ticket',id:'next'},windows:[]});await flush();
+      expect(connections[1].request.locale).toBe('de-DE');
+      connections[1].send(snapshot(connections[1].request));
+    } finally {owner.dispose();}
+  });
   it('advances a checkpoint without selector work while requiring new DOM evidence for changed content',async()=>{
     const {owner,connections}=fixture();let notifications=0;const stop=owner.subscribe(()=>notifications++);
     try{

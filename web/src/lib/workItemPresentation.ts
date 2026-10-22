@@ -1,5 +1,6 @@
 import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
+import { workItemLocale } from "./workItemLocale";
 
 export type WorkItemAttentionFacts = Omit<WorkAttention, 'awaiting_reply' | 'awaiting_answer' | 'agent_state'> & {
   awaiting_reply: boolean | null;
@@ -86,10 +87,11 @@ export function workItemTicketOrder(
   left: WorkItemTicketFacts,
   right: WorkItemTicketFacts
 ): number {
+  const locale = workItemLocale();
   return (
     (right.activity_at ?? 0) - (left.activity_at ?? 0) ||
-    left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
-    left.id.localeCompare(right.id)
+    left.title.localeCompare(right.title, locale, { sensitivity: "base" }) ||
+    left.id.localeCompare(right.id, locale)
   );
 }
 

@@ -398,10 +398,12 @@ old evidence; late responses cannot restore an obsolete scope. The legacy whole-
 protocol remains available for compatibility clients, but the application does not mount it.
 
 Ordering keys use the installed ICU version and include that version in cursor identity.
-The admitted workspace orderings are English (US) and German (Germany); other browser
-languages use English (US). A changed ordering generation invalidates old cursors. This
-is an explicit supported comparator boundary, not a claim that every browser ICU version
-or locale produces identical arbitrary-text ordering.
+Navigation requests and frontend Ticket comparisons share one locale rule. German browser
+languages use German (Germany). All other languages use English (US), as does execution
+without a browser. Title and identifier ties use that same locale on Manager pages and in the
+sidebar. A changed ordering generation invalidates old cursors. This is an explicit
+supported comparator boundary, not a claim that every browser ICU version or locale
+produces identical arbitrary-text ordering.
 
 ## The two rules that shape it
 
