@@ -192,6 +192,7 @@ private struct ReviewProposalView: View {
                     .accessibilityIdentifier("review.sendBack")
             }
             Button("Approve") { openApproval() }
+                .buttonStyle(ReviewActionStyle(approval: true))
                 .accessibilityIdentifier("review.approve")
         }
         .buttonStyle(ReviewActionStyle())
@@ -256,8 +257,8 @@ private struct ReviewApprovalSheet: View {
                 Button {
                     Haptics.light(); Task { await onApprove(ceiling, holder) }
                 } label: {
-                    HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.accentText) } else { Text("Approve until \(selectedLabel)") }; Spacer() }.frame(minHeight: ReviewStyle.actionHeight)
-                }.buttonStyle(ReviewActionStyle())
+                    HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.ink) } else { Text("Approve until \(selectedLabel)") }; Spacer() }.frame(minHeight: ReviewStyle.actionHeight)
+                }.buttonStyle(ReviewActionStyle(approval: true))
                     .accessibilityLabel("Approve until \(selectedLabel)")
                     .accessibilityValue(decision.busy ? "Approving" : "")
                     .disabled(!decision.ready || ceiling.isEmpty).accessibilityIdentifier("review.confirmApproval")
@@ -295,7 +296,7 @@ private struct ReviewReturnSheet: View {
                     Haptics.light(); Task { await onReturn() }
                 } label: {
                     HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.ink) } else { Text("Send back") }; Spacer() }.frame(minHeight: 44)
-                }.background(PanelsTheme.accent, in: Capsule()).foregroundStyle(PanelsTheme.ink)
+                }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)).foregroundStyle(PanelsTheme.ink)
                     .disabled(!decision.ready || decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || voice.phase != .idle)
                     .opacity(decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
                     .accessibilityLabel("Send back")

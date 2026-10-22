@@ -3,8 +3,8 @@
 The ticket page reads the full ticket endpoint and worker-type manifest. The
 manifest supplies labels, step ordering, completion counts, approval limits and
 the next stage after accepting a proposal. Only the conversation's live working
-signal animates a spinner. The project/type line keeps working and unread marks
-on its trailing edge; the title scrolls into the native navigation bar.
+signal animates a spinner when there is no unread message. The project/type line
+keeps one mark on its trailing edge, with unread taking precedence; the title scrolls into the native navigation bar.
 
 The recap shows eight lines with a fade and expands on tap. Long-press it to copy,
 edit or request a fresh recap. Long-press the title to rename it. The action menu

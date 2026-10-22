@@ -394,8 +394,8 @@ this lane did not run a simulator or write to a live server.
 
 ## Scoped iOS fixes (pios-fix2)
 
-Rows and page titles share one activity mark: a fixed-size working spinner and an
-independent unread dot can appear together. Reduce Motion substitutes a static
+Rows and page titles share one activity mark: an unread dot takes precedence over
+the fixed-size working spinner, matching the web. They never appear together. Reduce Motion substitutes a static
 working mark. Orchestrator activity stays beside the page title. Workspace card
 headers align at the bottom of their minimum touch area so Chief and orchestrator
 titles have the same spacing before their first group header.

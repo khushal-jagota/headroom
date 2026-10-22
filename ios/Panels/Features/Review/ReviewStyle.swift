@@ -13,14 +13,15 @@ enum ReviewStyle {
     @MainActor static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
 }
 
-/// Equal-weight review decisions with the app's accent text and surface tokens.
+/// Equal-size decisions; approval uses the web's filled accent and dark ink.
 struct ReviewActionStyle: ButtonStyle {
+    var approval = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(PanelsTheme.TypeScale.body)
             .frame(maxWidth: .infinity, minHeight: ReviewStyle.actionHeight)
-            .foregroundStyle(PanelsTheme.accentText)
-            .background(PanelsTheme.accentSurface, in: Capsule())
+            .foregroundStyle(approval ? PanelsTheme.ink : PanelsTheme.accentText)
+            .background(approval ? PanelsTheme.accent : PanelsTheme.accentSurface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

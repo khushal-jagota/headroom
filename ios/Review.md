@@ -7,7 +7,8 @@ items brings them back. A new proposal on the same ticket appears again.
 
 Review uses the system font throughout. Skip stays in the top bar. Send back and
 Approve have equal weight at the end of the scrollable proposal, with Approve on
-the right. Both use the app's accent text and surface colours. The title opens the
+the right. Both use rounded rectangles. Approve uses the filled accent background with dark
+ink text; Send back uses the accent surface and light accent text. The title opens the
 ticket in Workspace; its long-press menu offers Rename. Recaps expand in place.
 Tapping the proposal edits it in place, with Done in the navigation bar. Approval
 sends the edited text together with the exact revision that was read. If the
