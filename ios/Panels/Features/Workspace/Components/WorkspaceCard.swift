@@ -41,7 +41,7 @@ struct WorkspaceCard: View {
                                 .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
-                            WorkspaceSignalMark(signal: signal)
+                            ConversationSignalMark(signal: signal)
                         }
                     }
                     HStack(spacing: 10) {
@@ -54,9 +54,9 @@ struct WorkspaceCard: View {
                             .foregroundStyle(signal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
                             .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        if chief { WorkspaceSignalMark(signal: signal) }
+                        if chief { ConversationSignalMark(signal: signal) }
                     }
-                }.frame(minHeight: 44, alignment: .top).contentShape(Rectangle())
+                }.frame(minHeight: 44, alignment: .bottom).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .conversationAccessibility(label: [project, title].compactMap { $0 }.joined(separator: ", "), signal: signal)
@@ -84,7 +84,7 @@ struct WorkspaceCard: View {
                                 .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            WorkspaceSignalMark(signal: ticket.conversationSignal)
+                            ConversationSignalMark(signal: ticket.conversationSignal)
                         }.frame(minHeight: 44).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -99,23 +99,5 @@ struct WorkspaceCard: View {
         }
         .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, groups.isEmpty ? 16 : 2)
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(PanelsTheme.border))
-    }
-}
-
-struct WorkspaceSignalMark: View {
-    let signal: ConversationSignal?
-    var body: some View {
-        HStack(spacing: 4) {
-            if signal?.working == true {
-                ProgressView().controlSize(.mini).tint(PanelsTheme.faint)
-                    .accessibilityLabel("Working")
-            }
-            if signal?.messageForOwner == true {
-                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8)
-                    .accessibilityLabel("Unread message")
-            }
-        }.frame(width: 32, alignment: .trailing)
-            .animation(PanelsTheme.Motion.fade, value: signal?.messageForOwner)
-            .animation(PanelsTheme.Motion.fade, value: signal?.working)
     }
 }

@@ -100,12 +100,7 @@ struct TicketView: View {
                 Text("\(detail.project ?? "No project")  ·  \(manifest?.label ?? detail.workerType.replacingOccurrences(of: "_", with: " ").capitalized)")
                     .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                 Spacer(minLength: PanelsTheme.Space.sm)
-                if detail.conversationSignal?.messageForOwner == true {
-                    Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).accessibilityLabel("Unread message")
-                }
-                if detail.conversationSignal?.working == true {
-                    ProgressView().controlSize(.mini).tint(PanelsTheme.faint).frame(width: 12, height: 12).accessibilityLabel("Working")
-                }
+                ConversationSignalMark(signal: detail.conversationSignal)
             }
             if renaming {
                 TextField("Title", text: $titleDraft, axis: .vertical).font(.title.weight(.semibold))
@@ -209,14 +204,8 @@ struct TicketView: View {
     @ViewBuilder private var artifactRow: some View {
         if let artifactError { LoadErrorView(message: artifactError) { await loadArtifacts() } }
         if let artifacts, artifacts.total > 0 {
-            VStack(spacing: 0) {
-                Divider().overlay(PanelsTheme.border)
-                NavigationLink(value: AppRoute.artifacts(owner: owner, directory: "")) {
-                    HStack { Text("Artifacts"); Spacer(); Text(String(artifacts.total)).foregroundStyle(PanelsTheme.faint) }
-                        .font(PanelsTheme.TypeScale.body).frame(minHeight: 50).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityIdentifier("ticket-artifacts")
-                    .accessibilityLabel("Artifacts").accessibilityValue("\(artifacts.total) files")
-            }
+            ArtifactsRow(owner: owner, count: artifacts.total)
+                .accessibilityIdentifier("ticket-artifacts")
         }
     }
 

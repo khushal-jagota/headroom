@@ -80,7 +80,7 @@ private struct WorkspacePreview: View {
             HStack(alignment: .top) {
                 Text(title).panelsScaledFont(size: 20, relativeTo: .title3, weight: .semibold).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                WorkspaceSignalMark(signal: signal)
+                ConversationSignalMark(signal: signal)
             }
             if !stageLine.isEmpty { Text(stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
             if let recap, !recap.isEmpty {

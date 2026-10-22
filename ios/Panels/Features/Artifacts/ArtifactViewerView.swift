@@ -7,7 +7,9 @@ struct ArtifactViewerView: View {
     let owner: ArtifactOwner
     let path: String
     let title: String
-    var showsConversationPlaceholder = true
+    var showsConversation = true
+    var conversationOwner: ConversationOwner? = nil
+    @State private var conversationID: String?
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @State private var document: ArtifactDocument?
@@ -20,6 +22,10 @@ struct ArtifactViewerView: View {
     @State private var renderVersion = 0
     @State private var webReady = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
+
+    private var activeConversationOwner: ConversationOwner {
+        conversationOwner ?? (owner.kind == .ticket ? .ticket(owner.id) : .manager(owner.id))
+    }
 
     private var waitingForPreview: Bool { isLoading || (target.kind == .html && document != nil && !webReady && error == nil) }
 
@@ -37,9 +43,6 @@ struct ArtifactViewerView: View {
             } else {
                 Color.clear.overlay { if showLoading { ProgressView("Opening artifact…") } }
             }
-            if showsConversationPlaceholder && target.kind != .image {
-                ConversationPlaceholder().fixedSize(horizontal: false, vertical: true)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -49,6 +52,7 @@ struct ArtifactViewerView: View {
             }
         }
         .panelsScreen()
+        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, enabled: showsConversation))
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -68,7 +72,17 @@ struct ArtifactViewerView: View {
         }
         .sheet(isPresented: $sharePresented) { if let document { ArtifactShareSheet(document: document).presentationDetents([.medium, .large]) } }
         .navigationDestination(item: $linkedArtifact) { target in
-            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversationPlaceholder: showsConversationPlaceholder)
+            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: showsConversation, conversationOwner: activeConversationOwner)
+        }
+        .task(id: activeConversationOwner) {
+            guard showsConversation else { return }
+            do {
+                switch activeConversationOwner {
+                case .ticket(let id): conversationID = try await store.client.ticket(id).conversationId
+                case .manager(let id): conversationID = try await store.client.manager(id).manager.conversationId
+                case .chief: conversationID = try await store.client.chiefConversation().conversationId
+                }
+            } catch { /* The owner send door remains available when detail cannot be read. */ }
         }
         .task(id: loadVersion) { await load() }
         .task(id: waitingForPreview) {
@@ -146,4 +160,14 @@ private struct ArtifactMediaView: View {
     @State private var player: AVPlayer
     init(url: URL) { _player = State(initialValue: AVPlayer(url: url)) }
     var body: some View { VideoPlayer(player: player).background(.black).onDisappear { player.pause() } }
+}
+
+private struct ArtifactConversationSurface: ViewModifier {
+    let owner: ConversationOwner
+    let conversationID: String?
+    let enabled: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled { content.conversationOverlay(owner: owner, conversationID: conversationID) }
+        else { content }
+    }
 }

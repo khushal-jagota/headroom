@@ -252,15 +252,14 @@ They add no backend or browser host. Live Simulator verification invokes no writ
 
 ## Artifact integration
 
-Ticket and Orchestrator screens open `AppRoute.artifacts(owner:directory:)`, with
-an empty directory for the root. `ArtifactListView(owner:directory:)` is also
-available directly inside a navigation stack with the app's route destinations.
-`ArtifactsRow(owner:count:)` supplies the approved 50pt entry row with count and
-no chevron; it is absent at zero. Page owners supply the catalog count.
+Ticket and Orchestrator pages expand their artifact catalog beneath the Artifacts
+row. `ArtifactsRow(owner:count:)` supplies the shared 50pt entry row and count;
+it is absent at zero. Chief has no artifact catalog. Folders expand in place too.
 `AppRoute.artifact(owner:path:title:)` opens a specific managed file. Catalog links
-retain their actual owner, including links to files on another ticket.
+retain their actual file owner, including links to files on another ticket.
 
-The list reads the selected directory on arrival and pull-to-refresh. HTML runs
+The inline list reads on expansion and page refresh, with paging and a search
+field for larger catalogs. HTML runs
 inside a sandboxed frame in a nonpersistent WKWebView, with relative file assets
 and native navigation for managed links. Folder sections show five files before
 expanding, with image thumbnails and Open/Share/Copy link context menus.
@@ -273,10 +272,14 @@ the HTML/markdown preview remain available to Quick Look or sharing. Copy link
 copies the web preview address. Artifact pushes and zooms are silent; Copy link
 uses success feedback and reload errors use error feedback. The shared shell
 retains ownership of global navigation feedback and deployment chrome. The
-viewer reserves the existing conversation placeholder for non-image files;
-callers opening from Review can set `showsConversationPlaceholder: false`. No
-conversation state or composer is created. The app never writes
-to the server when listing, opening, reloading or sharing artifacts.
+viewer uses the same native conversation overlay as Ticket and Orchestrator,
+including image previews. Files opened from an inline catalog keep that catalog's
+conversation owner while managed links retain their actual file owner. Further
+artifact links preserve the conversation context. The viewer resolves the current
+conversation ID from the owner and uses the existing owner send door. Context-menu
+previews set `showsConversation: false`. Listing, opening, reloading and sharing
+artifacts do not write to the server; sending a message requires an explicit tap.
+
 
 The three artifact logic tests cover cross-owner URLs and encoding, unsafe file
 paths, and preservation of markdown code blocks. They reuse the existing XCTest
@@ -388,3 +391,20 @@ four macOS host model tests also pass, but do not exercise SwiftUI states. No ne
 view-mirroring tests or connected hosts were added. Offline interaction, layout
 stability, animation and haptic feel still require a later runtime/device pass;
 this lane did not run a simulator or write to a live server.
+
+## Scoped iOS fixes (pios-fix2)
+
+Rows and page titles share one activity mark: a fixed-size working spinner and an
+independent unread dot can appear together. Reduce Motion substitutes a static
+working mark. Orchestrator activity stays beside the page title. Workspace card
+headers align at the bottom of their minimum touch area so Chief and orchestrator
+titles have the same spacing before their first group header.
+
+Verification: the four-job iOS Simulator build and four existing conversation host
+tests passed. A stub-only, locked PanelsLaneB pass captured Workspace and the
+Orchestrator title with simultaneous working/unread marks; its accessibility
+snapshot also confirms the inline artifact list expanded. The temporary UI driver
+stopped on row selector mismatches before opening the file or sending a message.
+Firstmate accepted the captures and requested compile-only verification after
+rebasing. No live-server writes, simulator lifecycle changes, new permanent tests,
+or physical-device validation were performed.

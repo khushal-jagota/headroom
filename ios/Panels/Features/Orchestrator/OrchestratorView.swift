@@ -17,8 +17,8 @@ struct OrchestratorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                    AgentEyebrow(title: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""), signal: detail?.conversationSignal ?? summary?.conversationSignal)
-                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator")
+                    AgentEyebrow(title: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""))
+                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: detail?.conversationSignal ?? summary?.conversationSignal)
                     if let detail {
                         AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
                     }
@@ -38,14 +38,7 @@ struct OrchestratorView: View {
                         } label: {
                             Text("Goal").frame(maxWidth: .infinity, minHeight: 50, alignment: .leading).contentShape(Rectangle())
                         }.buttonStyle(.plain).accessibilityIdentifier("manager-goal")
-                        Divider().overlay(PanelsTheme.border)
-                        NavigationLink(value: AppRoute.artifacts(owner: ArtifactOwner(kind: .manager, id: managerID), directory: "")) {
-                            HStack {
-                                Text("Artifacts")
-                                Spacer()
-                                Text(detail.artifacts.count.formatted()).foregroundStyle(PanelsTheme.faint)
-                            }.frame(minHeight: 50).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                        ArtifactsRow(owner: ArtifactOwner(kind: .manager, id: managerID), count: detail.artifacts.count)
                     }.font(PanelsTheme.TypeScale.body)
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
@@ -86,9 +79,14 @@ struct OrchestratorView: View {
 
 struct AgentPageTitle: View {
     let title: String
+    var signal: ConversationSignal? = nil
     var body: some View {
-        Text(title).font(.title.weight(.semibold)).foregroundStyle(PanelsTheme.strong)
-            .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+        HStack(alignment: .center) {
+            Text(title).font(.title.weight(.semibold)).foregroundStyle(PanelsTheme.strong)
+                .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+            Spacer(minLength: PanelsTheme.Space.sm)
+            ConversationSignalMark(signal: signal)
+        }.conversationAccessibility(label: title, signal: signal)
     }
 }
 
@@ -99,12 +97,12 @@ enum AgentPageLayout {
 
 struct AgentEyebrow: View {
     let title: String
-    let signal: ConversationSignal?
+    var signal: ConversationSignal? = nil
     var body: some View {
         HStack(spacing: PanelsTheme.Space.sm) {
             if !title.isEmpty { Text(title).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
             Spacer()
-            WorkerSignalMark(signal: signal)
+            ConversationSignalMark(signal: signal)
         }.frame(minHeight: 18).padding(.top, PanelsTheme.Space.sm)
             .conversationAccessibility(label: title.isEmpty ? "Chief activity" : title, signal: signal)
             .accessibilityHidden(title.isEmpty && signal?.working != true && signal?.messageForOwner != true)
