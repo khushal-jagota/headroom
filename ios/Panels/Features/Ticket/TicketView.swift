@@ -169,7 +169,7 @@ struct TicketView: View {
                     Button("Complete") {
                         Haptics.light()
                         Task { await perform { try await store.client.completeTicketField(ticketID, field: field, body: completionDraft); return nil } }
-                    }.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).disabled(busy || completionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }.buttonStyle(.borderedProminent).buttonBorderShape(.roundedRectangle(radius: PanelsTheme.Radius.md)).disabled(busy || completionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } else if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
                     Button { scopeOpen = true } label: {
                         HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {

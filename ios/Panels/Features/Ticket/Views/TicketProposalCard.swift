@@ -27,12 +27,14 @@ struct TicketProposalCard: View {
                     .contextMenu { Button("Edit proposal", systemImage: "pencil") { editing = true } }
             }
             HStack(spacing: PanelsTheme.Space.lg) {
-                Button("Approve") { approveOpen = true }
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
-                    .disabled(presentation.manifest.advance?[presentation.ticket.stage] == nil)
                 if proposal.field != "brief" {
-                    Button("Send it back") { returnOpen = true }.disabled(presentation.ticket.conversationId == nil)
+                    Button("Send it back") { returnOpen = true }
+                        .buttonStyle(ReviewActionStyle())
+                        .disabled(presentation.ticket.conversationId == nil)
                 }
+                Button("Approve") { approveOpen = true }
+                    .buttonStyle(ReviewActionStyle(approval: true))
+                    .disabled(presentation.manifest.advance?[presentation.ticket.stage] == nil)
             }
             if proposal.field != "brief" && presentation.ticket.conversationId == nil {
                 Text("No existing Worker conversation to send a revision to.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)

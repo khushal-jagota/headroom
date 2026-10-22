@@ -53,7 +53,11 @@ struct TicketApprovalLimitSheet: View {
                                 catch { self.error = error.localizedDescription; Haptics.error() }
                                 busy = false
                             }
-                        }.disabled(busy || (!approval && ceiling == presentation.ticket.ceiling && holder == presentation.ticket.ceilingHolder))
+                        }
+                        .foregroundStyle(approval ? PanelsTheme.ink : PanelsTheme.accent)
+                        .padding(approval ? PanelsTheme.Space.sm : 0)
+                        .background(approval ? PanelsTheme.accent : Color.clear, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
+                        .disabled(busy || (!approval && ceiling == presentation.ticket.ceiling && holder == presentation.ticket.ceilingHolder))
                     }
                 }
         }

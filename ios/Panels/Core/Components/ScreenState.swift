@@ -97,17 +97,16 @@ struct ConversationSignalMark: View {
     let signal: ConversationSignal?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        HStack(spacing: 6) {
-            if signal?.working == true {
+        Group {
+            if signal?.messageForOwner == true {
+                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).accessibilityLabel("Unread message")
+            } else if signal?.working == true {
                 Group {
                     if reduceMotion { Image(systemName: "circle.dotted").font(.system(size: 14)).foregroundStyle(PanelsTheme.faint) }
                     else { WorkingSpinner().scaleEffect(0.7) }
                 }.frame(width: 14, height: 14).accessibilityLabel("Working")
             }
-            if signal?.messageForOwner == true {
-                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).accessibilityLabel("Unread message")
-            }
-        }.frame(width: 32, alignment: .trailing)
+        }.frame(width: 14, height: 14, alignment: .trailing)
     }
 }
 
@@ -116,10 +115,7 @@ extension View {
     func conversationAccessibility(label: String, signal: ConversationSignal?) -> some View {
         accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
-            .accessibilityValue([
-                signal?.messageForOwner == true ? "Unread message" : nil,
-                signal?.working == true ? "Working" : nil
-            ].compactMap { $0 }.joined(separator: ", "))
+            .accessibilityValue(signal?.messageForOwner == true ? "Unread message" : signal?.working == true ? "Working" : "")
     }
 }
 

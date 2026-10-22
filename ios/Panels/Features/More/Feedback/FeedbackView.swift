@@ -137,7 +137,7 @@ struct FeedbackView: View {
                 Text(action == .dismiss ? "Dismiss" : "Reopen")
             }.frame(minHeight: 32)
         }
-        .buttonStyle(.bordered).buttonBorderShape(.capsule)
+        .buttonStyle(.bordered).buttonBorderShape(.roundedRectangle(radius: PanelsTheme.Radius.md))
         .disabled(model.pendingNoteID != nil)
         .accessibilityLabel("\(action == .dismiss ? "Dismiss" : "Reopen") feedback: \(note.text)")
     }
