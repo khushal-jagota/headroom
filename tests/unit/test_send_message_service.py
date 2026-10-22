@@ -17,6 +17,7 @@ from planner.conversation.contracts import (
     ConversationSystem,
     ConversationTurnReference,
     PromptDeliveryMode,
+    PromptDeliveryStarted,
 )
 from planner.conversation.events import ExplicitReplyMissingEventPayload, PromptEventPayload
 from planner.conversation.in_memory_conversation_system import (
@@ -265,6 +266,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
 
 def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_message(
     tmp_db: Connection,
+    tmp_path: Path,
     fake_clock: PlannerTestClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,11 +325,13 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
                     conversation_id="c_worker",
                     backend_key=ConversationBackendKey.codex,
                     model="test-model",
+                    workspace_folder=tmp_path,
                 )
             )
-            await service.send_message(
+            result = await service.send_message(
                 subject.system, tmp_db, fake_clock, RequestContext(owner), worker, "Work"
             )
+            assert isinstance(result.fate, PromptDeliveryStarted), result.fate
             owner_turn = await _wait_for_active_turn(subject.system, "c_worker")
             assert await subject.system.turn_expects_reply(owner_turn, owner)
             await subject.tell_agent("c_worker", {"command": "reject_steer"})
