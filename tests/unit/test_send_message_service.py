@@ -36,7 +36,6 @@ from planner.runtime import conversation_start
 from planner.runtime.conversation_start import DeliveredMessage
 from planner.tickets import data as tickets_data
 
-
 ACTIVE_TURN_TIMEOUT_SECONDS = 10
 
 
