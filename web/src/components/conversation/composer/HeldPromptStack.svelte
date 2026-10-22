@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import { conversationHeight, fadeConversationExit } from "../../../lib/conversation/surfaceMotion";
+  let stackElement: HTMLDivElement;
   import { conversationFileHref } from "../../../lib/conversation/wire";
   import { base64DecodedByteCount } from "../../../lib/conversation/pendingFiles";
   import ConversationFileCard from "../ConversationFileCard.svelte";
@@ -29,6 +32,29 @@
     onSendAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
+  let displayedRows = $state<readonly HeldPromptRow[]>([]);
+  const exiting = new Set<string>();
+  const faded = new Set<string>();
+  $effect(() => {
+    const next = rows;
+    untrack(() => {
+      const byKey = new Map(next.map(row => [row.key, row]));
+      const previousKeys = new Set(displayedRows.map(row => row.key));
+      displayedRows = [...displayedRows.map(row => byKey.get(row.key) ?? row), ...next.filter(row => !previousKeys.has(row.key))];
+      for (const row of displayedRows) {
+        if (byKey.has(row.key) || exiting.has(row.key)) continue;
+        exiting.add(row.key);
+        const element = [...(stackElement?.querySelectorAll<HTMLElement>('[data-conversation-held-row]') ?? [])]
+          .find(node => node.dataset.conversationHeldRow === row.key);
+        const exit = faded.has(row.key) ? Promise.resolve() : fadeConversationExit(element ?? null);
+        void exit.then(() => {
+          exiting.delete(row.key); faded.delete(row.key);
+          if (!rows.some(current => current.key === row.key)) displayedRows = displayedRows.filter(current => current.key !== row.key);
+          else element?.style.removeProperty("opacity");
+        });
+      }
+    });
+  });
   let actionInFlight = $state<string | null>(null);
   function stateWord(row: HeldPromptRow): string | null {
     if (row.state === "in_flight") return "sending";
@@ -48,22 +74,26 @@
     if (actionInFlight !== null) return;
     actionInFlight = key;
     try {
-      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (!reduceMotion) await new Promise((resolve) => window.setTimeout(resolve, 90));
+      const row = [...stackElement.querySelectorAll<HTMLElement>("[data-conversation-held-row]")].find(node => node.dataset.conversationHeldRow === key);
+      await fadeConversationExit(row ?? null);
+      faded.add(key);
       await action();
     } finally {
+      const remaining = [...stackElement.querySelectorAll<HTMLElement>("[data-conversation-held-row]")].find(node => node.dataset.conversationHeldRow === key);
+      remaining?.style.removeProperty("opacity");
       actionInFlight = null;
     }
   }
 </script>
 
-{#if rows.length > 0}
+<div class="chat-queue-slot" use:conversationHeight><div bind:this={stackElement}>
+{#if displayedRows.length > 0}
   <div class="chat-queue-wrap" data-conversation-held-stack>
     <ol
       class="chat-queue-stack"
       aria-label="Messages waiting"
     >
-      {#each rows as row (row.key)}
+      {#each displayedRows as row (row.key)}
         {@const actions = heldPromptRowActions(row)}
         {@const actionable = actions.length > 0 && actionInFlight === null}
         {@const thisTabsOwn = row.state === "unknown" && row.senderMessageId !== null}
@@ -71,7 +101,6 @@
         {@const reason = queueReason(row)}
         <li
           class="chat-qrow"
-          class:is-leaving={actionInFlight === row.key}
           data-conversation-held-row={row.key}
           data-fate={row.state}
         >
@@ -153,6 +182,7 @@
     </ol>
   </div>
 {/if}
+</div></div>
 
 <style>
   .chat-qrow-file { grid-column: 2 / -1; min-width: 0; }

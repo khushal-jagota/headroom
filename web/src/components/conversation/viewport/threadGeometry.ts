@@ -155,6 +155,8 @@ export function threadGeometry(
           thread.clientHeight
           - (newestLineBottom() - topWithin(message))
           - SENT_MESSAGE_TOP_GAP_PIXELS
+          - NEWEST_LINE_BOTTOM_GAP_PIXELS
+          - (Number.parseFloat(getComputedStyle(thread).rowGap) || 0)
         )
       );
     },

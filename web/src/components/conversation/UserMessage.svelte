@@ -3,7 +3,7 @@
   import { promptLabelFor, PROMPT_DISCARDED_SENTENCE, type TranscriptRow } from '../../lib/conversation/transcript';
   import { outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
-  import { conversationHeight, fadeConversationExit } from '../../lib/conversation/surfaceMotion';
+  import { conversationHeight, fadeConversationExit, collapseConversationRow } from '../../lib/conversation/surfaceMotion';
   let { row = null, local = null, conversationId, ownSenderLabel = null, onStopDrawingMessage, onSendAgain }: {
     row?: Extract<TranscriptRow, {kind: 'prompt'|'prompt_refused'|'prompt_uncertain'|'prompt_discarded'}> | null;
     local?: OutgoingMessage | null;
@@ -17,7 +17,7 @@
   const label = $derived(promptLabelFor(row?.senderLabel ?? local?.senderLabel ?? '', ownSenderLabel));
   const note = $derived(row?.kind === 'prompt_refused' ? `not delivered · ${row.sentence}` : row?.kind === 'prompt_uncertain' ? 'delivery uncertain · do not resend' : row?.kind === 'prompt_discarded' ? PROMPT_DISCARDED_SENTENCE : row ? null : local ? outgoingMessageNote(local) : null);
   const actions = $derived(local && !row ? heldPromptRowActions(heldPromptRows([], [local])[0]!) : []);
-  async function stop(): Promise<void> { if (!local || busy) return; busy = true; try { await fadeConversationExit(element); await onStopDrawingMessage?.(local.messageId); } finally { busy = false; } }
+  async function stop(): Promise<void> { if (!local || busy) return; busy = true; let restore: (() => void) | undefined; try { await fadeConversationExit(element); restore = await collapseConversationRow(element); await onStopDrawingMessage?.(local.messageId); } finally { restore?.(); element.style.removeProperty('opacity'); busy = false; } }
   async function resend(): Promise<void> { if (!local || busy) return; busy = true; try { await onSendAgain?.(local.messageId); } finally { busy = false; } }
 </script>
 <article bind:this={element} class={label === null ? 'chat-u' : 'chat-system'} class:message-outcome={note!==null} class:message-refused={row?.kind==='prompt_refused'} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>

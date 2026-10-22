@@ -824,6 +824,8 @@
     }
     const size = textareaMeasurement.measure(style);
     const height = `${size.height}px`;
+    const host = input.closest<HTMLElement>(".ticket-page, .manager-page") ?? input.closest<HTMLElement>("[data-conversation-pane]");
+    host?.style.setProperty("--composer-growth", `${size.growth}px`);
     if (input.style.height !== height) input.style.height = height;
     if (input.style.overflowY !== size.overflowY) input.style.overflowY = size.overflowY;
   }

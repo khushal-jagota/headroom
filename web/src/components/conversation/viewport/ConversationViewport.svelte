@@ -19,17 +19,15 @@
   import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
-  import MessagePieces from "../MessagePieces.svelte";
+  import { conversationMotion, CONVERSATION_MOVE_MS } from "../../../lib/conversation/surfaceMotion";
   import type { ConversationState } from "../../../lib/conversation/conversationState";
   import type { ConversationLens } from "../../../lib/conversation/lens";
   import {
-    outgoingMessageNote,
     type OutgoingMessage
   } from "../../../lib/conversation/outgoing";
   import type { TranscriptRow } from "../../../lib/conversation/transcript";
   import type {
     BackendModel,
-    PromptDeliveryMode
   } from "../../../lib/conversation/wire";
   import { threadGeometry, type ThreadReading } from "./threadGeometry";
 
@@ -39,6 +37,9 @@
     visibleRows,
     lens,
     outgoingMessages,
+    acknowledgedMessageIds = new Set<string>(),
+    onStopDrawingMessage,
+    onSendAgain,
     models,
     ownSenderLabel,
     livenessPulse,
@@ -54,6 +55,9 @@
     visibleRows: readonly TranscriptRow[];
     lens: ConversationLens;
     outgoingMessages: readonly OutgoingMessage[];
+    acknowledgedMessageIds?: ReadonlySet<string>;
+    onStopDrawingMessage?: (messageId: string) => Promise<void> | void;
+    onSendAgain?: (messageId: string) => Promise<void> | void;
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
     livenessPulse: number;
@@ -66,6 +70,8 @@
   let reservedSpaceElement = $state<HTMLDivElement | null>(null);
   let reservedSpacePixels = $state(0);
   let jumpVisible = $state(false);
+  let belowCount = $state(0);
+  const newerHistory = $derived(reader?.pages.some(page => page.scope.kind === "timeline" && page.newer !== null) ?? false);
   let newestLineBottomPixels = 0;
   let settledOnOpening = false;
   let settledMessageIds = new Set<string>();
@@ -97,13 +103,28 @@
 
   /** Rest and hidden tabs keep dirty work, but never measure an invisible thread. */
   function canMeasure(): boolean {
-    return !disposed && !reader?.restoring && !nobodyIsLookingAtTheTab() && conversationState !== "rest";
+    return !disposed && reader?.entryPhase !== "loading" && reader?.entryPhase !== "error" && !reader?.restoring && !nobodyIsLookingAtTheTab() && conversationState !== "rest";
   }
 
-  function modeChip(mode: PromptDeliveryMode): string | null {
-    if (mode === "send_now") return "sent now";
-    if (mode === "steer") return "steered";
-    return "queued";
+  const positionMotion = {};
+  let gestureGeneration = 0;
+  let heldUnreadKey: string | null = null;
+  function stopAutomaticTravel(): void {
+    gestureGeneration += 1;
+    heldUnreadKey = null;
+    reader?.releaseEntry();
+    sentMessageToPlace = null;
+    latestIntent = null;
+    latestPending = false;
+    if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
+    withTheNewestLineBeforeTheWrite = false;
+  }
+  async function travel(thread: HTMLDivElement, wanted: number): Promise<boolean> {
+    const from = thread.scrollTop;
+    if (Math.abs(wanted - from) < .5) return true;
+    return conversationMotion(thread).move(positionMotion, fraction => {
+      moveTheThread(thread, from + (wanted - from) * fraction);
+    }, CONVERSATION_MOVE_MS, undefined, true);
   }
 
   function moveTheThread(thread: HTMLDivElement, wanted: number): void {
@@ -117,13 +138,22 @@
     if (least > thread.scrollTop) moveTheThread(thread, least);
   }
 
+  function countBelow(): void {
+    const thread = threadElement;
+    if (!thread) return;
+    const bottom = thread.getBoundingClientRect().bottom;
+    belowCount = [...thread.querySelectorAll<HTMLElement>('.chat-a, .chat-u, .c2-ask-row')]
+      .filter(node => node.getBoundingClientRect().top > bottom).length;
+  }
   function takeTheReading(reading: ThreadReading): void {
+    countBelow();
     newestLineBottomPixels = reading.newestLineBottomPixels;
     jumpVisible = !reading.newestLineIsInSight;
   }
 
   /** Is the reader with the newest line right now? Measured, never remembered. */
   function withTheNewestLine(thread: HTMLDivElement): boolean {
+    if (heldUnreadKey !== null) return false;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return withTheNewestLineBeforeTheWrite;
     return geometry.newestLineIsInSight(geometry.read(reservedSpacePixels).newestLineBottomPixels);
@@ -135,16 +165,17 @@
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
     const item=reader.pages.flatMap(page=>page.items).find(item=>item.key===key);
-    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:jumpVisible===false&&!latestPending};
+    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:jumpVisible===false&&!latestPending&&heldUnreadKey===null};
   }
 
   function onThreadScroll(): void {
     const thread = threadElement;
-    if (thread === null || !canMeasure()) return;
+    if (thread === null || !canMeasure() || conversationMotion(thread).active(positionMotion)) return;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return;
     jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels);
-    withTheNewestLineBeforeTheWrite = !jumpVisible;
+    countBelow();
+    withTheNewestLineBeforeTheWrite = !jumpVisible && heldUnreadKey === null;
     saveLogicalAnchor(thread);
   }
 
@@ -154,6 +185,9 @@
   }
 
   async function jumpToTheNewestLine(button: HTMLButtonElement): Promise<void> {
+    heldUnreadKey = null;
+    reader?.releaseEntry();
+    if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
     const intent = {
       reader,
       generation,
@@ -217,6 +251,8 @@
         // Keep this pass associated with the click that requested it, including
         // both layout waits and the later focus handoff.
         const intent = latestIntent;
+        const gesture = gestureGeneration;
+        let followingMore = false;
         // Svelte and managed Markdown finish their DOM writes before the reading.
         await tick();
         if (startedIn !== generation || !canMeasure()) return;
@@ -239,6 +275,8 @@
         if (newest !== undefined && !settledMessageIds.has(newest.messageId)) {
           const sent = geometry.sentMessage(newest.messageId);
           if (sent !== null) {
+            heldUnreadKey = null;
+            reader?.releaseEntry();
             settledMessageIds.add(newest.messageId);
             answerRoomMessageId = newest.messageId;
             sentMessageToPlace = newest.messageId;
@@ -249,6 +287,11 @@
           if (asking !== null) reservedSpacePixels = geometry.answerRoomPixels(asking);
         }
 
+        if (heldUnreadKey !== null) {
+          const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
+            .find(node => node.dataset.conversationViewKey === heldUnreadKey);
+          if (held) reservedSpacePixels = geometry.answerRoomPixels(held);
+        }
         // Space is part of layout. Place only after its final DOM height is present.
         await tick();
         if (startedIn !== generation || !canMeasure() || thread !== threadElement) return;
@@ -260,24 +303,51 @@
         if (!geometry.hasShape()) return;
         takeTheReading(geometry.read(reservedSpacePixels));
 
-        if (!settledOnOpening || pendingOpen) {
+        if (reader?.entryPhase === 'placing') {
+          if (!reader.entryTargetReady) return;
+          const entryReader = reader;
+          const target = reader.entryTarget;
+          const element = target === null ? null : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
+            .find(node => node.dataset.conversationViewKey === target.key);
+          if (target !== null && !element) return;
+          if (element) {
+            heldUnreadKey = target!.key;
+            reservedSpacePixels = Math.max(reservedSpacePixels, geometry.answerRoomPixels(element));
+            await tick();
+            if (startedIn !== generation || thread !== threadElement || reader !== entryReader || reader.entryPhase !== 'placing' || reader.entryTarget?.key !== target?.key || !reader.entryTargetReady) return;
+            moveTheThread(thread, threadGeometry(thread, reservedSpaceElement).elementAtTheTopScrollTop(element));
+          } else landTheOpen(thread);
+          reader.finishEntry();
+        } else if (!settledOnOpening || pendingOpen) {
           landTheOpen(thread);
         } else if (latestPending && isCurrentLatest(intent) && intent?.admitted) {
-          moveTheThread(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
+          await travel(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
         } else if (sentMessageToPlace !== null) {
           const sent = geometry.sentMessage(sentMessageToPlace);
-          if (sent !== null) moveTheThread(thread, geometry.sentMessageScrollTop(sent));
+          if (sent !== null) await travel(thread, geometry.sentMessageScrollTop(sent));
+        } else if (heldUnreadKey !== null) {
+          const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
+            .find(node => node.dataset.conversationViewKey === heldUnreadKey);
+          if (held) moveTheThread(thread, geometry.elementAtTheTopScrollTop(held));
         } else if (withTheNewestLineBeforeTheWrite && !latestPending) {
-          keepTheNewestLineInSight(thread);
+          const wanted = geometry.newestLineScrollTop(newestLineBottomPixels);
+          if (wanted > thread.scrollTop) {
+            const last = contentElement?.lastElementChild;
+            const line = last ? Number.parseFloat(getComputedStyle(last).lineHeight) : 24;
+            const step = Number.isFinite(line) && line > 0 ? line : 24;
+            await travel(thread, Math.min(wanted, thread.scrollTop + step));
+            if (wanted > thread.scrollTop + .5) { dirty = true; followingMore = true; }
+          }
         }
+        if (startedIn !== generation || gesture !== gestureGeneration || thread !== threadElement) return;
         settledOnOpening = true;
         pendingOpen = false;
         sentMessageToPlace = null;
         takeTheReading(geometry.read(reservedSpacePixels));
-        jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels);
+        jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
         const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && !jumpVisible;
         if (latestPlaced) latestPending = false;
-        withTheNewestLineBeforeTheWrite = !jumpVisible && !latestPending;
+        withTheNewestLineBeforeTheWrite = !jumpVisible && !latestPending && heldUnreadKey === null;
         saveLogicalAnchor(thread);
         if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
@@ -303,11 +373,13 @@
     untrack(() => {
       if (conversationOnScreen === wanted && readerOnScreen === wantedReader) return;
       generation += 1;
+      if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
       readerOnScreen = wantedReader;
       latestPending = false;
       latestIntent = null;
       if (conversationOnScreen !== wanted) {
         conversationOnScreen = wanted;
+        heldUnreadKey = null;
         settledOnOpening = false;
         settledMessageIds = new Set();
         reservedSpacePixels = 0;
@@ -324,6 +396,8 @@
   $effect.pre(() => {
     rows;
     reader?.revision;
+    reader?.entryPhase;
+    reader?.entryTargetReady;
     reader?.restoring;
     visibleRows;
     lens;
@@ -331,7 +405,7 @@
     threadElement;
     untrack(() => {
       const thread = threadElement;
-      if (thread !== null && canMeasure()) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
+      if (thread !== null && canMeasure() && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
       requestReconciliation();
     });
   });
@@ -355,6 +429,15 @@
     const thread = threadElement;
     const content = contentElement;
     if (thread === null || content === null) return;
+    const stopFollowing = conversationMotion(thread).following(keys => {
+      if (keys.includes(positionMotion)) return;
+      if (!canMeasure() || conversationMotion(thread).active(positionMotion)) return;
+      if (withTheNewestLineBeforeTheWrite && !latestPending && reader?.entryPhase !== 'placing') {
+        const geometry = threadGeometry(thread, reservedSpaceElement);
+        takeTheReading(geometry.read(reservedSpacePixels));
+        keepTheNewestLineInSight(thread);
+      }
+    });
     const observer = new ResizeObserver(() => {
       if (!canMeasure()) {
         dirty = true;
@@ -364,7 +447,7 @@
     });
     observer.observe(thread);
     observer.observe(content);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
   });
 
   onMount(() => {
@@ -384,7 +467,8 @@
 
 <div class="chat-thread-shell">
   <!-- A reachable reading region, so the keyboard can scroll it. -->
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- The keyboard region keeps native scrolling and only cancels automatic travel. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div
     class="chat-thread"
     data-conversation-thread
@@ -394,13 +478,18 @@
     bind:this={threadElement}
     onloadcapture={requestReconciliation}
     onscroll={onThreadScroll}
+    onwheel={stopAutomaticTravel}
+    ontouchmove={stopAutomaticTravel}
+    onpointerdown={(event) => { if (event.target === event.currentTarget) stopAutomaticTravel(); }}
+    onkeydown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stopAutomaticTravel(); }}
+    data-more-below={jumpVisible || newerHistory ? "true" : "false"}
   >
     <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
     {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
       {@render emptyState()}
     {/if}
     {#if reader!==null}
-      <ProjectedTranscript {reader} {models} {ownSenderLabel} {livenessPulse}/>
+      <ProjectedTranscript {reader} {models} {ownSenderLabel} {livenessPulse} {outgoingMessages} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
     {:else}
     <ConversationTranscript
       {rows}
@@ -410,21 +499,13 @@
       {ownSenderLabel}
       {livenessPulse}
       {conversationId}
+      {outgoingMessages}
+      {acknowledgedMessageIds}
+      {onStopDrawingMessage}
+      {onSendAgain}
     />
     {/if}
-    {#each outgoingMessages as message (message.messageId)}
-      {@const chip = modeChip(message.mode)}
-      {@const note = outgoingMessageNote(message)}
-      <article class="chat-u" data-conversation-outgoing={message.messageId}>
-        {#if note || chip}
-          <div class="c2-label" data-conversation-outgoing-label>
-            {#if note}{note}{/if}
-            {#if chip}<span class="c2-chip">{chip}</span>{/if}
-          </div>
-        {/if}
-        <MessagePieces content={message.content} {conversationId} />
-      </article>
-    {/each}
+
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -436,13 +517,13 @@
       ></div>
     {/if}
   </div>
-  {#if jumpVisible || latestPending}
+  {#if jumpVisible || newerHistory || latestPending}
     <button
       type="button"
       class="chat-jump"
       aria-label="Jump to latest message"
       onclick={(event) => void jumpToTheNewestLine(event.currentTarget)}
-    ><span>Latest</span><span aria-hidden="true">↓</span></button>
+    ><span>{belowCount > 0 ? `${belowCount} below` : "Latest"}</span><span aria-hidden="true">↓</span></button>
   {/if}
 </div>
 
@@ -451,19 +532,4 @@
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */
   .c2-reserved { flex: none; }
-  /* An optimistic message uses the transcript's own label and chip vocabulary. */
-  .c2-label {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-    margin-block-end: var(--space-1);
-  }
-  .c2-chip {
-    margin-inline-start: var(--space-2);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-pill);
-    color: var(--accent-bright);
-    padding: 0 var(--space-2);
-  }
 </style>
