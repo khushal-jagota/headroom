@@ -15,6 +15,11 @@ struct WorkspaceView: View {
     @State private var chiefSignalError: String?
     @State private var loadingMore = false
 
+    private var hasContent: Bool { store.chief != nil || store.managerPage != nil || store.ticketPage != nil }
+    private var refreshError: String? {
+        store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] ?? chiefSignalError
+    }
+
     private var motion: Animation? { reduceMotion ? nil : PanelsTheme.Motion.disclosure }
 
     @GestureState private var fingerDown = false
@@ -26,33 +31,29 @@ struct WorkspaceView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                if let error = store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] {
-                    LoadErrorView(message: error) { await store.refresh() }
-                }
-                if let chiefSignalError {
-                    LoadErrorView(message: chiefSignalError) { await refreshSupplementary() }
-                }
-                WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
-                              route: .chief, signal: chiefSignal, groups: groups["chief"] ?? [],
-                              previewChanged: setPreviewOpen, open: open)
-                ForEach(managers) { manager in
-                    WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
-                                  signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
+                if hasContent {
+                    WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
+                                  route: .chief, signal: chiefSignal, groups: groups["chief"] ?? [],
                                   previewChanged: setPreviewOpen, open: open)
+                    ForEach(managers) { manager in
+                        WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
+                                      signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
+                                      previewChanged: setPreviewOpen, open: open)
+                    }
+                    if store.managerPage?.nextOffset != nil || store.ticketPage?.nextOffset != nil {
+                        Button {
+                            Task {
+                                loadingMore = true
+                                await store.loadMore()
+                                updateGroups()
+                                loadingMore = false
+                            }
+                        } label: {
+                            HStack { if loadingMore { ProgressView() }; Text("Load more") }.frame(minHeight: 44)
+                        }.disabled(loadingMore)
+                    }
+                    settledSection.padding(.top, 16)
                 }
-                if store.managerPage?.nextOffset != nil || store.ticketPage?.nextOffset != nil {
-                    Button {
-                        Task {
-                            loadingMore = true
-                            await store.loadMore()
-                            updateGroups()
-                            loadingMore = false
-                        }
-                    } label: {
-                        HStack { if loadingMore { ProgressView() }; Text("Load more") }.frame(minHeight: 44)
-                    }.disabled(loadingMore)
-                }
-                settledSection.padding(.top, 16)
             }
             .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 24)
         }
@@ -63,8 +64,8 @@ struct WorkspaceView: View {
             scrolling = phase != .idle
             if !scrolling { updateGroups() }
         }
-        .refreshable { await store.refresh() }
-        .overlay { if store.isLoading && store.chief == nil { ProgressView("Loading workspace…").controlSize(.large) } }
+        .refreshable { await refresh() }
+        .screenLoadState("workspace", hasContent: hasContent, error: refreshError) { await refresh() }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: selectedRoute) { old, new in if old != new { Haptics.light() } }
@@ -116,7 +117,7 @@ struct WorkspaceView: View {
                             .frame(minHeight: 44).disabled(settledLoading)
                     }
                 } else if settledError == nil { ProgressView("Loading settled orchestrators…") }
-                if settledLoading { ProgressView("Loading more settled orchestrators…") }
+                if settledLoading && settled != nil { ProgressView("Loading more settled orchestrators…") }
             }
         }.padding(.horizontal, 16)
     }
@@ -150,6 +151,11 @@ struct WorkspaceView: View {
         }
     }
 
+    private func refresh() async {
+        await store.refresh()
+        await refreshSupplementary()
+    }
+
     private func refreshSupplementary() async {
         let api = store.client
         async let signalRead: () = loadChiefSignal(api)
@@ -164,7 +170,7 @@ struct WorkspaceView: View {
             chiefSignal = signal; chiefSignalError = nil
         } catch {
             guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
-            chiefSignal = nil; chiefSignalError = "Chief activity couldn’t refresh. \(error.localizedDescription)"
+            chiefSignalError = "Chief activity couldn’t refresh. \(error.localizedDescription)"
         }
     }
 

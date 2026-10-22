@@ -16,7 +16,6 @@ struct OrchestratorView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                if let error { LoadErrorView(message: error) { await load() } }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                     AgentEyebrow(title: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""), signal: detail?.conversationSignal ?? summary?.conversationSignal)
                     AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator")
@@ -25,6 +24,9 @@ struct OrchestratorView: View {
                     }
                 }
                 if let detail {
+                    if detail.tickets.isEmpty {
+                        Text("No workers yet").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                    }
                     WorkerSections(tickets: detail.tickets)
                     VStack(spacing: 0) {
                         Divider().overlay(PanelsTheme.border)
@@ -45,8 +47,6 @@ struct OrchestratorView: View {
                             }.frame(minHeight: 50).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }.font(PanelsTheme.TypeScale.body)
-                } else if error == nil {
-                    ProgressView("Loading orchestrator…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
@@ -68,6 +68,7 @@ struct OrchestratorView: View {
         } }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
+        .screenLoadState("orchestrator", hasContent: detail != nil, error: error) { await load() }
         .accessibilityIdentifier("orchestrator-screen")
     }
 

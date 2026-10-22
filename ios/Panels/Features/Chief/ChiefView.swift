@@ -17,7 +17,6 @@ struct ChiefView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                if let error { LoadErrorView(message: error) { await load() } }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                     AgentEyebrow(title: "", signal: chief?.conversationSignal)
                     AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff")
@@ -42,8 +41,6 @@ struct ChiefView: View {
                             if let page = done?.page { loadMoreButton(page: page, filter: .done) }
                         }
                     }
-                } else if error == nil {
-                    ProgressView("Loading Chief…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
@@ -65,6 +62,7 @@ struct ChiefView: View {
         } }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
+        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error) { await load() }
         .accessibilityIdentifier("chief-screen")
     }
 

@@ -25,11 +25,9 @@ struct ReviewView: View {
                         }
                     }.frame(maxWidth: .infinity).padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.hero * 4)
                 }.refreshable { await store.refresh() }
-            } else { ProgressView("Loading Review") }
+            } else { ScrollView { Color.clear.frame(height: 1) }.refreshable { await store.refresh() } }
         }
-        .overlay(alignment: .top) {
-            if let error = store.errors["Review"] { LoadErrorView(message: error) { await store.refresh() }.padding() }
-        }
+        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
         .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue() }
     }

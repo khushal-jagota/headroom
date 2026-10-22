@@ -30,7 +30,6 @@ struct TicketView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                if let error { LoadErrorView(message: error) { await load() } }
                 if let detail {
                     masthead(detail)
                     if let presentation {
@@ -38,20 +37,19 @@ struct TicketView: View {
                         steps(presentation)
                         artifactRow
                     }
-                } else if error == nil {
-                    ProgressView("Loading ticket…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.frame(maxWidth: 720, alignment: .leading)
                 .padding(.horizontal, 20).padding(.vertical, PanelsTheme.Space.lg)
                 .frame(maxWidth: .infinity)
         }
-        .navigationTitle(titleVisible ? "" : detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket")
+        .navigationTitle(detail != nil && titleVisible ? "" : detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar { ToolbarItem(placement: .primaryAction) { ticketMenu } }
         .panelsScreen()
         .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId)
         .refreshable { await load(); await loadArtifacts() }
+        .screenLoadState("ticket", hasContent: detail != nil, error: error) { await load() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
         .task(id: detail?.stage) {
@@ -237,7 +235,7 @@ struct TicketView: View {
             try Task.checkCancellation()
             guard generation == loadGeneration, client.baseURL == store.baseURL else { return }
             detail = result; manifest = type; error = nil
-        } catch { if !Task.isCancelled && generation == loadGeneration { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled && generation == loadGeneration && client.baseURL == store.baseURL { self.error = error.localizedDescription } }
     }
     private func loadArtifacts() async {
         let client = store.client

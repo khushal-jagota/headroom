@@ -9,14 +9,76 @@ struct ScreenPlaceholder: View {
     }
 }
 
+/// A refresh failure never replaces previously loaded content.
 struct LoadErrorView: View {
     let message: String
     let retry: () async -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+        HStack(alignment: .center, spacing: PanelsTheme.Space.md) {
             Text(message).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-            Button("Try again") { Task { await retry() } }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ScreenRetryButton(retry: retry)
         }.padding(.vertical, PanelsTheme.Space.sm)
+    }
+}
+
+private struct ScreenRetryButton: View {
+    let retry: () async -> Void
+    @State private var retrying = false
+    var body: some View {
+        Button {
+            retrying = true
+            Task { await retry(); retrying = false }
+        } label: {
+            Text(retrying ? "Retrying…" : "Try again").frame(minHeight: 44)
+        }.disabled(retrying)
+    }
+}
+
+struct ScreenLoadingView: View {
+    let title: String
+    var body: some View {
+        ProgressView("Loading \(title)…")
+            .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+    }
+}
+
+private struct ScreenLoadState: ViewModifier {
+    let title: String
+    let hasContent: Bool
+    let error: String?
+    let retry: () async -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if !hasContent {
+                    if let error {
+                        ContentUnavailableView {
+                            Label("Couldn’t load \(title)", systemImage: "exclamationmark.circle")
+                        } description: {
+                            Text(error)
+                        } actions: {
+                            ScreenRetryButton(retry: retry).buttonStyle(.bordered)
+                        }
+                    } else { ScreenLoadingView(title: title) }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if hasContent, let error {
+                    LoadErrorView(message: "Couldn’t refresh. Showing the last loaded content. \(error)", retry: retry)
+                        .padding(.horizontal, PanelsTheme.Space.lg)
+                        .background(PanelsTheme.surface)
+                }
+            }
+    }
+}
+
+extension View {
+    func screenLoadState(_ title: String, hasContent: Bool, error: String?, retry: @escaping () async -> Void) -> some View {
+        modifier(ScreenLoadState(title: title, hasContent: hasContent, error: error, retry: retry))
     }
 }
 

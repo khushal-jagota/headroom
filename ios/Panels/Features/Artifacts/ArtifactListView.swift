@@ -35,7 +35,6 @@ struct ArtifactListView: View {
     }
     private var list: some View {
         List {
-            if let error { LoadErrorView(message: error) { await load() }.listRowBackground(Color.clear) }
             ForEach(entries.filter { $0.directory != nil }) { folder in
                 ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { selectedArtifact = $0 })
             }
@@ -49,11 +48,11 @@ struct ArtifactListView: View {
         }
         .listStyle(.plain)
         .overlay {
-            if entries.isEmpty && (isLoading || (!hasLoaded && error == nil)) { ProgressView("Loading artifacts…") }
-            else if hasLoaded && entries.isEmpty && error == nil {
+            if hasLoaded && entries.isEmpty {
                 ContentUnavailableView("No artifacts yet", systemImage: "folder", description: Text("Files will appear here when they are added."))
             }
         }
+        .screenLoadState("artifacts", hasContent: hasLoaded, error: error) { await load(); refreshVersion += 1 }
     }
     @ViewBuilder private func fileSection(_ files: [ArtifactEntry], title: String) -> some View {
         if !files.isEmpty {

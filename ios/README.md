@@ -362,3 +362,25 @@ purpose. Review actions stack at accessibility sizes and proposal/recap controls
 expose their text to VoiceOver. No new tests were added for these
 view-only edits: the existing host tests cover model contracts, while actual text
 layout and assistive interaction require the deferred runtime check.
+
+## Loading and retry states
+
+Review, Workspace, Chief, Orchestrator, Ticket and artifact lists share a labeled
+initial loading state and a native retry screen when nothing has loaded. Failed
+refreshes keep the last content visible, including an empty result, with a small
+retry notice below the content. The notice does not insert a row above existing
+content. Retry buttons remain disabled until their request finishes. Artifact
+previews also retain their downloaded document after a failed reload.
+
+Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull
+feedback without an extra haptic. Workspace pull-to-refresh waits for its activity
+and Settled reads too; a failed activity read retains the last signal with an error
+notice. Review retains its quiet empty state, running-agent count and revisit action.
+Ticket retains its add-orientation action for an empty recap. Artifact image, PDF, media and Quick Look viewers keep the existing Reload
+menu; text, markdown and HTML retain their existing refresh gestures.
+
+These states are verified by a generic iOS Simulator SDK build only. The existing
+four macOS host model tests also pass, but do not exercise SwiftUI states. No new
+view-mirroring tests or connected hosts were added. Offline interaction, layout
+stability, animation and haptic feel still require a later runtime/device pass;
+this lane did not run a simulator or write to a live server.
