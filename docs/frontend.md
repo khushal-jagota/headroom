@@ -695,6 +695,8 @@ hand-rolling the same shapes per screen. Each does one job:
   The browser holds the top line when it can. If content above or within the view
   grows, text below it can move. Panels does not restore an exact paragraph offset.
   Opening the conversation, sending a message, and Latest each place the view once.
+  Latest returns focus to the Conversation region after the button disappears.
+  If the reader moves focus elsewhere before the jump completes, that focus stays there.
   An explicit send places the sent prompt near the top, even during a layer resize.
   If a shorter transcript clamps the view to the end, later content follows the end.
   Latest reflects the actual content, separately from the answer room below a sent
