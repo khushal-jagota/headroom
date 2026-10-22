@@ -4,6 +4,7 @@ struct AppShell: View {
     @Environment(AppStore.self) private var store
     @Environment(NotificationController.self) private var notifications
     @Environment(\.scenePhase) private var scenePhase
+    @State private var deploymentState: DeploymentStatusPresentation?
     @State private var selectedTab: AppTab = .workspace
     @State private var reviewPath: [AppRoute] = []
     @State private var workspacePath: [AppRoute] = []
@@ -20,23 +21,26 @@ struct AppShell: View {
                         selectedTab = .workspace
                     }
                 })
-                    .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
                 .tabItem { Label("Review", systemImage: "checkmark.circle") }
                 .badge(store.review?.items.count ?? 0).tag(AppTab.review)
             NavigationStack(path: $workspacePath) {
                 WorkspaceView()
-                    .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
                 .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
             NavigationStack(path: $morePath) {
                 MoreView()
-                    .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
-                .tabItem { Label("More", systemImage: "ellipsis") }.tag(AppTab.more)
+                .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
+        }
+        .task {
+            while !Task.isCancelled {
+                deploymentState = DeploymentStatusPresentation.resolve(store.deployment, connected: store.connection == "Following changes", readFailed: store.errors["Deployment"] != nil, now: .now)
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
         }
         .task(id: notifications.pendingOpen?.id) { openNotification() }
         .task(id: "push:\(store.baseURL):\(scenePhase == .active)") {
@@ -54,6 +58,16 @@ struct AppShell: View {
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
             if scenePhase == .active { await store.run() }
         }
+    }
+
+    private var moreTabImage: UIImage {
+        let symbol = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: 23))!
+        guard let deploymentState else { return symbol }
+        return UIGraphicsImageRenderer(size: CGSize(width: 32, height: 25)).image { _ in
+            symbol.withTintColor(UIColor(selectedTab == .more ? PanelsTheme.accent : PanelsTheme.faint)).draw(in: CGRect(x: 1, y: 9, width: 25, height: 6))
+            UIColor(deploymentState == .problem ? PanelsTheme.error : PanelsTheme.accent).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 26, y: 0, width: 6, height: 6)).fill()
+        }.withRenderingMode(.alwaysOriginal)
     }
 
     private func openNotification() {
@@ -75,13 +89,12 @@ struct AppShell: View {
 
     private func detail(_ route: AppRoute) -> some View {
         RouteDestination(route: route)
-            .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
     }
 }
 
 // Match the web's expiry rules: stale progress becomes reconnecting, and a
 // successful deployment only stays visible until its server-provided expiry.
-enum DeploymentCapsuleState: String {
+enum DeploymentStatusPresentation: String {
     case deploying = "Deploying", reconnecting = "Reconnecting", problem = "Problem", deployed = "Deployed"
 
     static func resolve(_ status: DeploymentStatus?, connected: Bool, readFailed: Bool, now: Date) -> Self? {
@@ -99,26 +112,6 @@ enum DeploymentCapsuleState: String {
         case "back_up": return connected ? (fresh ? .deployed : nil) : .reconnecting
         case "idle": return connected ? nil : .reconnecting
         default: return .reconnecting
-        }
-    }
-}
-
-private struct DeploymentCapsule: View {
-    @Environment(AppStore.self) private var store
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            if let state = DeploymentCapsuleState.resolve(store.deployment, connected: store.connection == "Following changes", readFailed: store.errors["Deployment"] != nil, now: context.date) {
-                HStack(spacing: PanelsTheme.Space.sm) {
-                    Circle().fill(state == .problem ? PanelsTheme.error : PanelsTheme.accent).frame(width: 5, height: 5)
-                    Text(state.rawValue).font(PanelsTheme.TypeScale.caption)
-                }
-                .foregroundStyle(PanelsTheme.muted)
-                .padding(.horizontal, PanelsTheme.Space.md).padding(.vertical, PanelsTheme.Space.sm)
-                .background(PanelsTheme.raised, in: Capsule())
-                .padding(.vertical, PanelsTheme.Space.sm)
-                .frame(maxWidth: .infinity)
-                .accessibilityElement(children: .combine)
-            }
         }
     }
 }

@@ -6,13 +6,13 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
-        case .approval: "Needs Your Approval"
-        case .answer: "Needs Your Answer"
+        case .approval: "Needs your approval"
+        case .answer: "Needs your answer"
         case .yours: "Yours"
         case .errored: "Errored"
         case .agent: "Agent"
         case .consequences: "Waiting on Consequences"
-        case .agentApproval: "Awaiting an Agent’s Approval"
+        case .agentApproval: "Awaiting an agent’s approval"
         case .other: "Other"
         }
     }

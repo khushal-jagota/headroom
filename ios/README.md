@@ -7,7 +7,8 @@ No backend changes or third-party packages are needed.
 
 Workspace is the initial tab. Review, Workspace and More each own a navigation
 stack and retain their place when switching tabs. More groups Work and System in
-a native list. The tab bar is visible on these three roots; the shared `AppRoute`
+a native list, with deployment status in a Panels server row above them. Active
+deployment status adds a dot to More; healthy idle has no dot. The tab bar is visible on these three roots; the shared `AppRoute`
 destination hides it on detail pages and their pushed children. Roots use the system
 default visibility: explicit root overrides compete with the shared detail rule.
 Navigation uses native pushes and back swipes;
@@ -230,18 +231,21 @@ answer, Yours, errors, Agent, Consequences, agent approval, then Other. Backlogg
 blocked and completed tickets leave this rail. Unread dots and working spinners
 are independent. Chief activity comes from the read-only workers index.
 
-The approved mobile design keeps hairline cards, title-case group labels, one-line
+The approved mobile design keeps hairline cards, full-width 32pt group bars with
+sentence-case labels on the cards’ 16pt inner line, one-line
 rows at standard text sizes and native pushes. Accessibility text sizes wrap row titles. Settled is a plain expandable list after the cards, with
-the server's total count. Pages load in batches of 30; refresh preserves the loaded
-window. Surviving rows retain order, and section changes fade instead of travelling.
+the server's total count. Opening scrolls its header to the top, then fades in
+the rows. Closing fades out the rows and returns to the previous scroll offset.
+Pages load automatically when the last ten rows become visible; refresh preserves
+the loaded window. Surviving rows retain order, and section changes fade instead of travelling.
 Regrouping waits during scrolling and context previews; titles and marks stay live.
 Reduce Motion removes layout animation.
 
 Long press previews the full title, recap and manifest-derived stage sentence.
 Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
 orchestrator. These use existing endpoints. Failed or uncertain actions show an
-error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle is
-silent, and pull refresh/context menus use system feedback. Every shared route
+error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle gives
+selection feedback, and pull refresh/context menus use system feedback. Every shared route
 destination hides the tab bar; returning to a tab root restores it. Physical haptic feel
 still needs a device. Conversation contents use the shared native overlay described below.
 

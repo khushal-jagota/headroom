@@ -26,11 +26,13 @@ enum PanelsTheme {
         static let title = Font.largeTitle.weight(.semibold)
     }
     enum Motion {
+        static let exit = 0.12
         static let fast = 0.09
         static let base = 0.15
         static let slow = 0.24
         static let enter = 0.32
         static let fade = Animation.timingCurve(0.2, 0.7, 0.3, 1, duration: base)
+        static let entrance = Animation.timingCurve(0.2, 0.7, 0.3, 1, duration: enter)
         static let disclosure = Animation.smooth(duration: slow, extraBounce: 0)
     }
 }

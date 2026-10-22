@@ -4,13 +4,13 @@ import XCTest
 /// No live writes. The real adapter runs against URLProtocol's in-memory transport.
 @MainActor final class ReviewDecisionTests: XCTestCase {
     // A stale deployment must never look healthy or reserve permanent screen space.
-    func testDeploymentCapsuleExpiresAndPreservesFailure() {
+    func testDeploymentStatusExpiresAndPreservesFailure() {
         let now = Date(timeIntervalSince1970: 1_000)
         func status(_ state: String, expiry: String? = "1970-01-01T00:20:00Z", outcome: String? = nil) -> DeploymentStatus {
             DeploymentStatus(state: state, deployedSha: nil, targetSha: nil, outcome: outcome, detail: nil, validUntil: expiry)
         }
-        func visible(_ value: DeploymentStatus, connected: Bool = true, at date: Date = Date(timeIntervalSince1970: 1_000)) -> DeploymentCapsuleState? {
-            DeploymentCapsuleState.resolve(value, connected: connected, readFailed: false, now: date)
+        func visible(_ value: DeploymentStatus, connected: Bool = true, at date: Date = Date(timeIntervalSince1970: 1_000)) -> DeploymentStatusPresentation? {
+            DeploymentStatusPresentation.resolve(value, connected: connected, readFailed: false, now: date)
         }
         XCTAssertNil(visible(status("idle")))
         XCTAssertEqual(visible(status("preparing")), .deploying)
