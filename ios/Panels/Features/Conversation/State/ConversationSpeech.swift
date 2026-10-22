@@ -1,5 +1,6 @@
 import AVFoundation
-import Speech
+// Speech predates Sendable annotations; its audio request accepts buffers from the audio tap.
+@preconcurrency import Speech
 import Observation
 
 @MainActor @Observable final class ConversationSpeech {
@@ -11,13 +12,14 @@ import Observation
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognition: SFSpeechRecognitionTask?
 
-    func start(update: @escaping @MainActor (String) -> Void) async {
+    func start(update: @escaping @MainActor @Sendable (String) -> Void) async {
         guard !recording, !starting else { return }
         starting = true
         let currentGeneration = generation
         defer { starting = false }
         let speech = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
+            // Speech invokes this callback off the main actor; only resume the continuation here.
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in continuation.resume(returning: status == .authorized) }
         }
         let microphone = await AVAudioApplication.requestRecordPermission()
         guard currentGeneration == generation else { return }
@@ -33,9 +35,9 @@ import Observation
             let buffer = SFSpeechAudioBufferRecognitionRequest()
             buffer.shouldReportPartialResults = true
             let input = audio.inputNode
-            input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { samples, _ in buffer.append(samples) }
+            input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { @Sendable samples, _ in buffer.append(samples) }
             engine = audio; request = buffer
-            recognition = recognizer.recognitionTask(with: buffer) { result, failure in
+            recognition = recognizer.recognitionTask(with: buffer) { @Sendable [weak self] result, failure in
                 let text = result?.bestTranscription.formattedString
                 let final = result?.isFinal == true
                 let failed = failure != nil
