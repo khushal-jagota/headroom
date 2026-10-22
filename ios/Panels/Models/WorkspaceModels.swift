@@ -19,6 +19,7 @@ struct TicketSummary: Codable, Identifiable, Sendable {
     let stage: String
     let ticketStatus: String
     let isBacklogged: Bool
+    let waitingToCloseout: Bool?
     let recapPreview: String
     let waitingToCloseout: Bool?
     let activityAt: Double?

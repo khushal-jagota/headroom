@@ -99,8 +99,9 @@ The app uses the server's general change stream and REST reads, not a duplicate 
 the web navigation replica protocol. Overview reads run concurrently and retain
 previous data with an explicit error on failure. Active manager and ticket lists
 use bounded pages; Load more preserves the loaded window across refreshes. A
-manager's detail supplies its complete grouped tickets. Other active tickets are
-shown separately when their manager is outside the current unsettled window.
+manager's detail supplies its complete grouped tickets. Workspace shows Chief tickets and the loaded unsettled orchestrators. Tickets whose
+parent is settled stay inside Settled; loading more orchestrators reveals their
+children without inventing a second active card for a settled parent.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
@@ -202,3 +203,30 @@ After Feedback and the system screens were integrated, Ideas was rebased while
 preserving every More destination. Firstmate requested compile-only verification
 and the existing host tests for that integration; no simulator was used for the
 rebase checks.
+## Workspace home
+
+Workspace follows the web rail's section precedence and visibility: approval,
+answer, Yours, errors, Agent, Consequences, agent approval, then Other. Backlogged,
+blocked and completed tickets leave this rail. Unread messages stay independent
+blue dots; a working spinner appears only when that conversation is running and
+has no unread message. Chief activity comes from the read-only workers index.
+Card activity marks sit in the avatar or project eyebrow above the title. Group
+labels have filled backgrounds and no chevrons. Headers and ticket rows push the
+shared typed routes without marking anything read.
+
+Cards keep surviving tickets in their existing section order and append arrivals.
+A flat set of stable row identities lets native animation move a ticket between
+sections; Reduce Motion disables the layout animation. Workspace navigation, the
+Settled fold, pagination and pull-to-refresh use selection haptics. Physical haptic
+feel still needs a device.
+
+Settled stays at the bottom, displays the server's total count, and opens into its
+own bounded scroll area. Summary pages load in batches of 30, and refresh preserves
+the loaded window. The active lists retain the foundation's Load more control. The collapsed Settled
+label is currently clipped by the bottom shell in Simulator captures; the toggle
+and expanded list work. This remains a known layout issue.
+
+Three pure Workspace tests reuse the existing ticket fixture. They cover distinct
+risks not covered by DTO decoding: overlapping attention facts and independent
+unread state; hidden work leaking into the rail; and refresh/reclassification
+reordering surviving rows. They need no backend, browser, or new fixture host.
