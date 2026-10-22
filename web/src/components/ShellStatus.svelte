@@ -2,21 +2,32 @@
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ConnectionStatus } from "../lib/changeStream";
-  import { deploymentStatusExpiryDelay, resolveDeploymentStatus } from "../lib/deploymentStatus";
+  import { deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard, type StatusCardKey } from "../lib/deploymentStatus";
   import { queries } from "../lib/queryCatalogue";
+  import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
+
+  // The deploy this card narrates is what produces the release the monitor finds, so
+  // both ends of that one event share this slot. One card occupies it at a time.
+  type Card = { word: string; state: "changing" | "settled" | "wrong"; action: string | null; sentence?: true };
+  const CARDS: Record<StatusCardKey, Card> = {
+    Deploying: { word: "Deploying", state: "changing", action: null },
+    Deployed: { word: "Deployed", state: "settled", action: null },
+    Reconnecting: { word: "Reconnecting", state: "changing", action: null },
+    Problem: { word: "Problem", state: "wrong", action: null },
+    "update-ready": { word: "New version ready", state: "settled", action: "Update" },
+    // A held update states its own reason, so it carries no control. The sentence
+    // wraps, because a truncated one cannot be read.
+    "update-held": { word: "Update applies when this message is safe", state: "changing", action: null, sentence: true }
+  };
 
   let { connectionState }: { connectionState: ConnectionStatus } = $props();
   let clock = $state(Date.now());
   const deployment = createQuery(() => queries.deploymentStatus());
   const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
-  const statusWord = $derived(
-    statusState === "preparing" || statusState === "restarting" ? "Deploying"
-      : statusState === "back_up" ? "Deployed"
-      : statusState === "problem" ? "Problem"
-      : statusState === "reconnecting" ? "Reconnecting" : null
-  );
-  let displayedWord = $state<string | null>(null);
+  const statusWord = $derived(resolveStatusCard(statusState, $releaseState));
+  let displayedWord = $state<StatusCardKey | null>(null);
+  const card = $derived(displayedWord === null ? null : CARDS[displayedWord]);
   let open = $state(false);
   let closing = $state(false);
   let slot = $state<HTMLDivElement | null>(null);
@@ -62,17 +73,29 @@
   });
 </script>
 
+{#snippet cardBody(entry: Card)}
+  <span class="status-mark" aria-hidden="true"></span>
+  <span class={entry.sentence ? "status-sentence" : "status-word"}>{entry.word}</span>
+  {#if entry.action}<span class="status-action">{entry.action}</span>{/if}
+{/snippet}
+
 <div bind:this={slot} class="status-slot" data-shell-status
   data-open={open ? "" : undefined} data-closing={closing ? "" : undefined}
   aria-hidden={statusWord === null ? "true" : undefined} style={motionStyle}>
-  <div>
-    {#if displayedWord !== null}
-      <div class="status-card" data-state={displayedWord === "Problem" ? "wrong" : displayedWord === "Deployed" ? "settled" : "changing"}
-        data-connection-status data-connection-state={connectionState} data-status-state={statusState}
-        role="status" aria-live="polite">
-        <span class="status-mark" aria-hidden="true"></span>
-        <span class="status-word">{displayedWord}</span>
-      </div>
+  <div role="status" aria-live="polite" inert={closing ? true : undefined}>
+    {#if card}
+      {#if card.action}
+        <button type="button" class="status-card" data-state={card.state}
+          data-connection-status data-connection-state={connectionState} data-status-state={statusState}
+          onclick={requestReleaseReload}>
+          {@render cardBody(card)}
+        </button>
+      {:else}
+        <div class="status-card" data-state={card.state}
+          data-connection-status data-connection-state={connectionState} data-status-state={statusState}>
+          {@render cardBody(card)}
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -98,6 +121,10 @@
   .status-card[data-state="wrong"] .status-mark { background: var(--accent-error); }
   .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .status-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-sentence { min-width: 0; }
+  .status-action { flex: none; margin-left: auto; font-weight: 600; }
+  button.status-card { width: 100%; border: 0; font: inherit; font-size: var(--type-xs); text-align: left; cursor: pointer; }
+  button.status-card:hover { background-image: var(--interaction-hover); }
   @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   @media (max-width: 720px) { .status-card { margin: 0; border-radius: 0; } }
   @media (prefers-reduced-motion: reduce) {

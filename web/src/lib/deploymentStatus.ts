@@ -1,4 +1,5 @@
 import type { ConnectionStatus } from "./changeStream";
+import type { ReleaseSnapshot } from "./releaseMonitor";
 import type { DeploymentStatus } from "./types";
 
 export type VisibleDeploymentState =
@@ -72,4 +73,30 @@ export function deploymentStatusExpiryDelay(
 ): number | null {
   const expiry = deploymentStatusExpiry(status, now);
   return expiry === null ? null : Math.max(1, expiry - now + 1);
+}
+
+/** What the one status slot shows. The update prompt and the deploy card report the
+ * same event from two ends, so they share the slot rather than stack. */
+export type StatusCardKey =
+  | "Deploying"
+  | "Deployed"
+  | "Reconnecting"
+  | "Problem"
+  | "update-ready"
+  | "update-held";
+
+export function resolveStatusCard(
+  statusState: VisibleDeploymentState,
+  release: ReleaseSnapshot
+): StatusCardKey | null {
+  // A failed deploy is the one state the user must not act on, so it displaces the
+  // update prompt. A rolled back release can still differ from the booted one.
+  if (statusState === "problem") return "Problem";
+  if (release.updateAvailable) {
+    return release.reloadRequested && release.compositionActive ? "update-held" : "update-ready";
+  }
+  if (statusState === "preparing" || statusState === "restarting") return "Deploying";
+  if (statusState === "back_up") return "Deployed";
+  if (statusState === "reconnecting") return "Reconnecting";
+  return null;
 }

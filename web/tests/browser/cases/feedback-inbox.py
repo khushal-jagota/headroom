@@ -181,3 +181,60 @@ def run(browser, urls):
     page.clock.fast_forward(600_001)
     expect(status).to_have_count(0)
     pass  # Shared runner owns the browser lifecycle.
+
+    # The update prompt is now an occupant of this same slot, so only the rendered
+    # surface can show which card wins, that the action is reachable, and that the
+    # held sentence changes the rail foot's height without disturbing the rail.
+    # The deploy fixture has already expired above, so the slot starts empty.
+    expect(status).to_have_count(0)
+    page.evaluate("window.__release('shipped')")
+    expect(status).to_contain_text("New version ready")
+    expect(status.locator(".status-action")).to_have_text("Update")
+    assert status.evaluate("node => node.tagName") == "BUTTON"
+    # A failed deploy displaces it: a rolled back release still differs from the boot.
+    page.evaluate("window.__deployment('problem')")
+    expect(status).to_have_text("Problem")
+    assert status.evaluate("node => node.tagName") == "DIV"
+    page.evaluate("window.__deployment('idle')")
+    expect(status).to_contain_text("New version ready")
+    expect(status.locator(".status-action")).to_have_text("Update")
+    page.screenshot(animations="disabled", path=str(evidence / "update-ready-desktop.png"))
+
+    # Asking for the reload while a message is composed holds it, and says why.
+    page.evaluate(
+        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
+    )
+    status.click()
+    expect(status).to_contain_text("Update applies when this message is safe")
+    expect(status.locator(".status-action")).to_have_count(0)
+    assert status.evaluate("node => node.tagName") == "DIV"
+    # The long copy wraps inside the rail rather than widening or truncating it.
+    rail = page.locator(".board-workspace-left")
+    assert rail.evaluate("node => node.scrollWidth <= node.clientWidth"), "Held update widened the rail"
+    assert status.evaluate(
+        "node => node.scrollWidth <= node.clientWidth + 1"
+    ), "Held update truncated its own sentence"
+    # The taller card pushes the rail foot open rather than overlapping its neighbour.
+    page.wait_for_function("""() => {
+      const utilities=document.querySelector('.rail-utilities')?.getBoundingClientRect();
+      const card=document.querySelector('.rail-foot .status-card')?.getBoundingClientRect();
+      return utilities && card && card.bottom <= utilities.top + 1;
+    }""")
+    page.screenshot(animations="disabled", path=str(evidence / "update-held-desktop.png"))
+
+    # Both breakpoints: on mobile the same card is a band inside the bottom bar.
+    page.set_viewport_size({"width": 390, "height": 844})
+    band = page.locator(".compact-bar .status-card")
+    expect(band).to_contain_text("Update applies when this message is safe")
+    bar = page.locator(".compact-bar-row").bounding_box()
+    box = band.bounding_box()
+    assert box and bar and box["y"] + box["height"] <= bar["y"] + 1, (box, bar)
+    assert box["width"] >= 389, box
+    page.screenshot(animations="disabled", path=str(evidence / "update-held-mobile.png"))
+
+    # The hold releases the moment the message is safe, and only then.
+    page.evaluate("window.__heldPage = true")
+    page.evaluate(
+        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
+    )
+    page.wait_for_function("() => window.__heldPage === undefined")
