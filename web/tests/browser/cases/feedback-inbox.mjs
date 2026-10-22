@@ -32,7 +32,8 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
     window.dispatchEvent(new Event("pageshow"));
   };
   (window as any).__deployment = async (state: string) => {
-    deployment = {...deployment, state};
+    // Each call renews the window, so a state is capturable at any point in the case.
+    deployment = {...deployment, state, valid_until:new Date(Date.now()+600000).toISOString()};
     await queryClient.invalidateQueries({queryKey:["deployment-status"]});
   };
   class QuietEventSource { constructor() { setTimeout(() => (this.onopen as any)?.({}), 0); } onopen = null; onmessage = null; onerror = null; addEventListener() {} removeEventListener() {} close() {} }

@@ -238,3 +238,32 @@ def run(browser, urls):
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
     )
     page.wait_for_function("() => window.__heldPage === undefined")
+
+    # The approved plan's evidence: every state of the one slot, at both breakpoints.
+    # The page reloaded above, so this starts from a fresh boot with no update served.
+    for label, drive in [
+        ("deploying", "window.__deployment('preparing')"),
+        ("problem", "window.__deployment('problem')"),
+        ("update-ready", "window.__deployment('idle'); window.__release('shipped')"),
+    ]:
+        page.evaluate(drive)
+        for breakpoint_, size in [("desktop", (1280, 844)), ("mobile", (390, 844))]:
+            page.set_viewport_size({"width": size[0], "height": size[1]})
+            shown = page.locator(
+                ".rail-foot .status-card" if breakpoint_ == "desktop" else ".compact-bar .status-card"
+            )
+            expect(shown).to_be_visible()
+            page.screenshot(animations="disabled", path=str(evidence / f"state-{label}-{breakpoint_}.png"))
+    # Held needs the action, which only the visible breakpoint's card carries.
+    page.evaluate(
+        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
+    )
+    for breakpoint_, size in [("desktop", (1280, 844)), ("mobile", (390, 844))]:
+        page.set_viewport_size({"width": size[0], "height": size[1]})
+        shown = page.locator(
+            ".rail-foot .status-card" if breakpoint_ == "desktop" else ".compact-bar .status-card"
+        )
+        if shown.evaluate("node => node.tagName") == "BUTTON":
+            shown.click()
+        expect(shown).to_contain_text("Update applies when this message is safe")
+        page.screenshot(animations="disabled", path=str(evidence / f"state-update-held-{breakpoint_}.png"))
