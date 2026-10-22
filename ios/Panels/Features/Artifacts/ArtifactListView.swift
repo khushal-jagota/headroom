@@ -24,6 +24,7 @@ struct ArtifactListView: View {
             }
             .navigationTitle("Artifacts")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .tabBar)
             .panelsScreen()
             .task { await load() }
             .refreshable { await load(); refreshVersion += 1 }
@@ -58,7 +59,7 @@ struct ArtifactListView: View {
         if !files.isEmpty {
             Section { ForEach(files.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }) { entry in
                 ArtifactFileRow(owner: owner, entry: entry, open: { selectedArtifact = $0 })
-            } } header: { Text(title.uppercased()).font(.caption2).foregroundStyle(PanelsTheme.faint) }
+            } } header: { Text(title).textCase(nil).font(.caption2).foregroundStyle(PanelsTheme.faint) }
         }
     }
     private func load(more: Bool = false) async {
@@ -117,7 +118,7 @@ private struct ArtifactFolderSection: View {
                     if entries.count < total { Task { await load(more: true) } }
                 }.disabled(loading).listRowBackground(Color.clear)
             }
-        } header: { Text(folder.label.uppercased()).font(.caption2).foregroundStyle(PanelsTheme.faint) }
+        } header: { Text(folder.label.prefix(1).uppercased() + folder.label.dropFirst()).textCase(nil).font(.caption2).foregroundStyle(PanelsTheme.faint) }
         .task(id: refreshVersion) { await load() }
     }
     private func load(more: Bool = false) async {
