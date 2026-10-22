@@ -18,7 +18,7 @@ struct UsageView: View {
     var body: some View {
         List {
             Section {
-                Picker("Usage", selection: $metric) { ForEach(metrics, id: \.self) { Text($0) } }.pickerStyle(.segmented)
+                Picker("Usage", selection: $metric) { ForEach(metrics, id: \.self) { Text($0) } }.accessibleSegmentedPicker()
                 Picker("Provider", selection: $provider) { ForEach(["All", "Codex", "Claude"], id: \.self) { Text($0) } }
             }.listRowBackground(PanelsTheme.raised)
             if let error { Section { LoadErrorView(message: error) { await load() } } }
@@ -70,7 +70,7 @@ struct UsageView: View {
             Section {
                 Picker("Period", selection: $days) {
                     Text("Today").tag(1); Text("7 days").tag(7); Text("30 days").tag(30); Text("90 days").tag(90)
-                }.pickerStyle(.segmented)
+                }.accessibleSegmentedPicker()
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                     Text(metric == "Cost" ? UsagePresentation.cost(selectedMetrics?.costUsd) : UsagePresentation.number(selectedMetrics?.totalTokens))
                         .font(PanelsTheme.TypeScale.title).monospacedDigit().contentTransition(.numericText())

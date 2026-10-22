@@ -221,7 +221,7 @@ blocked and completed tickets leave this rail. Unread dots and working spinners
 are independent. Chief activity comes from the read-only workers index.
 
 The approved mobile design keeps hairline cards, title-case group labels, one-line
-rows and native pushes. Settled is a plain expandable list after the cards, with
+rows at standard text sizes and native pushes. Accessibility text sizes wrap row titles. Settled is a plain expandable list after the cards, with
 the server's total count. Pages load in batches of 30; refresh preserves the loaded
 window. Surviving rows retain order, and section changes fade instead of travelling.
 Regrouping waits during scrolling and context previews; titles and marks stay live.
@@ -272,3 +272,29 @@ The three artifact logic tests cover cross-owner URLs and encoding, unsafe file
 paths, and preservation of markdown code blocks. They reuse the existing XCTest
 target and require no server. Simulator captures are a separate read-only smoke
 pass, and do not establish physical-device haptics or frame-rate performance.
+
+## Accessibility polish
+
+Workspace keeps its default font sizes but scales them with Dynamic Type. Worker,
+settled and artifact rows wrap titles at accessibility sizes; worker group counts
+stack below their labels. Artifact file types move below the name. Deployment
+status can wrap, and Ticket has a full title in the scrollable content. Recaps
+show their full text at accessibility sizes or with VoiceOver enabled, without
+the measured clipping used by the compact preview. Settings, Feedback, Usage and
+VPS use menu pickers at accessibility sizes so segment titles do not truncate.
+
+Conversation rows expose their title with unread and working state as one
+VoiceOver stop. Worker groups announce count, unread count and expansion state.
+Workspace actions and artifact Share/Copy link have named accessibility actions;
+file and folder rows announce their type or item count. Main loading states name
+what they are loading.
+
+This pass was checked with a generic iOS Simulator SDK build and the four macOS
+host model tests, without booting a simulator or contacting the live server.
+Those checks do not verify rendered wrapping, VoiceOver focus/action behavior,
+or physical haptics. A device accessibility pass remains necessary. After integrating the Review screen, approval stages expose their selected state,
+approval and Send back retain labels while busy, and the revision field names its
+purpose. Review actions stack at accessibility sizes and proposal/recap controls
+expose their text to VoiceOver. No new tests were added for these
+view-only edits: the existing host tests cover model contracts, while actual text
+layout and assistive interaction require the deferred runtime check.

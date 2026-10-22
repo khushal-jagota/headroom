@@ -40,3 +40,25 @@ struct PanelsScreen: ViewModifier {
     }
 }
 extension View { func panelsScreen() -> some View { modifier(PanelsScreen()) } }
+
+/// Preserve the approved default size while following the user's text size.
+private struct PanelsScaledFont: ViewModifier {
+    @ScaledMetric private var size: CGFloat
+    let weight: Font.Weight
+
+    init(size: CGFloat, relativeTo style: Font.TextStyle, weight: Font.Weight) {
+        _size = ScaledMetric(wrappedValue: size, relativeTo: style)
+        self.weight = weight
+    }
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size, weight: weight))
+    }
+}
+
+extension View {
+    func panelsScaledFont(size: CGFloat, relativeTo style: Font.TextStyle = .body, weight: Font.Weight = .regular) -> some View {
+        modifier(PanelsScaledFont(size: size, relativeTo: style, weight: weight))
+    }
+
+}

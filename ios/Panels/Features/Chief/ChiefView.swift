@@ -44,7 +44,7 @@ struct ChiefView: View {
                     }
                     ConversationPlaceholder()
                 } else if error == nil {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
+                    ProgressView("Loading Chief…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
@@ -76,9 +76,10 @@ struct ChiefView: View {
             } label: {
                 HStack {
                     Text("Load more")
-                    if loadingMore { ProgressView().controlSize(.mini) }
+                    if loadingMore { ProgressView().controlSize(.mini).accessibilityHidden(true) }
                 }.font(PanelsTheme.TypeScale.small).frame(minHeight: 44).frame(maxWidth: .infinity)
             }.disabled(loadingMore)
+                .accessibilityValue(loadingMore ? "Loading more workers" : "")
         }
     }
 

@@ -23,6 +23,7 @@ struct WorkerDisclosure<Content: View>: View {
     let count: Int
     let unreadCount: Int
     @ViewBuilder let content: () -> Content
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded: Bool
 
@@ -36,17 +37,19 @@ struct WorkerDisclosure<Content: View>: View {
             Button {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow)) { expanded.toggle() }
             } label: {
-                HStack(spacing: PanelsTheme.Space.sm) {
+                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
                     Text(title).font(PanelsTheme.TypeScale.small.weight(.semibold)).multilineTextAlignment(.leading)
-                    Spacer(minLength: PanelsTheme.Space.sm)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: PanelsTheme.Space.sm) }
                     Text(!expanded && unreadCount > 0 ? "\(unreadCount) unread" : count.formatted()).font(PanelsTheme.TypeScale.small).monospacedDigit().foregroundStyle(PanelsTheme.faint)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(PanelsTheme.muted)
                 .padding(.horizontal, AgentPageLayout.rowInset).frame(minHeight: 44)
                 .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
                 .contentShape(Rectangle())
             }.buttonStyle(.plain)
-                .accessibilityLabel(!expanded && unreadCount > 0 ? "\(title), \(count) workers, \(unreadCount) unread" : "\(title), \(count)")
+                .accessibilityLabel("\(title), \(count) workers, \(unreadCount) unread")
+                .accessibilityHint(expanded ? "Hides workers" : "Shows workers")
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
                 .accessibilityIdentifier("worker-group-\(title)")
             if expanded {
@@ -59,6 +62,7 @@ struct WorkerDisclosure<Content: View>: View {
 
 struct WorkerRows<T: GroupedWorker>: View {
     let tickets: [T]
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(AppStore.self) private var store
     @State private var actions = AgentPageActions()
     var body: some View {
@@ -73,11 +77,12 @@ struct WorkerRows<T: GroupedWorker>: View {
                     HStack(alignment: .center, spacing: PanelsTheme.Space.md) {
                         Text(ticket.title).font(PanelsTheme.TypeScale.body)
                             .foregroundStyle((ticket.awaitingApproval || ticket.awaitingAnswer || ticket.agentState == "errored" || ticket.conversationSignal?.messageForOwner == true) ? PanelsTheme.strong : PanelsTheme.faint)
-                            .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                            .lineLimit(typeSize.isAccessibilitySize ? nil : 2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                         WorkerSignalMark(signal: ticket.conversationSignal)
                     }.padding(.horizontal, AgentPageLayout.rowInset).padding(.vertical, PanelsTheme.Space.sm)
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("worker-\(ticket.id)")
+                    .conversationAccessibility(label: "\(ticket.title), \(WorkerGroup.classify(ticket).title)", signal: ticket.conversationSignal)
                     .contextMenu {
                         NavigationLink("Open", value: AppRoute.ticket(ticket.id))
                         Button("Ask for a recap") {

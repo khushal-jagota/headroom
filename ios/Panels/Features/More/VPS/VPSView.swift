@@ -36,7 +36,7 @@ struct VPSView: View {
                     }.listRowBackground(PanelsTheme.raised)
                     instruments(sample)
                     Section("CPU history") {
-                        Picker("Window", selection: $window) { ForEach(VPSWindow.allCases, id: \.self) { Text($0.rawValue) } }.pickerStyle(.segmented)
+                        Picker("Window", selection: $window) { ForEach(VPSWindow.allCases, id: \.self) { Text($0.rawValue) } }.accessibleSegmentedPicker()
                         if let historyError { LoadErrorView(message: historyError) { await loadHistory() } }
                         if let history, !history.points.isEmpty {
                             Chart(Array(history.points.enumerated()), id: \.offset) { _, point in

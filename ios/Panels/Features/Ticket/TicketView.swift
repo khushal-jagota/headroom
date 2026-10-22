@@ -221,6 +221,7 @@ struct TicketView: View {
                     HStack { Text("Artifacts"); Spacer(); Text(String(artifacts.total)).foregroundStyle(PanelsTheme.faint) }
                         .font(PanelsTheme.TypeScale.body).frame(minHeight: 50).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("ticket-artifacts")
+                    .accessibilityLabel("Artifacts").accessibilityValue("\(artifacts.total) files")
             }
         }
     }

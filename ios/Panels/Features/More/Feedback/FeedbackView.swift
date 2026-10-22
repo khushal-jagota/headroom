@@ -12,7 +12,7 @@ struct FeedbackView: View {
                     Text(tabTitle("Open", count: model.response?.openCount)).tag(false)
                     Text(tabTitle("Handled", count: model.response?.handledCount)).tag(true)
                 }
-                .pickerStyle(.segmented)
+                .accessibleSegmentedPicker()
                 .onChange(of: handled) { _, _ in Haptics.selection() }
 
                 if let error = model.error {

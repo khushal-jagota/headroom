@@ -13,6 +13,8 @@ struct ArtifactsRow: View {
                     HStack { Text("Artifacts"); Spacer(); Text(count.formatted()).foregroundStyle(PanelsTheme.faint) }
                         .font(.body).foregroundStyle(PanelsTheme.text).frame(minHeight: 50).contentShape(Rectangle())
                 }.buttonStyle(.plain)
+                    .accessibilityLabel("Artifacts")
+                    .accessibilityValue("\(count) files")
             }.navigationDestination(isPresented: $opened) { ArtifactListView(owner: owner) }
         }
     }
@@ -22,6 +24,7 @@ struct ArtifactFileRow: View {
     let owner: ArtifactOwner
     let entry: ArtifactEntry
     let open: (ArtifactTarget) -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(AppStore.self) private var store
     @State private var shareDocument: ArtifactDocument?
     @State private var sharing = false
@@ -36,16 +39,26 @@ struct ArtifactFileRow: View {
                     AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: "photo").foregroundStyle(PanelsTheme.faint) }
                         .frame(width: 36, height: 36).clipShape(RoundedRectangle(cornerRadius: 6))
                 } else { Image(systemName: symbol).font(.system(size: 22)).foregroundStyle(PanelsTheme.faint).frame(width: 36) }
-                Text(entry.label).font(.system(size: 16)).foregroundStyle(PanelsTheme.text).lineLimit(2)
-                Spacer(minLength: 8)
-                if downloading { ProgressView() }
-                else { Text((entry.path as NSString).pathExtension.lowercased()).font(.caption).foregroundStyle(PanelsTheme.faint) }
+                VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
+                    Text(entry.label).panelsScaledFont(size: 16).foregroundStyle(PanelsTheme.text)
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2).fixedSize(horizontal: false, vertical: true)
+                    if typeSize.isAccessibilitySize {
+                        Text((entry.path as NSString).pathExtension.lowercased()).font(.caption).foregroundStyle(PanelsTheme.faint)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                if downloading { ProgressView().accessibilityHidden(true) }
+                else if !typeSize.isAccessibilitySize { Text((entry.path as NSString).pathExtension.lowercased()).font(.caption).foregroundStyle(PanelsTheme.faint) }
             }.frame(minHeight: target?.kind == .image ? 56 : 48).contentShape(Rectangle())
         }
         .buttonStyle(.plain).disabled(target == nil)
         .listRowBackground(Color.clear).listRowSeparatorTint(PanelsTheme.border)
         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.label)
+        .accessibilityValue(downloading ? "Downloading for sharing" : (entry.path as NSString).pathExtension.uppercased())
+        .accessibilityHint("Opens artifact")
+        .accessibilityAction(named: "Share") { Task { await share() } }
+        .accessibilityAction(named: "Copy link") { copyLink() }
         .contextMenu {
             Button("Open", systemImage: "arrow.up.right.square") { if let target { open(target) } }
             Button("Share…", systemImage: "square.and.arrow.up") { Task { await share() } }

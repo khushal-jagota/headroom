@@ -52,7 +52,7 @@ struct ArtifactViewerView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text((path as NSString).lastPathComponent).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                Text((path as NSString).lastPathComponent).panelsScaledFont(size: 15, relativeTo: .subheadline, weight: .semibold).lineLimit(1).truncationMode(.middle)
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button { sharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
