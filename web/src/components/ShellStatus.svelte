@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ConnectionStatus } from "../lib/changeStream";
   import { deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard, type StatusCardKey } from "../lib/deploymentStatus";
@@ -31,6 +31,22 @@
   let open = $state(false);
   let closing = $state(false);
   let slot = $state<HTMLDivElement | null>(null);
+  let resize: Animation | null = null;
+
+  // The slot's open and close is a 0fr to 1fr row. That cannot carry a swap between two
+  // open occupants: both ends are 1fr, so a one line card replaced by a wrapped sentence
+  // jumps to its new intrinsic height. Animate that one distance the way the rail does.
+  function glideHeight(previous: number): void {
+    resize?.cancel();
+    resize = null;
+    if (!slot || typeof slot.animate !== "function") return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const next = slot.getBoundingClientRect().height;
+    if (Math.abs(next - previous) <= 0.5) return;
+    resize = slot.animate([{ height: `${previous}px` }, { height: `${next}px` }],
+      { duration: RAIL_MOTION.space, easing: RAIL_MOTION.ease });
+    void resize.finished.catch(() => {}).then(() => { resize = null; });
+  }
   const motionStyle = `--glide-space:${RAIL_MOTION.space}ms;--glide-fade:${RAIL_MOTION.fadeIn}ms;--glide-delay:${RAIL_MOTION.fadeDelay}ms;--glide-exit:${RAIL_MOTION.exit}ms;--glide-ease:${RAIL_MOTION.ease};--glide-enter:${RAIL_MOTION.enter};--glide-leave:${RAIL_MOTION.leave}`;
 
   $effect(() => {
@@ -48,16 +64,24 @@
     let frame: number | undefined;
     let timer: number | undefined;
     if (word !== null) {
+      // A swap between two open occupants owns its own distance. An entrance does not:
+      // the row glide already carries it.
+      const replacing = untrack(() => open && displayedWord !== null && displayedWord !== word);
+      const previousHeight = replacing && slot ? slot.getBoundingClientRect().height : null;
       displayedWord = word;
       closing = false;
       // Establish collapsed layout before entrance. Updates retain the card,
       // including a reversal during exit.
       void tick().then(() => {
         if (obsolete) return;
+        if (previousHeight !== null) { glideHeight(previousHeight); return; }
         if (slot) void slot.offsetHeight;
         frame = window.requestAnimationFrame(() => { if (!obsolete) open = true; });
       });
     } else {
+      // The collapse owns the height from here.
+      resize?.cancel();
+      resize = null;
       open = false;
       closing = true;
       timer = window.setTimeout(() => {

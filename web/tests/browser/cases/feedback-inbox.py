@@ -1,6 +1,7 @@
 # ruff: noqa: E501
 """One persistent feedback composer, entered through desktop or compact navigation."""
 
+import json
 import os
 from pathlib import Path
 
@@ -267,3 +268,108 @@ def run(browser, urls):
             shown.click()
         expect(shown).to_contain_text("Update applies when this message is safe")
         page.screenshot(animations="disabled", path=str(evidence / f"state-update-held-{breakpoint_}.png"))
+
+    # A swap between two open occupants holds the slot at grid-template-rows:1fr, so the
+    # row glide cannot carry it. At the rail's minimum width the held sentence wraps the
+    # most, which is where an unanimated intrinsic height change is worst.
+    page.set_viewport_size({"width": 1280, "height": 844})
+    page.evaluate("localStorage.setItem('panels.workspace.rail-width','232')")
+    page.reload(wait_until="networkidle")
+    page.locator(".rail-foot").wait_for()
+    page.evaluate("""() => {
+      window.__slotActions = {
+        held: () => {
+          document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}));
+          document.querySelector('.rail-foot .status-card').click();
+        },
+        problem: () => window.__deployment('problem'),
+      };
+      window.__slotStart = (duration, action) => {
+        const slot = document.querySelector('.rail-foot [data-shell-status]');
+        const samples = [];
+        const started = performance.now();
+        window.__slotDone = false;
+        const step = () => {
+          const ms = performance.now() - started;
+          const utilities = document.querySelector('.rail-utilities').getBoundingClientRect();
+          const foot = document.querySelector('.rail-foot').getBoundingClientRect();
+          const box = slot.getBoundingClientRect();
+          samples.push({
+            ms: Math.round(ms),
+            height: Number(box.height.toFixed(2)),
+            slotBottom: Number(box.bottom.toFixed(2)),
+            utilitiesTop: Number(utilities.top.toFixed(2)),
+            footTop: Number(foot.top.toFixed(2)),
+            effects: slot.getAnimations().length,
+          });
+          if (ms < duration) requestAnimationFrame(step);
+          else { window.__slotFrames = samples; window.__slotDone = true; }
+        };
+        requestAnimationFrame(step);
+        window.__slotActions[action]();
+      };
+    }""")
+
+    def swap(action, duration=560):
+        page.evaluate("([d,a]) => window.__slotStart(d,a)", [duration, action])
+        page.wait_for_function("window.__slotDone")
+        return page.evaluate("window.__slotFrames")
+
+    def smooth(samples, label):
+        heights = [sample["height"] for sample in samples]
+        low, high = min(heights), max(heights)
+        assert high - low > 10, (label, samples)
+        between = sum(low + 1 < value < high - 1 for value in heights)
+        assert between >= 3, (label, between, samples)
+        assert all(abs(current["height"] - previous["height"]) < 6
+                   for previous, current in zip(samples, samples[1:], strict=False)), (label, samples)
+        # The utility row is pinned to the foot of the rail, so the foot's own top takes
+        # the whole distance. It never travels through the card.
+        settled = samples[-1]["footTop"] + samples[-1]["height"]
+        assert all(abs(sample["footTop"] + sample["height"] - settled) < 2
+                   for sample in samples), (label, samples)
+        # The card's own box runs past the slot while the slot reveals it. The slot
+        # clips that, so the slot's edge is what must stay clear of the utility row.
+        assert all(sample["slotBottom"] <= sample["utilitiesTop"] + 1
+                   for sample in samples), (label, samples)
+        assert abs(heights[-1] - heights[-3]) < 1, (label, samples[-4:])
+
+    page.evaluate("window.__release('shipped')")
+    status = page.locator(".rail-foot .status-card")
+    expect(status).to_contain_text("New version ready")
+    page.screenshot(animations="disabled", path=str(evidence / "narrow-update-ready-desktop.png"))
+    ready_to_held = swap("held")
+    expect(status).to_contain_text("Update applies when this message is safe")
+    smooth(ready_to_held, "ready-to-held")
+    page.screenshot(animations="disabled", path=str(evidence / "narrow-update-held-desktop.png"))
+
+    held_to_problem = swap("problem")
+    expect(status).to_have_text("Problem")
+    smooth(held_to_problem, "held-to-problem")
+    page.screenshot(animations="disabled", path=str(evidence / "narrow-problem-desktop.png"))
+
+    # Reduced motion keeps the same occupants and the same hold, without a timed effect.
+    page.emulate_media(reduced_motion="reduce")
+    page.evaluate("window.__deployment('idle')")
+    expect(status).to_contain_text("Update applies when this message is safe")
+    reduced = swap("problem", duration=200)
+    expect(status).to_have_text("Problem")
+    assert all(sample["effects"] == 0 for sample in reduced), reduced
+    assert abs(reduced[0]["height"] - reduced[-1]["height"]) < 2, reduced
+    page.emulate_media(reduced_motion="no-preference")
+
+    # The hold survives every swap: the reload lands only once the message is safe.
+    page.evaluate("window.__deployment('idle')")
+    expect(status).to_contain_text("Update applies when this message is safe")
+    page.evaluate("window.__heldNarrow = true")
+    page.evaluate(
+        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
+    )
+    page.wait_for_function("() => window.__heldNarrow === undefined")
+
+    (evidence / "status-slot-frames.json").write_text(json.dumps({
+        "railWidth": 232,
+        "readyToHeld": ready_to_held,
+        "heldToProblem": held_to_problem,
+        "reducedMotionHeldToProblem": reduced,
+    }, indent=2))
