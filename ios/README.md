@@ -140,7 +140,14 @@ uses read-only navigation; recap requests are verified with an in-process mocked
 URL session and never sent to the live server during tests. Goal/recap saves,
 settling and backlog changes also have mocked request-contract coverage.
 
-Haptic helpers offer light, medium, success and selection. Navigation and tab
+The ticket page adds API actions for recap requests, backlog/resume, approval
+limits, proposal acceptance/return, owner completion, field/title/recap editing,
+blocker removal and pristine worker setup. Live simulator verification is read-only; ticket and Feedback writes are
+exercised only with an injected stub or URLProtocol interception.
+
+
+
+Haptic helpers offer light, medium, success, error and selection. Navigation and tab
 changes use them, as does saving Settings. Native navigation transitions supply
 motion, respect system accessibility preferences, and avoid custom bouncing.
 

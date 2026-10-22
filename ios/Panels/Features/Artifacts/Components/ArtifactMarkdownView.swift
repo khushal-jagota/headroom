@@ -5,6 +5,17 @@ struct ArtifactMarkdownView: View {
     let baseURL: URL
     var body: some View {
         ScrollView {
+            ArtifactMarkdownContent(source: source, baseURL: baseURL)
+                .frame(maxWidth: 720, alignment: .leading)
+                .padding(PanelsTheme.Space.xl).frame(maxWidth: .infinity)
+        }
+    }
+}
+
+struct ArtifactMarkdownContent: View {
+    let source: String
+    let baseURL: URL
+    var body: some View {
             LazyVStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
                 ForEach(ArtifactMarkdownBlock.parse(source)) { block in
                     switch block.kind {
@@ -26,9 +37,7 @@ struct ArtifactMarkdownView: View {
                     case .paragraph, .list: inline(block.text)
                     }
                 }
-            }.frame(maxWidth: 720, alignment: .leading)
-                .padding(PanelsTheme.Space.xl).frame(maxWidth: .infinity)
-        }
+            }
     }
     private func inline(_ source: String) -> some View {
         Text((try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: baseURL)) ?? AttributedString(source))
