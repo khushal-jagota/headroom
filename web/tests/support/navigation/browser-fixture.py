@@ -144,7 +144,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                     "recap_preview": row.get("recap_preview", ""),
                     "recap": row.get("recap", row.get("recap_preview", "")),
                     "created_at": row["created_at"],
-                    "updated_at": row.get("activity_at", row["created_at"]),
+                    "updated_at": row.get("updated_at", row.get("activity_at", row["created_at"])),
                     "project_id": project_id,
                     "settled": row.get("settled", False),
                     "conversation_id": conv,

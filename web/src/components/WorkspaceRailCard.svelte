@@ -3,6 +3,7 @@
   const navigation=navigationApplication();
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
   import type { ViewWindow } from "../lib/navigation/contracts";
+  import type { ScrollWindowCoordinator } from "../lib/navigation/views/scrollWindowRestoration";
   import { onDestroy } from "svelte";
   import { createRailPreviewInput } from "../lib/workspaceRailInteraction";
   import type { WorkspaceTicketGroup } from "../lib/workspaceRail";
@@ -12,7 +13,8 @@
   import WorkerRow from "./WorkerRow.svelte";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
   import chiefProfile from "../assets/chief-of-staff-profile.webp";
-  let { navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+  let { scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+    scrollCoordinator?:ScrollWindowCoordinator;scrollPublicationId?:number|null;
     navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;onVisibility?:(id:string,visible:boolean)=>void;
     id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; conversationId?: string | null; selected: boolean;
     selectedTicketId: string | null; groups: WorkspaceTicketGroup[]; busy?: boolean;
@@ -38,7 +40,8 @@
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
-<section use:visibility use:navigationScrollWindow={{window:navigationWindow,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
+<div class="manager-card-slot">
+<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
   <div class="identity">
     {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={onLeave}>
@@ -56,9 +59,11 @@
     </div>
   {/each}
 </section>
+</div>
 <style>
-  .manager-card { position:relative; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); padding:11px var(--space-3) var(--space-3); transition:border-color var(--motion-fast) var(--motion-ease); }
-  :global(.manager-card) + .manager-card { margin-top:var(--space-3); }
+  .manager-card-slot { min-width:0; }
+  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-3); }
+  .manager-card { box-sizing:border-box; position:relative; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); padding:11px var(--space-3) var(--space-3); transition:border-color var(--motion-fast) var(--motion-ease); }
   .manager-card:hover, .manager-card:focus-within { border-color:rgb(from var(--border-color) r g b / .26); }
   .manager-card.selected, .manager-card.selected:hover, .manager-card.selected:focus-within { border-color:var(--accent-bright); }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }

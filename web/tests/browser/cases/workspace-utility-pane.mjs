@@ -10,6 +10,11 @@ export async function prepare({ scratchRoot }) {
   // reload. Network sources use the case fixture through the real navigation transport.
   await writeFile(join(scratchRoot, host), `<script lang="ts">
 import AppWithQueryClient from '../src/AppWithQueryClient.svelte';
+import { railDomMatches } from '../src/lib/workspaceRailDom';
+import { buildWorkspaceRail } from '../src/lib/workspaceRail';
+(globalThis as any).__railDomMatches = (cards, managers, chief) => railDomMatches(
+  document.querySelector('.workspace-rail'), buildWorkspaceRail(cards, managers), chief, false,
+  managers.filter(item=>item.settled).length);
 import {installConversationViewReaderFixture} from '../tests/support/conversationViewReaderFixture';
 const overlay = new URLSearchParams(location.search).has('overlay');
 if (overlay) installConversationViewReaderFixture(location.hash.includes('t_overlay0') ? 'ticket-overlay' : 'bounded-reader');
@@ -17,6 +22,7 @@ const ReaderSource = globalThis.EventSource;
 // Supply wire snapshots through the production EventSource transport. The optional
 // fold fixture uses the same App host and the real navigation parser and projection.
 const sources = new Set<any>();
+(globalThis as any).__navigationFrames = [];
 class QuietEventSource {
   onopen = null; onmessage = null; onerror = null;
   listeners = new Map(); closed = false;
@@ -31,9 +37,14 @@ class QuietEventSource {
     const response = await fetch(this.url.replace('/events?', '/snapshot?'));
     if (!response.ok) return;
     const data = await response.text();
-    setTimeout(() => {
-      if (!this.closed) this.listeners.get('snapshot')?.({data});
-    }, (globalThis as any).__navigationDelay ?? 0);
+    await new Promise<void>(resolve => setTimeout(() => {
+      if (!this.closed) {
+        const frames = (globalThis as any).__navigationFrames;
+        frames.push(JSON.parse(data)); if (frames.length > 30) frames.shift();
+        this.listeners.get('snapshot')?.({data});
+      }
+      resolve();
+    }, (globalThis as any).__navigationDelay ?? 0));
   }
   addEventListener(name: string, listener: any) { this.listeners.set(name, listener); }
   removeEventListener(name: string) { this.listeners.delete(name); }
@@ -45,7 +56,7 @@ class QuietEventSource {
 <AppWithQueryClient />
 <style>:global(html),:global(body),:global(#app){height:100%;margin:0;overflow:hidden;}</style>
 `);
-  await writeFile(join(scratchRoot, main), `import {mount} from 'svelte'; import Host from './${host}'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host,{target:document.getElementById('app')!});`);
+  await writeFile(join(scratchRoot, main), `import {mount,unmount} from 'svelte'; import Host from './${host}'; import '../../assets/tokens.css'; import '../../assets/app.css'; const app=mount(Host,{target:document.getElementById('app')!}); (globalThis as any).__unmountWorkspace=()=>unmount(app);`);
   await writeFile(html, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="app"></div><script type="module" src="./${main}"></script></body></html>`);
   return {inputs: [html], arguments: [html], python: fileURLToPath(new URL("./workspace-utility-pane.py", import.meta.url))};
 }

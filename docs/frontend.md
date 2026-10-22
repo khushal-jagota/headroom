@@ -95,15 +95,31 @@ One screen per part of the system:
   only the ask remains.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
-  moves take 360–560 milliseconds according to distance. A new row opens space before
+  moves without a card size change take 360–560 milliseconds according to distance. A new row opens space before
   its fade. An exit fades before its space closes. Each moving surface uses its effective
   background before motion starts. Its opaque edge uses the surrounding background,
   so an active row keeps its shape. Selected cards keep their accent border through motion.
   The travelling row and its card stay above their neighbors. Row and spinner colors blend
   across group changes. Structural updates wait while a pointer rests on a Worker row.
   Exact conversation signals and their conversation IDs stay live during that wait.
+  Each card sits in a nonvisual slot. When a surviving card changes height, its slot
+  reserves the final space. The real card border and neighboring positions share one
+  340 millisecond beat, including header changes without new Workers. Text keeps its
+  natural size, and rows travel without clipping. Temporary heights clear after the
+  beat, cancellation, reduced motion, or controller disposal.
   Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
   animation and scripted travel, including travel already in progress.
+
+  Active rail pages restore a visible row only after an explicit page request.
+  The requested cursor, direction, and anchor stay with that request. Publication
+  identity and window metadata travel with the displayed rows through the motion queue.
+  Restoration waits for that rendered page and checks its displayed membership.
+  It runs before the controller measures final geometry, without a later restore callback.
+  When parent and card requests share a scroller, an eligible parent goes first.
+  The card retains its request for the next measured phase. Missing anchors retire
+  their requests. Scripted restoration resets every action's scroll baseline.
+  Ordinary rail updates do not restore scroll. Native wheel, touch, and keyboard
+  navigation remain available. Settled and ManagerChildren keep their existing policy.
 
   The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
   pixels with a pointer or arrow keys. Double click resets it. The preference persists

@@ -42,7 +42,9 @@ def run(browser, urls):
             "worker_type": worker_type,
             "label": worker_type.replace("_", " ").title(),
             "stages": [{"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "ownership_mode": None}],
-            "fields": [],
+            "fields": [], "advance": {}, "ceiling_range": ["done"], "default_ceiling": "done",
+            "worker_profile_id": worker_type, "default_backend": "codex",
+            "default_model": None, "default_reasoning_effort": None,
         }
         for worker_type in worker_types
     ]
@@ -52,12 +54,13 @@ def run(browser, urls):
     metrics_calls = []
 
     fold = {"enabled": False, "count": 3, "overflow": False, "active_count": 1, "release_sha": "fixture-boot"}
+    card_fixture = {"enabled": False}
     fixture = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
 
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
-        if fold["enabled"] and path == "/api/navigation/view/snapshot":
+        if (fold["enabled"] or card_fixture["enabled"]) and path == "/api/navigation/view/snapshot":
             board = {"managers": [
                 {"id": f"fold_{index}", "title": ("Settled" + "UnbrokenTitle" * 12) if fold["overflow"] else f"Settled fixture {index}", "created_at": index + 1,
                  "settled": True, "tickets": []}
@@ -70,10 +73,9 @@ def run(browser, urls):
                      "settled": False, "tickets": []}
                     for index in range(fold["active_count"])
                 )
-            source = fixture["navigation_response"](board, {"chief_of_staff": {"label": "Chief"}})
-            for record in source["snapshot"]["records"]:
-                if record["kind"] == "manager":
-                    record["value"]["updated_at"] = record["value"]["created_at"]
+            if card_fixture["enabled"]:
+                board = card_fixture["board"]
+            source = fixture["navigation_response"](board, {"chief_of_staff": card_fixture.get("chief", {"label": "Chief"})})
             view = json.loads(parse_qs(parts.query)["view"][0])
             route.fulfill(json=fixture["scoped_navigation_response"](source, view))
             return
@@ -303,6 +305,9 @@ def run(browser, urls):
     fold["enabled"] = True
     verify_settled_fold(page, url, fold, evidence)
     verify_rail_overflow(page, fold, evidence)
+    capture_card_motion(browser, url, card_fixture, respond, evidence)
+    verify_card_geometry(page, url, card_fixture, evidence)
+    verify_rail_pagination(page, url, card_fixture, evidence)
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
@@ -435,6 +440,467 @@ def verify_settled_fold(page, url, fixture, evidence):
     proof = page.evaluate("window.__foldProof")
     (evidence / "settled-fold-frames.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "flows": proof,
+    }, indent=2))
+
+
+def verify_card_geometry(page, url, fixture, evidence):
+    """A final-state test cannot detect a border snap or double neighbor movement.
+
+    Reuse the real App host. Pause browser-owned effects at common normalized times
+    to measure the actual border and text, independent of machine frame cadence.
+    """
+    started = time.perf_counter()
+
+    def ticket(identity, parent="geometry_a"):
+        return {"id": identity, "manager_id": parent, "title": "Worker " + identity,
+                "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+                "conversation_id": "conversation_" + identity,
+                "conversation_signal": {"working": False, "message_for_owner": False}}
+
+    first, second = ticket("geometry_one"), ticket("geometry_two")
+    chief_ticket = ticket("geometry_chief", None)
+    fixture.update(enabled=True, board={"managers": [
+        {"id": "geometry_a", "title": "A manager title that wraps across several lines in the narrow sidebar", "created_at": 1, "tickets": [first, second]},
+        {"id": "geometry_b", "title": "Neighbor geometry", "created_at": 2, "tickets": []},
+        {"id": "geometry_settled", "title": "Settled geometry", "created_at": 3, "settled": True, "tickets": []},
+    ], "columns": [{"cards": [chief_ticket]}]}, chief={"label": "Chief"})
+    page.emulate_media(reduced_motion="no-preference")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.mouse.move(1100, 800)
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('[data-ticket-id="geometry_two"]')).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    page.evaluate("""() => {
+      window.__cardProof = [];
+      window.__cardSample = id => {
+        const cards = [...document.querySelectorAll('.manager-card')];
+        const card = cards.find(node => node.dataset.railMotion === 'card:'+id);
+        const next = cards[cards.indexOf(card)+1];
+        const rect = card.getBoundingClientRect(), title = card.querySelector('.item-title');
+        const titleRect = title.getBoundingClientRect();
+        const style = getComputedStyle(title);
+        return {top:rect.top,bottom:rect.bottom,height:rect.height,
+          gap:next ? next.getBoundingClientRect().top-rect.bottom : null,
+          titleHeight:titleRect.height,titleScale:titleRect.height/parseFloat(style.lineHeight),
+          tickets:[...card.querySelectorAll('[data-ticket-id]')].map(n=>n.dataset.ticketId),
+          headings:[...card.querySelectorAll('[data-bucket-key]')].map(n=>n.dataset.bucketKey),
+          cardHeight:card.style.height,slotHeight:card.parentElement.style.height,
+          scrollTop:card.closest('.active-work-scroll').scrollTop,
+          scrollHeight:card.closest('.active-work-scroll').scrollHeight,
+          scrollClient:card.closest('.active-work-scroll').clientHeight,
+          transform:getComputedStyle(card).transform,
+          neighborTransform:next ? getComputedStyle(next).transform : null,
+          effects:card.getAnimations().filter(a=>a.effect?.getKeyframes().some(k=>'height' in k)).length};
+      };
+      window.__finiteEffects = () => document.getAnimations().filter(a =>
+        a.effect && a.effect.getTiming().iterations !== Infinity);
+    }""")
+    # This real-DOM boundary check catches stale direct-child selectors that a
+    # selector fake cannot catch. A rejected boundary stalls subsequent source use.
+    assert page.evaluate("args=>window.__railDomMatches(...args)", [
+        [chief_ticket], fixture["board"]["managers"], {"label": "Chief"},
+    ])
+    proof = []
+
+    def sample(identity="geometry_a"):
+        return page.evaluate("id => window.__cardSample(id)", identity)
+
+    def refresh():
+        # The fixture refresh resolves after snapshot delivery. Let Svelte commit
+        # before testing the controller's busy marker.
+        page.evaluate("async () => { await window.__refreshNavigation(); await new Promise(requestAnimationFrame); }")
+
+    def settled():
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+
+    def finish_effects():
+        page.evaluate("window.__sampleEffects.forEach(a=>a.finish())")
+        settled()
+
+    def transition(name, mutate, identity="geometry_a", membership_same=False):
+        before = sample(identity)
+        mutate()
+        refresh()
+        # The real card must own a size effect. A row entrance is no substitute.
+        try:
+            page.wait_for_function("""id => {
+              const node=document.querySelector('[data-rail-motion="card:'+id+'"]');
+              return node.getAnimations().some(a=>a.effect?.getKeyframes().some(k=>'height' in k));
+            }""", arg=identity, timeout=5000)
+        except Exception:
+            (evidence / "card-transition-failure.json").write_text(json.dumps({"name": name, "before": before, "after": sample(identity)}, indent=2))
+            raise
+        page.evaluate("window.__sampleEffects=window.__finiteEffects(); window.__sampleEffects.forEach(a=>a.pause())")
+        frames = []
+        for fraction in [0, .1, .25, .5, .75, .9, 1]:
+            page.evaluate("p=>window.__sampleEffects.forEach(a=>a.currentTime=Number(a.effect.getTiming().duration)*p)", fraction)
+            frames.append({"progress": fraction, **sample(identity)})
+            if fraction == .5:
+                page.screenshot(path=str(evidence / ("card-" + name + "-midpoint.png")))
+        finish_effects()
+        after = sample(identity)
+        (evidence / ("card-"+name+"-frames.json")).write_text(json.dumps({"name": name, "before": before, "samples": frames, "after": after,
+          "scrollWrites": page.evaluate("window.__scrollWrites ?? []")}, indent=2))
+        low, high = sorted([before["height"], after["height"]])
+        assert high-low > 10, (name, before, after)
+        assert sum(low+.5 < row["height"] < high-.5 for row in frames) >= 3, (name, frames)
+        assert abs(frames[0]["top"]-before["top"]) < 1.5, (name, before, frames)
+        assert abs(frames[0]["height"]-before["height"]) < 1, (name, before, frames)
+        assert abs(frames[-1]["height"]-after["height"]) < 1, (name, after, frames)
+        assert all(row["gap"] is None or abs(row["gap"]-before["gap"]) < 1.5 for row in frames), (name, frames)
+        assert all(abs(row["titleHeight"]-before["titleHeight"]) < .5 for row in frames), (name, frames)
+        assert not after["cardHeight"] and not after["slotHeight"] and not after["effects"], after
+        if membership_same:
+            assert sorted(before["tickets"]) == sorted(after["tickets"]), (before, after)
+        proof.append({"name": name, "before": before, "samples": frames, "after": after})
+        return after
+
+    page.screenshot(path=str(evidence / "card-initial.png"))
+    transition("header-appears", lambda: second.update(awaiting_approval=True), membership_same=True)
+    transition("header-disappears", lambda: second.update(awaiting_approval=False), membership_same=True)
+    arriving = ticket("geometry_arriving")
+    transition("worker-appears", lambda: fixture["board"]["managers"][0]["tickets"].append(arriving))
+    transition("worker-finishes", lambda: arriving.update(stage="done", ticket_status="done"))
+    assert "geometry_arriving" not in sample()["tickets"]
+    chief_second = ticket("geometry_chief_two", None)
+    transition("chief-worker-appears", lambda: fixture["board"]["columns"][0]["cards"].append(chief_second), "chief")
+    transition("chief-worker-finishes", lambda: chief_second.update(stage="done", ticket_status="done"), "chief")
+
+    # Hover defers structure but a conversation signal still changes immediately.
+    row = page.locator('[data-ticket-id="geometry_one"]')
+    row.hover()
+    before = sample()
+    second.update(awaiting_approval=True)
+    first["conversation_signal"]["message_for_owner"] = True
+    refresh()
+    expect(row).to_have_attribute("data-unread", "true")
+    assert sample()["headings"] == before["headings"]
+    assert sample()["height"] == before["height"]
+    page.mouse.move(1100, 800)
+    settled()
+    assert "awaiting_approval" in sample()["headings"]
+
+    # Latest queued updates win. The frame record also catches overlap on reversal.
+    page.evaluate("""() => {
+      window.__rapidSamples=[]; window.__rapidCapture=true;
+      const take=()=>{window.__rapidSamples.push(window.__cardSample('geometry_a'));
+        if(window.__rapidCapture) requestAnimationFrame(take);}; requestAnimationFrame(take);
+    }""")
+    second.update(awaiting_approval=False)
+    refresh()
+    page.wait_for_function("""() => document.querySelector('[data-rail-motion="card:geometry_a"]').getAnimations()
+      .some(a=>a.effect?.getKeyframes().some(k=>'height' in k))""")
+    second.update(awaiting_approval=True)
+    refresh()
+    second.update(awaiting_approval=False)
+    refresh()
+    settled()
+    page.evaluate("window.__rapidCapture=false")
+    rapid = page.evaluate("window.__rapidSamples")
+    assert all(row["gap"] >= -1 for row in rapid), rapid
+    assert "awaiting_approval" not in sample()["headings"]
+    proof.append({"name": "rapid-latest-intent", "samples": rapid, "after": sample()})
+    page.screenshot(path=str(evidence / "card-rapid-final.png"))
+
+    # Reduced motion before an update and when enabled during travel must release sizes.
+    page.emulate_media(reduced_motion="reduce")
+    second.update(awaiting_approval=True)
+    refresh()
+    expect(page.locator('[data-rail-motion="heading:geometry_a:awaiting_approval"]')).to_be_visible()
+    settled()
+    reduced = sample()
+    assert not reduced["cardHeight"] and not reduced["slotHeight"] and not reduced["effects"], reduced
+    proof.append({"name": "reduced-before", "after": reduced})
+    page.emulate_media(reduced_motion="no-preference")
+    second.update(awaiting_approval=False)
+    refresh()
+    page.wait_for_function("""() => document.querySelector('[data-rail-motion="card:geometry_a"]').getAnimations()
+      .some(a=>a.effect?.getKeyframes().some(k=>'height' in k))""")
+    page.emulate_media(reduced_motion="reduce")
+    settled()
+    reduced = sample()
+    assert not reduced["cardHeight"] and not reduced["slotHeight"] and not reduced["effects"], reduced
+    proof.append({"name": "reduced-during", "after": reduced})
+    page.screenshot(path=str(evidence / "card-reduced-final.png"))
+    page.emulate_media(reduced_motion="no-preference")
+
+    # The same card nodes and keyboard target survive a resize and group transfer.
+    row.focus()
+    page.locator('[data-rail-motion="card:geometry_a"]').evaluate("n=>window.__geometryCard=n")
+    page.set_viewport_size({"width": 1000, "height": 500})
+    refresh()
+    settled()
+    assert page.locator('[data-rail-motion="card:geometry_a"]').evaluate("n=>n===window.__geometryCard")
+    expect(row).to_be_focused()
+    row.evaluate("n=>n.blur()")
+    page.locator('[data-manager="geometry_a"] .item-head').hover()
+    page.mouse.move(900, 450)
+    expect(page.locator('[data-manager="geometry_a"] .item-title')).to_contain_text("A manager title that wraps")
+    settled()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    scroll = page.locator('[data-active-work-scroll]')
+    scroll.evaluate("async n=>{n.scrollTop=n.scrollHeight; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);}")
+    expect(page.locator('[data-manager="geometry_b"]')).to_be_in_viewport()
+    assert page.locator('.settled-head').is_visible()
+    assert not page.locator('.manager-card [style*="height:"]').count()
+    page.screenshot(path=str(evidence / "card-short-wrapped-final.png"))
+    # A bottom-anchored scroll can clamp when the final slot shrinks. The same
+    # border/gap proof must hold there, while the real scroll anchor is active.
+    sampler = page.evaluate("window.__cardSample.toString()")
+    fixture["board"]["managers"][0]["tickets"].extend(ticket("scroll_"+str(i)) for i in range(12))
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('[data-manager="geometry_a"] [data-ticket-id]')).to_have_count(14)
+    settled()
+    page.evaluate("code=>window.__cardSample=eval('('+code+')')", sampler)
+    page.mouse.move(900, 450)
+    scroll.evaluate("""node => {
+      window.__scrollWrites=[];
+      const property=Object.getOwnPropertyDescriptor(Element.prototype,'scrollTop');
+      Object.defineProperty(node,'scrollTop',{configurable:true,get(){return property.get.call(this)},
+        set(value){window.__scrollWrites.push({ms:performance.now(),before:property.get.call(this),value,stack:new Error().stack});property.set.call(this,value)}});
+    }""")
+    scroll.evaluate("async n=>{n.scrollTop=n.scrollHeight; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);}")
+    assert scroll.evaluate("n=>n.scrollTop") > 0
+    second.update(awaiting_approval=True)
+    refresh()
+    settled()
+    scroll.evaluate("async n=>{n.scrollTop=n.scrollHeight; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);}")
+    page.evaluate("""() => {
+      window.__naturalScrollSamples=[]; window.__naturalScrollCapture=true;
+      const take=()=>{window.__naturalScrollSamples.push({ms:performance.now(),...window.__cardSample('geometry_a')});
+        if(window.__naturalScrollCapture)requestAnimationFrame(take);}; take();
+    }""")
+    second.update(awaiting_approval=False)
+    refresh()
+    settled()
+    page.evaluate("window.__naturalScrollCapture=false")
+    (evidence / "card-scrolled-shrink-natural.json").write_text(json.dumps({
+        "samples":page.evaluate("window.__naturalScrollSamples"),
+        "scrollWrites":page.evaluate("window.__scrollWrites"),
+    }, indent=2))
+    natural = page.evaluate("window.__naturalScrollSamples")
+    assert all(row["gap"] >= -1 for row in natural), natural
+    low, high = sorted([natural[0]["height"], natural[-1]["height"]])
+    assert sum(low+.5 < row["height"] < high-.5 for row in natural) >= 3, natural
+    assert all(abs(row["titleHeight"]-natural[0]["titleHeight"]) < .5 for row in natural), natural
+    assert all(abs(current["top"]-previous["top"]) < 1.5
+               for previous,current in zip(natural,natural[1:], strict=False)
+               if previous["transform"] == current["transform"] == "none"
+               and abs(current["height"]-previous["height"]) < .5), natural
+    proof.append({"name":"scrolled-natural-shrink","samples":natural,"after":sample()})
+    assert not page.locator('.rail-moving,.rail-travelling,.rail-travelling-card').count()
+
+    # BoardRoute persists across URL changes. Unmount the actual App through the
+    # existing host to prove disposal releases styles on the detached nodes too.
+    second.update(awaiting_approval=True)
+    refresh()
+    page.wait_for_function("""() => document.querySelector('[data-rail-motion="card:geometry_a"]').getAnimations()
+      .some(a=>a.effect?.getKeyframes().some(k=>'height' in k))""")
+    page.evaluate("""() => {
+      window.__disposedCard=document.querySelector('[data-rail-motion="card:geometry_a"]');
+      window.__disposedSlot=window.__disposedCard.parentElement;
+      return window.__unmountWorkspace();
+    }""")
+    disposed = page.evaluate("""() => ({height:window.__disposedCard.style.height,
+      slotHeight:window.__disposedSlot.style.height,
+      motion:window.__disposedCard.classList.contains('rail-moving'),
+      connected:window.__disposedCard.isConnected})""")
+    assert disposed == {"height": "", "slotHeight": "", "motion": False, "connected": False}, disposed
+    proof.append({"name": "dispose-during-resize", "after": disposed})
+    (evidence / "card-geometry-frames.json").write_text(json.dumps({
+        "seconds": round(time.perf_counter()-started, 3), "newHosts": 0,
+        "method": "Real browser border boxes at normalized WAAPI progress; rapid changes use animation frames", "flows": proof,
+    }, indent=2))
+
+
+def capture_card_motion(browser, url, fixture, respond, evidence):
+    """Record a short, ordinary-speed review clip in the same existing App host."""
+    recordings = []
+    for reduced in [False, True]:
+        started = time.perf_counter()
+        one = {"id": "clip_one", "manager_id": "clip_manager", "title": "Repair sidebar animations",
+               "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
+        two = {**one, "id": "clip_two", "title": "Check the final card geometry"}
+        rows = [one, two]
+        fixture.update(enabled=True, board={"managers": [
+            {"id": "clip_manager", "title": "Left sidebar and shell design", "created_at": 1, "tickets": rows},
+            {"id": "clip_neighbor", "title": "The next manager keeps its spacing", "created_at": 2, "tickets": []},
+        ]}, chief={"label": "Chief"})
+        context = browser.new_context(viewport={"width": 1100, "height": 700},
+                                      record_video_dir=str(evidence / "video"),
+                                      record_video_size={"width": 1100, "height": 700},
+                                      reduced_motion="reduce" if reduced else "no-preference")
+        page = context.new_page()
+        page.route("**/api/**", respond)
+        try:
+            page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+            expect(page.locator('[data-ticket-id="clip_two"]')).to_be_visible()
+            page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+            page.mouse.move(1000, 650)
+            page.wait_for_timeout(250)
+            for approval in [True, False]:
+                two["awaiting_approval"] = approval
+                page.evaluate("void window.__refreshNavigation()")
+                page.wait_for_timeout(650)
+            arriving = {**one, "id": "clip_arriving", "title": "A new Worker appears"}
+            rows.append(arriving)
+            page.evaluate("void window.__refreshNavigation()")
+            page.wait_for_timeout(650)
+            arriving.update(stage="done", ticket_status="done")
+            page.evaluate("void window.__refreshNavigation()")
+            page.wait_for_timeout(750)
+            for approval in [True, False, True]:
+                two["awaiting_approval"] = approval
+                page.evaluate("void window.__refreshNavigation()")
+                page.wait_for_timeout(90)
+            page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+            page.wait_for_timeout(300)
+        finally:
+            video = page.video
+            context.close()
+            video.save_as(str(evidence / ("card-motion-reduced.webm" if reduced else "card-motion-normal.webm")))
+            video.delete()
+            recordings.append({"reducedMotion": reduced, "seconds": round(time.perf_counter()-started, 3)})
+    (evidence / "card-review-clips.json").write_text(json.dumps({"newHosts": 0, "contexts": 2, "recordings": recordings}, indent=2))
+
+
+def verify_rail_pagination(page, url, fixture, evidence):
+    """Actual scoped pages, DOM publication, native scrolling, and surviving rows.
+
+    Coordinator arbitration uses cheap unit coverage. This existing App flow proves
+    the boundary that unit hosts cannot: projected pages become measured real rows.
+    """
+    started = time.perf_counter()
+    chief_rows = [{"id": f"page_worker_{i:02}", "manager_id": None, "title": f"Paging Worker {i:02}",
+                   "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
+                  for i in range(40)]
+    fixture.update(enabled=True, board={"managers": [
+        {"id": f"page_manager_{i:02}", "title": f"Paging manager {i:02}", "created_at": i+1, "tickets": []}
+        for i in range(70)
+    ], "columns": [{"cards": chief_rows}]}, chief={"label": "Chief"})
+    page.set_viewport_size({"width": 1100, "height": 650})
+    page.emulate_media(reduced_motion="no-preference")
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
+    expect(page.locator('[data-manager]')).to_have_count(60)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    scroll = page.locator('[data-active-work-scroll]')
+    page.mouse.move(900, 600)
+    proof = []
+
+    def window(section):
+        return page.evaluate("""section => window.__navigationFrames.flatMap(frame=>frame.content.windows)
+          .filter(window=>window.request.section===section &&
+            (section!=='rail_tickets'||window.request.owner?.kind==='chief')).at(-1)""", section)
+
+    def members(section):
+        selector = '.chief [data-ticket-id]' if section == 'rail_tickets' else '[data-manager]'
+        key = 'ticketId' if section == 'rail_tickets' else 'manager'
+        return page.locator(selector).evaluate_all("(nodes,key)=>nodes.map(n=>n.dataset[key])", key)
+
+    def settled():
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+
+    def top(selector):
+        return page.locator(selector).evaluate("n=>n.getBoundingClientRect().top")
+
+    def settle_scroll():
+        page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame)}")
+
+    def page_changed(section, prior):
+        page.wait_for_function("""([section,prior])=>window.__navigationFrames.flatMap(frame=>frame.content.windows)
+          .filter(window=>window.request.section===section &&
+            (section!=='rail_tickets'||window.request.owner?.kind==='chief')).at(-1)?.request.anchor!==prior""",
+                               arg=[section, prior["request"]["anchor"]])
+        # A future window in navigation alone cannot prove rendered membership.
+        page.wait_for_function("""section=>{
+          const view=window.__navigationFrames.flatMap(frame=>frame.content.windows)
+            .filter(w=>w.request.section===section&&(section!=='rail_tickets'||w.request.owner?.kind==='chief')).at(-1);
+          const nodes=[...document.querySelectorAll(section==='rail_tickets'?'.chief [data-ticket-id]':'[data-manager]')];
+          const actual=nodes.map(n=>section==='rail_tickets'?n.dataset.ticketId:n.dataset.manager).sort();
+          return JSON.stringify(actual)===JSON.stringify(view.members.map(k=>k.id).sort());
+        }""", arg=section)
+        settled()
+        return window(section)
+
+    # A native scroll requests a child overlap before the visible half disappears.
+    prior = window('rail_tickets')
+    anchor = '[data-ticket-id="page_worker_17"]'
+    before = scroll.evaluate("""(surface,selector)=>{
+      const row=document.querySelector(selector);surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
+      return row.getBoundingClientRect().top;
+    }""", anchor)
+    after_view = page_changed('rail_tickets', prior)
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    assert after_view['request']['direction'] == 'after' and after_view['request']['anchor'] == prior['forward_overlap']
+    proof.append({"name":"card-forward-native-scroll","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_tickets')})
+
+    # Home at the physical boundary requests the backward page. The first visible
+    # surviving row remains fixed while earlier rows re-enter the same card.
+    scroll.evaluate("n=>n.scrollTop=0")
+    settle_scroll()
+    prior = window('rail_tickets')
+    first_id = members('rail_tickets')[0]
+    anchor = f'[data-ticket-id="{first_id}"]'
+    before = top(anchor)
+    page.locator('.chief .item-head').focus()
+    page.keyboard.press('Home')
+    after_view = page_changed('rail_tickets', prior)
+    assert after_view['request']['direction'] == 'before' and after_view['request']['anchor'] == prior['backward_overlap']
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    proof.append({"name":"card-backward-keyboard","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_tickets')})
+    page.locator('.chief .item-head').evaluate('n=>n.blur()')
+
+    # A live completion publication must not request another page. It also leaves
+    # the first parent visible at the physical top for backward anchor proof.
+    chief_request = window('rail_tickets')['request']
+    for row in chief_rows:
+        row.update(stage='done',ticket_status='done')
+    page.evaluate('async()=>{await window.__refreshNavigation();await new Promise(requestAnimationFrame)}')
+    expect(page.locator('.chief [data-ticket-id]')).to_have_count(0)
+    settled()
+    assert (window('rail_tickets')['request']['anchor'],window('rail_tickets')['request']['direction']) == (chief_request['anchor'],chief_request['direction']), (chief_request,window('rail_tickets')['request'])
+
+    # Parent pages use the same physical scroller, with a different surviving row.
+    prior = window('rail_parents')
+    anchor = '[data-manager="page_manager_35"]'
+    before = scroll.evaluate("""(surface,selector)=>{
+      const row=document.querySelector(selector);surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
+      return row.getBoundingClientRect().top;
+    }""", anchor)
+    after_view = page_changed('rail_parents', prior)
+    (evidence / 'parent-pagination-state.json').write_text(json.dumps({
+        'before':before,'after':top(anchor),'scrollTop':scroll.evaluate('n=>n.scrollTop'),
+        'oldWindow':prior,'newWindow':after_view,'parentMembers':members('rail_parents'),
+        'chiefMembers':members('rail_tickets'),
+    },indent=2))
+    assert after_view['request']['direction'] == 'after' and after_view['request']['anchor'] == prior['forward_overlap']
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    proof.append({"name":"parent-forward-native-scroll","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_parents')})
+
+    prior = window('rail_parents')
+    first_id = members('rail_parents')[0]
+    anchor = f'[data-manager="{first_id}"]'
+    # The wheel first moves to the physical top. Compare the surviving row with
+    # that user-requested position, rather than its position before user travel.
+    before = top(anchor)+scroll.evaluate('n=>n.scrollTop')
+    bounds = scroll.bounding_box()
+    page.mouse.move(bounds['x']+1, bounds['y']+30)
+    page.mouse.wheel(0, -100000)
+    after_view = page_changed('rail_parents', prior)
+    (evidence / 'parent-pagination-state.json').write_text(json.dumps({
+        'before':before,'after':top(anchor),'scrollTop':scroll.evaluate('n=>n.scrollTop'),
+        'oldWindow':prior,'newWindow':after_view,'parentMembers':members('rail_parents'),
+        'chiefMembers':members('rail_tickets'),
+    },indent=2))
+    assert after_view['request']['direction'] == 'before' and after_view['request']['anchor'] == prior['backward_overlap']
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    proof.append({"name":"parent-backward-wheel","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_parents')})
+    page.mouse.move(900, 600)
+    page.screenshot(path=str(evidence / 'rail-pagination-final.png'))
+    (evidence / 'rail-pagination.json').write_text(json.dumps({
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,
     }, indent=2))
 
 
