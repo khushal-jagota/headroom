@@ -287,3 +287,98 @@ it('returns false for failed, invalid, canceled, and disposed admission', async 
   expect(await disposed).toBe(false);
   expect(await reader.load()).toBe(false);
 });
+
+async function startEntry(watermark: number) {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, null, undefined, undefined, watermark);
+  readers.push(reader);
+  const ready = reader.connect(); Source.all[0].send('snapshot', snapshot()); await ready;
+  return reader;
+}
+
+it('freezes unread entry at its captured cursor and waits for placement before reconnect', async () => {
+  const page = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  const fetch = vi.fn(async (_url: string) => new Response(JSON.stringify(page)));
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  const url = new URL(fetch.mock.calls[0][0], 'http://local');
+  expect(JSON.parse(url.searchParams.get('cursor')!).order).toEqual({ sequence: 10, slot: Number.MAX_SAFE_INTEGER });
+  expect(url.searchParams.get('direction')).toBe('newer');
+  expect(reader.entryTarget?.key).toBe(page.items[0].key);
+  expect(reader.entryTarget?.offset).toBe(32);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(Source.all).toHaveLength(1);
+  reader.finishEntry();
+  expect(reader.entryPhase).toBe('complete');
+  expect(Source.all).toHaveLength(2);
+});
+
+it('offers retry after failed unread admission and keeps the original watermark', async () => {
+  const fetch = vi.fn(async (_url: string) => new Response('', { status: 503 }));
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('error'));
+  fetch.mockImplementation(async () => new Response(JSON.stringify(viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page)));
+  reader.retryEntry();
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  for (const call of fetch.mock.calls) {
+    const url = new URL(call[0], 'http://local');
+    expect(JSON.parse(url.searchParams.get('cursor')!).order.sequence).toBe(10);
+  }
+});
+
+it('replaces hidden-only unread pages within bounds', async () => {
+  const visible = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 12 }]).page;
+  const hidden = { ...visible, items: visible.items.map(item => ({ ...item, row_kind: 'token_usage' })), newer: {
+    projection_version: 1, lens: 'focus', scope: visible.scope, order: { sequence: 11, slot: 0 }
+  }};
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(hidden))).mockResolvedValueOnce(new Response(JSON.stringify(visible)));
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(reader.pages[0].items).toEqual(visible.items);
+  expect(reader.entryTarget?.key).toBe(visible.items[0].key);
+});
+
+it('does not publish a cancelled unread entry into a disposed reader', async () => {
+  let complete!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { complete = resolve; })));
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(complete).toBeDefined());
+  reader.close();
+  complete(new Response(JSON.stringify(snapshot().page)));
+  await Promise.resolve(); await Promise.resolve();
+  expect(reader.pages).toEqual([]);
+  expect(reader.entryTarget).toBeNull();
+});
+
+it('admits newest after an exhausted unread window without inventing an unread anchor', async () => {
+  const page = snapshot().page;
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...page, items: [], newer: null })))
+    .mockResolvedValueOnce(new Response(JSON.stringify(page)));
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(1);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  expect(reader.entryTarget).toBeNull();
+  expect(reader.entryTargetReady).toBe(true);
+  const latest = new URL(String(fetch.mock.calls[1][0]), 'http://local');
+  expect(latest.searchParams.has('cursor')).toBe(false);
+  expect(latest.searchParams.get('direction')).toBe('older');
+});
+
+it('holds cold entry until its own deferred body is ready', async () => {
+  const page = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  page.items = page.items.map(item => item.kind !== 'row' ? item : { ...item, body: { kind: 'deferred', reference: {
+    body_id: 'entry-body', version: 'one', byte_count: 10, media_type: 'application/json'
+  } } });
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(page))));
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  reader.entryBodyReady('unrelated'); reader.finishEntry();
+  expect(reader.entryPhase).toBe('placing');
+  expect(reader.entryTargetReady).toBe(false);
+  reader.entryBodyReady(reader.entryTarget!.key); reader.finishEntry();
+  expect(reader.entryPhase).toBe('complete');
+});
