@@ -49,11 +49,8 @@ struct TicketView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar { ToolbarItem(placement: .primaryAction) { ticketMenu } }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            ConversationPlaceholder().padding(.horizontal, PanelsTheme.Space.lg).padding(.vertical, PanelsTheme.Space.sm)
-                .background(PanelsTheme.surface)
-        }
         .panelsScreen()
+        .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId)
         .refreshable { await load(); await loadArtifacts() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }

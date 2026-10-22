@@ -42,7 +42,6 @@ struct ChiefView: View {
                             if let page = done?.page { loadMoreButton(page: page, filter: .done) }
                         }
                     }
-                    ConversationPlaceholder()
                 } else if error == nil {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
@@ -60,6 +59,7 @@ struct ChiefView: View {
         }
         .navigationTitle(headerCollapsed ? chief?.label ?? "Chief of Staff" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
+        .conversationOverlay(owner: .chief, conversationID: nil)
         .toolbar { ToolbarItem(placement: .topBarTrailing) {
             AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
         } }

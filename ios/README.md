@@ -105,9 +105,8 @@ children without inventing a second active card for a settled parent.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
-`ConversationPlaceholder` is the clearly named integration slot on Chief,
-Orchestrator and Ticket. No transcript, composer, read marker, or conversation
-layout has been implemented; the agreed conversation design comes later. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
+`ConversationOverlay` supplies the shared conversation card on Chief,
+Orchestrator and Ticket. The partial delivery and remaining work are listed below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
 context links and Dismiss/Reopen actions through its API adapter. It follows
 foreground change revisions and supports pull-to-refresh. Its empty state omits
@@ -233,7 +232,7 @@ orchestrator. These use existing endpoints. Failed or uncertain actions show an
 error; confirmed actions give success haptics. Pushes and the Settled toggle are
 silent, and pull refresh/context menus use system feedback. Every shared route
 destination hides the tab bar; returning to a tab root restores it. Physical haptic feel
-still needs a device. Conversation contents remain the shared placeholder.
+still needs a device. Conversation contents use the shared native overlay described below.
 
 Four focused Workspace tests reuse the existing ticket fixture and an in-process
 URLProtocol stub. They cover attention precedence, hidden-ticket exclusion, stable
@@ -272,3 +271,44 @@ The three artifact logic tests cover cross-owner URLs and encoding, unsafe file
 paths, and preservation of markdown code blocks. They reuse the existing XCTest
 target and require no server. Simulator captures are a separate read-only smoke
 pass, and do not establish physical-device haptics or frame-rate performance.
+
+## Native conversation preview
+
+Chief, Orchestrator and Ticket now share a native floating conversation card. It
+keeps the document beneath it, aligns to the content gutter, retains bottom scroll
+clearance after collapse, and offers rest, peeked and opened states. Peek grows
+with the draft; input caps at six lines. Motion uses the shared tokens and respects
+Reduce Motion. Speech starts only after a tap and permission, transcribes into an
+editable draft, and never sends automatically. Keyboard entry remains available.
+
+The implementation follows `t_02zd37tz/artifacts/design.html`, confirmed by the
+owner through firstmate, and the overlay implementation at `0480bc3e`. The named
+`overlay-states.html` was not present in either ticket's current artifact inventory;
+current `design.html`, `overlay-plan.md` and the overlay implementation's phone
+capture were read instead. No live transcript was opened or marked read.
+
+Reads use the server's Focus/Full view projection. The mounted foreground card
+polls status every two seconds and requests transcript data only when expanded.
+Earlier pages and deferred message bodies are fetched on demand. The working line
+uses server authority, pending permission, plan and tool facts. Sends use the
+Chief/Manager/Ticket owner door, a stable sender message ID, and steer mode. A lost
+response stays uncertain and is never retried automatically. Reconciliation uses
+the same sender ID so the pending and recorded messages are not drawn twice.
+
+This is a partial delivery. First-unread entry and read markers, live token
+streaming, folded Full-mode turn/tool expansion, attachments, run/model controls,
+permission answers, queue management, durable drafts across navigation, and exact
+arrival/queue animations remain. Queued sends currently stay in the thread with a
+Queued note. Record reconciliation can still change a steered message's position.
+The single screenshot is a deterministic fixture smoke capture, not live-server
+or interaction proof. It exposed excessive composer stretching; the intrinsic
+height fix was compiled afterward, without a second capture. Keyboard transitions,
+speech recognition, VoiceOver, frame timing and physical haptics need device review.
+
+`ios/scripts/test-conversation.sh` runs four Foundation-only host tests. They cover
+previously uncovered projection inline/deferred decoding, stable sender-ID
+reconciliation, blank/uncertain send behavior, and the exact send request against
+an intercepted URLSession. Setup reuses the shared API decoder; no backend,
+browser, or live write is involved. The Debug-only `--conversation-smoke` launch
+argument renders a deterministic read-only fixture with all composer actions
+disabled and no AppShell/network task. It is excluded from Release.
