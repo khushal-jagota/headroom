@@ -40,7 +40,6 @@ struct AppShell: View {
             .presentationBackground(PanelsTheme.surface)
         }
         .onChange(of: reviewPath) { old, new in if new.count > old.count { Haptics.light() } }
-        .onChange(of: workspacePath) { old, new in if new.count > old.count { Haptics.light() } }
         .onChange(of: morePath) { old, new in
             if old != new { Haptics.light() }
             if !new.isEmpty { moreDetent = .large }

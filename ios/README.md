@@ -99,8 +99,9 @@ The app uses the server's general change stream and REST reads, not a duplicate 
 the web navigation replica protocol. Overview reads run concurrently and retain
 previous data with an explicit error on failure. Active manager and ticket lists
 use bounded pages; Load more preserves the loaded window across refreshes. A
-manager's detail supplies its complete grouped tickets. Other active tickets are
-shown separately when their manager is outside the current unsettled window.
+manager's detail supplies its complete grouped tickets. Workspace shows Chief tickets and the loaded unsettled orchestrators. Tickets whose
+parent is settled stay inside Settled; loading more orchestrators reveals their
+children without inventing a second active card for a settled parent.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
@@ -202,3 +203,29 @@ After Feedback and the system screens were integrated, Ideas was rebased while
 preserving every More destination. Firstmate requested compile-only verification
 and the existing host tests for that integration; no simulator was used for the
 rebase checks.
+## Workspace home
+
+Workspace follows the web rail's section precedence and visibility: approval,
+answer, Yours, errors, Agent, Consequences, agent approval, then Other. Backlogged,
+blocked and completed tickets leave this rail. Unread dots and working spinners
+are independent. Chief activity comes from the read-only workers index.
+
+The approved mobile design keeps hairline cards, title-case group labels, one-line
+rows and native pushes. Settled is a plain expandable list after the cards, with
+the server's total count. Pages load in batches of 30; refresh preserves the loaded
+window. Surviving rows retain order, and section changes fade instead of travelling.
+Regrouping waits during scrolling and context previews; titles and marks stay live.
+Reduce Motion removes layout animation.
+
+Long press previews the full title, recap and manifest-derived stage sentence.
+Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
+orchestrator. These use existing endpoints. Failed or uncertain actions show an
+error; confirmed actions give success haptics. Pushes and the Settled toggle are
+silent, and pull refresh/context menus use system feedback. Every shared route
+destination hides the tab bar; returning to a tab root restores it. Physical haptic feel
+still needs a device. Conversation contents remain the shared placeholder.
+
+Four focused Workspace tests reuse the existing ticket fixture and an in-process
+URLProtocol stub. They cover attention precedence, hidden-ticket exclusion, stable
+section ordering, and write methods/payloads including uncertain recap delivery.
+They add no backend or browser host. Live Simulator verification invokes no writes.
