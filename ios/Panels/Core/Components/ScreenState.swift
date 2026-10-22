@@ -82,15 +82,32 @@ extension View {
     }
 }
 
-struct ConversationPlaceholder: View {
-    // Integration slot only. The conversation worker owns the eventual design.
+/// Fixed-size UIKit indicator avoids SwiftUI control-size differences in compact rows.
+struct WorkingSpinner: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIActivityIndicatorView {
+        let view = UIActivityIndicatorView(style: .medium)
+        view.color = UIColor(PanelsTheme.faint)
+        view.startAnimating()
+        return view
+    }
+    func updateUIView(_ view: UIActivityIndicatorView, context: Context) { view.startAnimating() }
+}
+
+struct ConversationSignalMark: View {
+    let signal: ConversationSignal?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        Label("Conversation", systemImage: "bubble.left.and.bubble.right")
-            .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(PanelsTheme.Space.lg)
-            .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
-            .accessibilityLabel("Conversation surface awaiting design")
+        HStack(spacing: 6) {
+            if signal?.working == true {
+                Group {
+                    if reduceMotion { Image(systemName: "circle.dotted").font(.system(size: 14)).foregroundStyle(PanelsTheme.faint) }
+                    else { WorkingSpinner().scaleEffect(0.7) }
+                }.frame(width: 14, height: 14).accessibilityLabel("Working")
+            }
+            if signal?.messageForOwner == true {
+                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).accessibilityLabel("Unread message")
+            }
+        }.frame(width: 32, alignment: .trailing)
     }
 }
 

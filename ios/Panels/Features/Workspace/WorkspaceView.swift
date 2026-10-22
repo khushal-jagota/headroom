@@ -106,7 +106,7 @@ struct WorkspaceView: View {
                         NavigationLink(value: AppRoute.orchestrator(manager.id)) {
                             HStack {
                                 Text(manager.title).lineLimit(typeSize.isAccessibilitySize ? nil : 1).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                                WorkspaceSignalMark(signal: manager.conversationSignal)
+                                ConversationSignalMark(signal: manager.conversationSignal)
                             }.panelsScaledFont(size: 16).foregroundStyle(PanelsTheme.faint).frame(minHeight: 44)
                         }.buttonStyle(.plain)
                             .conversationAccessibility(label: manager.title, signal: manager.conversationSignal)

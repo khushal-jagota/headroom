@@ -9,13 +9,14 @@ struct ArtifactsRow: View {
         if count > 0 {
             VStack(spacing: 0) {
                 Rectangle().fill(PanelsTheme.border).frame(height: 0.5)
-                Button { opened = true } label: {
+                Button { opened.toggle() } label: {
                     HStack { Text("Artifacts"); Spacer(); Text(count.formatted()).foregroundStyle(PanelsTheme.faint) }
                         .font(.body).foregroundStyle(PanelsTheme.text).frame(minHeight: 50).contentShape(Rectangle())
                 }.buttonStyle(.plain)
                     .accessibilityLabel("Artifacts")
-                    .accessibilityValue("\(count) files")
-            }.navigationDestination(isPresented: $opened) { ArtifactListView(owner: owner) }
+                    .accessibilityValue("\(count) files, \(opened ? "expanded" : "collapsed")")
+                if opened { ArtifactListView(owner: owner) }
+            }
         }
     }
 }
@@ -64,7 +65,7 @@ struct ArtifactFileRow: View {
             Button("Share…", systemImage: "square.and.arrow.up") { Task { await share() } }
             Button("Copy link", systemImage: "link") { copyLink() }
         } preview: {
-            if let target { NavigationStack { ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversationPlaceholder: false) }.environment(store).frame(width: 320, height: 420) }
+            if let target { NavigationStack { ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: false) }.environment(store).frame(width: 320, height: 420) }
         }
         .sheet(isPresented: $sharing) { if let shareDocument { ArtifactShareSheet(document: shareDocument) } }
         .alert("Couldn't share file", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") { error = nil } } message: { Text(error ?? "") }

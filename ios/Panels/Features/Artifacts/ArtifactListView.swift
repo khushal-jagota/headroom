@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Ticket and Orchestrator screens enter through AppRoute.artifacts(owner:directory:).
+/// Inline catalog shared by Ticket and Orchestrator disclosures.
 struct ArtifactListView: View {
     let owner: ArtifactOwner
     var directory: String = ""
@@ -20,44 +20,43 @@ struct ArtifactListView: View {
     var body: some View {
         searchContent
             .navigationDestination(item: $selectedArtifact) { target in
-                ArtifactViewerView(owner: target.owner, path: target.path, title: target.title)
+                ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: owner.kind == .ticket ? .ticket(owner.id) : .manager(owner.id))
             }
-            .navigationTitle("Artifacts")
-            .navigationBarTitleDisplayMode(.inline)
-            .panelsScreen()
-            .task { await load() }
-            .refreshable { await load(); refreshVersion += 1 }
+            .task(id: store.revision) { await load(); refreshVersion += 1 }
+
     }
-    @ViewBuilder private var searchContent: some View {
-        if fileCount > 12 { list.searchable(text: $search, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Find a file") }
-        else { list }
+    private var searchContent: some View {
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+            if fileCount > 12 {
+                TextField("Find a file", text: $search).textFieldStyle(.roundedBorder)
+            }
+            list
+        }
     }
     private var list: some View {
-        List {
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             ForEach(entries.filter { $0.directory != nil }) { folder in
                 ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { selectedArtifact = $0 })
             }
             fileSection(entries.filter { $0.directory == nil && !$0.key.hasPrefix("linked:") }, title: directory.isEmpty ? "Files" : (directory as NSString).lastPathComponent)
             fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From Fields")
+            if let error { LoadErrorView(message: error) { await load(); refreshVersion += 1 } }
+            if !hasLoaded && isLoading { ProgressView("Loading artifacts…") }
+            if hasLoaded && entries.isEmpty { Text("No artifacts yet").foregroundStyle(PanelsTheme.faint) }
             if hasLoaded && nextOffset < total {
                 Button { Task { await load(more: true) } } label: {
                     HStack { Text("More files"); Spacer(); if isLoading { ProgressView() } }
                 }.disabled(isLoading).listRowBackground(Color.clear)
             }
         }
-        .listStyle(.plain)
-        .overlay {
-            if hasLoaded && entries.isEmpty {
-                ContentUnavailableView("No artifacts yet", systemImage: "folder", description: Text("Files will appear here when they are added."))
-            }
-        }
-        .screenLoadState("artifacts", hasContent: hasLoaded, error: error) { await load(); refreshVersion += 1 }
     }
     @ViewBuilder private func fileSection(_ files: [ArtifactEntry], title: String) -> some View {
         if !files.isEmpty {
-            Section { ForEach(files.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }) { entry in
+            VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
+                Text(title).font(.caption2).foregroundStyle(PanelsTheme.faint)
+                ForEach(files.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }) { entry in
                 ArtifactFileRow(owner: owner, entry: entry, open: { selectedArtifact = $0 })
-            } } header: { Text(title).textCase(nil).font(.caption2).foregroundStyle(PanelsTheme.faint) }
+            } }
         }
     }
     private func load(more: Bool = false) async {
@@ -100,12 +99,13 @@ private struct ArtifactFolderSection: View {
         return expanded ? entries : Array(entries.prefix(5))
     }
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
+            Text(folder.label.prefix(1).uppercased() + folder.label.dropFirst()).font(.caption2).foregroundStyle(PanelsTheme.faint)
             ForEach(visible) { entry in
                 if let directory = entry.directory {
-                    NavigationLink(value: AppRoute.artifacts(owner: owner, directory: directory)) {
-                        Label(entry.label, systemImage: "folder")
-                    }.accessibilityLabel(entry.label)
+                    DisclosureGroup {
+                        ArtifactListView(owner: owner, directory: directory)
+                    } label: { Label(entry.label, systemImage: "folder") }.accessibilityLabel(entry.label)
                         .accessibilityValue("Folder, \(entry.childCount) items")
                         .listRowBackground(Color.clear)
                 } else { ArtifactFileRow(owner: owner, entry: entry, open: open) }
@@ -119,7 +119,7 @@ private struct ArtifactFolderSection: View {
                 }.disabled(loading).listRowBackground(Color.clear)
                     .accessibilityLabel("Show \(total - visible.count) more files in \(folder.label)")
             }
-        } header: { Text(folder.label.prefix(1).uppercased() + folder.label.dropFirst()).textCase(nil).font(.caption2).foregroundStyle(PanelsTheme.faint) }
+        }
         .task(id: refreshVersion) { await load() }
     }
     private func load(more: Bool = false) async {

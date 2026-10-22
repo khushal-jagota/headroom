@@ -78,7 +78,7 @@ struct WorkerRows<T: GroupedWorker>: View {
                         Text(ticket.title).font(PanelsTheme.TypeScale.body)
                             .foregroundStyle((ticket.awaitingApproval || ticket.awaitingAnswer || ticket.agentState == "errored" || ticket.conversationSignal?.messageForOwner == true) ? PanelsTheme.strong : PanelsTheme.faint)
                             .lineLimit(typeSize.isAccessibilitySize ? nil : 2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                        WorkerSignalMark(signal: ticket.conversationSignal)
+                        ConversationSignalMark(signal: ticket.conversationSignal)
                     }.padding(.horizontal, AgentPageLayout.rowInset).padding(.vertical, PanelsTheme.Space.sm)
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("worker-\(ticket.id)")
@@ -99,33 +99,12 @@ struct WorkerRows<T: GroupedWorker>: View {
                     } preview: {
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                             Text(WorkerGroup.classify(ticket).title).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                            HStack { Text(ticket.title).font(PanelsTheme.TypeScale.heading); WorkerSignalMark(signal: ticket.conversationSignal) }
+                            HStack { Text(ticket.title).font(PanelsTheme.TypeScale.heading); ConversationSignalMark(signal: ticket.conversationSignal) }
                             Text(ticket.recapPreview).font(PanelsTheme.TypeScale.body).lineLimit(5)
                                 .padding(PanelsTheme.Space.md).background(PanelsTheme.recessed)
                         }.padding(PanelsTheme.Space.lg).frame(maxWidth: 330).panelsScreen()
                     }
             }
         }
-    }
-}
-
-struct WorkerSignalMark: View {
-    let signal: ConversationSignal?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        HStack(spacing: PanelsTheme.Space.xs) {
-            if signal?.messageForOwner == true {
-                Circle().fill(PanelsTheme.accent).frame(width: 9, height: 9)
-                    .accessibilityLabel("Unread message")
-            }
-            if signal?.working == true {
-                if reduceMotion {
-                    Image(systemName: "circle.dotted").font(PanelsTheme.TypeScale.small)
-                        .foregroundStyle(PanelsTheme.faint).accessibilityLabel("Working")
-                } else {
-                    ProgressView().controlSize(.mini).tint(PanelsTheme.faint).accessibilityLabel("Working")
-                }
-            }
-        }.frame(width: 32, alignment: .trailing)
     }
 }
