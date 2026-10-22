@@ -10,11 +10,15 @@ from __future__ import annotations
 import asyncio
 from sqlite3 import Connection
 
+import pytest
+
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import text_message_content
+from planner.core import authority
+from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.managers import data as managers_data
@@ -129,7 +133,9 @@ def test_third_party_move_notifies_the_previous_holder_with_the_movers_name(
     assert notice.mover_name == "Reassigning supervisor"
 
 
-def test_new_holder_can_be_a_ticket(tmp_db: Connection, fake_clock: FakeClock) -> None:
+def test_new_holder_can_be_a_ticket(
+    tmp_db: Connection, fake_clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ticket_id = _parked_ticket(
         tmp_db, fake_clock, title="Transferred to a ticket", holder=OWNER_PRINCIPAL
     )
@@ -142,6 +148,8 @@ def test_new_holder_can_be_a_ticket(tmp_db: Connection, fake_clock: FakeClock) -
         worker_type="coding",
         brief="Start",
     )
+    # A Ticket reviewer needs declared authority, independent of its review address.
+    monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "coding", (authority.ticket(ticket_id),))
     new_holder = Principal(PrincipalKind.ticket, holder_ticket.id)
     notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=OWNER_PRINCIPAL)
     assert notice.new_holder == new_holder
@@ -149,11 +157,12 @@ def test_new_holder_can_be_a_ticket(tmp_db: Connection, fake_clock: FakeClock) -
 
 
 def test_new_holder_can_be_a_manager(tmp_db: Connection, fake_clock: FakeClock) -> None:
-    ticket_id = _parked_ticket(
-        tmp_db, fake_clock, title="Transferred to an item", holder=OWNER_PRINCIPAL
-    )
     item = managers_data.create_manager(
         tmp_db, title="Owning sprint item", project_id="project_vylo", clock=fake_clock
+    )
+    ticket_id = _parked_ticket(
+        tmp_db, fake_clock, title="Transferred to an item", holder=OWNER_PRINCIPAL,
+        manager_id=item.id,
     )
     new_holder = Principal(PrincipalKind.manager, item.id)
     notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=OWNER_PRINCIPAL)
@@ -162,7 +171,7 @@ def test_new_holder_can_be_a_manager(tmp_db: Connection, fake_clock: FakeClock) 
 
 
 def test_delivery_addresses_both_targets_on_a_third_party_move(
-    tmp_db: Connection, fake_clock: FakeClock
+    tmp_db: Connection, fake_clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mover_item = managers_data.create_manager(
         tmp_db, title="Reassigning supervisor", project_id="project_vylo", clock=fake_clock
@@ -183,6 +192,8 @@ def test_delivery_addresses_both_targets_on_a_third_party_move(
         worker_type="coding",
         brief="Start",
     )
+    # A Ticket reviewer needs declared authority, independent of its review address.
+    monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "coding", (authority.ticket(ticket_id),))
     new_holder = Principal(PrincipalKind.ticket, holder_ticket.id)
     actor = Principal(PrincipalKind.manager, mover_item.id)
     notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=actor)
