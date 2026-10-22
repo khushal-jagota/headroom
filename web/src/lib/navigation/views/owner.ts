@@ -8,6 +8,7 @@ import {compareRevision,sameAuthority} from '../validation';
 import {applyFrame,sameDomain} from './validation';
 import {createViewTransport,type ViewTransport} from './transport';
 import {NavigationRequestError} from '../transport';
+import {workItemLocale} from '../../workItemLocale';
 
 export type ViewDemand={selected?:ViewOwner|null;selected_conversation_id?:string|null;windows:readonly ViewWindowRequest[]};
 export function viewWindow(section:ViewWindowRequest['section'],owner:ViewOwner|null=null,options:Partial<Omit<ViewWindowRequest,'section'|'owner'>>={}):ViewWindowRequest {
@@ -30,7 +31,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   const knowledge=createNavigationKnowledge();
   const listeners=new Set<(state:NavigationOwnerState)=>void>();
   const demands=new Map<string,ViewDemand>();
-  let request=options.request ?? defaultViewRequest(typeof navigator==='undefined'?'en-US':navigator.language.startsWith('de')?'de-DE':'en-US');
+  let request=options.request ?? defaultViewRequest(workItemLocale());
   let activeRequest=request;
   let pendingScope:{controller:AbortController;close:()=>void}|undefined;
   let scopeToken=0;
