@@ -489,6 +489,8 @@ def verify_card_geometry(page, url, fixture, evidence):
           scrollTop:card.closest('.active-work-scroll').scrollTop,
           scrollHeight:card.closest('.active-work-scroll').scrollHeight,
           scrollClient:card.closest('.active-work-scroll').clientHeight,
+          anchorValue:card.closest('.active-work-scroll').style.getPropertyValue('overflow-anchor'),
+          anchorPriority:card.closest('.active-work-scroll').style.getPropertyPriority('overflow-anchor'),
           transform:getComputedStyle(card).transform,
           neighborTransform:next ? getComputedStyle(next).transform : null,
           effects:card.getAnimations().filter(a=>a.effect?.getKeyframes().some(k=>'height' in k)).length};
@@ -655,7 +657,9 @@ def verify_card_geometry(page, url, fixture, evidence):
     page.evaluate("code=>window.__cardSample=eval('('+code+')')", sampler)
     page.mouse.move(900, 450)
     scroll.evaluate("""node => {
-      window.__scrollWrites=[];
+      window.__scrollWrites=[]; window.__motionScrollEvents=[];
+      node.addEventListener('scroll',event=>window.__motionScrollEvents.push({ms:performance.now(),
+        trusted:event.isTrusted,top:node.scrollTop,range:node.scrollHeight-node.clientHeight}),{capture:true});
       const property=Object.getOwnPropertyDescriptor(Element.prototype,'scrollTop');
       Object.defineProperty(node,'scrollTop',{configurable:true,get(){return property.get.call(this)},
         set(value){window.__scrollWrites.push({ms:performance.now(),before:property.get.call(this),value,stack:new Error().stack});property.set.call(this,value)}});
@@ -678,8 +682,13 @@ def verify_card_geometry(page, url, fixture, evidence):
     (evidence / "card-scrolled-shrink-natural.json").write_text(json.dumps({
         "samples":page.evaluate("window.__naturalScrollSamples"),
         "scrollWrites":page.evaluate("window.__scrollWrites"),
+        "nativeScrollEvents":page.evaluate("window.__motionScrollEvents"),
     }, indent=2))
     natural = page.evaluate("window.__naturalScrollSamples")
+    assert max(row['scrollHeight']-row['scrollClient'] for row in natural)-min(row['scrollHeight']-row['scrollClient'] for row in natural) > 5, natural
+    # This explicitly proves the browser range contracted during motion; the
+    # samples and write stacks distinguish that movement from native input.
+    # Range arithmetic cannot recover movement erased before capture.
     assert all(row["gap"] >= -1 for row in natural), natural
     low, high = sorted([natural[0]["height"], natural[-1]["height"]])
     assert sum(low+.5 < row["height"] < high-.5 for row in natural) >= 3, natural
@@ -852,6 +861,159 @@ def verify_rail_pagination(page, url, fixture, evidence):
     proof.append({"name":"card-backward-keyboard","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_tickets')})
     page.locator('.chief .item-head').evaluate('n=>n.blur()')
 
+    # The same mounted App and scoped transport now pause an overlap response.
+    # Native wheel input continues after the request, protecting the gap left by
+    # immediate-publication coverage above. No additional browser host is created.
+    continued_scroll_started = time.perf_counter()
+    for queued in [False, True]:
+        page.reload(wait_until="domcontentloaded")
+        expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
+        settled()
+        page.mouse.move(900, 600)
+        prior = window('rail_tickets')
+        scroll.evaluate("""n => {
+          n.style.setProperty('overflow-anchor','auto','important');
+          window.__holdNavigation=true;
+          window.__navigationOrder=[];
+          window.__paginationScrollEvents=[];
+          n.addEventListener('scroll',event=>window.__paginationScrollEvents.push({
+            trusted:event.isTrusted, top:n.scrollTop, ms:performance.now()}), {capture:true});
+        }""")
+        anchor = '[data-ticket-id="page_worker_17"]'
+        scroll.evaluate("""(surface,selector)=>{const row=document.querySelector(selector);
+          surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
+        }""", anchor)
+        page.wait_for_function('window.__heldNavigation.length>0')
+        request_top = top(anchor)
+        # Hover deliberately holds card structure only in the queued-publication
+        # case. The delayed case releases on a trusted native scroll at capture
+        # phase, before the production action receives that event.
+        row = page.locator(anchor)
+        if queued:
+            row.hover()
+            page.evaluate("async()=>{window.__holdNavigation=false;window.__releaseNavigation();await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame)}")
+            assert members('rail_tickets') == [key['id'] for key in prior['members']]
+        else:
+            bounds = scroll.bounding_box()
+            page.mouse.move(bounds['x']+1, bounds['y']+30)
+        scroll.evaluate("""(n,queued) => {
+          window.__releaseOnNativeScroll=event=>{
+            if(!event.isTrusted) return;
+            n.removeEventListener('scroll',window.__releaseOnNativeScroll,true);
+            const row=document.querySelector('[data-ticket-id="page_worker_17"]');
+            window.__continuedScroll={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,
+              trusted:event.isTrusted,ms:performance.now(),queued};
+            if(!queued){
+              // Withhold this dispatch from the action: publication must sample
+              // native movement itself, rather than relying on an onScroll call.
+              event.stopImmediatePropagation();
+              window.__navigationOrder.push({kind:'native-scroll-before-action',ms:performance.now(),top:n.scrollTop});
+              window.__holdNavigation=false;window.__releaseNavigation();
+            }
+          };
+          n.addEventListener('scroll',window.__releaseOnNativeScroll,true);
+        }""", queued)
+        page.mouse.wheel(0, 36)
+        page.wait_for_function('window.__continuedScroll?.queued === '+str(queued).lower())
+        continued = page.evaluate('window.__continuedScroll')
+        assert continued['trusted'] and abs(continued['top']-request_top)>10, (request_top,continued)
+        if queued:
+            # Further native movement occurred while the new page was already
+            # queued. Leaving the row publishes the still-deferred card once.
+            assert members('rail_tickets') == [key['id'] for key in prior['members']]
+        (evidence / ('queued-publication-before-wait.json' if queued else 'delayed-publication-before-wait.json')).write_text(json.dumps({
+            'prior':prior,'continued':continued,'frames':page.evaluate('window.__navigationFrames'),
+            'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
+            'heldFrames':page.evaluate('window.__heldNavigationFrames'),
+            'members':members('rail_tickets')},indent=2))
+        page.mouse.move(900, 600)
+        if queued:
+            page.wait_for_function("""()=>document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
+              .some(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k))""")
+            bounds = scroll.bounding_box()
+            page.mouse.move(bounds['x']+1,bounds['y']+30)
+            scroll.evaluate("""n=>{
+              window.__exitScrollSamples=[];window.__captureExitScroll=true;
+              n.addEventListener('wheel',event=>window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,
+                before:n.scrollTop,deltaY:event.deltaY},{once:true,capture:true});
+              n.addEventListener('scroll',event=>{
+                const row=document.querySelector('[data-ticket-id="page_worker_17"]');
+                const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
+                const exitRunning=exit?.getAnimations().some(a=>a.playState==='running'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
+                window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),
+                  trusted:event.isTrusted,exitRunning,wheel:window.__exitWheel};
+                window.__exitScrollTake=()=>{
+                  const row=document.querySelector('[data-ticket-id="page_worker_17"]');
+                  window.__exitScrollSamples.push({ms:performance.now(),top:row?.getBoundingClientRect().top,
+                    scrollTop:n.scrollTop,range:n.scrollHeight-n.clientHeight,transform:row?getComputedStyle(row).transform:null,
+                    published:!document.querySelector('[data-ticket-id="page_worker_00"]'),busy:Boolean(document.querySelector('[data-rail-motion-busy]'))});
+                };
+                const sample=()=>{if(!window.__captureExitScroll)return;window.__exitScrollTake();
+                  requestAnimationFrame(sample);};sample();
+              },{once:true,capture:true});
+            }""")
+            page.mouse.wheel(0,36)
+            page.wait_for_function('window.__exitContinued')
+            continued = page.evaluate('window.__exitContinued')
+            assert continued['exitRunning'] and continued['wheel']['trusted'] and continued['wheel']['deltaY']>0, continued
+            assert continued['scrollTop']-continued['wheel']['before']>20 and continued['ms']>=continued['wheel']['ms'], continued
+        after_view = page_changed('rail_tickets', prior)
+        if queued:
+            page.evaluate('window.__exitScrollTake();window.__captureExitScroll=false')
+            exit_samples = page.evaluate('window.__exitScrollSamples')
+            (evidence / 'queued-publication-scroll-during-exit.json').write_text(json.dumps({
+                'continued':continued,'samples':exit_samples},indent=2))
+            assert not exit_samples[0]['published'] and exit_samples[-1]['published'] and not exit_samples[-1]['busy'], exit_samples
+            assert exit_samples[0]['range']-exit_samples[-1]['range']>5, exit_samples
+            assert all(abs(sample['top']-continued['top'])<1.5 for sample in exit_samples), (continued,exit_samples)
+        assert abs(top(anchor)-continued['top']) < 1.5, (queued,continued,top(anchor),after_view)
+        policy = scroll.evaluate("n=>({value:n.style.getPropertyValue('overflow-anchor'),priority:n.style.getPropertyPriority('overflow-anchor')})")
+        assert policy == {'value':'auto','priority':'important'}, policy
+        order = page.evaluate('window.__navigationOrder')
+        if not queued:
+            assert [entry['kind'] for entry in order][:2] == ['native-scroll-before-action','publication'], order
+        proof.append({'name':'queued-publication-continued-wheel' if queued else 'delayed-publication-native-scroll-before-action',
+                      'requestTop':request_top,'continued':continued,'after':top(anchor),'policy':policy,
+                      'eventOrder':order,'scrollEvents':page.evaluate('window.__paginationScrollEvents')})
+    # A separate ordering proof moves the actual DOM scroller and publishes the
+    # held wire frame in one JavaScript task. Its movement is programmatic; the
+    # later scroll event is native. This is the precise pre-dispatch boundary,
+    # complementary to the physical-wheel proof above.
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
+    settled()
+    page.mouse.move(900, 600)
+    prior = window('rail_tickets')
+    scroll.evaluate("""n=>{window.__holdNavigation=true;
+      const row=document.querySelector('[data-ticket-id="page_worker_17"]');
+      n.scrollTop+=row.getBoundingClientRect().top-n.getBoundingClientRect().top-8;
+    }""")
+    page.wait_for_function('window.__heldNavigation.length>0')
+    settle_scroll()
+    expected = scroll.evaluate("""n=>{
+      window.__navigationOrder=[];
+      n.addEventListener('scroll',event=>window.__navigationOrder.push({kind:'native-scroll-dispatch',trusted:event.isTrusted,ms:performance.now(),top:n.scrollTop}),{once:true,capture:true});
+      n.scrollTop+=36;
+      const top=document.querySelector('[data-ticket-id="page_worker_17"]').getBoundingClientRect().top;
+      window.__navigationOrder.push({kind:'programmatic-movement',ms:performance.now(),top:n.scrollTop});
+      window.__holdNavigation=false;window.__releaseNavigation();
+      return top;
+    }""")
+    after_view = page_changed('rail_tickets', prior)
+    assert abs(top('[data-ticket-id="page_worker_17"]')-expected)<1.5, (expected,top('[data-ticket-id="page_worker_17"]'))
+    order = page.evaluate('window.__navigationOrder')
+    assert [entry['kind'] for entry in order][:3] == ['programmatic-movement','publication','native-scroll-dispatch'], order
+    assert order[2]['trusted'], order
+    proof.append({'name':'same-task-publication-before-native-scroll-dispatch','movement':'programmatic',
+                  'expected':expected,'after':top('[data-ticket-id="page_worker_17"]'),'eventOrder':order})
+
+    continued_scroll_seconds = time.perf_counter() - continued_scroll_started
+    # Restore the initial page before retaining the existing completion and parent
+    # overlap proofs below.
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
+    settled()
+
     # A live completion publication must not request another page. It also leaves
     # the first parent visible at the physical top for backward anchor proof.
     chief_request = window('rail_tickets')['request']
@@ -900,7 +1062,8 @@ def verify_rail_pagination(page, url, fixture, evidence):
     page.mouse.move(900, 600)
     page.screenshot(path=str(evidence / 'rail-pagination-final.png'))
     (evidence / 'rail-pagination.json').write_text(json.dumps({
-        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,
+        "continuedScrollSeconds":round(continued_scroll_seconds,3),"flows":proof,
     }, indent=2))
 
 
