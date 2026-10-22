@@ -1988,8 +1988,19 @@ def _owner_width_frames(browser, url):
 
 
 def _bounded_reader(browser, url):
+    from playwright.sync_api import expect
+
     page = browser.new_page(viewport={"width": 1000, "height": 900})
+    page.route("**/api/deployment-interruptions", lambda route: route.fulfill(json={"accounts": [{
+        "deployment_id": "deploy", "capture_state": "captured", "detail": None,
+        "entries": [{"interruption_id": "notice", "deployment_id": "deploy",
+            "conversation_id": "bounded-reader", "display_name": "Worker", "owner_kind": "ticket",
+            "owner_id": "worker", "original_status": "active", "recovery_state": "awaiting_action",
+            "detail": "The deploy ended this turn. Inspect current work before another action.",
+            "can_restart": False}]
+    }]}))
     page.goto(url + "?reader=1")
+    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_contain_text("The deploy ended this turn.")
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
     page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
     # What the reader retains is what is drawn. One bound, not two: a row that is
@@ -2040,9 +2051,11 @@ def _bounded_reader(browser, url):
     page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
     page.evaluate("() => window.__readerState('rest')")
     page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
+    expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     assert page.locator('[data-conversation-view-key]').count() == 0
     page.evaluate("() => window.__readerState('opened')")
     page.wait_for_selector('[data-conversation-thread]')
+    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_be_visible()
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     # Persisted projected prompts must retain the same bubble layout as outgoing

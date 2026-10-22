@@ -18,6 +18,7 @@ from planner.conversation.contracts import (
     ConversationTurnReference,
     PromptDeliveryMode,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
 )
 from planner.conversation.events import ExplicitReplyMissingEventPayload, PromptEventPayload
 from planner.conversation.in_memory_conversation_system import (
@@ -149,6 +150,22 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
             "Panels:\nAutomatic action"
         )
         conversations.complete_running_turn("c_chief")
+
+        # A pre-wire suppression cannot answer this turn, even when a caller supplies
+        # the default freshness flag. Only a real accepted message pays the reply debt.
+        async def suppressed_send(*args: object, **kwargs: object) -> DeliveredMessage:
+            return DeliveredMessage("c_chief", PromptDeliverySuppressed("obsolete"))
+
+        with monkeypatch.context() as suppression_patch:
+            suppression_patch.setattr(
+                conversation_start, "send_to_agent_conversation", suppressed_send
+            )
+            suppressed = await service.send_message(
+                conversations, tmp_db, fake_clock, RequestContext(worker), chief,
+                "Obsolete reply",
+            )
+            assert isinstance(suppressed.fate, PromptDeliverySuppressed)
+            assert await conversations.turn_expects_reply(worker_turn, chief)
 
         await service.send_message(
             conversations,

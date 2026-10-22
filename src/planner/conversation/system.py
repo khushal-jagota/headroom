@@ -73,6 +73,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
     PromptQueueReason,
     backend_supports_steer,
@@ -326,6 +327,9 @@ class _PromptDeliveryAttempt:
     composed_content_delivered: bool = True
     model_resolution: ModelResolution | None = None
     refusal_detail: str | None = None
+    suppression_reason: str | None = None
+    messages: tuple[_HeldPrompt, ...] = ()
+    automatic_notice: bool = False
 
 
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, None]]
@@ -645,6 +649,14 @@ class SqliteProcessConversationSystem:
                     if isinstance(payload, PromptDeliveryUncertainEventPayload):
                         return AddressedPromptDeliveryReceipt(
                             PromptDeliveryUncertain(), newly_accepted=False
+                        )
+                    if (
+                        isinstance(payload, PromptDiscardedEventPayload)
+                        and payload.suppression_reason
+                    ):
+                        return AddressedPromptDeliveryReceipt(
+                            PromptDeliverySuppressed(payload.suppression_reason),
+                            newly_accepted=False,
                         )
                     reason = getattr(
                         payload,
@@ -1150,6 +1162,7 @@ class SqliteProcessConversationSystem:
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                     automatic_compaction=False,
+                    messages=(held,),
                     reply_senders=reply_senders,
                 )
             except BaseException:
@@ -1157,6 +1170,13 @@ class SqliteProcessConversationSystem:
                 async with state.lock:
                     self._settle_held_deliveries(state, (held,))
                 raise
+            if delivery.suppression_reason is not None:
+                self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+                async with state.lock:
+                    self._settle_held_deliveries(state, (held,))
+                await self._drain_held_prompts(state)
+                return PromptDeliverySuppressed(delivery.suppression_reason)
+            reservation.automatic_notice = delivery.automatic_notice
             try:
                 started = await self._finalize_delivery(
                     state,
@@ -1203,6 +1223,18 @@ class SqliteProcessConversationSystem:
         assert steer_child is not None
         assert steer_turn_token is not None
         attempt = await self._begin_attempt(state, steer_turn_token, LifecycleOperation.steer)
+        messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
+            state,
+            (held,),
+            lifecycle_if_all_suppressed=(replace(attempt, status=LifecycleStatus.suppressed),),
+        )
+        if not messages:
+            async with state.lock:
+                self._settle_held_deliveries(state, (held,))
+                state.steer_settlements.discard(barrier)
+                barrier.set()
+            assert suppression_reason is not None
+            return PromptDeliverySuppressed(suppression_reason)
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
@@ -2091,6 +2123,33 @@ class SqliteProcessConversationSystem:
         assert child is not None
         assert running is not None
         attempt = await self._begin_attempt(state, running.token, LifecycleOperation.steer)
+        messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
+            state,
+            (
+                _HeldPrompt(
+                    held_prompt_id="",
+                    content=content,
+                    sender_label=sender_label,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    snapshot_sent_at_unix_milliseconds=0,
+                    sender=sender,
+                    recipient=recipient,
+                    reply_requested=reply_requested,
+                    queue_reason=PromptQueueReason.steer_refused,
+                    owner_read_through_sequence=owner_read_through_sequence,
+                ),
+            ),
+            lifecycle_if_all_suppressed=(replace(attempt, status=LifecycleStatus.suppressed),),
+        )
+        if not messages:
+            assert barrier is not None
+            state.steer_settlements.discard(barrier)
+            barrier.set()
+            assert suppression_reason is not None
+            return PromptDeliverySuppressed(suppression_reason)
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
@@ -2266,6 +2325,23 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=reservation.automatic_compaction,
+                messages=(
+                    _HeldPrompt(
+                        held_prompt_id="",
+                        content=content,
+                        sender_label=sender_label,
+                        model_change=model_change,
+                        reasoning_effort_change=reasoning_effort_change,
+                        sender_message_id=sender_message_id,
+                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        snapshot_sent_at_unix_milliseconds=0,
+                        sender=sender,
+                        recipient=recipient,
+                        reply_requested=reply_requested,
+                        queue_reason=PromptQueueReason.steer_refused,
+                        owner_read_through_sequence=owner_read_through_sequence,
+                    ),
+                ),
                 reply_senders=(
                     (sender,)
                     if reply_requested and sender is not None and recipient is not None
@@ -2284,6 +2360,11 @@ class SqliteProcessConversationSystem:
                 await self._drain_held_prompts(state)
             raise
 
+        if delivery.suppression_reason is not None:
+            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+            await self._drain_held_prompts(state)
+            return PromptDeliverySuppressed(delivery.suppression_reason)
+        reservation.automatic_notice = delivery.automatic_notice
         started = await self._finalize_delivery(
             state,
             reservation,
@@ -2314,6 +2395,59 @@ class SqliteProcessConversationSystem:
         await self._drain_held_prompts(state)
         return PromptDeliveryRefused(refusal_reason=refusal)
 
+    @staticmethod
+    def _reply_senders(messages: tuple[_HeldPrompt, ...]) -> tuple[Principal, ...]:
+        return tuple(
+            dict.fromkeys(
+                message.sender
+                for message in messages
+                if message.reply_requested
+                and message.sender is not None
+                and message.recipient is not None
+            )
+        )
+
+    async def _admit_dispatch_messages(
+        self,
+        state: _ConversationState,
+        messages: tuple[_HeldPrompt, ...],
+        *,
+        lifecycle_if_all_suppressed: tuple[LifecycleFact, ...] = (),
+    ) -> tuple[tuple[_HeldPrompt, ...], str | None, bool]:
+        """Keep sender envelopes intact until the final transactional dispatch decision."""
+        async with state.lock:
+            decisions = await self._persist(
+                state,
+                partial(
+                    self._store.admit_sender_messages,
+                    state.record.conversation_id,
+                    tuple(
+                        PromptDiscardedEventPayload(
+                            content=m.content,
+                            sender_label=m.sender_label,
+                            sender_message_id=m.sender_message_id,
+                            sent_at_unix_milliseconds=m.sent_at_unix_milliseconds,
+                            sender=m.sender,
+                            recipient=m.recipient,
+                        )
+                        for m in messages
+                    ),
+                    lifecycle_if_all_suppressed=lifecycle_if_all_suppressed,
+                ),
+            )
+            written = await self._store.read_events_after(
+                state.record.conversation_id, state.record.latest_sequence
+            )
+            self._take_in_written_rows(state, written)
+        survivors = tuple(
+            m for m, d in zip(messages, decisions, strict=True) if d.suppression_reason is None
+        )
+        reason = next((d.suppression_reason for d in decisions if d.suppression_reason), None)
+        automatic_notice = bool(survivors) and all(
+            d.is_manager_notice for d in decisions if d.suppression_reason is None
+        )
+        return survivors, reason, automatic_notice
+
     async def _deliver_prompt(
         self,
         state: _ConversationState,
@@ -2327,12 +2461,21 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
         reply_senders: tuple[Principal, ...] = (),
+        messages: tuple[_HeldPrompt, ...] = (),
     ) -> _PromptDeliveryAttempt:
         """Get the message onto a live child's wire, or name why that was impossible.
 
         No lock is held here: spawning a process and loading a session take as long as they
         take, and the conversation stays readable while they do.
         """
+        interruption_notice = await self._persist(
+            state,
+            partial(
+                self._store.bind_interruption_delivery,
+                state.record.conversation_id,
+                turn_token.turn_number,
+            ),
+        )
         resolution: ModelResolution | None = None
         if self._model_resolver is not None:
             requested_model = model_change or state.record.model
@@ -2369,9 +2512,30 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
-        composed = with_authenticated_reply_directive(
-            await self._compose_prompt_content(state, content), reply_senders
-        )
+        automatic_notice = False
+        if messages:
+            messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
+                state,
+                messages,
+                lifecycle_if_all_suppressed=(
+                    _turn_fact(turn_token, LifecycleStatus.unavailable),
+                    _prompt_fact(turn_token, LifecycleStatus.suppressed),
+                ),
+            )
+            if not messages:
+                # Preparation can spawn on uncommitted model values. Never retain that child.
+                await self._discard_child(state, child)
+                return _PromptDeliveryAttempt(suppression_reason=suppression_reason)
+            content = one_prompt_from(messages)
+            sender_label = messages[0].sender_label
+            sender_message_count = len(messages)
+            reply_senders = self._reply_senders(messages)
+        composed_content = await self._compose_prompt_content(state, content)
+        if interruption_notice is not None:
+            composed_content = prefix_message_content_text(
+                composed_content, interruption_notice, "\n\n"
+            )
+        composed = with_authenticated_reply_directive(composed_content, reply_senders)
         try:
             accepted = await child.write_prompt(
                 turn_token,
@@ -2398,6 +2562,8 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=automatic_compaction,
+                messages=messages,
+                interruption_notice=interruption_notice,
             )
             return replace(
                 rebound,
@@ -2408,6 +2574,8 @@ class SqliteProcessConversationSystem:
             )
         return _PromptDeliveryAttempt(
             model_resolution=resolution,
+            messages=messages,
+            automatic_notice=automatic_notice,
             composed_content_delivered=accepted.composed_content_delivered,
         )
 
@@ -2424,6 +2592,8 @@ class SqliteProcessConversationSystem:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
+        messages: tuple[_HeldPrompt, ...] = (),
+        interruption_notice: str | None = None,
     ) -> _PromptDeliveryAttempt:
         """Start the child again on the new values, under the same conversation, and write.
 
@@ -2453,6 +2623,30 @@ class SqliteProcessConversationSystem:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
+        automatic_notice = False
+        if messages:
+            messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
+                state,
+                messages,
+                lifecycle_if_all_suppressed=(
+                    _turn_fact(turn_token, LifecycleStatus.unavailable),
+                    _prompt_fact(turn_token, LifecycleStatus.suppressed),
+                ),
+            )
+            if not messages:
+                await self._discard_child(state, child)
+                return _PromptDeliveryAttempt(suppression_reason=suppression_reason)
+            sender_content = one_prompt_from(messages)
+            sender_label = messages[0].sender_label
+            sender_message_count = len(messages)
+            composed_content = await self._compose_prompt_content(state, sender_content)
+            if interruption_notice is not None:
+                composed_content = prefix_message_content_text(
+                    composed_content, interruption_notice, "\n\n"
+                )
+            content = with_authenticated_reply_directive(
+                composed_content, self._reply_senders(messages)
+            )
         try:
             accepted = await child.write_prompt(
                 turn_token,
@@ -2472,7 +2666,9 @@ class SqliteProcessConversationSystem:
             await self._discard_child(state, child)
             raise
         return _PromptDeliveryAttempt(
-            composed_content_delivered=accepted.composed_content_delivered
+            composed_content_delivered=accepted.composed_content_delivered,
+            messages=messages,
+            automatic_notice=automatic_notice,
         )
 
     async def _finalize_delivery(
@@ -2623,6 +2819,7 @@ class SqliteProcessConversationSystem:
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
+                        composed_content_delivered=composed_content_delivered,
                         model_change=carried_change,
                         extra_prompts=tuple(
                             PromptEventPayload(
@@ -2796,7 +2993,6 @@ class SqliteProcessConversationSystem:
                 self._begin_held_deliveries(state, batch)
                 held = batch[0]
                 rest = batch[1:]
-                combined = one_prompt_from(batch)
                 self._publish_held_prompts_changed(state)
                 reservation = await self._reserve_turn(state)
 
@@ -2812,13 +3008,14 @@ class SqliteProcessConversationSystem:
                 delivery = await self._deliver_prompt(
                     state,
                     reservation.token,
-                    content=combined,
+                    content=held.content,
                     sender_label=held.sender_label,
                     sender_message_count=len(batch),
                     mode=PromptDeliveryMode.queue,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                     automatic_compaction=False,
+                    messages=batch,
                     reply_senders=tuple(
                         dict.fromkeys(
                             message.sender
@@ -2859,6 +3056,15 @@ class SqliteProcessConversationSystem:
                     self._settle_held_deliveries(state, batch)
                 continue
 
+            if delivery.suppression_reason is not None:
+                self._abandon_reserved_turn(state, reservation, _ConversationPhase.draining)
+                async with state.lock:
+                    self._settle_held_deliveries(state, batch)
+                continue
+            reservation.automatic_notice = delivery.automatic_notice
+            if delivery.messages:
+                held, *surviving_rest = delivery.messages
+                rest = tuple(surviving_rest)
             try:
                 started = await self._finalize_delivery(
                     state,
@@ -2883,7 +3089,7 @@ class SqliteProcessConversationSystem:
                     owner_read_through_sequence=max(
                         (
                             message.owner_read_through_sequence
-                            for message in batch
+                            for message in delivery.messages
                             if message.sender is not None
                             and message.sender.kind is PrincipalKind.owner
                             and message.owner_read_through_sequence is not None

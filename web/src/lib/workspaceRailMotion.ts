@@ -1,5 +1,4 @@
 import { tick } from "svelte";
-import type { WorkspaceMessageConversation } from "./types";
 import { refreshWorkspaceRailSignals, stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
 
 // The approved Glide timing: distance changes duration, never the easing.
@@ -17,7 +16,6 @@ export type WorkspaceRailPresentation = {
   settledOpen: boolean;
   /** Keep the closing body mounted while the header acknowledges the click. */
   settledBodyOpen?: boolean;
-  settledMessages: Record<string, WorkspaceMessageConversation[]>;
 };
 
 type MotionSurface = { background: string; surrounding: string };
@@ -77,7 +75,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     const direct = directSettled && activeParents(value) === activeParents(directSettled) ? directSettled : null;
     const settled = closingBody ?? direct;
     return {...value, settledOpen:manualOpen, settledBodyOpen:foldBodyOpen ?? manualOpen,
-      ...(settled ? {rail:{...value.rail, settledItems:settled.rail.settledItems}, settledMessages:settled.settledMessages} : {})};
+      ...(settled ? {rail:{...value.rail, settledItems:settled.rail.settledItems}} : {})};
   }
   const present = (value: WorkspaceRailPresentation) => apply(withFold(value));
   function markBusy() {
@@ -190,11 +188,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
     }
     if (next.settledOpen) for (const item of next.rail.settledItems) {
       remaining.add(`settled:${item.id}`);
-      const messages = next.settledMessages[item.id] ?? [];
-      if (messages.length) remaining.add(`settled-heading:${item.id}`);
-      for (const message of messages) remaining.add(`settled-message:${item.id}:${message.conversationId}`);
+
     }
-    const settledPart = (key: string) => key.startsWith("settled:") || key.startsWith("settled-heading:") || key.startsWith("settled-message:");
+    const settledPart = (key: string) => key.startsWith("settled:");
     const exits = [...first].filter(([key]) => !remaining.has(key) && !(directFold() && settledPart(key)));
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
     if (disposed) return;
@@ -238,7 +234,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
       const old = first.get(key);
       if (old) distance = Math.max(distance, Math.abs(old.rect.top - part.rect.top));
     }
-    const isRow = (key: string) => key.startsWith("row:") || key.startsWith("settled:") || key.startsWith("settled-message:");
+    const isRow = (key: string) => key.startsWith("row:") || key.startsWith("settled:");
     const rowArrival = [...last.keys()].some((key) => isRow(key) && !first.has(key) && !(directFold() && settledPart(key)));
     const rowExit = [...first.keys()].some((key) => isRow(key) && !last.has(key) && !(directFold() && settledPart(key)));
     const duration = rowExit || rowArrival ? RAIL_MOTION.space : railMoveDuration(distance);
@@ -275,19 +271,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
   }
   function signalsOnly(next: WorkspaceRailPresentation): WorkspaceRailPresentation {
     const current = read();
-    // Discovery deliberately drops a read message. Read its facts from all
-    // tickets so a row held under the pointer still loses its unread mark.
-    const tickets = new Map([...next.rail.groups.flatMap((group) => group.cards),
-      ...[...next.rail.items, ...next.rail.settledItems].flatMap((item) => item.tickets)]
-      .map((ticket) => [ticket.id, ticket]));
-    return {...current, rail:refreshWorkspaceRailSignals(current.rail, next.rail),
-      settledMessages:Object.fromEntries(Object.entries(current.settledMessages).map(([id, messages]) =>
-        [id, messages.map((message) => {
-          const ticket = tickets.get(message.id);
-          return ticket ? {...message, conversationSignal:ticket.conversation_signal,
-            conversationId:ticket.conversation_id ?? message.conversationId} : message;
-        })]))};
+    return {...current, rail:refreshWorkspaceRailSignals(current.rail, next.rail)};
   }
+
   async function setSettledOpen(open: boolean): Promise<void> {
     if (disposed || (manualOpen ?? read().settledOpen) === open) return;
     const generation = ++foldGeneration;

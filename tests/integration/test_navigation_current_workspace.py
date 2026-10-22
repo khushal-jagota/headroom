@@ -122,7 +122,7 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     with current_navigation_database(path) as conn:
         current = snapshot(conn)
         assert current["schema_version"] == 8
-        assert current["semantics"] == "attention-knowledge-v8-manager"
+        assert current["semantics"] == "attention-knowledge-v8-manager-updated-at"
         assert current["scope"] == old["scope"]
         assert current["epoch"] != old["epoch"]
         assert source_facts(conn)["events"] == original["source"]["events"]

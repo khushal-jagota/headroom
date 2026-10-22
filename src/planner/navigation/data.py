@@ -474,6 +474,8 @@ def _derive(
             version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
             if version >= 3:
                 value.update(created_at=t["created_at"])
+                if version >= PREPARED_SCHEMA_VERSION:
+                    value["updated_at"] = t["updated_at"]
                 if version < PREPARED_SCHEMA_VERSION:
                     value["priority"] = t["priority"]
             if version >= 4:

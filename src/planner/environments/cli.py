@@ -270,6 +270,7 @@ def app_deploy(
             raise ValueError("gate evidence health URL differs from deployment health URL")
         result = deploy_app(
             gate_evidence=evidence,
+            deployment_id=deployment_id,
             candidate_app=candidate_app,
             current_root=current_root,
             source_db=source_db,

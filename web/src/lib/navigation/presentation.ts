@@ -2,8 +2,6 @@ import type { TicketValue, TicketRecord, ManagerRecord, ProjectRecord, AddressRe
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState } from '../types';
 import type { WorkspaceTicket, WorkspaceManager, WorkspaceSettledManager, WorkspaceChief } from '../workspaceRail';
-import { workspaceMessageIndex } from '../workspaceMessageDiscovery';
-import { workspaceRailChildMessageConversations } from '../workspaceRail';
 import type { ConversationSignal } from '../conversationSignal';
 import type { WorkspaceMessageConversation } from '../types';
 
@@ -104,7 +102,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const managers: WorkspaceManager[]=managerRecords.map(record=>{
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
-    return {id:record.id,title:row.title,created_at:row.created_at,
+    return {id:record.id,title:row.title,created_at:row.created_at,updated_at:row.updated_at,
       settled:row.settled,project_id:row.project_id,project:projects.get(row.project_id)?.name,
       recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
       conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`manager:${record.id}`) ?? [],
@@ -145,20 +143,8 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       parentId,parentTitle:parentId==='chief' ? chief?.label ?? null : parent?.title ?? null,
       settled:address.owner_kind==='manager' ? item?.settled === true : parent?.settled === true});
   }
-  const messagesByParent=new Map<string,WorkspaceMessageConversation[]>();
-  for(const message of messages) {
-    if(message.parentId===null || message.parentId===undefined) continue;
-    const siblings=messagesByParent.get(message.parentId) ?? [];
-    siblings.push(message);messagesByParent.set(message.parentId,siblings);
-  }
-  const messageIndex=workspaceMessageIndex(messages,tickets,byTicket);
-  const railMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
-  for(const parent of [...managers,...settledManagers]) {
-    railMessagesByParent.set(parent.id,workspaceRailChildMessageConversations(messages,parent,tickets,messageIndex));
-  }
   const addressesById=new Map([...addressesByConversation.values()].flat().map(record=>[record.id,record]));
   const unreadConversationIdsByWindow=new Map<string,ReadonlySet<string>>();
-  const scopedRailMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
   for(const window of view.publication.view?.windows ?? []) {
     if(window.request.section!=='unread')continue;
     const ids=new Set<string>();
@@ -167,15 +153,11 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       if(address)ids.add(address.value.conversation_id);
     }
     unreadConversationIdsByWindow.set(window.window_id,ids);
-    if(window.request.owner?.kind==='manager') {
-      const parentId=window.request.owner.id;
-      scopedRailMessagesByParent.set(parentId,(railMessagesByParent.get(parentId) ?? []).filter(row=>ids.has(row.conversationId)));
-    }
   }
   return {tickets,managers,settledManagers,chief,messages,conversationSignals,rawTicketsById,rawManagersById,rawProjectsById,
     ticketsById:byTicket,managersById:new Map(managers.map(item=>[item.id,item])),
-    ticketsByParent,messagesByParent,ticketMastheadsById,addressesByConversation,
-    railMessagesByParent,scopedRailMessagesByParent,unreadConversationIdsByWindow,
+    ticketsByParent,ticketMastheadsById,addressesByConversation,
+    unreadConversationIdsByWindow,
     review:finishReviewPresentation(view,reviewItems,currentConversationIds,exactOutClaimCount),
     viewWindows:view.publication.view?.windows ?? [],globalCounts:view.publication.view?.counts ?? null};
 }
@@ -233,8 +215,6 @@ export function navigationTicketMasthead(view:EffectiveNavigationView,id:string)
 }
 
 export type NavigationPresentationIndexes = {
-  readonly railMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
-  readonly scopedRailMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
   readonly unreadConversationIdsByWindow:ReadonlyMap<string,ReadonlySet<string>>;
   readonly addressesByConversation:ReadonlyMap<string,readonly AddressRecord[]>;
   readonly rawTicketsById:ReadonlyMap<string,TicketRecord>;
@@ -243,7 +223,6 @@ export type NavigationPresentationIndexes = {
   readonly ticketsById:ReadonlyMap<string,NavigationTicket>;
   readonly managersById:ReadonlyMap<string,WorkspaceManager>;
   readonly ticketsByParent:ReadonlyMap<string,readonly NavigationTicket[]>;
-  readonly messagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
   readonly ticketMastheadsById:ReadonlyMap<string,NavigationTicketMasthead>;
 };
 export type NavigationPresentation = NavigationWorkspacePresentation & NavigationPresentationIndexes & {
