@@ -44,7 +44,6 @@ struct TicketView: View {
         }
         .navigationTitle(detail != nil && titleVisible ? "" : detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
         .toolbar { ToolbarItem(placement: .primaryAction) { ticketMenu } }
         .panelsScreen()
         .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId)

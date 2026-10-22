@@ -13,6 +13,8 @@ enum AppRoute: Hashable {
 struct RouteDestination: View {
     let route: AppRoute
     var body: some View {
+        // Roots use the system default. Hide here for every detail route and
+        // its pushed children; root visibility overrides compete with this rule.
         destination.toolbar(.hidden, for: .tabBar)
     }
 

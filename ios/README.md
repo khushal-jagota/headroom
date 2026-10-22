@@ -8,7 +8,9 @@ No backend changes or third-party packages are needed.
 Workspace is the initial tab. Review, Workspace and More each own a navigation
 stack and retain their place when switching tabs. More groups Work and System in
 a native list. The tab bar is visible on these three roots; the shared `AppRoute`
-destination hides it on detail pages. Navigation uses native pushes and back swipes;
+destination hides it on detail pages and their pushed children. Roots use the system
+default visibility: explicit root overrides compete with the shared detail rule.
+Navigation uses native pushes and back swipes;
 every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets/{id}/workspace` endpoint returned HTTP 500 for the sampled tickets;

@@ -51,7 +51,6 @@ struct ArtifactViewerView: View {
         .panelsScreen()
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text((path as NSString).lastPathComponent).panelsScaledFont(size: 15, relativeTo: .subheadline, weight: .semibold).lineLimit(1).truncationMode(.middle)
