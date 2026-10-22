@@ -51,12 +51,48 @@ def _enable_child_reaping() -> None:
         raise OSError(ctypes.get_errno(), "could not enable child reaping")
 
 
+def _foreign_child_is_unsignalable(pid: int, identity: str) -> bool:
+    """Only a stable, proved foreign-UID child can remain under runner ownership."""
+    try:
+        status = Path(f"/proc/{pid}/status").read_text()
+        uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
+        uids = [int(value) for value in uid_line.split()[1:4]]
+        if len(uids) != 3 or {os.getuid(), os.geteuid()}.intersection(uids):
+            return False
+        descriptor = os.pidfd_open(pid)
+    except (OSError, StopIteration, ValueError):
+        return False
+    try:
+        if process_identity(pid) != identity or pid not in _direct_children():
+            return False
+        try:
+            signal.pidfd_send_signal(descriptor, 0)
+        except PermissionError:
+            print(
+                f"Deployment descendant {pid} belongs to another user and refuses signals; "
+                "cleanup remains with the runner or system owner.",
+                file=sys.stderr, flush=True,
+            )
+            return True
+        except ProcessLookupError:
+            return False
+        return False
+    finally:
+        os.close(descriptor)
+
+
 def _shutdown(process: subprocess.Popen[bytes], timings: Timings) -> None:
     # The group belongs to this exact child (start_new_session), never the live service.
+    permission_denied = False
     for shutdown_signal in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(process.pid, shutdown_signal)
         except ProcessLookupError:
+            break
+        except PermissionError:
+            # No member accepts this signal. Detached same-user descendants still
+            # need the exact-child cleanup below, even if privileged peers remain.
+            permission_denied = True
             break
         deadline = time.monotonic() + timings.shutdown_grace
         while time.monotonic() < deadline:
@@ -71,12 +107,21 @@ def _shutdown(process: subprocess.Popen[bytes], timings: Timings) -> None:
                 os.killpg(process.pid, 0)
             except ProcessLookupError:
                 break
+            except PermissionError:
+                break
             time.sleep(timings.poll)
+    if process.poll() is None:
+        identity = process_identity(process.pid)
+        if identity is not None and _foreign_child_is_unsignalable(process.pid, identity):
+            return
+        if permission_denied:
+            raise PermissionError("owned command refuses signals without proved foreign ownership")
     process.wait()
     # Only adopted children in this owned process group are eligible for reaping.
     while True:
         try:
-            os.waitpid(-process.pid, 0)
+            if os.waitpid(-process.pid, os.WNOHANG)[0] == 0:
+                break
         except ChildProcessError:
             break
 
@@ -119,13 +164,19 @@ def _shutdown_adopted_children(timings: Timings) -> None:
         if not children:
             return
         force = time.monotonic() >= grace_deadline
+        managed_children = False
         for pid in children:
             identity = process_identity(pid)
             if identity is None:
                 continue
+            if _foreign_child_is_unsignalable(pid, identity):
+                continue
+            managed_children = True
             if force or (pid, identity) not in notified:
                 _signal_adopted_child(pid, identity, signal.SIGKILL if force else signal.SIGTERM)
                 notified.add((pid, identity))
+        if not managed_children:
+            return
         if time.monotonic() >= final_deadline:
             raise RuntimeError("owned deployment descendants did not stop before shutdown deadline")
         # Killing an adopted parent can adopt another detached descendant: enumerate again.
@@ -136,6 +187,9 @@ def supervise(
     script: Path, *, cleanup: bool = False, timings: Timings = DEFAULT_TIMINGS,
 ) -> int:
     """Run Bash with bounded, interruptible renewal; preserve command failures."""
+    if os.environ.get("PANELS_DEPLOYMENT_PROGRESS_ACTIVE") != "true":
+        # Bootstrap has no lifecycle to renew and keeps the runner's normal shell ownership.
+        os.execvp("bash", ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)])
     parent_pid = os.getppid()
     parent_identity = process_identity(parent_pid)
     cancelled = 0

@@ -11,8 +11,10 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TextIO
+from unittest.mock import Mock
 
 import pytest
+from scripts import deployment_progress
 from scripts.deployment_progress import LIFECYCLE_WRITER, process_identity
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -230,9 +232,12 @@ def test_bootstrap_and_terminal_evidence_do_not_renew(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     before = lifecycle.read_bytes()
-    process = launch(tmp_path, lifecycle, "exit 7\n", active=False)
+    process = launch(tmp_path, lifecycle, "echo $$\nexit 7\n", active=False)
     processes.append(process)
-    assert process.wait(timeout=5) == 7
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 7
+    assert stdout == f"{process.pid}\n".encode()
+    assert stderr == b""
     assert lifecycle.read_bytes() == before
     subprocess.run(
         [sys.executable, str(LIFECYCLE_WRITER), "transition", "--path", str(lifecycle),
@@ -277,3 +282,61 @@ def test_descendant_shutdown_survives_bash_leader_exit(
     assert process.wait(timeout=5) == 0
     descendant_pid = int(pidfile.read_text())
     assert process_identity(descendant_pid) is None
+
+
+@pytest.mark.parametrize("ownership", ["same", "foreign", "unknown"])
+def test_permission_denial_skips_only_proved_foreign_children(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], ownership: str,
+) -> None:
+    children = [101, 102]
+    signaled: list[int] = []
+    monkeypatch.setattr(deployment_progress, "_direct_children", lambda: children.copy())
+    monkeypatch.setattr(deployment_progress, "process_identity", lambda _pid: "start-tick")
+    monkeypatch.setattr(os, "getuid", lambda: 1000)
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(os, "pidfd_open", lambda pid: pid)
+    monkeypatch.setattr(os, "close", lambda _fd: None)
+    def read_status(path: Path) -> str:
+        if str(path) == "/proc/101/status":
+            if ownership == "unknown":
+                return "Name:\tcommand\n"
+            if ownership == "foreign":
+                return "Uid:\t0\t0\t0\t0\n"
+        return "Uid:\t1000\t1000\t1000\t1000\n"
+
+    monkeypatch.setattr(Path, "read_text", read_status)
+
+    def waitpid(_pid: int, _options: int) -> tuple[int, int]:
+        raise ChildProcessError
+
+    def send_signal(descriptor: int, signum: int) -> None:
+        if descriptor == 101:
+            raise PermissionError("permission denied")
+        if signum:
+            signaled.append(descriptor)
+            children.remove(descriptor)
+
+    monkeypatch.setattr(os, "waitpid", waitpid)
+    monkeypatch.setattr(signal, "pidfd_send_signal", send_signal)
+    def deny_group_signal(_pid: int, _signum: int) -> None:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(os, "killpg", deny_group_signal)
+    command = Mock(pid=100)
+    command.poll.return_value = 0
+    deployment_progress._shutdown(command, deployment_progress.DEFAULT_TIMINGS)
+    command.wait.assert_called_once()
+    privileged_command = Mock(pid=101)
+    privileged_command.poll.return_value = None
+    if ownership == "foreign":
+        deployment_progress._shutdown(privileged_command, deployment_progress.DEFAULT_TIMINGS)
+        privileged_command.wait.assert_not_called()
+        deployment_progress._shutdown_adopted_children(deployment_progress.DEFAULT_TIMINGS)
+        assert signaled == [102]
+        assert children == [101]
+        assert "belongs to another user" in capsys.readouterr().err
+    else:
+        with pytest.raises(PermissionError, match="without proved foreign ownership"):
+            deployment_progress._shutdown(privileged_command, deployment_progress.DEFAULT_TIMINGS)
+        with pytest.raises(PermissionError, match="permission denied"):
+            deployment_progress._shutdown_adopted_children(deployment_progress.DEFAULT_TIMINGS)
