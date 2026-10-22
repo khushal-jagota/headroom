@@ -70,6 +70,9 @@ def run(browser, urls):
                     for index in range(fold["active_count"])
                 )
             source = fixture["navigation_response"](board, {"chief_of_staff": {"label": "Chief"}})
+            for record in source["snapshot"]["records"]:
+                if record["kind"] == "manager":
+                    record["value"]["updated_at"] = record["value"]["created_at"]
             view = json.loads(parse_qs(parts.query)["view"][0])
             route.fulfill(json=fixture["scoped_navigation_response"](source, view))
             return
