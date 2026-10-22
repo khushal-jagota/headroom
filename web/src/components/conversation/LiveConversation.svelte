@@ -602,9 +602,13 @@
       fateNoteIsTerminal = terminalFate;
       fateNoteMessageId = terminalFate ? message.messageId : null;
       if (terminalFate) {
-        await stopDrawing(message.messageId);
+        // A durable outcome replaces this same display slot. It is not a failed
+        // transport retry: restoring the old message would create a second copy.
+        const recordedOutcome = delivered.conversation_id !== null;
+        if (recordedOutcome) acknowledgedMessageIds.add(message.messageId);
+        await stopDrawing(message.messageId, recordedOutcome);
         await refreshView();
-        return false;
+        return recordedOutcome;
       }
       // Held for a busy agent: it has reached nothing yet, and it says so rather than
       // sitting there looking like a message something is answering.
