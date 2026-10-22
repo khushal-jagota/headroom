@@ -657,7 +657,9 @@ def verify_card_geometry(page, url, fixture, evidence):
     page.evaluate("code=>window.__cardSample=eval('('+code+')')", sampler)
     page.mouse.move(900, 450)
     scroll.evaluate("""node => {
-      window.__scrollWrites=[];
+      window.__scrollWrites=[]; window.__motionScrollEvents=[];
+      node.addEventListener('scroll',event=>window.__motionScrollEvents.push({ms:performance.now(),
+        trusted:event.isTrusted,top:node.scrollTop,range:node.scrollHeight-node.clientHeight}),{capture:true});
       const property=Object.getOwnPropertyDescriptor(Element.prototype,'scrollTop');
       Object.defineProperty(node,'scrollTop',{configurable:true,get(){return property.get.call(this)},
         set(value){window.__scrollWrites.push({ms:performance.now(),before:property.get.call(this),value,stack:new Error().stack});property.set.call(this,value)}});
@@ -680,6 +682,7 @@ def verify_card_geometry(page, url, fixture, evidence):
     (evidence / "card-scrolled-shrink-natural.json").write_text(json.dumps({
         "samples":page.evaluate("window.__naturalScrollSamples"),
         "scrollWrites":page.evaluate("window.__scrollWrites"),
+        "nativeScrollEvents":page.evaluate("window.__motionScrollEvents"),
     }, indent=2))
     natural = page.evaluate("window.__naturalScrollSamples")
     assert max(row['scrollHeight']-row['scrollClient'] for row in natural)-min(row['scrollHeight']-row['scrollClient'] for row in natural) > 5, natural
@@ -877,7 +880,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
         }""")
         anchor = '[data-ticket-id="page_worker_17"]'
         scroll.evaluate("""(surface,selector)=>{const row=document.querySelector(selector);
-          surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-60;
+          surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
         }""", anchor)
         page.wait_for_function('window.__heldNavigation.length>0')
         request_top = top(anchor)
@@ -918,7 +921,37 @@ def verify_rail_pagination(page, url, fixture, evidence):
             # queued. Leaving the row publishes the still-deferred card once.
             assert members('rail_tickets') == [key['id'] for key in prior['members']]
         page.mouse.move(900, 600)
+        (evidence / ('queued-publication-before-wait.json' if queued else 'delayed-publication-before-wait.json')).write_text(json.dumps({
+            'prior':prior,'continued':continued,'frames':page.evaluate('window.__navigationFrames'),
+            'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
+            'members':members('rail_tickets')},indent=2))
+        if queued:
+            page.wait_for_function("""()=>document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
+              .some(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k))""")
+            bounds = scroll.bounding_box()
+            page.mouse.move(bounds['x']+1,bounds['y']+30)
+            scroll.evaluate("""n=>{
+              window.__exitScrollSamples=[];window.__captureExitScroll=true;
+              n.addEventListener('scroll',event=>{
+                const row=document.querySelector('[data-ticket-id="page_worker_17"]');
+                window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),trusted:event.isTrusted};
+                const sample=()=>{if(!window.__captureExitScroll)return;
+                  const row=document.querySelector('[data-ticket-id="page_worker_17"]');
+                  window.__exitScrollSamples.push({ms:performance.now(),top:row?.getBoundingClientRect().top,
+                    scrollTop:n.scrollTop,range:n.scrollHeight-n.clientHeight,transform:row?getComputedStyle(row).transform:null});
+                  requestAnimationFrame(sample);};sample();
+              },{once:true,capture:true});
+            }""")
+            page.mouse.wheel(0,36)
+            page.wait_for_function('window.__exitContinued')
+            continued = page.evaluate('window.__exitContinued')
         after_view = page_changed('rail_tickets', prior)
+        if queued:
+            page.evaluate('window.__captureExitScroll=false')
+            exit_samples = page.evaluate('window.__exitScrollSamples')
+            (evidence / 'queued-publication-scroll-during-exit.json').write_text(json.dumps({
+                'continued':continued,'samples':exit_samples},indent=2))
+            assert all(abs(sample['top']-continued['top'])<1.5 for sample in exit_samples), (continued,exit_samples)
         assert abs(top(anchor)-continued['top']) < 1.5, (queued,continued,top(anchor),after_view)
         policy = scroll.evaluate("n=>({value:n.style.getPropertyValue('overflow-anchor'),priority:n.style.getPropertyPriority('overflow-anchor')})")
         assert policy == {'value':'auto','priority':'important'}, policy
@@ -939,7 +972,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
     prior = window('rail_tickets')
     scroll.evaluate("""n=>{window.__holdNavigation=true;
       const row=document.querySelector('[data-ticket-id="page_worker_17"]');
-      n.scrollTop+=row.getBoundingClientRect().top-n.getBoundingClientRect().top-60;
+      n.scrollTop+=row.getBoundingClientRect().top-n.getBoundingClientRect().top-8;
     }""")
     page.wait_for_function('window.__heldNavigation.length>0')
     settle_scroll()
