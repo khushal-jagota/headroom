@@ -6,7 +6,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import AsyncExitStack, closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -456,12 +456,16 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     copied = tmp_path / "post-expiry.db"
     with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
         source.backup(target)
-    harness = _Harness(copied)
-    harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
-    harness.app.add_exception_handler(PlannerError, handle_planner_error)
 
     async def exercise() -> None:
-        try:
+        async with AsyncExitStack() as cleanup:
+            composition = SignalRuntimeComposition(str(copied), 1000)
+            cleanup.callback(composition.close)
+            composition.bootstrap()
+            harness = _Harness(copied, signal_composition=composition, cleanup=cleanup)
+            composition.initialize()
+            harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
+            harness.app.add_exception_handler(PlannerError, handle_planner_error)
             async with harness.client() as client:
                 path = f"{CONVERSATION_PREFIX}/conversations/supervisor"
                 snapshot = (await client.get(path + "/view", params={"lens": "full"})).json()
@@ -499,7 +503,5 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
                         name, event = await stream.next_named_frame()
                         assert name == COMMITTED_EVENT_STREAM_NAME
                         assert event["sequence"] == sequence
-        finally:
-            await harness.runtime.shutdown()
 
     _run(exercise)
