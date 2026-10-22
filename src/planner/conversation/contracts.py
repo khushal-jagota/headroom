@@ -502,6 +502,26 @@ class PromptDeliveryRefusalReason(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class PromptDispatchDecision:
+    """One exact sender's final admission, after preparation and before backend I/O.
+
+    A missing suppression reason means allow. Notice eligibility belongs to its domain.
+    Ordinary messages pass through with ``is_manager_notice=False``.
+    """
+
+    sender_message_id: str | None
+    suppression_reason: str | None = None
+    is_manager_notice: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliverySuppressed:
+    """An intentional pre-wire discard, durably recorded for this sender identity."""
+
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class PromptDeliveryStarted:
     """The prompt request was written to the wire of a live backend process, under a
     valid bound session, before this call returned. The turn is now running.
@@ -588,6 +608,7 @@ type PromptDeliveryFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 
@@ -610,6 +631,7 @@ type HeldPromptPromotionFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 

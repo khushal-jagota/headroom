@@ -10,6 +10,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "diagnostic_expiry_metadata",
         "remove_calendar_records",
         "rename_managers",
+        "notice_suppression_audit",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

@@ -15,6 +15,10 @@ import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 (globalThis as any).__railDomMatches = (cards, managers, chief) => railDomMatches(
   document.querySelector('.workspace-rail'), buildWorkspaceRail(cards, managers), chief, false,
   managers.filter(item=>item.settled).length);
+import {installConversationViewReaderFixture} from '../tests/support/conversationViewReaderFixture';
+const overlay = new URLSearchParams(location.search).has('overlay');
+if (overlay) installConversationViewReaderFixture(location.hash.includes('t_overlay0') ? 'ticket-overlay' : 'bounded-reader');
+const ReaderSource = globalThis.EventSource;
 // Supply wire snapshots through the production EventSource transport. The optional
 // fold fixture uses the same App host and the real navigation parser and projection.
 const sources = new Set<any>();
@@ -25,7 +29,7 @@ class QuietEventSource {
   url: string;
   constructor(url: string) {
     this.url = url;
-    if (!url.startsWith('/api/navigation/view/events')) return;
+    if (!url.startsWith('/api/navigation/view/events')) { if (overlay) return new ReaderSource(url); return; }
     sources.add(this);
     void this.refresh();
   }
