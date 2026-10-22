@@ -23,6 +23,13 @@ const ReaderSource = globalThis.EventSource;
 // fold fixture uses the same App host and the real navigation parser and projection.
 const sources = new Set<any>();
 (globalThis as any).__navigationFrames = [];
+(globalThis as any).__heldNavigation = [];
+(globalThis as any).__heldNavigationFrames = [];
+(globalThis as any).__navigationOrder = [];
+(globalThis as any).__releaseNavigation = () => {
+  const held = (globalThis as any).__heldNavigation.splice(0);
+  for (const publish of held) publish();
+};
 class QuietEventSource {
   onopen = null; onmessage = null; onerror = null;
   listeners = new Map(); closed = false;
@@ -38,12 +45,20 @@ class QuietEventSource {
     if (!response.ok) return;
     const data = await response.text();
     await new Promise<void>(resolve => setTimeout(() => {
+      const publish = () => {
       if (!this.closed) {
         const frames = (globalThis as any).__navigationFrames;
         frames.push(JSON.parse(data)); if (frames.length > 30) frames.shift();
+        (globalThis as any).__navigationOrder.push({kind:'publication', ms:performance.now(), top:document.querySelector('[data-active-work-scroll]')?.scrollTop});
         this.listeners.get('snapshot')?.({data});
       }
       resolve();
+      };
+      if ((globalThis as any).__holdNavigation) {
+        (globalThis as any).__heldNavigationFrames.push(JSON.parse(data));
+        (globalThis as any).__heldNavigation.push(publish);
+      }
+      else publish();
     }, (globalThis as any).__navigationDelay ?? 0));
   }
   addEventListener(name: string, listener: any) { this.listeners.set(name, listener); }

@@ -73,8 +73,14 @@
   let stateOnScreen: ConversationState | null = null;
   let stateHasBeenDrawn = false;
   let pendingOpen = false;
-  let pendingLatest = false;
-  let latestFocusButton: HTMLButtonElement | null = null;
+  let latestPending = $state(false);
+  let latestIntent: {
+    reader: ConversationViewReader | null;
+    generation: number;
+    admitted: boolean;
+    focusButton: HTMLButtonElement | null;
+  } | null = null;
+  let readerOnScreen: ConversationViewReader | null = null;
   let sentMessageToPlace: string | null = null;
   let answerRoomMessageId: string | null = null;
   let dirty = false;
@@ -129,7 +135,7 @@
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
     const item=reader.pages.flatMap(page=>page.items).find(item=>item.key===key);
-    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:jumpVisible===false};
+    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:jumpVisible===false&&!latestPending};
   }
 
   function onThreadScroll(): void {
@@ -142,17 +148,40 @@
     saveLogicalAnchor(thread);
   }
 
+  function isCurrentLatest(intent: typeof latestIntent): boolean {
+    return intent !== null && latestIntent === intent && !disposed &&
+      intent.generation === generation && intent.reader === reader;
+  }
+
   async function jumpToTheNewestLine(button: HTMLButtonElement): Promise<void> {
-    const startedIn = generation;
-    latestFocusButton = button;
-    if(reader!==null)await reader.load({kind:"timeline",key:null},null,"older",true);
-    if (disposed || startedIn !== generation) return;
-    pendingLatest = true;
+    const intent = {
+      reader,
+      generation,
+      admitted: reader === null,
+      focusButton: button as HTMLButtonElement | null
+    };
+    latestIntent = intent;
+    latestPending = true;
+    if (intent.reader !== null) {
+      const admitted = await intent.reader.load({kind:"timeline",key:null},null,"older",true);
+      if (!isCurrentLatest(intent)) return;
+      if (!admitted) {
+        latestIntent = null;
+        latestPending = false;
+        requestReconciliation();
+        return;
+      }
+      intent.admitted = true;
+    }
+    if (!isCurrentLatest(intent)) return;
     requestReconciliation();
   }
 
   function onFocusIn(event: FocusEvent): void {
-    if (event.target !== latestFocusButton && event.target !== document.body) latestFocusButton = null;
+    const intent = latestIntent;
+    if (intent !== null && event.target !== intent.focusButton && event.target !== document.body) {
+      intent.focusButton = null;
+    }
   }
 
   function requestWaitingOnThePerson(thread: HTMLDivElement): HTMLElement | null {
@@ -185,9 +214,16 @@
   async function reconcileTheThread(startedIn: number): Promise<void> {
     try {
       while (dirty && startedIn === generation && canMeasure()) {
+        // Keep this pass associated with the click that requested it, including
+        // both layout waits and the later focus handoff.
+        const intent = latestIntent;
         // Svelte and managed Markdown finish their DOM writes before the reading.
         await tick();
         if (startedIn !== generation || !canMeasure()) return;
+        if (intent !== latestIntent) {
+          dirty = true;
+          continue;
+        }
         const thread = threadElement;
         if (thread === null || !threadGeometry(thread, reservedSpaceElement).hasShape()) {
           // The first nonzero observation resumes this work without a microtask loop.
@@ -216,38 +252,43 @@
         // Space is part of layout. Place only after its final DOM height is present.
         await tick();
         if (startedIn !== generation || !canMeasure() || thread !== threadElement) return;
+        if (intent !== latestIntent) {
+          dirty = true;
+          continue;
+        }
         geometry = threadGeometry(thread, reservedSpaceElement);
         if (!geometry.hasShape()) return;
         takeTheReading(geometry.read(reservedSpacePixels));
 
         if (!settledOnOpening || pendingOpen) {
           landTheOpen(thread);
-        } else if (pendingLatest) {
+        } else if (latestPending && isCurrentLatest(intent) && intent?.admitted) {
           moveTheThread(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
         } else if (sentMessageToPlace !== null) {
           const sent = geometry.sentMessage(sentMessageToPlace);
           if (sent !== null) moveTheThread(thread, geometry.sentMessageScrollTop(sent));
-        } else if (withTheNewestLineBeforeTheWrite) {
+        } else if (withTheNewestLineBeforeTheWrite && !latestPending) {
           keepTheNewestLineInSight(thread);
         }
         settledOnOpening = true;
         pendingOpen = false;
-        const focusButton = pendingLatest ? latestFocusButton : null;
-        pendingLatest = false;
         sentMessageToPlace = null;
         takeTheReading(geometry.read(reservedSpacePixels));
         jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels);
-        withTheNewestLineBeforeTheWrite = !jumpVisible;
+        const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && !jumpVisible;
+        if (latestPlaced) latestPending = false;
+        withTheNewestLineBeforeTheWrite = !jumpVisible && !latestPending;
         saveLogicalAnchor(thread);
-        if (focusButton !== null && !jumpVisible) {
+        if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
           await tick();
-          if (startedIn !== generation || disposed || thread !== threadElement) return;
-          if (latestFocusButton === focusButton &&
+          if (startedIn !== generation || !isCurrentLatest(intent) || thread !== threadElement) return;
+          const focusButton = intent.focusButton;
+          if (focusButton !== null &&
               (document.activeElement === focusButton || document.activeElement === document.body)) {
             thread.focus({ preventScroll: true });
           }
-          latestFocusButton = null;
+          latestIntent = null;
         }
       }
     } finally {
@@ -258,19 +299,23 @@
 
   $effect.pre(() => {
     const wanted = conversationId;
+    const wantedReader = reader;
     untrack(() => {
-      if (conversationOnScreen === wanted) return;
+      if (conversationOnScreen === wanted && readerOnScreen === wantedReader) return;
       generation += 1;
-      conversationOnScreen = wanted;
-      settledOnOpening = false;
-      settledMessageIds = new Set();
-      reservedSpacePixels = 0;
-      answerRoomMessageId = null;
-      sentMessageToPlace = null;
-      pendingOpen = true;
-      pendingLatest = false;
-      latestFocusButton = null;
-      withTheNewestLineBeforeTheWrite = true;
+      readerOnScreen = wantedReader;
+      latestPending = false;
+      latestIntent = null;
+      if (conversationOnScreen !== wanted) {
+        conversationOnScreen = wanted;
+        settledOnOpening = false;
+        settledMessageIds = new Set();
+        reservedSpacePixels = 0;
+        answerRoomMessageId = null;
+        sentMessageToPlace = null;
+        pendingOpen = true;
+        withTheNewestLineBeforeTheWrite = true;
+      }
       requestReconciliation();
     });
   });
@@ -391,7 +436,7 @@
       ></div>
     {/if}
   </div>
-  {#if jumpVisible}
+  {#if jumpVisible || latestPending}
     <button
       type="button"
       class="chat-jump"
