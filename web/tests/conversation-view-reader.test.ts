@@ -292,7 +292,8 @@ async function startEntry(watermark: number) {
   vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
   const reader = new ConversationViewReader('c', 'focus', true, undefined, null, undefined, undefined, watermark);
   readers.push(reader);
-  const ready = reader.connect(); Source.all[0].send('snapshot', snapshot()); await ready;
+  const initial = snapshot(); initial.coverage.through_sequence = watermark + 100;
+  const ready = reader.connect(); Source.all[0].send('snapshot', initial); await ready;
   return reader;
 }
 
@@ -381,4 +382,38 @@ it('holds cold entry until its own deferred body is ready', async () => {
   expect(reader.entryTargetReady).toBe(false);
   reader.entryBodyReady(reader.entryTarget!.key); reader.finishEntry();
   expect(reader.entryPhase).toBe('complete');
+});
+
+
+it('uses the initial snapshot without paging when its coverage proves no unread range', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, null, undefined, undefined, 1);
+  readers.push(reader);
+  const ready = reader.connect(); Source.all[0].send('snapshot', snapshot()); await ready;
+  expect(reader.entryPhase).toBe('placing');
+  expect(reader.entryTarget).toBeNull();
+  expect(reader.entryTargetReady).toBe(true);
+  expect(fetch).not.toHaveBeenCalled();
+  reader.finishEntry();
+  expect(reader.entryPhase).toBe('complete');
+});
+
+it('retains the parked unread target when expanded scopes reach the shared item bound', async () => {
+  const first = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(first))));
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  reader.finishEntry();
+  expect(reader.entryHeld).toBe(true);
+  for (let index = 0; index < 3; index++) {
+    const scope = { kind: 'turn' as const, key: `turn:${index}` };
+    const page = viewSnapshot('c', 'focus', Array.from({ length: 100 }, (_, n) => ({ ...rows[0], sequence: 100 + index * 100 + n }))).page;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...page, scope }))));
+    await reader.expand(scope, true);
+  }
+  expect(reader.pages.flatMap(page => page.items).length).toBeLessThanOrEqual(300);
+  expect(reader.pages.flatMap(page => page.items).some(item => item.key === reader.entryTarget?.key)).toBe(true);
+  reader.releaseEntry();
+  expect(reader.entryHeld).toBe(false);
 });

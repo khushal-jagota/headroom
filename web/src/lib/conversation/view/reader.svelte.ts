@@ -43,6 +43,7 @@ export class ConversationViewReader {
     entryPhase = $state<'idle' | 'loading' | 'placing' | 'error' | 'complete'>('idle');
     entryTarget = $state.raw<ViewReaderAnchor | null>(null);
     entryTargetReady = $state(false);
+    entryHeld = $state(false);
     private entryOperation = 0;
     private entryStarted = false;
     private rangeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -172,10 +173,12 @@ export class ConversationViewReader {
     }
     finishEntry(): void {
         if (this.entryPhase !== 'placing' || !this.entryTargetReady) return;
+        this.entryHeld = this.entryTarget !== null;
         this.entryPhase = 'complete';
         this.changed();
-        void this.connect().catch(() => undefined);
+        if (this.source === null) void this.connect().catch(() => undefined);
     }
+    releaseEntry(): void { this.entryHeld = false; }
     private url(suffix: string, query: Record<string, string> = {}): string {
         const search = new URLSearchParams({ lens: this.lens, ...query });
         return `/api/conversation/conversations/${encodeURIComponent(this.id)}/view${suffix}?${search}`;
@@ -243,10 +246,12 @@ export class ConversationViewReader {
         let count = pages.reduce((sum, p) => sum + p.items.length, 0);
         let bytes = pages.reduce((sum, p) => sum + p.items.reduce((n, item) => n + itemBytes(item), 0), 0);
         while (count > READER_ITEMS || bytes > READER_BODY_BYTES) {
-            const page = pages.find(p => scopeKey(p.scope) !== preferred && p.items.length > 0) ?? pages.find(p => p.items.length > 0);
+            const removable = pages.filter(p => p.items.length > 0 && !(this.entryHeld && p.items.length === 1 && p.items[0].key === this.entryTarget?.key));
+            const page = removable.find(p => scopeKey(p.scope) !== preferred) ?? removable[0];
             if (!page)
                 break;
-            const removeEnd = scopeKey(page.scope) === preferred && direction === 'older';
+            const targetIndex = this.entryHeld ? page.items.findIndex(item => item.key === this.entryTarget?.key) : -1;
+            const removeEnd = targetIndex >= 0 ? targetIndex < page.items.length / 2 : scopeKey(page.scope) === preferred && direction === 'older';
             const removed = removeEnd ? page.items.pop() : page.items.shift();
             if (!removed)
                 break;
@@ -330,7 +335,15 @@ export class ConversationViewReader {
                         await this.load(timeline, cursor, 'older', true);
                         this.restoring = false;
                     }
-                    if (this.entryPhase === 'loading' && !this.entryStarted) void this.prepareEntry();
+                    if (this.entryPhase === 'loading' && !this.entryStarted) {
+                        if (value.coverage.through_sequence <= (this.entryReadThroughSequence ?? 0)) {
+                            // The admitted snapshot proves that there is no unread range.
+                            this.entryStarted = true;
+                            this.entryTarget = null;
+                            this.entryTargetReady = true;
+                            this.entryPhase = 'placing';
+                        } else void this.prepareEntry();
+                    }
                     ready();
                 }
                 catch (error) {
