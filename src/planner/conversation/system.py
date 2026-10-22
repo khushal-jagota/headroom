@@ -2333,6 +2333,14 @@ class SqliteProcessConversationSystem:
         No lock is held here: spawning a process and loading a session take as long as they
         take, and the conversation stays readable while they do.
         """
+        interruption_notice = await self._persist(
+            state,
+            partial(
+                self._store.bind_interruption_delivery,
+                state.record.conversation_id,
+                turn_token.turn_number,
+            ),
+        )
         resolution: ModelResolution | None = None
         if self._model_resolver is not None:
             requested_model = model_change or state.record.model
@@ -2369,9 +2377,12 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
-        composed = with_authenticated_reply_directive(
-            await self._compose_prompt_content(state, content), reply_senders
-        )
+        composed_content = await self._compose_prompt_content(state, content)
+        if interruption_notice is not None:
+            composed_content = prefix_message_content_text(
+                composed_content, interruption_notice, "\n\n"
+            )
+        composed = with_authenticated_reply_directive(composed_content, reply_senders)
         try:
             accepted = await child.write_prompt(
                 turn_token,
@@ -2623,6 +2634,7 @@ class SqliteProcessConversationSystem:
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
+                        composed_content_delivered=composed_content_delivered,
                         model_change=carried_change,
                         extra_prompts=tuple(
                             PromptEventPayload(
