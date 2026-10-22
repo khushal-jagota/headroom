@@ -28,6 +28,10 @@ struct TicketDetail: Codable, Identifiable, Sendable {
     let fieldSummaries: [String: FieldSummary]?
     let fieldApprovals: [String: FieldApproval]
     let pendingProposal: TicketProposal?
+    let agentState: String?
+    let conversationSignal: ConversationSignal?
+    let assigned: Bool?
+    let awaitingApproval: Bool?
 }
 struct BlockerSummary: Codable, Sendable { let blockedBy: [TicketBlocker] }
 struct TicketBlocker: Codable, Sendable { let ticketId: String; let title: String; let stage: String; let href: String }
