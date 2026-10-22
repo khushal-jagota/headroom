@@ -1325,12 +1325,40 @@ def _run(browser, urls):
     after_growth = wait_for_anchor(page, after_removal)
     assert after_growth["scrollTop"] > after_removal["scrollTop"], (after_removal, after_growth)
 
-    # Latest resumes following, and a newly appended line stays in sight.
-    page.locator('button[aria-label="Jump to latest message"]').click()
-    page.wait_for_function("""() => {
-      const thread = document.querySelector('[data-conversation-thread]');
-      return thread.scrollHeight - thread.scrollTop - thread.clientHeight <= 2;
-    }""")
+    # Latest removes the active control. Both activation paths return the keyboard
+    # to the reading region without moving the newest line out of sight.
+    latest = page.get_by_role("button", name="Jump to latest message", exact=True)
+    for activation in ("pointer", "keyboard", "focus-elsewhere"):
+        if activation != "pointer":
+            thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        latest.wait_for()
+        if activation == "pointer":
+            latest.click()
+        elif activation == "keyboard":
+            latest.focus()
+            page.keyboard.press("Enter")
+        else:
+            latest.evaluate("""button => {
+              button.focus();button.click();
+              document.querySelector('[data-conversation-input]').focus({preventScroll:true});
+            }""")
+        page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
+        page.wait_for_function("""elsewhere => document.activeElement === document.querySelector(
+          elsewhere ? '[data-conversation-input]' : '[data-conversation-thread]')""",
+          arg=activation == "focus-elsewhere")
+        page.wait_for_function("""() => {
+          const thread = document.querySelector('[data-conversation-thread]');
+          const newest = [...thread.querySelectorAll('[data-conversation-row="agent_message"]')].at(-1);
+          return newest.getBoundingClientRect().bottom <= thread.getBoundingClientRect().bottom + 1;
+        }""")
+        print("LATEST_FOCUS_PROOF", activation, page.evaluate("""() => ({
+          tag:document.activeElement.tagName,label:document.activeElement.getAttribute('aria-label'),
+          latestPresent:!!document.querySelector('button[aria-label="Jump to latest message"]')})"""), flush=True)
+        if activation == "keyboard" and os.environ.get("PANELS_E2E_FAILURE_DIR"):
+            from pathlib import Path
+            output = Path(os.environ["PANELS_E2E_FAILURE_DIR"]).parent
+            page.screenshot(path=str(output / "latest-focus.png"))
+    # Preserve the existing following proof after the explicit jump.
     before = thread.evaluate("node => node.scrollTop")
     page.evaluate("window.__appendConversationLine()")
     page.get_by_text("Newest appended line 28", exact=True).wait_for()
@@ -1973,6 +2001,26 @@ def _bounded_reader(browser, url):
     page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
     assert page.locator('[data-conversation-view-key]').count() <= 300
     assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
+    # A delayed latest-page read must respect focus moved during the request.
+    page.evaluate("""() => {
+      const original = window.fetch;
+      window.fetch = async (...args) => {
+        const path = String(args[0]);
+        const url = new URL(path, location.origin);
+        if (url.pathname.endsWith('/view/pages') && !url.searchParams.has('cursor')) {
+          window.fetch = original;
+          await new Promise(resolve => {window.__releaseLatestPage = resolve;});
+        }
+        return original(...args);
+      };
+    }""")
+    latest = page.get_by_role("button", name="Jump to latest message", exact=True)
+    latest.click()
+    page.wait_for_function("typeof window.__releaseLatestPage === 'function'")
+    page.locator('[data-conversation-input]').focus()
+    page.evaluate("window.__releaseLatestPage()")
+    page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
+    page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
     page.evaluate("() => window.__readerState('rest')")
     page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
     assert page.locator('[data-conversation-view-key]').count() == 0
