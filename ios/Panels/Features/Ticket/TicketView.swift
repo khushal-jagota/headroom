@@ -62,15 +62,19 @@ struct TicketView: View {
 
     private func masthead(_ detail: TicketDetail) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-            Text("\(detail.project ?? "No project")  ·  \(manifest?.label ?? detail.workerType.replacingOccurrences(of: "_", with: " ").capitalized)")
-                .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-            HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.md) {
-                Text(detail.title).font(PanelsTheme.TypeScale.title).foregroundStyle(PanelsTheme.strong)
-                    .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+            HStack(spacing: PanelsTheme.Space.sm) {
+                Text("\(detail.project ?? "No project")  ·  \(manifest?.label ?? detail.workerType.replacingOccurrences(of: "_", with: " ").capitalized)")
+                    .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                 if detail.conversationSignal?.working == true {
                     ProgressView().controlSize(.small).tint(PanelsTheme.accent).accessibilityLabel("Working")
                 }
+                if detail.conversationSignal?.messageForOwner == true {
+                    Image(systemName: "circle.fill").font(PanelsTheme.TypeScale.caption)
+                        .foregroundStyle(PanelsTheme.accent).accessibilityLabel("Unread message")
+                }
             }
+            Text(detail.title).font(PanelsTheme.TypeScale.title).foregroundStyle(PanelsTheme.strong)
+                .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
             TicketExpandableText(text: detail.recap, emptyText: "No recap yet.")
             if let presentation, !presentation.terminal {
                 ViewThatFits(in: .horizontal) {

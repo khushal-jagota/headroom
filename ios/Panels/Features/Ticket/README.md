@@ -4,7 +4,9 @@ The native ticket page reads the existing full ticket endpoint and that ticket's
 worker-type manifest. The manifest supplies stage names, step order, completion
 counts and the approval-limit options. A worker that still owns a step keeps its
 “Currently working on” heading even between turns; only a live conversation signal
-shows the title spinner.
+shows the spinner. Working and unread marks sit beside the project and worker type,
+above the title. The recap has five visible lines before Show more, following the
+owner's design update.
 
 The recap and step bodies expand in place. The approval limit opens a native sheet;
 Cancel discards its selections and Save writes the selected limit and reviewer.

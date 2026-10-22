@@ -14,10 +14,10 @@ struct TicketExpandableText: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
             Text(text.isEmpty ? AttributedString(emptyText) : rendered)
-                .lineLimit(expanded ? nil : 3)
+                .lineLimit(expanded ? nil : 5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background {
-                    Text(rendered).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    Text(rendered).lineLimit(5).fixedSize(horizontal: false, vertical: true)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedHeight = $0 }
                         .hidden()
                 }
