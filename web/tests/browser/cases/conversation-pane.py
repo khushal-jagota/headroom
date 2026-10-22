@@ -1987,6 +1987,153 @@ def _owner_width_frames(browser, url):
     print("OWNER_WIDTH_PROOF " + json.dumps(proof), flush=True)
 
 
+def _latest_obsolete_intents(browser, url):
+    import json
+    import time
+
+    started = time.perf_counter()
+    page = browser.new_page(viewport={"width":1000,"height":900})
+    proof=[]
+    try:
+        for case in ("refusal", "superseded", "reader-swap"):
+            page.goto(url + "?intent=1")
+            thread=page.locator('[data-conversation-thread]')
+            thread.wait_for()
+            page.wait_for_function("document.querySelector('[data-conversation-thread]').scrollHeight > 1000")
+            thread.evaluate("node=>{node.scrollTop=500;node.dispatchEvent(new Event('scroll'));}")
+            latest=page.get_by_role("button",name="Jump to latest message",exact=True)
+            latest.wait_for()
+            latest.click()
+            page.wait_for_function("window.__intentProbe.loads.length===1")
+            if case == "superseded":
+                latest.click()
+                page.wait_for_function("window.__intentProbe.loads.length===2")
+            # No geometry can settle while hidden. Complete the obsolete request,
+            # then restore geometry, exercising deferred placement and focus.
+            thread.evaluate("node=>node.style.display='none'")
+            if case == "reader-swap":
+                # Keep the original button's focus claim alive. Admission succeeds
+                # first, but geometry cannot settle until after reader replacement.
+                latest.evaluate("node=>node.blur()")
+            else:
+                page.locator('[data-conversation-input]').focus()
+            page.evaluate("admitted=>window.__intentProbe.finish(0,admitted)",case != "refusal")
+            page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
+            if case == "reader-swap":
+                assert page.evaluate("document.activeElement===document.body")
+                page.evaluate("window.__intentProbe.swap()")
+            thread.evaluate("node=>node.style.display=''")
+            page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
+            assert thread.evaluate("node=>Math.abs(node.scrollTop-500)<2"), (case,thread.evaluate("node=>node.scrollTop"))
+            if case == "reader-swap":
+                assert page.evaluate("document.activeElement===document.body"),case
+            else:
+                assert page.evaluate("document.activeElement===document.querySelector('[data-conversation-input]')"),case
+            assert latest.is_visible(),case
+            if case == "superseded":
+                page.evaluate("window.__intentProbe.finish(1,true)")
+                page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
+                assert page.evaluate("document.activeElement===document.querySelector('[data-conversation-input]')")
+            proof.append({"case":case,"obsoletePlacement":False,"focus":"body preserved after admitted reader swap" if case == "reader-swap" else "composer preserved"})
+        # Swap after placement removes Latest, in the mutation callback before
+        # the focus tick resumes. The old button's body-focus claim must not pass
+        # to a reader that did not own that click.
+        page.goto(url + "?intent=1")
+        thread=page.locator('[data-conversation-thread]')
+        thread.wait_for()
+        page.wait_for_function("document.querySelector('[data-conversation-thread]').scrollHeight > 1000")
+        thread.evaluate("node=>{node.scrollTop=500;node.dispatchEvent(new Event('scroll'));}")
+        latest=page.get_by_role("button",name="Jump to latest message",exact=True)
+        latest.click()
+        page.wait_for_function("window.__intentProbe.loads.length===1")
+        page.evaluate("""() => {
+          const thread=document.querySelector('[data-conversation-thread]');
+          const focus=thread.focus.bind(thread);
+          window.__obsoleteFocusCalls=0;
+          thread.focus=(...args)=>{window.__obsoleteFocusCalls++;focus(...args);};
+          const observer=new MutationObserver(()=>{
+            if(document.querySelector('button[aria-label="Jump to latest message"]'))return;
+            observer.disconnect();
+            window.__focusTickSwap=true;
+            window.__intentProbe.swapSynchronously();
+          });
+          observer.observe(document.querySelector('[data-conversation-pane]'),{subtree:true,childList:true});
+          window.__intentProbe.finish(0,true);
+        }""")
+        page.wait_for_function("window.__focusTickSwap===true")
+        page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
+        assert page.evaluate("window.__obsoleteFocusCalls===0"), "Obsolete focus crossed reader replacement during focus tick"
+        assert page.evaluate("document.activeElement===document.body")
+        proof.append({"case":"reader-swap-at-focus-tick","obsoleteFocusCalls":0})
+        print("LATEST_OBSOLETE_INTENTS_PROOF "+json.dumps({"cases":proof,"seconds":round(time.perf_counter()-started,3),"newHosts":0}),flush=True)
+    finally:
+        page.close()
+
+
+def _latest_destination(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    page = browser.new_page(viewport={"width": 1000, "height": 900})
+    output = Path(os.environ.get("PANELS_LATEST_ARTIFACT_DIR", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")))
+    output.mkdir(parents=True, exist_ok=True)
+    try:
+        page.goto(url + "?reader=1")
+        page.wait_for_selector('[data-conversation-view-key="e2000"]')
+        page.evaluate("window.__latestProbe.blockForward = true")
+        # Three historical pages exceed the real 300-row retention bound.
+        for _ in range(3):
+            before = page.evaluate("Math.min(...[...document.querySelectorAll('[data-conversation-view-key]')].map(n=>+n.dataset.conversationViewKey.slice(1)))")
+            page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+            page.wait_for_function("before => Math.min(...[...document.querySelectorAll('[data-conversation-view-key]')].map(n=>+n.dataset.conversationViewKey.slice(1))) < before", arg=before)
+        assert page.locator('[data-conversation-view-key="e2000"]').count() == 0
+        assert page.locator('[data-conversation-view-key]').count() <= 300
+        page.evaluate("window.__latestProbe.holdHistory = true")
+        page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        page.wait_for_function("window.__latestProbe.historyWaiting > 0")
+        page.evaluate("""() => {
+          window.__latestFrames=[];
+          const sample = () => {
+            const thread=document.querySelector('[data-conversation-thread]');
+            const edge=thread.getBoundingClientRect();
+            const row=document.querySelector('[data-conversation-view-key="e2000"]');
+            const bounds=row?.getBoundingClientRect();
+            const visible=!!bounds && bounds.bottom>edge.top && bounds.top<edge.bottom;
+            window.__latestFrames.push({visibleNewest:visible,
+              latest:!!document.querySelector('button[aria-label="Jump to latest message"]'),
+              latestResponses:window.__latestProbe.latestResponses,
+              scrollTop:thread.scrollTop, scrollHeight:thread.scrollHeight});
+            if(!window.__stopLatestFrames)requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }""")
+        page.get_by_role("button", name="Jump to latest message", exact=True).click()
+        page.evaluate("window.__latestProbe.holdHistory=false;window.__latestProbe.releaseHistory()")
+        # On the defect, Latest disappears at the retained historical endpoint.
+        # Do not wait for a fetch hook: destination and control trajectory decide.
+        try:
+            page.wait_for_function("window.__latestFrames.some(f => !f.latest)", timeout=10000)
+        finally:
+            frames=page.evaluate("window.__latestFrames")
+            (output / "latest-destination-frames.json").write_text(json.dumps(frames, indent=2))
+        first_hidden=next(frame for frame in frames if not frame["latest"])
+        assert first_hidden["visibleNewest"], {"failure":"Latest disappeared before the true newest destination", "frame":first_hidden}
+        assert first_hidden["latestResponses"] > 0, first_hidden
+        assert page.evaluate("window.__latestProbe.blockForward"), "Recovery gate opened before destination assertion"
+        # All frames that presented Latest as complete must already show e2000.
+        assert all(frame["visibleNewest"] for frame in frames if not frame["latest"]), frames
+        page.screenshot(path=str(output / "latest-destination.png"))
+        proof={"destination":"e2000 visible before Latest disappears", "recovery":"blocked through destination assertion", "seconds":round(time.perf_counter()-started,3), "newHosts":0}
+        (output / "latest-destination-proof.json").write_text(json.dumps(proof,indent=2))
+        print("LATEST_DESTINATION_PROOF " + json.dumps(proof), flush=True)
+        page.evaluate("window.__latestProbe.blockForward=false;window.__latestProbe.holdHistory=false;window.__latestProbe.releaseForward();window.__latestProbe.releaseHistory();window.__stopLatestFrames=true")
+    finally:
+        page.close()
+
+
 def _bounded_reader(browser, url):
     from playwright.sync_api import expect
 
@@ -2030,6 +2177,8 @@ def _bounded_reader(browser, url):
     assert page.locator('[data-conversation-view-key]').count() <= 300
     assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     # A delayed latest-page read must respect focus moved during the request.
+    import time
+    focus_started = time.perf_counter()
     page.evaluate("""() => {
       const original = window.fetch;
       window.fetch = async (...args) => {
@@ -2049,6 +2198,7 @@ def _bounded_reader(browser, url):
     page.evaluate("window.__releaseLatestPage()")
     page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
     page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
+    print(f"LATEST_DELAYED_FOCUS_PROOF composer focus preserved after controlled admission ({time.perf_counter()-focus_started:.3f}s)", flush=True)
     page.evaluate("() => window.__readerState('rest')")
     page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
     expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
@@ -2561,6 +2711,14 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'destination':
+            _latest_destination(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'intents':
+            _latest_obsolete_intents(browser, urls[0])
+            return
+        _latest_destination(browser, urls[0])
+        _latest_obsolete_intents(browser, urls[0])
         _overlay_menu_bounds(browser, urls[0])
         if __import__('os').environ.get('PANELS_CONVERSATION_MENU_ONLY') == '1':
             print('Focused overlay menu proof only; other conversation scenarios were not run.',flush=True)
