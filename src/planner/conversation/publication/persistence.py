@@ -164,7 +164,7 @@ def _install_source_triggers(connection: sqlite3.Connection, *, require_admissio
         ).fetchone()
         is None
     )
-    sources = {
+    sources: dict[str, str | None] = {
         "conversations": "conversation_id",
         "conversation_events": "conversation_id",
         "conversation_error_acknowledgements": "conversation_id",
@@ -172,6 +172,11 @@ def _install_source_triggers(connection: sqlite3.Connection, *, require_admissio
         "ticket_conversations": "conversation_id",
         "tickets": "conversation_id",
         "agents": "conversation_id",
+        "conversation_turn_occurrences": "conversation_id",
+        "conversation_runtime_epoch": None,
+        "deploy_interruption_accounts": None,
+        "deploy_interruptions": "source_conversation_id",
+        "deploy_interruption_deliveries": "conversation_id",
     }
     for table, column in sources.items():
         if not connection.execute(
@@ -187,6 +192,8 @@ def _install_source_triggers(connection: sqlite3.Connection, *, require_admissio
                 "RAISE(ABORT,'source lacks Signal admission') END;"
             )
             for alias in aliases:
+                if column is None:
+                    continue
                 body += (
                     "INSERT INTO signal_publication_dirty "
                     f"SELECT {alias}.{column} WHERE {alias}.{column} IS NOT NULL "

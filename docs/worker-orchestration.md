@@ -88,9 +88,45 @@ periodic poll recovers missed signals and restart state. The loop groups open wa
 recipient into an immutable batch. It sends that batch through the recipient's normal
 conversation boundary in queue mode.
 
+Before forming a batch, the loop retires proposal notices whose Ticket has disappeared,
+whose pending revision has changed or resolved, or whose effective reviewer has changed.
+The effective reviewer follows the proposal's routing and parked destination. A ceiling
+change alone does not invalidate a parked proposal.
+
+The same check runs again at actual conversation dispatch, after session preparation and
+before any backend write. One SQLite write transaction orders this decision against
+proposal resolution. If any proposal in a batch is obsolete, the whole immutable batch
+receives an exact discard receipt. Only its obsolete sources close. Valid proposal and
+error sources remain available for a fresh batch, with new message identity, after the
+normal retry interval. Original batch text and membership remain intact.
+
+Suppression is countable from `manager_wake_suppressions`: each retired source records its
+Ticket, original revision and reviewer, reason, current Ticket existence, pending revision
+and reviewer, time, and batch sender identity when there was a batch. A missing Ticket,
+resolved proposal, changed revision, and changed reviewer have distinct reasons. A batch
+containing several obsolete proposals records each obsolete source separately. The
+conversation's discard receipt also records why this particular attempt was suppressed.
+
+Count obsolete sources by reason, then inspect the compared facts:
+
+```sql
+SELECT reason, count(*) AS suppressed_sources
+FROM manager_wake_suppressions GROUP BY reason;
+
+SELECT s.*, w.summary
+FROM manager_wake_suppressions s
+LEFT JOIN manager_wakes w ON w.id = s.wake_id
+ORDER BY s.created_at, s.wake_id;
+```
+
+The first query counts sources, not delivery attempts. A mixed batch can suppress one
+obsolete source and regroup several valid sources. Its discard receipt identifies the
+original attempt. A deleted source Ticket leaves its notice summary and suppression
+facts available.
+
 A queued batch remains open while it waits behind active work. The exact durable prompt
-event closes its member wakes. A definite refusal or discard creates a later attempt with a
-new sender message identity. An uncertain delivery remains unresolved and is not replayed
+event closes its member wakes. A definite refusal or discard permits remaining eligible sources to form a later attempt
+with a new sender message identity. An uncertain delivery remains unresolved and is not replayed
 automatically. Supervisor reset and deletion share a lifecycle lock with delivery.
 
 _Code paths:_ `src/planner/manager_wakes/`, `src/planner/core/loops.py`, and the proposal

@@ -1374,3 +1374,12 @@ def test_legacy_sparse_events_report_real_edges_and_expired_details(harness: _Ha
                 assert name == COMMITTED_EVENT_STREAM_NAME and event["sequence"] == 3
 
     _run(exercise)
+
+
+def test_suppressed_fate_keeps_its_reason_at_the_http_boundary() -> None:
+    from planner.conversation.api import delivery_fate_json
+    from planner.conversation.contracts import PromptDeliverySuppressed
+
+    assert delivery_fate_json(PromptDeliverySuppressed("proposal_revision_changed")) == {
+        "fate": "suppressed", "reason": "proposal_revision_changed"
+    }

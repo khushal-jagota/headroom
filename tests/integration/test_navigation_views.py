@@ -229,7 +229,9 @@ def test_settled_update_order_pages_and_live_changes_preserve_active_order(tmp_p
         for current in (True, False):
             _, changed = read_content(conn, query, current=current)
             assert [row["id"] for row in changed["windows"][0]["members"]] == ["a", "b"]
-            manager = next(row for row in changed["records"] if row["id"] == "a")
+            manager = next(
+                row for row in changed["records"] if row["kind"] == "manager" and row["id"] == "a"
+            )
             assert manager["value"]["updated_at"] == 400
             query["windows"] = [{**settled_window, "section": "rail_parents"}]
             _, active = read_content(conn, query, current=current)

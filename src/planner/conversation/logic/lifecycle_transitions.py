@@ -43,6 +43,7 @@ def validate_transition(previous: LifecycleFact, candidate: LifecycleFact) -> No
                 LifecycleStatus.injected,
                 LifecycleStatus.accepted,
                 LifecycleStatus.refused,
+                LifecycleStatus.suppressed,
                 LifecycleStatus.unknown,
             }
         }
@@ -96,6 +97,7 @@ def validate_fact(fact: LifecycleFact) -> None:
             LifecycleStatus.injected,
             LifecycleStatus.accepted,
             LifecycleStatus.refused,
+            LifecycleStatus.suppressed,
             LifecycleStatus.unknown,
         },
     }
