@@ -147,6 +147,10 @@ exercised only with an injected stub or URLProtocol interception.
 
 
 
+Review supports approval and send-back through its API adapter; see
+`Review.md` for its behavior and focused verification. Live-server simulator
+verification remains read-only; mutation verification uses a mocked transport.
+
 Haptic helpers offer light, medium, success, error and selection. Navigation and tab
 changes use them, as does saving Settings. Native navigation transitions supply
 motion, respect system accessibility preferences, and avoid custom bouncing.
