@@ -6,6 +6,7 @@ import type {
 import {
   workItemTicketGroupKey,
   workItemTicketGroups,
+  workItemWorkGroups,
   type WorkItemAttentionFacts,
   type WorkItemTicketFacts
 } from "./workItemPresentation";
@@ -60,16 +61,12 @@ function railGroups(
   cards: readonly WorkItemTicketFacts[],
   sidebarPresentation = false
 ): WorkspaceTicketGroup[] {
-  // Unread stays an independent mark in the rail, never a category or tone.
-  const originals = new Map(cards.map((card) => [card.id, card]));
-  const groups = workItemTicketGroups(
-    sidebarPresentation ? cards.map((card) => ({...card, awaiting_reply: false})) : cards
-  );
+  const groups = sidebarPresentation ? workItemWorkGroups(cards) : workItemTicketGroups(cards);
   return groups.map((group) => ({
     key: group.key,
     label: sidebarPresentation && group.key === "empty" ? "Other" : group.label,
     defaultCollapsed: group.quiet,
-    cards: group.tickets.map((card) => originals.get(card.id)!)
+    cards: group.tickets
   }));
 }
 

@@ -90,6 +90,8 @@ def group(value: dict[str, Any], attention: dict[str, Any] | None, *, rail: bool
         return "assigned"
     if not rail and attention and attention["signal"]["message_for_owner"]:
         return "awaiting_reply"
+    if value["blocked"] or value["ticket_status"] == "blocked":
+        return "blocked"
     working = bool(attention and attention["signal"]["working"])
     failed = bool(attention and attention["last_turn_failed"])
     if not working and (value["ticket_status"] == "errored" or failed and value["stage"] != "done"):
@@ -100,8 +102,6 @@ def group(value: dict[str, Any], attention: dict[str, Any] | None, *, rail: bool
         return "waiting_to_closeout"
     if parked and not owner:
         return "status_awaiting_approval"
-    if value["ticket_status"] == "blocked":
-        return "blocked"
     if value["stage"] == "done":
         return "done"
     return "empty"

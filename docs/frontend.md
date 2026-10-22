@@ -44,8 +44,10 @@ One screen per part of the system:
   Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty
   group. Done, Backlog, and Blocked stay outside this list, even if they carry
   attention facts. Unread alone does not change a row’s category, order, or tone.
-  The rail omits the Messages group. The sidebar preserves all facts, global unread
-  discovery, and the shared classifier on other surfaces.
+  The rail and complete Manager and Chief pages use one work grouping rule and initial
+  ticket order. Classification ignores unread replies; original records and unread
+  counts remain intact. The sidebar applies its own exclusions before grouping.
+  Global Messages keeps its separate reply classification and discovery.
 
   Attention rows are bright. Ongoing rows and their working spinners are dim.
   Unread message dots stay bright and take precedence over working spinners.
@@ -146,6 +148,13 @@ One screen per part of the system:
   Manual fold requests bypass that structural queue. Coherent settled page updates
   do not restart the chevron or body fade. The latest manual choice wins during rapid reversal.
 
+  Manager and Chief pages give Tickets blocked by dependencies or by their status a distinct
+  Blocked header.
+  Backlog and owner approval, answer, and assignment retain precedence; Blocked wins
+  over worker errors, ongoing work, and closeout fallback. A dependency can block an
+  Agent Ticket even while its conversation is idle. Removing the dependency restores
+  ordinary grouping unless its status still says blocked. Blocked keeps its existing
+  group order before Done. Group collapse choices remain presentation rules.
   Manager pages show active groups first, then Backlogged and Done headers.
   Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
   including completed Tickets that retain a backlog flag. Both headers start closed.
@@ -263,7 +272,7 @@ One screen per part of the system:
   Chief keeps an editable recap in its managed settings, through the same header control.
   Chief cannot settle and has no Project or parent navigation.
 - **Chief children** — the Chief and ordinary Managers show one scoped Worker list.
-  Active groups stay visible. Backlogged and Done have independent collapsible headers.
+  Active groups stay visible. Backlogged, Blocked, and Done have independent collapsible headers.
   Each Chief section retains its own bounded pages and reader choices. Ordinary
   managers retain exact group counts and independent reader choices. Open groups
   request bounded scrolling windows; closed groups request counts without row bodies.
