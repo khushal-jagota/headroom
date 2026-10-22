@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterable
 from uuid import uuid4
 
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal
-from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus, WakeSourceKind
+from planner.manager_wakes.contracts import (
+    ProposalNoticeState,
+    ProposalNoticeSuppression,
+    WakeBatch,
+    WakeBatchStatus,
+    WakeSourceKind,
+)
+from planner.manager_wakes.logic.proposal_notices import suppression_reason
+from planner.tickets.logic.proposal_routing import parked_destination, route_to_holder
 
 
 def create_wake(
@@ -198,12 +207,130 @@ def _compose_message(rows: Iterable[sqlite3.Row]) -> str:
     )
 
 
-def claim_next_batch(
-    conn: sqlite3.Connection, *, process_token: str, now: int
-) -> WakeBatch | None:
+def _obsolete_proposal(
+    conn: sqlite3.Connection, row: sqlite3.Row
+) -> ProposalNoticeSuppression | None:
+    target = Principal(PrincipalKind(str(row["target_kind"])), str(row["target_id"]))
+    ticket = conn.execute(
+        "SELECT pending_proposal,pending_proposal_revision,ceiling_holder FROM tickets WHERE id=?",
+        (row["ticket_id"],),
+    ).fetchone()
+    if ticket is None:
+        current = ProposalNoticeState(False, None, None)
+    else:
+        holder = json.loads(str(ticket["ceiling_holder"]))
+        reviewer = parked_destination(
+            route_to_holder(Principal(PrincipalKind(holder["kind"]), holder["id"]))
+        )
+        current = ProposalNoticeState(
+            True,
+            int(ticket["pending_proposal_revision"])
+            if ticket["pending_proposal"] is not None
+            else None,
+            reviewer,
+        )
+    reason = suppression_reason(
+        source_revision=int(row["source_revision"]), target=target, current=current
+    )
+    if reason is None:
+        return None
+    return ProposalNoticeSuppression(
+        int(row["id"]), row["ticket_id"], int(row["source_revision"]), target, current, reason
+    )
+
+
+def _retire_proposal(
+    conn: sqlite3.Connection,
+    suppression: ProposalNoticeSuppression,
+    *,
+    sender_message_id: str | None,
+    now: int,
+) -> None:
+    current = suppression.current
+    conn.execute(
+        "INSERT OR IGNORE INTO manager_wake_suppressions("
+        "wake_id,ticket_id,source_revision,target_kind,target_id,reason,ticket_exists,"
+        "current_revision,current_target_kind,current_target_id,sender_message_id,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            suppression.wake_id,
+            suppression.ticket_id,
+            suppression.source_revision,
+            suppression.target.kind.value,
+            suppression.target.id,
+            suppression.reason.value,
+            int(current.ticket_exists),
+            current.pending_revision,
+            None if current.reviewer is None else current.reviewer.kind.value,
+            None if current.reviewer is None else current.reviewer.id,
+            sender_message_id,
+            now,
+        ),
+    )
+    conn.execute(
+        "UPDATE manager_wakes SET closed_at=? WHERE id=? AND closed_at IS NULL",
+        (now, suppression.wake_id),
+    )
+
+
+def admit_notice_batch(
+    conn: sqlite3.Connection, *, conversation_id: str, sender_message_id: str | None, now: int
+) -> tuple[bool, str | None]:
+    """Check only this delivery owner's exact pre-wire candidate, in its transaction."""
+    batch = conn.execute(
+        "SELECT id,status FROM manager_wake_batches "
+        "WHERE conversation_id=? AND sender_message_id=?",
+        (conversation_id, sender_message_id),
+    ).fetchone()
+    if batch is None:
+        return False, None
+    # A durable terminal outcome cannot become a new send. Uncertain attempts are
+    # historical evidence and never receive eligibility cleanup here.
+    if batch["status"] in ("uncertain", "delivered", "refused"):
+        raise RuntimeError("historical notice attempt cannot receive dispatch admission")
+    if batch["status"] == "discarded":
+        return True, "notice_batch_discarded"
+    rows = conn.execute(
+        "SELECT w.* FROM manager_wakes w JOIN manager_wake_batch_members m ON m.wake_id=w.id "
+        "WHERE m.batch_id=? AND w.source_kind='proposal'",
+        (batch["id"],),
+    ).fetchall()
+    obsolete = tuple(value for row in rows if (value := _obsolete_proposal(conn, row)) is not None)
+    if obsolete:
+        for value in obsolete:
+            _retire_proposal(conn, value, sender_message_id=sender_message_id, now=now)
+        reason = ",".join(sorted({value.reason.value for value in obsolete}))
+        conn.execute(
+            "UPDATE manager_wake_batches SET status='discarded',updated_at=? WHERE id=?",
+            (now, batch["id"]),
+        )
+        return True, reason
+    conn.execute(
+        "UPDATE manager_wake_batches SET status='dispatching',updated_at=? WHERE id=? "
+        "AND status IN ('pending','offering','accepted')",
+        (now, batch["id"]),
+    )
+    return True, None
+
+
+def _retire_obsolete_unsent_proposals(conn: sqlite3.Connection, *, now: int) -> None:
+    rows = conn.execute(
+        "SELECT w.* FROM manager_wakes w WHERE w.source_kind='proposal' AND w.closed_at IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members m "
+        "JOIN manager_wake_batches b ON b.id=m.batch_id WHERE m.wake_id=w.id "
+        "AND b.status IN ('pending','offering','dispatching','accepted','uncertain'))"
+    ).fetchall()
+    for row in rows:
+        obsolete = _obsolete_proposal(conn, row)
+        if obsolete is not None:
+            _retire_proposal(conn, obsolete, sender_message_id=None, now=now)
+
+
+def claim_next_batch(conn: sqlite3.Connection, *, process_token: str, now: int) -> WakeBatch | None:
     """Group every currently available wake for the oldest waiting manager."""
     conn.execute("BEGIN IMMEDIATE")
     try:
+        _retire_obsolete_unsent_proposals(conn, now=now)
         target = conn.execute(
             "SELECT w.target_kind,w.target_id FROM manager_wakes w "
             "WHERE w.closed_at IS NULL AND NOT EXISTS ("
@@ -219,7 +346,7 @@ def claim_next_batch(
             (now - 5,),
         ).fetchone()
         if target is None:
-            conn.execute("COMMIT")
+            commit_without_change_signal(conn)
             return None
         target_kind = str(target["target_kind"])
         target_id = str(target["target_id"])
@@ -268,9 +395,7 @@ def claim_next_batch(
     except BaseException:
         conn.execute("ROLLBACK")
         raise
-    row = conn.execute(
-        "SELECT * FROM manager_wake_batches WHERE id=?", (batch_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM manager_wake_batches WHERE id=?", (batch_id,)).fetchone()
     assert row is not None
     return _batch_from_row(row)
 

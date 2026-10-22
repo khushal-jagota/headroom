@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 
 PREPARED_SCHEMA_VERSION = 7
 SCHEMA_VERSION = 8
-SUPPORTED_SEMANTICS = "attention-knowledge-v8-manager"
+SUPPORTED_SEMANTICS = "attention-knowledge-v8-manager-updated-at"
 RecordKind = Literal[
     "ticket", "manager", "chief", "conversation", "address", "totals", "project"
 ]
@@ -51,6 +51,7 @@ class TicketValue(TypedDict):
 
 
 class ManagerValue(TypedDict):
+    updated_at: int
     title: str
     recap: str
     recap_preview: str
@@ -206,7 +207,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v8-manager"]
+    semantics: Literal["attention-knowledge-v8-manager-updated-at"]
     epoch: str
     revision: str
 
@@ -218,7 +219,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v8-manager"]
+    semantics: Literal["attention-knowledge-v8-manager-updated-at"]
     epoch: str
     base_revision: str
     revision: str
