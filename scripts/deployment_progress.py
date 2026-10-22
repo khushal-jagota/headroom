@@ -133,6 +133,17 @@ def _direct_children() -> list[int]:
     return [int(value) for value in path.read_text().split()]
 
 
+def _reap_exited_adopted_children(excluded: set[int]) -> None:
+    # Popen owns the command and renewal statuses. Only adopted children belong here.
+    for pid in _direct_children():
+        if pid in excluded:
+            continue
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+
+
 def _signal_adopted_child(pid: int, identity: str, signum: signal.Signals) -> None:
     try:
         descriptor = os.pidfd_open(pid)
@@ -202,6 +213,11 @@ def supervise(
     command: subprocess.Popen[bytes] | None = None
     renewal: subprocess.Popen[bytes] | None = None
 
+    def reap_adopted_children() -> None:
+        _reap_exited_adopted_children({
+            process.pid for process in (command, renewal) if process is not None
+        })
+
     def interrupted() -> bool:
         return bool(
             cancelled or parent_identity is None or os.getppid() != parent_pid
@@ -221,6 +237,7 @@ def supervise(
         )
         # The CLI returns one bounded record, so pipe capacity cannot block its exit.
         while renewal.poll() is None:
+            reap_adopted_children()
             if interrupted():
                 raise InterruptedError
             if command is not None and command.poll() is not None:
@@ -274,6 +291,7 @@ def supervise(
         )
         next_renewal = time.monotonic() + timings.renewal
         while command.poll() is None:
+            reap_adopted_children()
             if interrupted():
                 raise InterruptedError
             if active and time.monotonic() >= next_renewal:

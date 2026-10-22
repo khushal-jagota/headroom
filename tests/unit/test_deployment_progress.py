@@ -284,6 +284,33 @@ def test_descendant_shutdown_survives_bash_leader_exit(
     assert process_identity(descendant_pid) is None
 
 
+def test_exited_adopted_child_is_reaped_before_owned_command_finishes(
+    tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
+) -> None:
+    pidfile = tmp_path / "adopted.pid"
+    release = tmp_path / "release"
+    helper = tmp_path / "orphan.py"
+    helper.write_text(
+        "import os, time\nfrom pathlib import Path\n"
+        "if os.fork() == 0:\n"
+        f"    Path({str(pidfile)!r}).write_text(str(os.getpid()))\n"
+        "    time.sleep(0.15)\n"
+        "    os._exit(0)\n"
+    )
+    process = launch(
+        tmp_path, lifecycle,
+        f"{sys.executable} {helper}\n"
+        f"while [ ! -e {release} ]; do sleep 0.02; done\nexit 7\n",
+    )
+    processes.append(process)
+    wait_until(pidfile.exists)
+    adopted_pid = int(pidfile.read_text())
+    wait_until(lambda: not Path(f"/proc/{adopted_pid}").exists())
+    assert process.poll() is None
+    release.touch()
+    assert process.wait(timeout=5) == 7
+
+
 @pytest.mark.parametrize("ownership", ["same", "foreign", "unknown"])
 def test_permission_denial_skips_only_proved_foreign_children(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], ownership: str,
