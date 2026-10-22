@@ -204,7 +204,7 @@ struct TicketView: View {
     private func steps(_ presentation: TicketPresentation) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             HStack {
-                Text("STEPS").fontWeight(.semibold).tracking(1)
+                Text("Steps").fontWeight(.semibold)
                 Spacer()
                 Text("\(presentation.completedCount) of \(presentation.manifest.fields.count) done")
             }.font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
