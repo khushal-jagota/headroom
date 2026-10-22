@@ -435,6 +435,10 @@ expires 15 minutes after the runner last renews it. A proved success appears as
 rollback remain problems until a later deployment supersedes them. The server watches
 the lifecycle path and sends the existing contentless change signal after create,
 replace, change, or deletion, so connected browsers re-read the canonical file.
+The connected shell shows “Deployed” for fresh success, with a steady status mark.
+It removes that confirmation at expiry, even without another response from the server.
+The 24-hour window schedules a browser timer for at most 86,400,001 milliseconds,
+which is below the signed 32-bit limit of 2,147,483,647 milliseconds.
 
 An app deployed before this lifecycle feature cannot expose the new status endpoints or
 observe runner updates while that old app is serving. The current workflow tool and

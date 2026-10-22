@@ -182,7 +182,18 @@ def supervise(
         if status:
             raise RuntimeError(stderr.decode(errors="replace").strip() or "renewal failed")
         payload = json.loads(stdout)
-        return payload["phase"] not in TERMINAL_PHASES
+        if payload["phase"] in TERMINAL_PHASES:
+            return False
+        # Log only bounded public fields from the canonical writer's persisted record.
+        evidence = {
+            field: payload[field]
+            for field in ("deployment_id", "phase", "updated_at", "expires_at")
+        }
+        print(
+            "Deployment lifecycle renewed: " + json.dumps(evidence, separators=(",", ":")),
+            flush=True,
+        )
+        return True
 
     try:
         _enable_child_reaping()

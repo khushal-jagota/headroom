@@ -100,7 +100,18 @@ def test_periodic_renewal_preserves_bash_semantics_and_child_status(
     wait_until(lambda: record(lifecycle)["updated_at"] != first["updated_at"])
     stdout, stderr = process.communicate(timeout=5)
     assert process.returncode == 1
-    assert stdout == b""
+    prefix = b"Deployment lifecycle renewed: "
+    lines = stdout.splitlines()
+    assert len(lines) >= 2
+    assert all(line.startswith(prefix) for line in lines)
+    renewals = [json.loads(line.removeprefix(prefix)) for line in lines]
+    expected_fields = {"deployment_id", "phase", "updated_at", "expires_at"}
+    assert all(set(renewal) == expected_fields for renewal in renewals)
+    assert all(renewal["deployment_id"] == "run-1" for renewal in renewals)
+    assert all(renewal["phase"] == "preparing" for renewal in renewals)
+    assert renewals[0]["expires_at"] < renewals[-1]["expires_at"]
+    persisted = record(lifecycle)
+    assert renewals[-1] == {field: persisted[field] for field in expected_fields}
     assert stderr == b""
     final = lifecycle.read_bytes()
     time.sleep(0.12)
@@ -231,7 +242,9 @@ def test_bootstrap_and_terminal_evidence_do_not_renew(
     before = lifecycle.read_bytes()
     process = launch(tmp_path, lifecycle, "sleep 0.25\n")
     processes.append(process)
-    assert process.wait(timeout=5) == 0
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0
+    assert stdout == stderr == b""
     assert lifecycle.read_bytes() == before
 
 
