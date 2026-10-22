@@ -426,8 +426,10 @@ def _preview_lifecycle(browser, url):
 
 
 def _run(browser, urls):
-    _catalogs(browser, urls[0])
-    _preview_lifecycle(browser, urls[0])
+    controls_only = __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'controls'
+    if not controls_only:
+        _catalogs(browser, urls[0])
+        _preview_lifecycle(browser, urls[0])
 
     import json
     import os
@@ -1004,6 +1006,8 @@ def _run(browser, urls):
         raise AssertionError("Unknown CONVERSATION_SCROLL_CASE: " + selected)
     failures = []
     for name, run_case in cases.items():
+        if controls_only:
+            break
         if selected and selected != name:
             continue
         regression_page = browser.new_page(viewport={"width": 1000, "height": 760})
@@ -1441,16 +1445,18 @@ def _run(browser, urls):
 
     # The server capability controls one provider-neutral steering action.
     page.evaluate("window.__showHeldPrompt(false)")
+    settled(page)
     page.locator('[data-conversation-held-row="held-1"]').wait_for()
     assert page.locator('[data-conversation-held-promote="steer"]').count() == 0
     page.evaluate("window.__showHeldPrompt(true)")
-    steer = page.locator('[data-conversation-held-promote="steer"]')
+    steer = page.locator('[data-conversation-held-row="held-1"] [data-conversation-held-promote="steer"]')
     steer.wait_for()
     assert steer.inner_text() == "Steer"
     assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
 
     # An unanswered send retains its bubble and carries its two existing actions there.
     page.evaluate("window.__showUnansweredSend()")
+    settled(page)
     bubble = page.locator('[data-conversation-outgoing="sent-into-the-dark"]')
     bubble.wait_for()
     assert "no answer came" in bubble.inner_text()
@@ -1807,6 +1813,7 @@ def _run(browser, urls):
         queued_page.evaluate("window.__loadQueueMatrix()")
         state(queued_page, "opened")
         queued_page.wait_for_selector("[data-conversation-held-row]")
+        settled(queued_page)
         assert queued_page.locator(
             "[data-conversation-held-row] .chat-qrow-txt"
         ).all_inner_texts() == [f"queued message {number}" for number in range(1, 7)]
@@ -2879,7 +2886,7 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
-        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'legacy':
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') in ('legacy', 'controls'):
             _run(browser, urls)
             return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'bounded':
