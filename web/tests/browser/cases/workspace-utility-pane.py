@@ -666,7 +666,7 @@ def verify_card_geometry(page, url, fixture, evidence):
     assert sum(low+.5 < row["height"] < high-.5 for row in natural) >= 3, natural
     assert all(abs(row["titleHeight"]-natural[0]["titleHeight"]) < .5 for row in natural), natural
     assert all(abs(current["top"]-previous["top"]) < 1.5
-               for previous,current in zip(natural,natural[1:])
+               for previous,current in zip(natural,natural[1:], strict=False)
                if previous["transform"] == current["transform"] == "none"
                and abs(current["height"]-previous["height"]) < .5), natural
     proof.append({"name":"scrolled-natural-shrink","samples":natural,"after":sample()})
