@@ -65,6 +65,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   }
   if(folds){status.turn_key='turn:14';status.stopped_without_ending=true;}
   function page(url:URL):ConversationViewPage{
+    const lens=url.searchParams.get('lens')==='full'?'full':'focus';
     if(ownerWidth){
       const items:ConversationViewRow[]=[1,2,3].map(n=>({...item(n),row_kind:'prompt',body:{kind:'inline',value:{kind:'prompt',sender_label:n===3?'Chief':'owner',mode:'queue',sent_at_unix_milliseconds:n,content:[{piece:'text',text:n===2?'A long owner prompt retains its existing width limit. '.repeat(8):'Short prompt.'}]}}}));
       items[0].body={kind:'deferred',reference:{body_id:'owner-width:1',version:'1',byte_count:widthBody.length,media_type:'application/json'}};
@@ -73,11 +74,10 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(expiry){
       const tool:ConversationViewRow={...item(1),row_kind:'tool_call',body:{kind:'inline',value:{kind:'tool_call',tool_call_id:'expiry-tool',title:'Read diagnostic',tool_kind:'read',detail:'Capped diagnostic',started_detail:'Capped diagnostic',capped_detail_sequence:2,status:'completed'}}};
       const pending:ConversationViewRow={...item(3),body:{kind:'deferred',reference:{body_id:'row:3',version:'1',byte_count:delayedBody.length,media_type:'application/json'}}};
-      return{conversation_id:id,protocol_version:1,projection_version:1,lens:'focus',scope:{kind:'timeline',key:null},items:expired&&!deferredExpired?[tool]:[tool,pending],older:null,newer:null,body_bytes:0};
+      return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope:{kind:'timeline',key:null},items:expired&&!deferredExpired?[tool]:[tool,pending],older:null,newer:null,body_bytes:0};
     }
     if(folds)return foldPage(url);
     if(visual)return visualPage(url);
-    const lens=url.searchParams.get('lens')==='full'?'full':'focus';
     const cursor=JSON.parse(url.searchParams.get('cursor')??'null') as ViewPageCursor|null;
     const direction=url.searchParams.get('direction')??'older';
     const end=cursor===null?sequence:direction==='older'?cursor.order.sequence-(cursor.order.slot>0?0:1):Math.min(sequence,cursor.order.sequence+100);
@@ -146,7 +146,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   };
   class Source extends EventTarget{
     onerror:null|(()=>void)=null;closed=false;
-    constructor(raw:string){super();sources.push(this);calls.push(raw);const url=new URL(raw,location.origin);queueMicrotask(()=>{
+    constructor(readonly raw:string){super();sources.push(this);calls.push(raw);const url=new URL(raw,location.origin);queueMicrotask(()=>{
       if(this.closed)return;
       const result=page(url);if(url.searchParams.get('transcript')==='false')result.items=[];
       const after=url.searchParams.get('after');
@@ -157,7 +157,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   }
   (window as any).__expireDiagnostics=()=>{
     expired=true;status.diagnostics_expired=true;
-    for(const source of sources){if((source as Source).closed)continue;source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL('/?lens=focus',location.origin)),coverage:{through_sequence:sequence},status})}));}
+    for(const source of sources){if((source as Source).closed)continue;source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL(source.raw,location.origin)),coverage:{through_sequence:sequence},status})}));}
   };
   (window as any).__expireDeferred=()=>{deferredExpired=true;(window as any).__expireDiagnostics();};
   (window as any).__completeDiagnosticBody=()=>completeBody?.();

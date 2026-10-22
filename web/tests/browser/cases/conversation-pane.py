@@ -2155,8 +2155,13 @@ def _bounded_reader(browser, url):
     # made the thread change size under a gesture.
     assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     assert page.evaluate("() => window.__viewCalls.every(url => !url.includes('/events?') && (!url.includes('/tail?') || url.includes('/view/tail?')))")
+    # Hidden candidate rows exist before cold-entry placement. Wait for the visible
+    # destination before the reader starts a history gesture.
+    page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry === 'complete'")
     before = page.evaluate("() => window.__viewCalls.filter(url => url.includes('/view/pages')).length")
-    page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+    # Use an owner navigation gesture so active follow motion yields before scroll.
+    page.locator('[data-conversation-thread]').focus()
+    page.locator('[data-conversation-thread]').press("Home")
     page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
     # A transport call records request start, before the reader admits its page.
     # Wait for both edges of the older page and its layout before requesting Latest.
@@ -2235,6 +2240,7 @@ def _bounded_reader(browser, url):
     from pathlib import Path
     started = time.perf_counter()
     page.goto(url + "?reader=1&expiry=1")
+    page.locator('[data-conversation-lens-choice="full"]').click()
     page.locator('[data-conversation-tool="expiry-tool"]').click()
     page.get_by_text("Cached whole diagnostic", exact=True).wait_for()
     page.evaluate("() => window.__expireDiagnostics()")
@@ -2760,6 +2766,7 @@ def _settled_motion(browser, url):
         bubble=page.locator('[data-conversation-outgoing="sent-into-the-dark"]')
         bubble.wait_for()
         page.wait_for_timeout(300)
+        page.screenshot(path=str(output/'settled-unanswered.png'))
         page.evaluate("""()=>{
           const bubble=document.querySelector('[data-conversation-outgoing="sent-into-the-dark"]');
           const row=bubble.closest('[data-conversation-view-key]')??bubble;
@@ -2851,6 +2858,9 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'bounded':
+            _bounded_reader(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'motion':
             _settled_motion(browser, urls[0])
             return
