@@ -49,7 +49,7 @@ they do not change how transcript content is generated.
 The notebook keeps completed receipts. A separate conversation-owned source keeps
 version 1 facts about turns, external attempts, and requests. These facts contain
 identities and outcomes, without message content, process handles, or callbacks.
-Turn numbers come from a database transaction and do not repeat after a restart.
+Turn numbers come from a database transaction. Durable occurrence identifiers also distinguish turns across a deployment rollback.
 Public request IDs include that durable turn identity. A live runtime maps them to
 the provider's request IDs. An old answer cannot address a later request that reuses
 the same provider ID.
@@ -90,6 +90,16 @@ Restart restores no queue content or callbacks. It sends no prompt or answer and
 no interrupted work. Queue persistence, replay, and automatic continuation remain separate
 product decisions. The source contract lives in `conversation/lifecycle.py` and its
 transaction and terminal-transition rules live beside the conversation store.
+
+## Sessions that a deploy ends
+
+A deploy leaves a durable account of the sessions that it interrupts. The account stays outside the application backup and restore set. A rollback therefore keeps evidence from both the old application and its replacement. Missing evidence means that the account is unavailable. It never means that no sessions were interrupted.
+
+The shell keeps an expandable session list after the deployment status expires. Each entry names the agent, explains the interruption, and states the recovery status. The shared conversation pane shows the same notice. Removed conversations remain historical entries with no broken conversation link.
+
+Recovery stays manual. An authorized supervisor or Khushal can restart an eligible Worker through the existing action. Other conversations use their existing composer. Backlogged and completed Tickets receive no restart action. A conversation that changed since capture cannot authorize a restart of its replacement.
+
+The next authorized prompt tells the agent that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. A queued receipt does not count as resumption. Only a new turn with the notice in its actual prompt counts. Refusal or uncertain delivery remains explicit and receives no automatic retry.
 
 ## Exercising permission requests
 

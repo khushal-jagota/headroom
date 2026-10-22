@@ -622,6 +622,8 @@ def _write_worker_step_claim(
     ticket_id: str,
     worker_step_claim: WorkerStepClaim,
     now: int,
+    *,
+    notify_manager: bool = True,
 ) -> None:
     before = conn.execute(
         "SELECT worker_step_claim,worker_step_claim_revision,manager_id,title "
@@ -640,7 +642,8 @@ def _write_worker_step_claim(
         ),
     )
     if (
-        before is not None
+        notify_manager
+        and before is not None
         and str(before["worker_step_claim"]) != worker_step_claim.value
         and worker_step_claim is WorkerStepClaim.errored
         and before["manager_id"] is not None
@@ -1238,6 +1241,7 @@ def mark_worker_step_claim_errored(
     expected_claim: WorkerStepClaim,
     expected_claim_revision: int,
     now: int,
+    notify_manager: bool = True,
 ) -> bool:
     """Expose one failed claim, unless a later claim transition replaced it.
 
@@ -1252,7 +1256,9 @@ def mark_worker_step_claim_errored(
             return False
         if ticket.worker_step_claim_revision != expected_claim_revision:
             return False
-        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.errored, now)
+        _write_worker_step_claim(
+            conn, ticket_id, WorkerStepClaim.errored, now, notify_manager=notify_manager
+        )
         return True
 
 

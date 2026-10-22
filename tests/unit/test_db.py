@@ -1360,7 +1360,7 @@ def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     shipped = db_module.MIGRATIONS_DIRECTORY
-    tree = _migration_tree_through(tmp_path, monkeypatch, "rename_managers")
+    tree = _migration_tree_through(tmp_path, monkeypatch, "deploy_interruption_accounts")
     conn = connect(str(tmp_path / "before-suppression.db"))
     try:
         create_schema(conn)

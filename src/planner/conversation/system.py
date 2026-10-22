@@ -2468,6 +2468,14 @@ class SqliteProcessConversationSystem:
         No lock is held here: spawning a process and loading a session take as long as they
         take, and the conversation stays readable while they do.
         """
+        interruption_notice = await self._persist(
+            state,
+            partial(
+                self._store.bind_interruption_delivery,
+                state.record.conversation_id,
+                turn_token.turn_number,
+            ),
+        )
         resolution: ModelResolution | None = None
         if self._model_resolver is not None:
             requested_model = model_change or state.record.model
@@ -2522,9 +2530,12 @@ class SqliteProcessConversationSystem:
             sender_label = messages[0].sender_label
             sender_message_count = len(messages)
             reply_senders = self._reply_senders(messages)
-        composed = with_authenticated_reply_directive(
-            await self._compose_prompt_content(state, content), reply_senders
-        )
+        composed_content = await self._compose_prompt_content(state, content)
+        if interruption_notice is not None:
+            composed_content = prefix_message_content_text(
+                composed_content, interruption_notice, "\n\n"
+            )
+        composed = with_authenticated_reply_directive(composed_content, reply_senders)
         try:
             accepted = await child.write_prompt(
                 turn_token,
@@ -2552,6 +2563,7 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=automatic_compaction,
                 messages=messages,
+                interruption_notice=interruption_notice,
             )
             return replace(
                 rebound,
@@ -2581,6 +2593,7 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
         messages: tuple[_HeldPrompt, ...] = (),
+        interruption_notice: str | None = None,
     ) -> _PromptDeliveryAttempt:
         """Start the child again on the new values, under the same conversation, and write.
 
@@ -2626,9 +2639,13 @@ class SqliteProcessConversationSystem:
             sender_content = one_prompt_from(messages)
             sender_label = messages[0].sender_label
             sender_message_count = len(messages)
+            composed_content = await self._compose_prompt_content(state, sender_content)
+            if interruption_notice is not None:
+                composed_content = prefix_message_content_text(
+                    composed_content, interruption_notice, "\n\n"
+                )
             content = with_authenticated_reply_directive(
-                await self._compose_prompt_content(state, sender_content),
-                self._reply_senders(messages),
+                composed_content, self._reply_senders(messages)
             )
         try:
             accepted = await child.write_prompt(
@@ -2802,6 +2819,7 @@ class SqliteProcessConversationSystem:
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
+                        composed_content_delivered=composed_content_delivered,
                         model_change=carried_change,
                         extra_prompts=tuple(
                             PromptEventPayload(

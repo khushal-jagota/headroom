@@ -6,7 +6,7 @@ from typing import cast
 from alembic import op
 
 revision = "notice_suppression_audit"
-down_revision = "rename_managers"
+down_revision = "deploy_interruption_accounts"
 branch_labels = None
 depends_on = None
 

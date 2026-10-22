@@ -1298,7 +1298,8 @@ def test_final_admission_discards_exact_mixed_batch_and_regroups_survivors(
         sender_label="Panels",
         sender_message_id="manager_delivery_wake_forged",
     )
-    turn = asyncio.run(store.reserve_turn("conv-admit"))
+    with store.claim_runtime():
+        turn = asyncio.run(store.reserve_turn("conv-admit"))
     terminal = (
         LifecycleFact(
             LifecycleKind.turn,

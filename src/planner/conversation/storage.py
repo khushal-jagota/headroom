@@ -40,6 +40,8 @@ from planner.conversation.contracts import (
     PromptDispatchDecision,
     ResolvedConversationStart,
 )
+from planner.conversation.deploy_interruptions import data as interruption_data
+from planner.conversation.deploy_interruptions.files import read_manifests
 from planner.conversation.events import (
     AutomaticCompactionResult,
     ConversationEventKind,
@@ -274,6 +276,7 @@ class ConversationStore:
 
     def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
         conn.execute("BEGIN IMMEDIATE")
+        interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
             "WHERE status IN ('intent','running','pending','answering')"
@@ -299,6 +302,7 @@ class ConversationStore:
                 )
             )
             apply_facts(conn, conversation_id, facts)
+            interruption_data.settle_delivery(conn, conversation_id, facts)
             participate(
                 conn,
                 self._transaction_participant,
@@ -306,6 +310,24 @@ class ConversationStore:
                 guard=self._transaction_control_guard,
             )
         commit_without_change_signal(conn)
+
+    async def bind_interruption_delivery(
+        self, conversation_id: str, turn_number: int
+    ) -> str | None:
+        return await self._write(
+            self._bind_interruption_delivery_sync, conversation_id, turn_number
+        )
+
+    def _bind_interruption_delivery_sync(
+        self, conversation_id: str, turn_number: int
+    ) -> str | None:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            self._apply_signal_mutation(conn, admission)
+            notice = interruption_data.bind_delivery(conn, conversation_id, turn_number)
+            self._record_signal_result(conn, notice)
+            self._commit_rows(conn, ())
+            return notice
 
     async def reserve_turn(self, conversation_id: str) -> int:
         return await self._write(self._reserve_turn_sync, conversation_id)
@@ -319,6 +341,14 @@ class ConversationStore:
                 (conversation_id,),
             ).fetchone()
             turn_number = int(row[0]) + 1
+            epoch = conn.execute(
+                "SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1"
+            ).fetchone()
+            assert epoch is not None
+            conn.execute(
+                "INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)",
+                (conversation_id, turn_number, uuid4().hex, str(epoch[0])),
+            )
             apply_facts(
                 conn,
                 conversation_id,
@@ -371,6 +401,7 @@ class ConversationStore:
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
             apply_facts(conn, conversation_id, facts)
+            interruption_data.settle_delivery(conn, conversation_id, facts)
             participate(
                 conn,
                 self._transaction_participant,
@@ -737,6 +768,7 @@ class ConversationStore:
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        composed_content_delivered: bool = True,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -765,6 +797,7 @@ class ConversationStore:
             extra_prompts,
             owner_read_through_sequence,
             lifecycle,
+            composed_content_delivered,
         )
 
     async def read_events_after(
@@ -1100,6 +1133,7 @@ class ConversationStore:
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        composed_content_delivered: bool = True,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1110,6 +1144,12 @@ class ConversationStore:
                 snapshot = self._begin_validated_attention_write(conn, conversation_id)
                 self._apply_signal_mutation(conn, admission)
                 written = self._insert_rows(conn, conversation_id, payloads, lifecycle)
+                interruption_data.settle_delivery(
+                    conn,
+                    conversation_id,
+                    lifecycle,
+                    composed_content_delivered=composed_content_delivered,
+                )
                 if model_change is not None:
                     conn.execute(
                         "UPDATE conversations SET model = ?, reasoning_effort = ? "
@@ -1334,6 +1374,17 @@ class ConversationStore:
             (latest_sequence + len(payloads), conversation_id),
         )
         apply_facts(conn, conversation_id, lifecycle)
+        interruption_data.settle_delivery(
+            conn,
+            conversation_id,
+            tuple(
+                fact
+                for fact in lifecycle
+                if fact.status in (
+                    LifecycleStatus.refused, LifecycleStatus.unknown, LifecycleStatus.suppressed
+                )
+            ),
+        )
         append_projection(conn, written)
         return tuple(written)
 
