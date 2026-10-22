@@ -493,7 +493,7 @@ describe('shared Review and runtime counts',()=>{
     const ask=(id:string,stamp:number,changes:Partial<TicketRecord['value']>={}):TicketRecord=>({kind:'ticket',id,value:{...sourceTicket.value,
       ticket_status:'awaiting_approval',proposal_field:'plan',gating_field:'implementation',proposal_created_at:stamp,proposal_revision:1,...changes}});
     const records:NavigationRecord[]=[ask('b',2,{is_backlogged:true,blocked:true,terminal:true,worker_step_claim_out:true}),
-      ask('a',2),ask('earliest',1),ask('manager',0,{ceiling_holder:{kind:'chief',id:'chief'}}),
+      ask('c',2),ask('a',2),ask('earliest',1),ask('manager',0,{ceiling_holder:{kind:'chief',id:'chief'}}),
       ask('claim-only',0,{ticket_status:'empty',worker_step_claim_out:true,conversation_id:null}),
       ...sourceRecords.slice(1).filter(record=>record.kind!=='chief').map(record=>record.kind==='manager' ? {...record,value:{...record.value,conversation_id:'manager-current'}} : record),conversation('historical'),conversation('manager-current'),
       {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:'conversation'}},
@@ -506,7 +506,7 @@ describe('shared Review and runtime counts',()=>{
       adapter.publishSnapshot(currentSnapshot({...continuity,records}),'counts');
       let view=knowledge.accept(adapter.getPublication()!);
       expect(navigationReviewPresentation(view)).toMatchObject({runningConversationCount:0,exactOutClaimCount:2,
-        items:[{ticket_id:'earliest',field:'implementation',proposal_field:'plan'},{ticket_id:'a'},{ticket_id:'b'}]});
+        items:[{ticket_id:'earliest',field:'implementation',proposal_field:'plan'},{ticket_id:'a'},{ticket_id:'c'}]});
       const active=conversation('conversation');active.value.attention.current!.signal.working=true;
       const historical=conversation('historical');historical.value.attention.current!.signal.working=true;
       adapter.publishBatch(envelope({...continuity,base_revision:'0',revision:'1',upserts:[active,historical,conversation('manager-current')],deletes:[]}),encodeCursor({...continuity,revision:'1'}),'counts-batch');
@@ -514,7 +514,8 @@ describe('shared Review and runtime counts',()=>{
       expect(navigationReviewPresentation(view).runningConversationCount).toBe(2);
       const lost=knowledge.loseRuntime()!;
       expect(navigationReviewPresentation(lost)).toMatchObject({runningConversationCount:null,exactOutClaimCount:2});
-      expect(navigationReviewPresentation(lost).items.map(item=>item.ticket_id)).toEqual(['earliest','a','b']);
+      // Backlogged b stays outside Review but still contributes its outclaim.
+      expect(navigationReviewPresentation(lost).items.map(item=>item.ticket_id)).toEqual(['earliest','a','c']);
       const missing={...view,conversations:new Map([...view.conversations].filter(([id])=>id!=='conversation'))};
       expect(navigationReviewPresentation(missing).runningConversationCount).toBeNull();
       const empty={...view,publication:{...view.publication,records:[]}};
