@@ -39,7 +39,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     swap:()=>{intentReader=makeIntentReader();},
     swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
   const readerOnly=new URLSearchParams(window.location.search).has("reader");
-  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":"opened");
+  const readerPeek=new URLSearchParams(window.location.search).has("reader-peek");
+  let readerState=$state<"opened"|"peeked"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":readerPeek?"peeked":"opened");
   if(readerOnly)installConversationViewReaderFixture();
   (window as any).__readerState=(state:typeof readerState)=>readerState=state;
 
@@ -300,15 +301,11 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__showUnansweredSend = () => {
     supportsSteer = true;
-    heldPromptRows = [{
-      key: "local:sent-into-the-dark",
-      heldPromptId: null,
-      senderMessageId: "sent-into-the-dark",
-      content: [{ piece: "text", text: "did this arrive" }],
-      senderLabel: "owner",
-      sentAtUnixMilliseconds: 10,
-      state: "unknown",
-      queueReason: null
+    heldPromptRows = [];
+    outgoingMessages = [{
+      messageId: "sent-into-the-dark", content: [{piece:"text",text:"did this arrive"}],
+      senderLabel: "owner", mode:"steer", sentAtUnixMilliseconds:10,
+      knownFate:"answer_never_came_back"
     }];
   };
   (window as any).__setComposerDisabled = (disabled: boolean) => {
@@ -549,6 +546,13 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     <ConversationPane conversationId="same-conversation" conversationExists conversationState="opened"
       reader={intentReader} rows={[]} lens="focus" running={false} />
   </div>
+{:else if readerOnly && readerPeek}
+  <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
+    <ManagerFrame bind:conversationState={readerState}>
+      <p>Conversation document</p>
+      {#snippet conversation()}<LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>{/snippet}
+    </ManagerFrame>
+  </div>
 {:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
@@ -637,6 +641,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         onPromoteHeldPrompt={(heldPromptId: string, mode: "steer" | "send_now") => actOnQueueMatrix(heldPromptId, mode)}
         onStopDrawingHeldPrompt={(senderMessageId: string) => {
           (window as any).__stoppedDrawing = senderMessageId;
+          outgoingMessages=outgoingMessages.filter(message=>message.messageId!==senderMessageId);
         }}
         onSendHeldPromptAgain={(senderMessageId: string) => {
           (window as any).__sentAgain = senderMessageId;

@@ -1,6 +1,11 @@
 /** A finite indexed-page transport for browser lifecycle and scroll admission checks. */
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
 export function installConversationViewReaderFixture(id='bounded-reader'):void {
+  const unreadText=new URLSearchParams(location.search).get('unread');
+  const unread=unreadText===null?null:Number(unreadText);
+  const entryProbe={hold:new URLSearchParams(location.search).has('entry-hold'),fail:new URLSearchParams(location.search).has('entry-fail'),waiting:0,release:()=>{}};
+  (window as any).__entryProbe=entryProbe;
+  const hiddenUnread=new URLSearchParams(location.search).has('entry-hidden');
   const ownerWidth=new URLSearchParams(location.search).get('owner-width');
   const widthBody=JSON.stringify({kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:1,content:[{piece:'text',text:'Short prompt.'}]});
   let releaseOwnerBody: (()=>void)|null=null;
@@ -76,9 +81,12 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const cursor=JSON.parse(url.searchParams.get('cursor')??'null') as ViewPageCursor|null;
     const direction=url.searchParams.get('direction')??'older';
     const end=cursor===null?sequence:direction==='older'?cursor.order.sequence-(cursor.order.slot>0?0:1):Math.min(sequence,cursor.order.sequence+100);
-    const start=Math.max(1,end-99);
+    const start=cursor!==null&&direction==='newer'?cursor.order.sequence+1:Math.max(1,end-99);
     const items=Array.from({length:end-start+1},(_,index)=>{
       const row=item(start+index);
+      if(hiddenUnread && unread!==null && row.source_sequence>unread && row.source_sequence<=unread+100){
+        row.row_kind='token_usage';row.body={kind:'inline',value:{kind:'token_usage',input_tokens:1,output_tokens:1,cached_input_tokens:0,cost_usd:null}};
+      }
       if(row.source_sequence>=1997 && row.source_sequence<=1999){
         row.row_kind='prompt';
         row.body={kind:'inline',value:{kind:'prompt',sender_label:row.source_sequence===1997?'Chief':'owner',mode:'queue',sent_at_unix_milliseconds:row.created_at,content:[{piece:'text',text:row.source_sequence===1999?'A long owner prompt retains its existing width limit. '.repeat(20):'Short prompt.'}]}};
@@ -121,6 +129,10 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(visual&&url.pathname.endsWith('/view/body/content'))return new Response(JSON.parse(url.searchParams.get('reference')!).body_id==='completed:13'?deferredEndingText:liveText);
     if(url.pathname.endsWith('/view/pages')) {
       const cursored=url.searchParams.has('cursor');
+      if(unread!==null && cursored && url.searchParams.get('direction')==='newer'){
+        if(entryProbe.hold){entryProbe.waiting++;await new Promise<void>((resolve,reject)=>{const abort=()=>reject(new DOMException('Aborted','AbortError'));entryProbe.release=()=>{init?.signal?.removeEventListener('abort',abort);resolve();};if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});});}
+        if(entryProbe.fail)return Response.json({error:'Entry failed'},{status:503});
+      }
       if(cursored && url.searchParams.get('direction')==='newer' && latestProbe.blockForward)
         await gate('forward', init?.signal);
       else if(cursored && latestProbe.holdHistory) await gate('history', init?.signal);
@@ -130,7 +142,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     }
     if(url.pathname.endsWith('/view/receipts'))return Response.json({conversation_id:id,coverage:{through_sequence:sequence},receipts:[]});
     if(url.pathname.endsWith('/owner-read'))return Response.json({owner_read_through_sequence:JSON.parse(String(init?.body)).through_sequence});
-    return Response.json({conversation_id:id,backend_key:'codex',supports_steer:true,model:null,reasoning_effort:null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:sequence,is_running:false,held_prompts:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});
+    return Response.json({conversation_id:id,backend_key:'codex',supports_steer:true,model:null,reasoning_effort:null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:unread??sequence,is_running:false,held_prompts:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});
   };
   class Source extends EventTarget{
     onerror:null|(()=>void)=null;closed=false;

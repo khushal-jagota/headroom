@@ -1428,23 +1428,23 @@ def _run(browser, urls):
     assert steer.inner_text() == "Steer"
     assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
 
-    # A send the server never answered sits above the composer, never under the rows, and
-    # carries the two things this tab can do about it on its own.
+    # An unanswered send retains its bubble and carries its two existing actions there.
     page.evaluate("window.__showUnansweredSend()")
-    page.locator('[data-conversation-held-row="local:sent-into-the-dark"]').wait_for()
-    assert "no answer came" in page.locator("[data-conversation-held-stack]").inner_text()
-    assert page.locator('[data-conversation-outgoing="sent-into-the-dark"]').count() == 0
+    bubble = page.locator('[data-conversation-outgoing="sent-into-the-dark"]')
+    bubble.wait_for()
+    assert "no answer came" in bubble.inner_text()
+    assert page.locator('[data-conversation-held-stack]').count() == 0
     assert page.locator('[data-conversation-held-promote="send_now"]').count() == 0
     assert page.locator('[data-conversation-held-promote="steer"]').count() == 0
-    send_again = page.locator('[data-conversation-held-send-again="sent-into-the-dark"]')
+    send_again = bubble.get_by_role('button', name='Send again', exact=True)
     send_again.wait_for()
     if screenshot_dir:
-        page.locator("[data-conversation-held-stack]").screenshot(
-            path=os.path.join(screenshot_dir, "unanswered-send-above-the-composer.png")
+        bubble.screenshot(
+            path=os.path.join(screenshot_dir, "unanswered-send-in-place.png")
         )
     send_again.click()
     page.wait_for_function("window.__sentAgain === 'sent-into-the-dark'")
-    page.locator('[data-conversation-held-stop-drawing="sent-into-the-dark"]').click()
+    bubble.get_by_role('button', name='Stop showing this message', exact=True).click()
     page.wait_for_function("window.__stoppedDrawing === 'sent-into-the-dark'")
 
     # Opening is an open, not a restore. A reader who moves up the thread and then puts
@@ -2368,6 +2368,10 @@ def _conversation_repairs(browser, url):
     def state(page, value):
         page.wait_for_selector(f'{pane_selector}[data-conversation-state="{value}"]')
         frames(page)
+        # The settled design gives card state travel 150ms. Measure pointer origins
+        # after that travel, not at the third intermediate frame.
+        page.wait_for_function("[...document.querySelectorAll('.conversation-layer')].every(node=>!node.style.height)")
+        frames(page)
     for route in ("manager", "ticket"):
         page = browser.new_page(viewport={"width": 1280, "height": 1000})
         errors = []
@@ -2707,16 +2711,160 @@ def _overlay_menu_bounds(browser, url):
         page.close()
 
 
+def _settled_motion(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
+    output.mkdir(parents=True, exist_ok=True)
+    page = browser.new_page(viewport={'width':1000,'height':900}, reduced_motion='no-preference')
+    try:
+        page.goto(url)
+        page.evaluate("window.__setupScrollRegression('plain')")
+        thread = page.locator('[data-conversation-thread]')
+        thread.wait_for()
+        page.wait_for_timeout(350)
+        before = thread.evaluate('node=>node.clientHeight')
+        page.evaluate("""()=>{
+          window.__growthFrames=[];window.__growthStop=false;
+          const sample=()=>{window.__growthFrames.push(document.querySelector('[data-conversation-thread]').clientHeight);if(!window.__growthStop)requestAnimationFrame(sample);};
+          requestAnimationFrame(sample);
+        }""")
+        page.locator('[data-conversation-input]').fill('One line\nSecond line\nThird line\nFourth line')
+        page.wait_for_timeout(350)
+        frames=page.evaluate('window.__growthStop=true;window.__growthFrames')
+        assert len(frames)>3
+        assert max(abs(value-before) for value in frames)<=2, {'before':before,'frames':frames}
+        page.locator('[data-conversation-input]').fill('')
+        page.wait_for_timeout(300)
+        page.evaluate("""()=>{
+          window.__sendFrames=[];window.__sendStop=false;
+          const sample=()=>{const node=document.querySelector('[data-conversation-thread]');window.__sendFrames.push(node.scrollTop);if(!window.__sendStop)requestAnimationFrame(sample);};
+          requestAnimationFrame(sample);window.__sendScrollRegression(false);
+        }""")
+        page.wait_for_timeout(450)
+        send_frames=page.evaluate('window.__sendStop=true;window.__sendFrames')
+        moving=[value for i,value in enumerate(send_frames) if i==0 or abs(value-send_frames[i-1])>.5]
+        assert len(moving)>3, send_frames
+        assert all(b>=a-1 for a,b in zip(send_frames,send_frames[1:],strict=False)), send_frames
+        page.evaluate("window.__sentBubble=document.querySelector('[data-conversation-outgoing=\"scroll-send\"]')")
+        page.evaluate('window.__answerScrollRegression(1)')
+        page.wait_for_timeout(350)
+        assert page.evaluate("window.__sentBubble===document.querySelector('[data-conversation-row=\"prompt\"]')"), 'Receipt replaced the visible bubble'
+        assert page.locator('.c2-chip').count()==0
+        page.screenshot(path=str(output/'settled-motion.png'))
+        page.evaluate('window.__showUnansweredSend()')
+        bubble=page.locator('[data-conversation-outgoing="sent-into-the-dark"]')
+        bubble.wait_for()
+        page.wait_for_timeout(300)
+        page.evaluate("""()=>{
+          const bubble=document.querySelector('[data-conversation-outgoing="sent-into-the-dark"]');
+          const row=bubble.closest('[data-conversation-view-key]')??bubble;
+          window.__exitFrames=[];
+          const sample=()=>{window.__exitFrames.push({opacity:+getComputedStyle(bubble).opacity * +getComputedStyle(row).opacity,height:row.getBoundingClientRect().height});if(bubble.isConnected)requestAnimationFrame(sample);};
+          requestAnimationFrame(sample);
+        }""")
+        bubble.get_by_role('button',name='Stop showing this message',exact=True).click()
+        bubble.wait_for(state='detached')
+        exit_frames=page.evaluate('window.__exitFrames')
+        height=exit_frames[0]['height']
+        assert any(row['opacity']<.9 and abs(row['height']-height)<1 for row in exit_frames),exit_frames
+        assert any(row['opacity']<.05 and 1<row['height']<height-1 for row in exit_frames),exit_frames
+        assert all(b['height']<=a['height']+1 for a,b in zip(exit_frames,exit_frames[1:],strict=False)),exit_frames
+        faded=next(i for i,row in enumerate(exit_frames) if row['opacity']<.05)
+        assert all(row['opacity']<.05 for row in exit_frames[faded:] if row['height']>0),exit_frames
+        receipt={'draftBaseline':before,'draftFrames':frames,'sendFrames':send_frames,'exitFrames':exit_frames,'sameBubble':True,'seconds':round(time.perf_counter()-started,3),'newHosts':0}
+        (output/'settled-motion-proof.json').write_text(json.dumps(receipt,indent=2))
+        print('SETTLED_MOTION_PROOF '+json.dumps(receipt),flush=True)
+    finally:
+        page.close()
+
+
+def _settled_unread_entry(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
+    output.mkdir(parents=True, exist_ok=True)
+    proof = []
+    page = browser.new_page(viewport={"width": 1000, "height": 900}, reduced_motion="reduce")
+    try:
+        page.goto(url + "?reader=1&unread=1500&entry-hold=1")
+        page.wait_for_function("window.__entryProbe.waiting > 0")
+        region = page.locator('.conversation-transcript-region')
+        assert region.get_attribute('aria-busy') == 'true'
+        assert not page.locator('[data-conversation-view-key="e2000"]').is_visible()
+        page.evaluate("window.__entryProbe.hold=false;window.__entryProbe.release()")
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        first = page.locator('[data-conversation-view-key="e1501"]')
+        first.wait_for(state='visible')
+        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap-32) < 2, gap
+        assert page.locator('[data-conversation-view-key]').count() <= 300
+        page.screenshot(path=str(output / 'settled-unread.png'))
+        proof.append({'case':'older unread delayed admission','topGap':gap,'newestFlash':False})
+
+        page.goto(url + "?reader=1&unread=1500&entry-fail=1")
+        retry = page.get_by_role('button', name='Retry unread messages', exact=True)
+        retry.wait_for(state='visible')
+        assert page.locator('[data-conversation-entry-status]').is_visible()
+        assert region.get_attribute('aria-busy') == 'false'
+        page.screenshot(path=str(output / 'settled-unread-error.png'))
+        page.evaluate("window.__entryProbe.fail=false")
+        retry.click()
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        page.locator('[data-conversation-view-key="e1501"]').wait_for(state='visible')
+        assert not retry.is_visible()
+        proof.append({'case':'admission failure','visibleRetry':True,'retryPreservesTarget':True})
+
+        page.goto(url + "?reader=1&unread=1500&entry-hidden=1")
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        first = page.locator('[data-conversation-view-key="e1601"]')
+        first.wait_for(state='visible')
+        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap-32) < 2, gap
+        proof.append({'case':'hidden-only first page','firstVisible':'e1601','topGap':gap})
+        page.goto(url + "?reader=1&reader-peek=1&unread=1999")
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        first = page.locator('[data-conversation-view-key="e2000"]')
+        gap_before = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap_before-32)<2, gap_before
+        page.evaluate("window.__readerState('opened')")
+        page.wait_for_timeout(300)
+        gap_after = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap_after-32)<2, gap_after
+        proof.append({'case':'short unread tail expansion','peekTop':gap_before,'openedTop':gap_after})
+        receipt={'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0}
+        (output / 'settled-unread-proof.json').write_text(json.dumps(receipt,indent=2))
+        print('SETTLED_UNREAD_PROOF '+json.dumps(receipt),flush=True)
+    finally:
+        page.close()
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'motion':
+            _settled_motion(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'unread':
+            _settled_unread_entry(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'destination':
             _latest_destination(browser, urls[0])
             return
         if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'intents':
             _latest_obsolete_intents(browser, urls[0])
             return
+        _settled_motion(browser, urls[0])
+        _settled_unread_entry(browser, urls[0])
         _latest_destination(browser, urls[0])
         _latest_obsolete_intents(browser, urls[0])
         _overlay_menu_bounds(browser, urls[0])

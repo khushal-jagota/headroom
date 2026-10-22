@@ -684,13 +684,14 @@ gets. Showing them is not choosing them: a picker nobody touched still sends
 nothing, and the message that makes the conversation is created on those values
 because they are what the server resolves again when it arrives.
 
-Nobody waits for the network to see what they typed or attached. The browser gives a message
-its own name and stamps the moment the person pressed send, draws it in the
-composer stack there and then, and empties the box. Those two stamps travel with
-the message and are kept on its row, so the shared held snapshot and the eventual
-notebook row can recognize the same message. If the message turns out to have got
-nowhere, the copy goes and its exact words, pictures and pending run choices come
-back to the box, unless something else has been composed there since.
+The browser gives each send its own identity and timestamp before the network answers.
+Messages drawn in the conversation retain one display slot through record admission.
+A receipt can release persistence before the matching row body arrives. The visible
+copy remains until that body replaces its contents. Explicit composer-stack and
+server-held messages still belong above the input.
+
+A durable refusal or uncertain outcome stays on the same bubble. A transport
+rejection without a recorded outcome returns the draft through the existing recovery path.
 
 Queue changes also travel on the conversation's live connection as a contentless
 wake. Every open binder then reads the shared snapshot again. The wake carries no
@@ -714,15 +715,14 @@ have disappears from the screen as soon as the record is read again. Waiting too
 little would put a frightening sentence on a message that was about to turn out
 fine.
 
-A message nobody answered for does not stay in the thread. The thread draws these
-copies after every row the conversation has, so one left there would sit under
-every later turn for as long as the tab stayed open, looking like the newest thing
-said. It moves up to the composer, with the other messages that have not landed,
-and it says that no answer came. Two things can be done with it there, and both
-belong to the browser rather than the record: stop showing it, or send the same
-words again. Sending again is a new message with a new name, so if the first one
-did arrive after all there are two — that is the person's call to make, and
-nothing guesses it for them.
+An unanswered send stays where it first appeared and says “no answer came”.
+Its bubble offers Stop showing this message and Send again at opposite ends.
+A resend uses a new transport identity but retains the display slot. If the resend
+fails before a durable outcome, the old copy returns. A recorded refusal or uncertain
+outcome replaces it in place. Historical rows still follow server chronology after reload.
+
+A dismissed local bubble fades for 160ms, then its space closes over 240ms.
+History eviction does not use this exit effect.
 
 None of that is a guess about whether the message arrived, and the question stays
 open until the record answers it. Most of the time the record already has the

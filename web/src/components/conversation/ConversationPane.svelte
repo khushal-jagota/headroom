@@ -473,8 +473,8 @@
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
   {#if reader?.entryPhase === 'error'}
-    <div role="status" data-conversation-entry-status="error">Unread messages did not load.
-      <button type="button" onclick={() => reader?.retryEntry()}>Retry unread messages</button>
+    <div class="chat-receipt" role="status" data-conversation-entry-status="error">Unread messages did not load.
+      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryEntry()}>Retry unread messages</button>
     </div>
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
