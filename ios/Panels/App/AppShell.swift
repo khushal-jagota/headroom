@@ -20,7 +20,6 @@ struct AppShell: View {
                         selectedTab = .workspace
                     }
                 })
-                    .toolbar(.visible, for: .tabBar)
                     .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
@@ -28,14 +27,12 @@ struct AppShell: View {
                 .badge(store.review?.items.count ?? 0).tag(AppTab.review)
             NavigationStack(path: $workspacePath) {
                 WorkspaceView()
-                    .toolbar(.visible, for: .tabBar)
                     .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
                 .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
             NavigationStack(path: $morePath) {
                 MoreView()
-                    .toolbar(.visible, for: .tabBar)
                     .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
@@ -78,7 +75,6 @@ struct AppShell: View {
 
     private func detail(_ route: AppRoute) -> some View {
         RouteDestination(route: route)
-            .toolbar(.hidden, for: .tabBar)
             .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
     }
 }

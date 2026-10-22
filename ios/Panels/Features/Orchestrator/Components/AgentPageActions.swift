@@ -80,7 +80,6 @@ struct AgentReadingPage: View {
                 }
             }
         }.padding(PanelsTheme.Space.xl).panelsScreen().navigationTitle(title).navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .tabBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(editing ? "Done" : "Edit") {

@@ -24,7 +24,6 @@ struct ArtifactListView: View {
             }
             .navigationTitle("Artifacts")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .tabBar)
             .panelsScreen()
             .task { await load() }
             .refreshable { await load(); refreshVersion += 1 }

@@ -77,7 +77,6 @@ struct TicketStepPage: View {
                 } else if error == nil { ProgressView() }
             }.padding(PanelsTheme.Space.xl)
         }.panelsScreen().navigationTitle(field.label).navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .tabBar)
             .toolbar {
                 if presentation?.isComplete(field.id) == true {
                     ToolbarItem(placement: .primaryAction) {
