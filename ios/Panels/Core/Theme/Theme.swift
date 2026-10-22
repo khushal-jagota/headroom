@@ -25,7 +25,14 @@ enum PanelsTheme {
         static let heading = Font.title3.weight(.semibold)
         static let title = Font.largeTitle.weight(.semibold)
     }
-    enum Motion { static let fast = 0.09; static let base = 0.15; static let slow = 0.24 }
+    enum Motion {
+        static let fast = 0.09
+        static let base = 0.15
+        static let slow = 0.24
+        static let enter = 0.32
+        static let fade = Animation.timingCurve(0.2, 0.7, 0.3, 1, duration: base)
+        static let disclosure = Animation.smooth(duration: slow, extraBounce: 0)
+    }
 }
 
 private extension Color {
@@ -35,6 +42,7 @@ private extension Color {
 struct PanelsScreen: ViewModifier {
     func body(content: Content) -> some View {
         content.scrollContentBackground(.hidden)
+            .textCase(nil)
             .background(PanelsTheme.surface)
             .foregroundStyle(PanelsTheme.text)
     }

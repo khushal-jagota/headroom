@@ -1,8 +1,6 @@
 import SwiftUI
 
 struct MoreView: View {
-    @Environment(\.dismiss) private var dismiss
-
     var body: some View {
         List {
             Section("Work") {
@@ -18,11 +16,6 @@ struct MoreView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("More")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") { Haptics.light(); dismiss() }
-            }
-        }
         .panelsScreen()
     }
 

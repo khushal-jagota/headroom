@@ -27,7 +27,7 @@ struct UsageView: View {
         }
         .navigationTitle("Usage").panelsScreen()
         .task(id: "\(store.baseURL):\(metric):\(days):\(store.revision)") { await load() }
-        .refreshable { Haptics.light(); await load() }
+        .refreshable { await load() }
         .onChange(of: metric) { _, _ in Haptics.selection() }
         .onChange(of: days) { _, _ in Haptics.selection() }
         .onChange(of: provider) { _, _ in Haptics.selection() }
@@ -92,7 +92,7 @@ struct UsageView: View {
                 }
             }.listRowBackground(PanelsTheme.raised)
             if let totals = selectedMetrics {
-                Section(metric == "Cost" ? "Cost detail" : "Token detail") {
+                Section(metric == "Cost" ? "Cost Detail" : "Token Detail") {
                     if metric == "Cost" {
                         LabeledContent("Estimated", value: UsagePresentation.cost(totals.estimatedCostUsd))
                         LabeledContent("Provider reported", value: UsagePresentation.cost(totals.providerReportedCostUsd))

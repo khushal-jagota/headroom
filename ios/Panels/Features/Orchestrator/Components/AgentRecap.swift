@@ -29,7 +29,7 @@ struct AgentRecap: View {
                     .clipped()
                 if fullHeight > clampedHeight + 1 || expanded {
                     Button(expanded ? "Show less" : "Show more") {
-                        withAnimation(reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow)) { expanded.toggle() }
+                        withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded.toggle() }
                     }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                         .frame(minHeight: 44, alignment: .leading).accessibilityIdentifier("recap-disclosure")
                 }
@@ -39,7 +39,7 @@ struct AgentRecap: View {
             }
             if actions.isSending { ProgressView().controlSize(.mini) }
             if let note = actions.note { Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
-        }.onChange(of: recap) { _, _ in expanded = false }
+        }.clipped()
             .contextMenu {
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = recap; Haptics.success() }
                 Button("Edit", systemImage: "pencil") { editing = true }

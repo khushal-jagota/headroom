@@ -46,7 +46,7 @@ struct WorkspaceContextMenu: ViewModifier {
                 Haptics.success()
                 await store.refresh()
             } catch {
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
                 self.error = error.localizedDescription
             }
         }

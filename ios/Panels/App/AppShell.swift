@@ -8,20 +8,8 @@ struct AppShell: View {
     @State private var workspacePath: [AppRoute] = []
     @State private var morePath: [AppRoute] = []
 
-    @State private var morePresented = false
-    @State private var moreDetent: PresentationDetent = .medium
-
     var body: some View {
-        TabView(selection: Binding(get: { selectedTab }, set: { tab in
-            if tab == .more {
-                Haptics.selection()
-                morePath = []
-                moreDetent = .medium
-                morePresented = true
-            } else {
-                selectedTab = tab
-            }
-        })) {
+        TabView(selection: $selectedTab) {
             NavigationStack(path: $reviewPath) {
                 ReviewView(openTicket: { id in
                     var transaction = Transaction(animation: nil)
@@ -31,34 +19,27 @@ struct AppShell: View {
                         selectedTab = .workspace
                     }
                 })
-                    .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }.tabItem { Label("Review", systemImage: "checkmark.circle") }
-                .badge(store.review?.items.count ?? 0).tag(AppTab.review)
-            NavigationStack(path: $workspacePath) {
-                WorkspaceView()
-                    .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }.tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
-            Color.clear.tabItem { Label("More", systemImage: "ellipsis") }.tag(AppTab.more)
-        }
-        .sheet(isPresented: $morePresented) {
-            NavigationStack(path: $morePath) {
-                MoreView()
+                    .toolbar(.visible, for: .tabBar)
                     .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
-            .presentationDetents([.medium, .large], selection: $moreDetent)
-            .presentationDragIndicator(.visible)
-            .presentationBackground(PanelsTheme.surface)
+                .tabItem { Label("Review", systemImage: "checkmark.circle") }
+                .badge(store.review?.items.count ?? 0).tag(AppTab.review)
+            NavigationStack(path: $workspacePath) {
+                WorkspaceView()
+                    .toolbar(.visible, for: .tabBar)
+                    .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
+            NavigationStack(path: $morePath) {
+                MoreView()
+                    .toolbar(.visible, for: .tabBar)
+                    .safeAreaInset(edge: .bottom, spacing: 0) { DeploymentCapsule() }
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label("More", systemImage: "ellipsis") }.tag(AppTab.more)
         }
-        .onChange(of: reviewPath) { old, new in if new.count > old.count { Haptics.light() } }
-        .onChange(of: workspacePath) { old, new in if new.count > old.count { Haptics.light() } }
-        .onChange(of: morePath) { old, new in
-            if old != new { Haptics.light() }
-            if !new.isEmpty { moreDetent = .large }
-        }
-        .onChange(of: selectedTab) { _, _ in Haptics.selection() }
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
             if scenePhase == .active { await store.run() }

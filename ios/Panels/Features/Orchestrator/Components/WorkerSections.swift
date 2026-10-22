@@ -34,7 +34,7 @@ struct WorkerDisclosure<Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow)) { expanded.toggle() }
+                withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded.toggle() }
             } label: {
                 HStack(spacing: PanelsTheme.Space.sm) {
                     Text(title).font(PanelsTheme.TypeScale.small.weight(.semibold)).multilineTextAlignment(.leading)
@@ -108,17 +108,19 @@ struct WorkerSignalMark: View {
     let signal: ConversationSignal?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        if signal?.messageForOwner == true {
-            Circle().fill(PanelsTheme.accent).frame(width: 9, height: 9)
-                .accessibilityLabel("Unread message")
-        }
-        if signal?.working == true {
-            if reduceMotion {
-                Image(systemName: "circle.dotted").font(PanelsTheme.TypeScale.small)
-                    .foregroundStyle(PanelsTheme.faint).accessibilityLabel("Working")
-            } else {
-                ProgressView().controlSize(.mini).tint(PanelsTheme.faint).accessibilityLabel("Working")
+        HStack(spacing: PanelsTheme.Space.xs) {
+            if signal?.messageForOwner == true {
+                Circle().fill(PanelsTheme.accent).frame(width: 9, height: 9)
+                    .accessibilityLabel("Unread message")
             }
-        }
+            if signal?.working == true {
+                if reduceMotion {
+                    Image(systemName: "circle.dotted").font(PanelsTheme.TypeScale.small)
+                        .foregroundStyle(PanelsTheme.faint).accessibilityLabel("Working")
+                } else {
+                    ProgressView().controlSize(.mini).tint(PanelsTheme.faint).accessibilityLabel("Working")
+                }
+            }
+        }.frame(width: 32, alignment: .trailing)
     }
 }

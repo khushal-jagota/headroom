@@ -40,7 +40,7 @@ struct ArtifactListView: View {
                 ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { selectedArtifact = $0 })
             }
             fileSection(entries.filter { $0.directory == nil && !$0.key.hasPrefix("linked:") }, title: directory.isEmpty ? "Files" : (directory as NSString).lastPathComponent)
-            fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From fields")
+            fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From Fields")
             if hasLoaded && nextOffset < total {
                 Button { Task { await load(more: true) } } label: {
                     HStack { Text("More files"); Spacer(); if isLoading { ProgressView() } }
@@ -114,7 +114,7 @@ private struct ArtifactFolderSection: View {
             if loading && entries.isEmpty { ProgressView().listRowBackground(Color.clear) }
             if search.isEmpty && total > visible.count {
                 Button("\(total - visible.count) more") {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) { expanded = true }
+                    withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded = true }
                     if entries.count < total { Task { await load(more: true) } }
                 }.disabled(loading).listRowBackground(Color.clear)
             }

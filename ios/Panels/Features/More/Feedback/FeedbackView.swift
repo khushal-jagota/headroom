@@ -18,7 +18,7 @@ struct FeedbackView: View {
                 if let error = model.error {
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                         Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
-                        Button("Retry") { Haptics.light(); Task { await model.load(using: store.client) } }
+                        Button("Retry") { Task { await model.load(using: store.client) } }
                     }
                 }
                 if let response = model.response {
@@ -32,7 +32,7 @@ struct FeedbackView: View {
         .panelsScreen()
         .navigationTitle("Feedback")
         .navigationBarTitleDisplayMode(.large)
-        .refreshable { Haptics.light(); await model.load(using: store.client) }
+        .refreshable { await model.load(using: store.client) }
         .task(id: store.revision) { await model.load(using: store.client) }
     }
 
@@ -115,7 +115,6 @@ struct FeedbackView: View {
             if let label = note.pageLabel, !label.isEmpty {
                 if let destination = FeedbackPageDestination.parse(note.pageAddress) {
                     NavigationLink { pageDestination(destination) } label: { Text(label) }
-                        .simultaneousGesture(TapGesture().onEnded { Haptics.light() })
                 } else { Text(label) }
             }
             Text(Date(timeIntervalSince1970: note.createdAt), style: .relative)
@@ -126,9 +125,10 @@ struct FeedbackView: View {
 
     private func actionButton(_ note: FeedbackNote, action: FeedbackAction) -> some View {
         Button {
-            Haptics.medium()
+            Haptics.light()
             Task {
                 if await model.update(note, action: action, using: store.client) { Haptics.success() }
+                else if model.error != nil { Haptics.error() }
             }
         } label: {
             HStack(spacing: PanelsTheme.Space.sm) {

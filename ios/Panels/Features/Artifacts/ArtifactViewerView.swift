@@ -126,7 +126,7 @@ struct ArtifactViewerView: View {
         } catch {
             if !Task.isCancelled {
                 self.error = error.localizedDescription
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
             }
         }
     }

@@ -8,12 +8,12 @@ import Observation
 
     func perform(_ action: () async throws -> Void) async {
         guard !isSending else { return }
-        isSending = true; note = nil; Haptics.light()
+        isSending = true; note = nil
         defer { isSending = false }
         do { try await action(); Haptics.success() }
         catch {
             note = error.localizedDescription
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            Haptics.error()
         }
     }
 
@@ -85,11 +85,11 @@ struct AgentReadingPage: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(editing ? "Done" : "Edit") {
                         if !editing { draft = text; editing = true; return }
-                        saving = true; error = nil; Haptics.light()
+                        saving = true; error = nil
                         Task {
                             defer { saving = false }
                             do { try await save(draft); text = draft; editing = false; Haptics.success() }
-                            catch { self.error = error.localizedDescription; UINotificationFeedbackGenerator().notificationOccurred(.error) }
+                            catch { self.error = error.localizedDescription; Haptics.error() }
                         }
                     }.disabled(saving)
                 }

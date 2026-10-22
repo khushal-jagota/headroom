@@ -11,16 +11,20 @@ struct OrchestratorView: View {
     @State private var scrolling = false
     @State private var refreshAfterScroll = false
 
+    private var summary: ManagerSummary? { store.managers.first { $0.id == managerID } }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 if let error { LoadErrorView(message: error) { await load() } }
-                if let detail {
-                    VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                        AgentEyebrow(title: detail.project + (detail.settled == true ? " · Settled" : ""), signal: detail.conversationSignal)
-                        AgentPageTitle(title: detail.title)
+                VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
+                    AgentEyebrow(title: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""), signal: detail?.conversationSignal ?? summary?.conversationSignal)
+                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator")
+                    if let detail {
                         AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
                     }
+                }
+                if let detail {
                     WorkerSections(tickets: detail.tickets)
                     VStack(spacing: 0) {
                         Divider().overlay(PanelsTheme.border)
@@ -55,7 +59,7 @@ struct OrchestratorView: View {
             }
         }
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 100 } action: { _, collapsed in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { headerCollapsed = collapsed }
+            withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
         }
         .navigationTitle(headerCollapsed ? detail?.title ?? "Orchestrator" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
@@ -63,7 +67,7 @@ struct OrchestratorView: View {
             AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
         } }
         .task(id: store.revision) { await load() }
-        .refreshable { Haptics.light(); await load() }
+        .refreshable { await load() }
         .accessibilityIdentifier("orchestrator-screen")
     }
 

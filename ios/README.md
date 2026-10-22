@@ -5,9 +5,11 @@ Native SwiftUI foundation, iOS 18 minimum. The app defaults to
 HTTPS server address. The Mac must be able to reach the server over Tailscale.
 No backend changes or third-party packages are needed.
 
-Workspace is the initial tab. Review and Workspace each own their navigation stack. More opens a native sheet
-with its own navigation stack, grouped into Work and System. Choosing a destination
-expands the sheet; dismissing returns to the previous tab. Navigation uses `AppRoute`; every destination has a separate source file.
+Workspace is the initial tab. Review, Workspace and More each own a navigation
+stack and retain their place when switching tabs. More groups Work and System in
+a native list. The tab bar is visible on these three roots; the shared `AppRoute`
+destination hides it on detail pages. Navigation uses native pushes and back swipes;
+every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets/{id}/workspace` endpoint returned HTTP 500 for the sampled tickets;
 `/api/tickets?detail=full&id=…` succeeded. This adapter deliberately uses that
@@ -145,15 +147,18 @@ limits, proposal acceptance/return, owner completion, field/title/recap editing,
 blocker removal and pristine worker setup. Live simulator verification is read-only; ticket and Feedback writes are
 exercised only with an injected stub or URLProtocol interception.
 
-
-
 Review supports approval and send-back through its API adapter; see
 `Review.md` for its behavior and focused verification. Live-server simulator
 verification remains read-only; mutation verification uses a mocked transport.
 
-Haptic helpers offer light, medium, success, error and selection. Navigation and tab
-changes use them, as does saving Settings. Native navigation transitions supply
-motion, respect system accessibility preferences, and avoid custom bouncing.
+Haptic helpers offer light, success, error and selection. Navigation, tabs,
+back swipes, disclosures and read retries are silent; pull refresh and context
+menus retain system feedback. Selection acknowledges a changed control value.
+Ideas and Feedback use light feedback when submitting and success or error on
+the result; page context actions and edits acknowledge the result only. Copy and
+local Settings saves acknowledge completion. Background updates never buzz.
+Native pushes retain system motion; shared disclosures use the same bounce-free
+spring, with instant changes under Reduce Motion.
 
 ## Feedback verification
 
@@ -272,3 +277,20 @@ The three artifact logic tests cover cross-owner URLs and encoding, unsafe file
 paths, and preservation of markdown code blocks. They reuse the existing XCTest
 target and require no server. Simulator captures are a separate read-only smoke
 pass, and do not establish physical-device haptics or frame-rate performance.
+
+## App-wide feel pass
+
+Chief and Orchestrator headers use the already loaded Workspace identity during
+the initial detail read. Ticket navigation uses its cached title. Activity marks
+reserve their width so arriving unread/working indicators do not rewrap titles.
+Expanded recaps stay expanded during refresh. Ideas disclosures clip their
+shrinking content to address the reviewed collapse overlap. System list headers
+preserve mixed case; static group labels use title case.
+
+The polish revision was compiled with the generic iOS Simulator SDK and four
+build jobs, and the four existing host system-model tests passed. Lane B was shut
+down and this task forbids booting it, so there was no simulator capture or runtime
+navigation pass. The incoming Ticket and Review redesigns were not in this base;
+their integrated interaction review remains outstanding. Physical haptics, motion,
+all-detail tab restoration and live regrouping still need runtime verification.
+No live write was sent. No tests were added for these presentation changes.
