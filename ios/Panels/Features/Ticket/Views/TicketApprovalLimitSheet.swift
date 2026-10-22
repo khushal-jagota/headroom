@@ -35,7 +35,7 @@ struct TicketApprovalLimitSheet: View {
                         ForEach(presentation.holders, id: \.self) { principal in
                             Text(presentation.holderLabel(principal)).tag(principal)
                         }
-                    }.pickerStyle(.inline).labelsHidden()
+                    }.pickerStyle(.segmented).labelsHidden()
                 }
                 if let error { Text(error).foregroundStyle(PanelsTheme.error) }
             }.disabled(busy).panelsScreen().navigationTitle(approval ? "Approve" : "Approval limit").navigationBarTitleDisplayMode(.inline)
@@ -59,5 +59,7 @@ struct TicketApprovalLimitSheet: View {
         }
         .presentationDragIndicator(.visible)
         .interactiveDismissDisabled(busy)
+        .onChange(of: ceiling) { _, _ in Haptics.selection() }
+        .onChange(of: holder) { _, _ in Haptics.selection() }
     }
 }

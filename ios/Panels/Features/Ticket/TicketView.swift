@@ -42,7 +42,7 @@ struct TicketView: View {
                     ProgressView("Loading ticket…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
             }.frame(maxWidth: 720, alignment: .leading)
-                .padding(.horizontal, PanelsTheme.Space.xl).padding(.vertical, PanelsTheme.Space.lg)
+                .padding(.horizontal, 20).padding(.vertical, PanelsTheme.Space.lg)
                 .frame(maxWidth: .infinity)
         }
         .navigationTitle(titleVisible ? "" : detail?.title ?? "Ticket")
@@ -197,8 +197,8 @@ struct TicketView: View {
                         .font(PanelsTheme.TypeScale.small).frame(minHeight: 44)
                 }.buttonStyle(.plain)
             }
-        }.padding(PanelsTheme.Space.xl).frame(maxWidth: .infinity, alignment: .leading)
-            .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
+        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(presentation.ticket.pendingProposal != nil || presentation.ticket.assigned == true ? PanelsTheme.raised : PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
     }
 
     private func steps(_ presentation: TicketPresentation) -> some View {
@@ -209,7 +209,7 @@ struct TicketView: View {
                 Text("\(presentation.completedCount) of \(presentation.manifest.fields.count) done")
             }.font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
             ForEach(presentation.manifest.fields) { field in TicketStepRow(field: field, presentation: presentation) }
-        }.accessibilityIdentifier("ticket-steps")
+        }
     }
 
     @ViewBuilder private var artifactRow: some View {
