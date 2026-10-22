@@ -924,6 +924,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
         (evidence / ('queued-publication-before-wait.json' if queued else 'delayed-publication-before-wait.json')).write_text(json.dumps({
             'prior':prior,'continued':continued,'frames':page.evaluate('window.__navigationFrames'),
             'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
+            'heldFrames':page.evaluate('window.__heldNavigationFrames'),
             'members':members('rail_tickets')},indent=2))
         if queued:
             page.wait_for_function("""()=>document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()

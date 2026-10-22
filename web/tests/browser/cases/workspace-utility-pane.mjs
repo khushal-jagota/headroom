@@ -24,6 +24,7 @@ const ReaderSource = globalThis.EventSource;
 const sources = new Set<any>();
 (globalThis as any).__navigationFrames = [];
 (globalThis as any).__heldNavigation = [];
+(globalThis as any).__heldNavigationFrames = [];
 (globalThis as any).__navigationOrder = [];
 (globalThis as any).__releaseNavigation = () => {
   const held = (globalThis as any).__heldNavigation.splice(0);
@@ -53,7 +54,10 @@ class QuietEventSource {
       }
       resolve();
       };
-      if ((globalThis as any).__holdNavigation) (globalThis as any).__heldNavigation.push(publish);
+      if ((globalThis as any).__holdNavigation) {
+        (globalThis as any).__heldNavigationFrames.push(JSON.parse(data));
+        (globalThis as any).__heldNavigation.push(publish);
+      }
       else publish();
     }, (globalThis as any).__navigationDelay ?? 0));
   }
