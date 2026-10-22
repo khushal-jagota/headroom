@@ -6,7 +6,7 @@ private enum WorkspaceCardRow: Identifiable {
     var id: String {
         switch self {
         case .heading(let section): "heading:\(section.rawValue)"
-        case .ticket(let ticket, _): "ticket:\(ticket.id)"
+        case .ticket(let ticket, let section): "ticket:\(section.rawValue):\(ticket.id)"
         }
     }
 }
@@ -18,6 +18,8 @@ struct WorkspaceCard: View {
     let route: AppRoute
     let signal: ConversationSignal?
     let groups: [WorkspaceTicketGroup]
+    let previewChanged: (Bool) -> Void
+    let open: (AppRoute) -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private static let chiefPortrait: UIImage? = Bundle.main.url(forResource: "workspace-chief", withExtension: "png")
@@ -32,81 +34,85 @@ struct WorkspaceCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             NavigationLink(value: route) {
-                VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                    HStack(spacing: PanelsTheme.Space.md) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if !chief {
+                        HStack {
+                            Text(project ?? "").font(.system(size: 13)).foregroundStyle(PanelsTheme.faint)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            WorkspaceSignalMark(signal: signal)
+                        }
+                    }
+                    HStack(spacing: 10) {
                         if chief, let portrait = Self.chiefPortrait {
                             Image(uiImage: portrait).renderingMode(.original).resizable().scaledToFill()
-                                .frame(width: 28, height: 28).clipShape(RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
+                                .frame(width: 28, height: 28).clipShape(RoundedRectangle(cornerRadius: 6))
                                 .accessibilityHidden(true)
-                        } else if let project, !project.isEmpty {
-                            Text(project).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                                .lineLimit(1)
                         }
-                        Spacer(minLength: PanelsTheme.Space.sm)
-                        WorkspaceSignalMark(signal: signal)
+                        Text(title).font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(signal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
+                            .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if chief { WorkspaceSignalMark(signal: signal) }
                     }
-                    Text(title).font(PanelsTheme.TypeScale.heading).foregroundStyle(PanelsTheme.strong)
-                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.vertical, PanelsTheme.Space.md)
-                .contentShape(Rectangle())
+                }.frame(minHeight: 44, alignment: .top).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier(chief ? "workspace-chief" : "workspace-orchestrator")
+            .modifier(WorkspaceContextMenu(route: route, title: title, parent: project, ticket: nil,
+                                           signal: signal, previewChanged: previewChanged, open: open))
             ForEach(rows) { row in
                 switch row {
                 case .heading(let section):
                     Text(section.title.uppercased())
-                        .font(PanelsTheme.TypeScale.caption.weight(.semibold))
-                        .tracking(0.8).foregroundStyle(PanelsTheme.muted)
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(1.3).foregroundStyle(PanelsTheme.faint)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, PanelsTheme.Space.sm)
-                        .padding(.vertical, PanelsTheme.Space.sm)
-                        .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.sm))
-                        .padding(.top, PanelsTheme.Space.md)
-                        .padding(.bottom, PanelsTheme.Space.xs)
-                    .accessibilityAddTraits(.isHeader)
-                    .transition(.opacity)
+                        .padding(.vertical, 8)
+                        .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 4))
+                        .padding(.top, section == groups.first?.section ? 16 : 8)
+                        .accessibilityAddTraits(.isHeader)
+                        .transition(.opacity)
                 case .ticket(let ticket, let section):
                     NavigationLink(value: AppRoute.ticket(ticket.id)) {
-                        HStack(spacing: PanelsTheme.Space.md) {
-                            Text(ticket.title).font(PanelsTheme.TypeScale.body)
-                                .foregroundStyle(section.needsAttention ? PanelsTheme.text : PanelsTheme.faint)
+                        HStack(spacing: 12) {
+                            Text(ticket.title).font(.system(size: 16))
+                                .foregroundStyle(section.needsAttention || ticket.conversationSignal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
                                 .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             WorkspaceSignalMark(signal: ticket.conversationSignal)
-                        }
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+                        }.frame(minHeight: 44).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("workspace-ticket-\(ticket.id)")
                     .accessibilityLabel(ticket.title)
-                    .accessibilityValue(ticket.conversationSignal?.messageForOwner == true ? "Unread message" : ticket.conversationSignal?.working == true ? "Working" : "")
+                    .modifier(WorkspaceContextMenu(route: .ticket(ticket.id), title: ticket.title,
+                                                   parent: title, ticket: ticket, signal: ticket.conversationSignal,
+                                                   previewChanged: previewChanged, open: open))
                     .transition(.opacity)
                 }
             }
         }
-        .padding(.horizontal, PanelsTheme.Space.lg)
-        .padding(.bottom, groups.isEmpty ? 0 : PanelsTheme.Space.sm)
-        .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
-        .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).strokeBorder(PanelsTheme.border))
+        .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, groups.isEmpty ? 16 : 2)
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(PanelsTheme.border))
     }
 }
 
 struct WorkspaceSignalMark: View {
     let signal: ConversationSignal?
     var body: some View {
-        Group {
-            if signal?.messageForOwner == true {
-                Circle().fill(PanelsTheme.accent).frame(width: 10, height: 10)
-                    .accessibilityLabel("Unread message")
-            } else if signal?.working == true {
+        HStack(spacing: 4) {
+            if signal?.working == true {
                 ProgressView().controlSize(.mini).tint(PanelsTheme.faint)
                     .accessibilityLabel("Working")
             }
-        }.frame(width: 16)
+            if signal?.messageForOwner == true {
+                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8)
+                    .accessibilityLabel("Unread message")
+            }
+        }.frame(minWidth: 20, alignment: .trailing)
+            .animation(.easeInOut(duration: 0.15), value: signal?.messageForOwner)
+            .animation(.easeInOut(duration: 0.15), value: signal?.working)
     }
 }

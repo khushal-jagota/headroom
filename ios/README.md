@@ -207,26 +207,24 @@ rebase checks.
 
 Workspace follows the web rail's section precedence and visibility: approval,
 answer, Yours, errors, Agent, Consequences, agent approval, then Other. Backlogged,
-blocked and completed tickets leave this rail. Unread messages stay independent
-blue dots; a working spinner appears only when that conversation is running and
-has no unread message. Chief activity comes from the read-only workers index.
-Card activity marks sit in the avatar or project eyebrow above the title. Group
-labels have filled backgrounds and no chevrons. Headers and ticket rows push the
-shared typed routes without marking anything read.
+blocked and completed tickets leave this rail. Unread dots and working spinners
+are independent. Chief activity comes from the read-only workers index.
 
-Cards keep surviving tickets in their existing section order and append arrivals.
-A flat set of stable row identities lets native animation move a ticket between
-sections; Reduce Motion disables the layout animation. Workspace navigation, the
-Settled fold, pagination and pull-to-refresh use selection haptics. Physical haptic
-feel still needs a device.
+The approved mobile design keeps hairline cards, filled group labels, one-line
+rows and native pushes. Settled is a plain expandable list after the cards, with
+the server's total count. Pages load in batches of 30; refresh preserves the loaded
+window. Surviving rows retain order, and section changes fade instead of travelling.
+Regrouping waits during scrolling and context previews; titles and marks stay live.
+Reduce Motion removes layout animation.
 
-Settled stays at the bottom, displays the server's total count, and opens into its
-own bounded scroll area. Summary pages load in batches of 30, and refresh preserves
-the loaded window. The active lists retain the foundation's Load more control. The collapsed Settled
-label is currently clipped by the bottom shell in Simulator captures; the toggle
-and expanded list work. This remains a known layout issue.
+Long press previews the full title, recap and manifest-derived stage sentence.
+Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
+orchestrator. These use existing endpoints. Failed or uncertain actions show an
+error; confirmed actions give success haptics. Pushes and the Settled toggle are
+silent, and pull refresh/context menus use system feedback. Physical haptic feel
+still needs a device. Conversation contents remain the shared placeholder.
 
-Three pure Workspace tests reuse the existing ticket fixture. They cover distinct
-risks not covered by DTO decoding: overlapping attention facts and independent
-unread state; hidden work leaking into the rail; and refresh/reclassification
-reordering surviving rows. They need no backend, browser, or new fixture host.
+Four focused Workspace tests reuse the existing ticket fixture and an in-process
+URLProtocol stub. They cover attention precedence, hidden-ticket exclusion, stable
+section ordering, and write methods/payloads including uncertain recap delivery.
+They add no backend or browser host. Live Simulator verification invokes no writes.

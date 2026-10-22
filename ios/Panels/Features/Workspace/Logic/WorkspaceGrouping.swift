@@ -16,7 +16,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .other: "Other"
         }
     }
-    var needsAttention: Bool { self == .approval || self == .answer || self == .yours || self == .errored }
+    var needsAttention: Bool { self == .approval || self == .answer || self == .errored }
 }
 
 struct WorkspaceTicketGroup: Identifiable {
@@ -27,7 +27,7 @@ struct WorkspaceTicketGroup: Identifiable {
 
 enum WorkspaceGrouping {
     static func section(for ticket: TicketSummary) -> WorkspaceSection? {
-        guard !ticket.isBacklogged, ticket.ticketStatus != "blocked", ticket.stage != "done" else { return nil }
+        guard !ticket.isBacklogged, ticket.blocked != true, ticket.ticketStatus != "blocked", ticket.stage != "done" else { return nil }
         if ticket.awaitingApproval { return .approval }
         if ticket.awaitingAnswer { return .answer }
         if ticket.assigned { return .yours }

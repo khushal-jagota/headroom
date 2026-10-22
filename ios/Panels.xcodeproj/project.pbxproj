@@ -66,6 +66,7 @@
 		E8EB97A1681A6EAEA0322130 /* ChiefModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C8B9D9D1FE5DC39AC9839B9 /* ChiefModels.swift */; };
 		ECD2E176E42C2C7A8E5CE683 /* ReviewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA980845BC1C25E5F54217D /* ReviewModels.swift */; };
 		F5678A0C6C2DCF5758843DFC /* artifacts.json in Resources */ = {isa = PBXBuildFile; fileRef = 08B13A66D381488CEFC63E89 /* artifacts.json */; };
+		F70457F000B7D649DB66BB39 /* WorkspaceContextMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 235B29593C129B082143CFEF /* WorkspaceContextMenu.swift */; };
 		FA8B9255C9A250AB3535F32F /* PanelsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C53D8C52A18D5B5D1295C5F /* PanelsApp.swift */; };
 		FCF89F630317387F7FCA3437 /* review.json in Resources */ = {isa = PBXBuildFile; fileRef = 783A5F0113315294102CE6CE /* review.json */; };
 		FDFE6ADACE950453A345B463 /* TicketView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99A69BEF25D336DE99BFC97 /* TicketView.swift */; };
@@ -91,6 +92,7 @@
 		1704E7E98D27A5B4734FD5ED /* WorkerScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerScreenTests.swift; sourceTree = "<group>"; };
 		19076135E62A3ADAC15BC4E2 /* RecapAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecapAPI.swift; sourceTree = "<group>"; };
 		1C45F3D7A86215A521781B78 /* Navigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation.swift; sourceTree = "<group>"; };
+		235B29593C129B082143CFEF /* WorkspaceContextMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceContextMenu.swift; sourceTree = "<group>"; };
 		2C504A7DC566D315CFE44BE6 /* WorkspaceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCard.swift; sourceTree = "<group>"; };
 		2CD280BD116D51431A92E820 /* ScreenState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenState.swift; sourceTree = "<group>"; };
 		2E71530843F077BD7F076F6B /* ArtifactViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactViewerView.swift; sourceTree = "<group>"; };
@@ -320,6 +322,7 @@
 			isa = PBXGroup;
 			children = (
 				2C504A7DC566D315CFE44BE6 /* WorkspaceCard.swift */,
+				235B29593C129B082143CFEF /* WorkspaceContextMenu.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -664,6 +667,7 @@
 				141C57725CE90E4AE2CA7CF3 /* WorkerSections.swift in Sources */,
 				5334A0758F1BF38826201578 /* WorkspaceAPI.swift in Sources */,
 				944A2AA8AF2F16B274EC8243 /* WorkspaceCard.swift in Sources */,
+				F70457F000B7D649DB66BB39 /* WorkspaceContextMenu.swift in Sources */,
 				7D12E534E3E83816275B63C2 /* WorkspaceGrouping.swift in Sources */,
 				5D9538E76E79D21C3E40827A /* WorkspaceModels.swift in Sources */,
 				BBD854BD301C60BE514FCE08 /* WorkspaceView.swift in Sources */,

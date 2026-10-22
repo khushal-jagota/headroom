@@ -11,6 +11,22 @@ final class WorkspacePresentationTests: XCTestCase {
         return try APIClient.decoder().decode(TicketSummary.self, from: JSONSerialization.data(withJSONObject: row))
     }
 
+    func testActionsUseWireContractAndRejectUncertainDelivery() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WorkspaceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = APIClient(baseURL: URL(string: "https://workspace-stub.invalid")!, session: session)
+        try await client.workspaceAction(.backlog, route: .ticket("t1"))
+        try await client.workspaceAction(.resume, route: .ticket("t1"))
+        try await client.workspaceAction(.settle, route: .orchestrator("m1"))
+        try await client.workspaceAction(.recap, route: .chief)
+        do {
+            try await client.workspaceAction(.recap, route: .ticket("uncertain"))
+            XCTFail("Uncertain delivery must not show success")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("uncertain")) }
+    }
+
     func testAttentionPrecedenceAndUnreadDoesNotCreateASection() throws {
         let overlap = try ticket(["awaiting_approval": true, "awaiting_answer": true, "assigned": true, "agent_state": "working"])
         XCTAssertEqual(WorkspaceGrouping.section(for: overlap), .approval)
@@ -23,7 +39,7 @@ final class WorkspacePresentationTests: XCTestCase {
     }
 
     func testRailExcludesHiddenWorkEvenWhenItNeedsApproval() throws {
-        for override: [String: Any] in [["is_backlogged": true], ["ticket_status": "blocked"], ["stage": "done"]] {
+        for override: [String: Any] in [["is_backlogged": true], ["blocked": true], ["ticket_status": "blocked"], ["stage": "done"]] {
             var changes = override
             changes["awaiting_approval"] = true
             XCTAssertNil(WorkspaceGrouping.section(for: try ticket(changes)))
@@ -43,4 +59,41 @@ final class WorkspacePresentationTests: XCTestCase {
         XCTAssertEqual(next.first?.tickets.map(\.id), ["b", "c"])
         XCTAssertEqual(next.last?.tickets.map(\.id), ["a"])
     }
+}
+
+private final class WorkspaceURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                data.append(buffer, count: count)
+            }
+        }
+        let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let path = request.url!.path
+        var reply = "{}"
+        let valid: Bool
+        switch path {
+        case "/api/tickets/t1/backlog", "/api/tickets/t1/resume":
+            valid = request.httpMethod == "POST" && body?.isEmpty == true
+        case "/api/managers/m1/settled":
+            valid = request.httpMethod == "PATCH" && body?["settled"] as? Bool == true
+        case "/api/recap-requests":
+            let target = body?["target"] as? [String: String]
+            valid = request.httpMethod == "POST" && (target == ["kind": "chief", "id": "chief"] || target == ["kind": "ticket", "id": "uncertain"])
+            reply = target?["id"] == "uncertain" ? #"{"fate":"uncertain"}"# : #"{"fate":"queued"}"#
+        default: valid = false
+        }
+        guard valid else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(reply.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
