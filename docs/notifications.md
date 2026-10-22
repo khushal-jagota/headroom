@@ -19,10 +19,21 @@ commits stay distinct even when one wake-up covers them. Ticket creation capture
 initial flags before commit. Blocker, proposal, assignment, conversation link, and read
 changes capture their flags in the same transaction.
 
+A permission or input request awaits an answer only while its turn remains open.
+A recorded completion, failure, or interruption clears all unanswered requests from
+that turn. The next request can then create a new notification edge. A prompt or steer
+alone does not close a request. Unread messages and failure attention remain separate.
+
 The delivery poll consumes those saved edges. It does not scan conversation history.
 A Ticket without a conversation has no conversation attention. The process that owns
 the polling lock reconciles imported state once before it starts the loops. Repeated
 startup reconciliation creates no duplicate edges. A startup failure releases the lock.
+
+Startup reconciliation also clears stale request attention when the conversation records
+that the turn ended. This correction preserves the generation and past deliveries, and
+creates no edge. A later conversation write can also correct the stale flag.
+Neither path replays missed historical edges. Recovery after a crash without a recorded
+turn ending remains outside this correction.
 
 One policy function is the only door from an edge to a notification. It reads the saved
 choice for that type and either suppresses the edge or creates the privacy-safe title,
@@ -116,4 +127,4 @@ Code paths: `src/planner/notifications/`, the notification tables in the baselin
 `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
-_Last verified: 2026-09-20._
+_Last verified: 2026-10-22._
