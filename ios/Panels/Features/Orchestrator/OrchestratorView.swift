@@ -7,7 +7,9 @@ struct OrchestratorView: View {
     @State private var detail: ManagerDetail?
     @State private var error: String?
     @State private var headerCollapsed = false
-    @State private var goalExpanded = false
+    @State private var actions = AgentPageActions()
+    @State private var scrolling = false
+    @State private var refreshAfterScroll = false
 
     var body: some View {
         ScrollView {
@@ -15,43 +17,52 @@ struct OrchestratorView: View {
                 if let error { LoadErrorView(message: error) { await load() } }
                 if let detail {
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                        AgentBreadcrumb(title: detail.project, signal: detail.conversationSignal)
+                        AgentEyebrow(title: detail.project + (detail.settled == true ? " · Settled" : ""), signal: detail.conversationSignal)
                         AgentPageTitle(title: detail.title)
-                        AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID)) { await store.refresh() }
+                        AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
                     }
                     WorkerSections(tickets: detail.tickets)
-                    VStack(spacing: PanelsTheme.Space.sm) {
-                        if !detail.goal.isEmpty {
-                            DisclosureGroup("Goal", isExpanded: $goalExpanded) {
-                                Text(detail.goal).font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.muted)
-                                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, PanelsTheme.Space.md)
-                            }.font(PanelsTheme.TypeScale.small).tint(PanelsTheme.faint)
-                                .padding(PanelsTheme.Space.md)
-                                .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
-                                .animation(reduceMotion ? nil : .easeInOut(duration: PanelsTheme.Motion.slow), value: goalExpanded)
-                                .onChange(of: goalExpanded) { _, _ in Haptics.selection() }
-                        }
+                    VStack(spacing: 0) {
+                        Divider().overlay(PanelsTheme.border)
+                        NavigationLink {
+                            AgentReadingPage(title: "Goal", originalText: detail.goal) { text in
+                                try await store.client.saveManagerGoal(managerID, goal: text)
+                                await store.refresh()
+                            }
+                        } label: {
+                            Text("Goal").frame(maxWidth: .infinity, minHeight: 50, alignment: .leading).contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityIdentifier("manager-goal")
+                        Divider().overlay(PanelsTheme.border)
                         NavigationLink(value: AppRoute.artifacts(owner: ArtifactOwner(kind: .manager, id: managerID), directory: "")) {
                             HStack {
-                                Label("Artifacts", systemImage: "folder")
+                                Text("Artifacts")
                                 Spacer()
-                                Image(systemName: "chevron.right")
-                            }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-                                .padding(PanelsTheme.Space.md).frame(minHeight: 44)
-                                .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
+                                Text(detail.artifacts.count.formatted()).foregroundStyle(PanelsTheme.faint)
+                            }.frame(minHeight: 50).contentShape(Rectangle())
                         }.buttonStyle(.plain)
-                    }
+                    }.font(PanelsTheme.TypeScale.body)
                     ConversationPlaceholder()
                 } else if error == nil {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
-            }.padding(.horizontal, PanelsTheme.Space.xl).padding(.bottom, PanelsTheme.Space.xl)
+            }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
+        }
+        .onScrollPhaseChange { _, phase in
+            scrolling = phase != .idle
+            if !scrolling && refreshAfterScroll {
+                refreshAfterScroll = false
+                Task { await load() }
+            }
         }
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 100 } action: { _, collapsed in
             withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { headerCollapsed = collapsed }
         }
         .navigationTitle(headerCollapsed ? detail?.title ?? "Orchestrator" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) {
+            AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
+        } }
         .task(id: store.revision) { await load() }
         .refreshable { Haptics.light(); await load() }
         .accessibilityIdentifier("orchestrator-screen")
@@ -63,6 +74,7 @@ struct OrchestratorView: View {
             let result = try await api.manager(managerID)
             try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
+            if scrolling { refreshAfterScroll = true; return }
             detail = result; error = nil
         } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
     }
@@ -71,26 +83,24 @@ struct OrchestratorView: View {
 struct AgentPageTitle: View {
     let title: String
     var body: some View {
-        Text(title).font(PanelsTheme.TypeScale.title).foregroundStyle(PanelsTheme.strong)
+        Text(title).font(.title.weight(.semibold)).foregroundStyle(PanelsTheme.strong)
             .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
     }
 }
 
-struct AgentBreadcrumb: View {
+enum AgentPageLayout {
+    static let gutter: CGFloat = 20
+    static let rowInset: CGFloat = 14
+}
+
+struct AgentEyebrow: View {
     let title: String
     let signal: ConversationSignal?
-    @Environment(\.dismiss) private var dismiss
     var body: some View {
         HStack(spacing: PanelsTheme.Space.sm) {
-            Button { Haptics.light(); dismiss() } label: {
-                HStack(spacing: PanelsTheme.Space.sm) {
-                    Text(title)
-                    Text("/")
-                    Image(systemName: "arrow.up.left")
-                }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 44)
-            }.accessibilityLabel("\(title), back to Workspace")
+            if !title.isEmpty { Text(title).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
             Spacer()
             WorkerSignalMark(signal: signal)
-        }
+        }.frame(minHeight: 18).padding(.top, PanelsTheme.Space.sm)
     }
 }

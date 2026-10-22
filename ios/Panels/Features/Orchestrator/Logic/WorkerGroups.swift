@@ -3,6 +3,7 @@ import Foundation
 /// The facts already supplied by the two existing worker endpoints.
 protocol GroupedWorker: Identifiable where ID == String {
     var title: String { get }
+    var recapPreview: String { get }
     var stage: String { get }
     var ticketStatus: String { get }
     var isBacklogged: Bool { get }

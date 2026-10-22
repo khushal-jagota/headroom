@@ -46,6 +46,20 @@ final class WorkerScreenTests: XCTestCase {
         XCTAssertEqual(uncertain.note, "Delivery uncertain · do not resend")
     }
 
+    func testApprovedPageActionsUseExistingWriteContracts() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WorkerScreenMockProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let api = APIClient(baseURL: URL(string: "https://panels.invalid")!, session: session)
+        try await api.setManagerSettled("manager", settled: true)
+        try await api.saveManagerGoal("manager", goal: "goal text")
+        try await api.saveAgentRecap(target: Principal(kind: "manager", id: "manager"), recap: "recap text")
+        try await api.saveAgentRecap(target: Principal(kind: "chief", id: "chief"), recap: "recap text")
+        try await api.setWorkerBacklog("worker", backlogged: true)
+        try await api.setWorkerBacklog("worker", backlogged: false)
+    }
+
     func testChiefRefreshRetainsLoadedWindowAndScopesEveryPage() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WorkerScreenMockProtocol.self]
@@ -64,26 +78,29 @@ private final class WorkerScreenMockProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
+    private func bodyObject() throws -> [String: Any] {
+        let body: Data
+        if let value = request.httpBody { body = value }
+        else if let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var collected = Data(); var bytes = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: bytes.count)
+                guard count >= 0 else { throw URLError(.cannotDecodeRawData) }
+                if count == 0 { break }
+                collected.append(contentsOf: bytes.prefix(count))
+            }
+            body = collected
+        } else { throw URLError(.badServerResponse) }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+    }
     override func startLoading() {
         do {
             guard let url = request.url, url.host == "panels.invalid" else { throw URLError(.badURL) }
             let data: Data
             if url.path == "/api/recap-requests" {
                 guard request.httpMethod == "POST", request.value(forHTTPHeaderField: "Content-Type") == "application/json" else { throw URLError(.badServerResponse) }
-                let body: Data
-                if let value = request.httpBody { body = value }
-                else if let stream = request.httpBodyStream {
-                    stream.open(); defer { stream.close() }
-                    var collected = Data(); var bytes = [UInt8](repeating: 0, count: 1024)
-                    while stream.hasBytesAvailable {
-                        let count = stream.read(&bytes, maxLength: bytes.count)
-                        guard count >= 0 else { throw URLError(.cannotDecodeRawData) }
-                        if count == 0 { break }
-                        collected.append(contentsOf: bytes.prefix(count))
-                    }
-                    body = collected
-                } else { throw URLError(.badServerResponse) }
-                let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let object = try bodyObject()
                 let target = try XCTUnwrap(object["target"] as? [String: String])
                 guard Set(object.keys) == ["target"], Set(target.keys) == ["kind", "id"] else { throw URLError(.badServerResponse) }
                 switch (target["kind"], target["id"]) {
@@ -92,6 +109,18 @@ private final class WorkerScreenMockProtocol: URLProtocol, @unchecked Sendable {
                 case ("manager", "uncertain"): data = Data(#"{"fate":"uncertain"}"#.utf8)
                 default: throw URLError(.badServerResponse)
                 }
+            } else if url.path.hasPrefix("/api/managers/") || url.path == "/api/workers/chief-of-staff/recap" || url.path.hasPrefix("/api/tickets/worker/") {
+                let object = try XCTUnwrap(try bodyObject() as? [String: AnyHashable])
+                let valid: Bool
+                switch (url.path, request.httpMethod) {
+                case ("/api/managers/manager/settled", "PATCH"): valid = object == ["settled": true]
+                case ("/api/managers/manager", "PATCH"): valid = object == ["goal": "goal text"] || object == ["recap": "recap text"]
+                case ("/api/workers/chief-of-staff/recap", "PUT"): valid = object == ["recap": "recap text"]
+                case ("/api/tickets/worker/backlog", "POST"), ("/api/tickets/worker/resume", "POST"): valid = object.isEmpty
+                default: valid = false
+                }
+                guard valid, request.value(forHTTPHeaderField: "Content-Type") == "application/json" else { throw URLError(.badServerResponse) }
+                data = Data("{}".utf8)
             } else if url.path == "/api/tickets" {
                 let query = Dictionary(uniqueKeysWithValues: (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
                 guard request.httpMethod == "GET", query["manager_kind"] == "chief", query["stage"] == "done", query["include_terminal"] == "true" else { throw URLError(.badServerResponse) }

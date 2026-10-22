@@ -10,6 +10,9 @@ struct ChiefView: View {
     @State private var error: String?
     @State private var loadingMore = false
     @State private var headerCollapsed = false
+    @State private var actions = AgentPageActions()
+    @State private var scrolling = false
+    @State private var refreshAfterScroll = false
 
     var body: some View {
         ScrollView {
@@ -17,12 +20,11 @@ struct ChiefView: View {
                 if let error { LoadErrorView(message: error) { await load() } }
                 if let chief {
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                        AgentBreadcrumb(title: "Workspace", signal: chief.conversationSignal)
+                        AgentEyebrow(title: "", signal: chief.conversationSignal)
                         AgentPageTitle(title: chief.label)
-                        AgentRecap(recap: chief.recap, target: Principal(kind: "chief", id: "chief")) { await store.refresh() }
+                        AgentRecap(recap: chief.recap, target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
                     }
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                        Text("Workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).accessibilityAddTraits(.isHeader)
                         if let active {
                             if active.tickets.isEmpty {
                                 Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
@@ -31,11 +33,11 @@ struct ChiefView: View {
                             }
                             loadMoreButton(page: active.page, filter: .active)
                         }
-                        WorkerDisclosure(title: "Backlogged", count: backlogged?.page.matchCount ?? 0) {
+                        WorkerDisclosure(title: "Backlogged", count: backlogged?.page.matchCount ?? 0, unreadCount: backlogged?.tickets.filter { $0.conversationSignal?.messageForOwner == true }.count ?? 0) {
                             WorkerRows(tickets: WorkerGroup.ordered(backlogged?.tickets ?? []))
                             if let page = backlogged?.page { loadMoreButton(page: page, filter: .backlogged) }
                         }
-                        WorkerDisclosure(title: "Done", count: done?.page.matchCount ?? 0) {
+                        WorkerDisclosure(title: "Done", count: done?.page.matchCount ?? 0, unreadCount: done?.tickets.filter { $0.conversationSignal?.messageForOwner == true }.count ?? 0) {
                             WorkerRows(tickets: WorkerGroup.ordered(done?.tickets ?? []))
                             if let page = done?.page { loadMoreButton(page: page, filter: .done) }
                         }
@@ -44,13 +46,24 @@ struct ChiefView: View {
                 } else if error == nil {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
                 }
-            }.padding(PanelsTheme.Space.xl)
+            }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
+        }
+        .onScrollPhaseChange { _, phase in
+            scrolling = phase != .idle
+            if !scrolling && refreshAfterScroll {
+                refreshAfterScroll = false
+                Task { await load() }
+            }
         }
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 80 } action: { _, collapsed in
             withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { headerCollapsed = collapsed }
         }
         .navigationTitle(headerCollapsed ? chief?.label ?? "Chief of Staff" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) {
+            AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
+        } }
         .task(id: store.revision) { await load() }
         .refreshable { Haptics.light(); await load() }
         .accessibilityIdentifier("chief-screen")
@@ -86,6 +99,7 @@ struct ChiefView: View {
             let result = try await (roster, activeRead, backlogRead, doneRead)
             try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
+            if scrolling { refreshAfterScroll = true; return }
             chief = result.0.chiefOfStaff; active = result.1; backlogged = result.2; done = result.3; error = nil
         } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
     }
