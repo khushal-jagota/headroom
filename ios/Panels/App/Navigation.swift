@@ -13,6 +13,10 @@ enum AppRoute: Hashable {
 struct RouteDestination: View {
     let route: AppRoute
     var body: some View {
+        destination.toolbar(.hidden, for: .tabBar)
+    }
+
+    @ViewBuilder private var destination: some View {
         switch route {
         case .chief: ChiefView()
         case .orchestrator(let id): OrchestratorView(managerID: id)

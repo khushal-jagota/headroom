@@ -7,6 +7,7 @@ struct ManagerDetail: Codable, Identifiable, Sendable {
     let projectId: String
     let goal: String
     let recap: String
+    let conversationSignal: ConversationSignal?
     let settled: Bool?
     let manager: ManagerAgent
     let tickets: [ManagerTicket]
@@ -32,4 +33,8 @@ struct ManagerTicket: Codable, Identifiable, Sendable {
     let awaitingApproval: Bool
     let awaitingAgentApproval: Bool
     let agentState: String
+    let assigned: Bool
+    let waitingToCloseout: Bool?
+    let activityAt: Double?
+    let conversationSignal: ConversationSignal?
 }
