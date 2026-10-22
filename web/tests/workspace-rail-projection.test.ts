@@ -78,11 +78,27 @@ describe("manager rail projection", () => {
         awaiting_approval:true, stage:id === "done" ? "done" : "needs_plan",
         is_backlogged:id === "backlog", blocked:id === "blocked", ticket_status:"agent"
       }))];
-    const rail = buildWorkspaceRail(rows);
-    expect(rail.chiefGroups.map((group) => [group.label, group.cards.map((row) => row.id)]))
-      .toEqual([["Agent", ["working"]], ["Waiting on Consequences", ["closeout"]],
-        ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["idle"]]]);
+    const dependencies = [card("dependent-idle", {blocked:true, agent_state:"idle"}),
+      card("dependent-working", {blocked:true, agent_state:"working", awaiting_reply:true}),
+      card("dependent-failed", {blocked:true, agent_state:"errored"})];
+    rows.push(...dependencies);
+    const managers = (tickets: typeof rows) => [item("active", {tickets}), item("settled", {tickets, settled:true})];
+    const rail = buildWorkspaceRail(rows, managers(rows));
+    for (const groups of [rail.chiefGroups, rail.items[0].groups, rail.settledItems[0].groups]) {
+      expect(groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
+        .toEqual([["Agent", ["working"]], ["Waiting on Consequences", ["closeout"]],
+          ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["idle"]]]);
+    }
     expect(rail.groups.find((group) => group.key === "empty")?.label).toBe("Empty");
+    const released = rows.map((row) => dependencies.includes(row) ? {...row, blocked:false, activity_at:100} : row);
+    const resumed = stabilizeWorkspaceRail(buildWorkspaceRail(released, managers(released)), rail);
+    for (const groups of [resumed.chiefGroups, resumed.items[0].groups, resumed.settledItems[0].groups]) {
+      expect(groups.find((group) => group.key === "agent")?.cards.map((row) => row.id))
+        .toEqual(["working", "dependent-idle", "dependent-working"]);
+      expect(groups.find((group) => group.key === "errored")?.cards.map((row) => row.id)).toEqual(["dependent-failed"]);
+      expect(groups.find((group) => group.key === "agent")?.cards[2]).toBe(released.find((row) => row.id === "dependent-working"));
+      expect(groups.find((group) => group.key === "agent")?.cards[2].awaiting_reply).toBe(true);
+    }
   });
 
   it("keeps unread independent of rail categories while preserving global classification and original records", () => {

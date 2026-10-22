@@ -1000,3 +1000,63 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
         assert not started.started
         assert ticket.worker_step_claim is WorkerStepClaim.none
         assert ticket.conversation_id is None
+
+
+def test_deploy_restart_capability_obeys_authority_and_current_worker_gates(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.conversation.deploy_interruptions import api
+    from planner.conversation.deploy_interruptions.contracts import InterruptionSummary
+    from planner.core.authctx import RequestContext
+
+    ticket_id = world.ready_ticket(conversation_id="deploy-conversation")
+    with closing(world.connect()) as conn:
+        conn.execute("UPDATE tickets SET worker_step_claim = 'errored' WHERE id = ?", (ticket_id,))
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        assert ticket.stage == ticket.ceiling
+
+        def summary(_conn: sqlite3.Connection) -> InterruptionSummary:
+            return {
+                "accounts": [
+                    {
+                        "deployment_id": "deploy",
+                        "capture_state": "captured",
+                        "detail": None,
+                        "entries": [
+                            {
+                                "interruption_id": "notice",
+                                "deployment_id": "deploy",
+                                "conversation_id": "deploy-conversation",
+                                "display_name": "T",
+                                "owner_kind": "ticket",
+                                "owner_id": ticket_id,
+                                "original_status": "active",
+                                "recovery_state": "awaiting_action",
+                                "detail": "Deploy ended the turn.",
+                                "can_restart": False,
+                            }
+                        ],
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(api, "read_summary", summary)
+        owner = RequestContext(OWNER_PRINCIPAL)
+        assert asyncio.run(api.deployment_interruptions(conn, owner))["accounts"][0]["entries"][0][
+            "can_restart"
+        ]
+        worker = RequestContext(Principal(PrincipalKind.ticket, ticket_id))
+        assert not asyncio.run(api.deployment_interruptions(conn, worker))["accounts"][0][
+            "entries"
+        ][0]["can_restart"]
+        conn.execute("UPDATE tickets SET is_backlogged = 1 WHERE id = ?", (ticket_id,))
+        assert not asyncio.run(api.deployment_interruptions(conn, owner))["accounts"][0]["entries"][
+            0
+        ]["can_restart"]
+        conn.execute(
+            "UPDATE tickets SET is_backlogged = 0, conversation_id = 'newer' WHERE id = ?",
+            (ticket_id,),
+        )
+        assert not asyncio.run(api.deployment_interruptions(conn, owner))["accounts"][0]["entries"][
+            0
+        ]["can_restart"]

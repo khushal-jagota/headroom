@@ -6,6 +6,7 @@ import asyncio
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -20,13 +21,21 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
+    PromptDiscardedEventPayload,
     PromptEventPayload,
     TurnEndedEventPayload,
+)
+from planner.conversation.lifecycle import (
+    LifecycleFact,
+    LifecycleKind,
+    LifecycleOperation,
+    LifecycleStatus,
+    LifecycleTransition,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
-from planner.conversation.message_content import MessageContent
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core import change_signal
 from planner.core.clock import TestClock as FakeClock
@@ -577,7 +586,15 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    for revision, kind in enumerate(WakeSourceKind, start=1):
+    tickets_data.file_current_proposal(
+        tmp_db,
+        ticket_id,
+        body="Review this",
+        principal=Principal(PrincipalKind.ticket, ticket_id),
+        now=11,
+    )
+    tmp_db.execute("UPDATE manager_wakes SET summary='Event 1' WHERE ticket_id=?", (ticket_id,))
+    for revision, kind in enumerate(list(WakeSourceKind)[1:], start=2):
         wake_data.create_wake(
             tmp_db,
             manager_id=item_id,
@@ -677,13 +694,11 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
         ).fetchone()[0]
         == 0
     )
-    wake_data.create_proposal_wake(
+    tickets_data.file_current_proposal(
         tmp_db,
-        manager_id=item_id,
-        ticket_id=ticket_id,
-        proposal_revision=1,
-        ticket_title="Managed ticket",
-        proposal_field="success_condition",
+        ticket_id,
+        body="Review the current proposal",
+        principal=Principal(PrincipalKind.ticket, ticket_id),
         now=53,
     )
     combined = wake_data.claim_next_batch(tmp_db, process_token="process", now=54)
@@ -1127,3 +1142,411 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
         title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=60,
     )
     assert len(_wake_rows(tmp_db)) == 1
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("accept", "proposal_resolved"),
+        ("reject", "proposal_resolved"),
+        ("replace", "revision_changed"),
+        ("delete", "ticket_missing"),
+        ("transfer", "revision_changed"),
+        ("reviewer_only", "reviewer_changed"),
+    ],
+)
+def test_obsolete_sources_retire_before_batching_with_compared_facts(
+    tmp_db: Connection, fake_clock: FakeClock, change: str, expected: str
+) -> None:
+    manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    tickets_data.file_current_proposal(
+        tmp_db,
+        ticket_id,
+        body="Original",
+        principal=Principal(PrincipalKind.ticket, ticket_id),
+        now=2,
+    )
+    if change == "accept":
+        tickets_data.accept_proposal(
+            tmp_db,
+            ticket_id,
+            field="success_condition",
+            principal=OWNER_PRINCIPAL,
+            now=3,
+            next_holder=OWNER_PRINCIPAL,
+            next_ceiling="needs_what_changes",
+        )
+    elif change in ("reject", "resolve_transfer"):
+        tickets_data.reject_proposal(
+            tmp_db,
+            ticket_id,
+            message=None,
+            principal=OWNER_PRINCIPAL,
+            now=3,
+        )
+        if change == "resolve_transfer":
+            tickets_data.edit_ticket(
+                tmp_db,
+                ticket_id,
+                edit={"ceiling_holder": CHIEF_PRINCIPAL},
+                title_max_chars=TITLE_MAX_CHARS,
+                principal=OWNER_PRINCIPAL,
+                now=4,
+            )
+    elif change == "replace":
+        tickets_data.file_current_proposal(
+            tmp_db,
+            ticket_id,
+            body="Replacement",
+            principal=Principal(PrincipalKind.ticket, ticket_id),
+            now=3,
+        )
+    elif change == "delete":
+        tickets_data.delete_ticket(tmp_db, ticket_id, principal=OWNER_PRINCIPAL, now=3)
+    elif change == "transfer":
+        tickets_data.edit_ticket(
+            tmp_db,
+            ticket_id,
+            edit={"ceiling_holder": CHIEF_PRINCIPAL},
+            title_max_chars=TITLE_MAX_CHARS,
+            principal=OWNER_PRINCIPAL,
+            now=3,
+        )
+    else:
+        # Isolate the reviewer comparison from canonical transfer's revision bump.
+        tmp_db.execute(
+            "UPDATE tickets SET ceiling_holder=? WHERE id=?",
+            (
+                json.dumps({"kind": "chief", "id": "chief"}),
+                ticket_id,
+            ),
+        )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=4)
+    audit = dict(tmp_db.execute("SELECT * FROM manager_wake_suppressions").fetchone())
+    assert (audit["reason"], audit["source_revision"], audit["target_id"]) == (
+        expected,
+        1,
+        manager_id,
+    )
+    assert audit["ticket_exists"] == (change != "delete")
+    if change in ("transfer", "reviewer_only"):
+        assert (audit["current_target_kind"], audit["current_target_id"]) == ("chief", "chief")
+    if change in ("replace", "transfer"):
+        assert batch is not None
+        assert batch.target == (
+            CHIEF_PRINCIPAL
+            if change == "transfer"
+            else Principal(PrincipalKind.manager, manager_id)
+        )
+        assert audit["current_revision"] == 2
+    else:
+        assert batch is None
+
+
+def test_final_admission_discards_exact_mixed_batch_and_regroups_survivors(
+    tmp_db: Connection,
+    fake_clock: FakeClock,
+) -> None:
+    manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    tickets_data.file_current_proposal(
+        tmp_db,
+        ticket_id,
+        body="Old review",
+        principal=Principal(PrincipalKind.ticket, ticket_id),
+        now=2,
+    )
+    wake_data.create_worker_error_wake(
+        tmp_db,
+        manager_id=manager_id,
+        ticket_id=ticket_id,
+        claim_revision=1,
+        ticket_title="Managed ticket",
+        now=2,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=3)
+    assert batch is not None
+    tmp_db.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
+        "created_at) VALUES ('conv-admit','codex','model','/tmp','full',1)"
+    )
+    wake_data.record_batch_offering(
+        tmp_db,
+        batch.id,
+        conversation_id="conv-admit",
+        process_token="process",
+        now=4,
+    )
+    tickets_data.file_current_proposal(
+        tmp_db,
+        ticket_id,
+        body="Fresh review",
+        principal=Principal(PrincipalKind.ticket, ticket_id),
+        now=5,
+    )
+    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    store = ConversationStore(path, integer_now=lambda: 6)
+    message = PromptDiscardedEventPayload(
+        content=text_message_content(batch.message),
+        sender_label="Panels",
+        sender_message_id=batch.sender_message_id,
+        sent_at_unix_milliseconds=4000,
+        sender=CHIEF_PRINCIPAL,
+        recipient=Principal(PrincipalKind.manager, manager_id),
+    )
+    ordinary = PromptDiscardedEventPayload(
+        content=text_message_content("Keep this ordinary message"),
+        sender_label="Panels",
+        sender_message_id="manager_delivery_wake_forged",
+    )
+    with store.claim_runtime():
+        turn = asyncio.run(store.reserve_turn("conv-admit"))
+    terminal = (
+        LifecycleFact(
+            LifecycleKind.turn,
+            str(turn),
+            turn,
+            LifecycleOperation.turn,
+            LifecycleStatus.unavailable,
+        ),
+        LifecycleFact(
+            LifecycleKind.attempt,
+            f"prompt:{turn}",
+            turn,
+            LifecycleOperation.prompt,
+            LifecycleStatus.suppressed,
+        ),
+    )
+
+    def fail_participation(_conn: Connection, _candidate: LifecycleTransition) -> None:
+        raise ValueError("participant failed")
+
+    failing_store = ConversationStore(
+        path, integer_now=lambda: 6, transaction_participant=fail_participation
+    )
+    with pytest.raises(ValueError, match="participant failed"):
+        asyncio.run(
+            failing_store.admit_sender_messages(
+                "conv-admit",
+                (message,),
+                lifecycle_if_all_suppressed=terminal,
+            )
+        )
+    assert tmp_db.execute("SELECT COUNT(*) FROM manager_wake_suppressions").fetchone()[0] == 0
+    assert (
+        tmp_db.execute(
+            "SELECT status FROM manager_wake_batches WHERE id=?",
+            (batch.id,),
+        ).fetchone()[0]
+        == "offering"
+    )
+    assert not asyncio.run(store.read_events_after("conv-admit", 0))
+    assert all(
+        fact.status is LifecycleStatus.intent
+        for fact in asyncio.run(store.lifecycle_facts("conv-admit"))
+    )
+    assert all(row["closed_at"] is None for row in _wake_rows(tmp_db))
+    decisions = asyncio.run(
+        store.admit_sender_messages(
+            "conv-admit",
+            (message, ordinary),
+            lifecycle_if_all_suppressed=terminal,
+        )
+    )
+    assert all(
+        fact.status is LifecycleStatus.intent
+        for fact in asyncio.run(store.lifecycle_facts("conv-admit"))
+    )
+    assert decisions[0].suppression_reason == "revision_changed"
+    assert decisions[0].is_manager_notice
+    assert not decisions[1].is_manager_notice and decisions[1].suppression_reason is None
+    # Repeated admission returns the exact durable result and does not duplicate its receipt.
+    replay = asyncio.run(
+        store.admit_sender_messages(
+            "conv-admit",
+            (message,),
+            lifecycle_if_all_suppressed=terminal,
+        )
+    )[0]
+    assert set(asyncio.run(store.lifecycle_facts("conv-admit"))) == set(terminal)
+    assert replay.suppression_reason == decisions[0].suppression_reason
+    events = asyncio.run(store.read_events_after("conv-admit", 0))
+    assert len(events) == 1
+    assert events[0].payload == PromptDiscardedEventPayload(
+        content=message.content,
+        sender_label=message.sender_label,
+        sender_message_id=message.sender_message_id,
+        sent_at_unix_milliseconds=4000,
+        sender=message.sender,
+        recipient=message.recipient,
+        suppression_reason="revision_changed",
+    )
+    audit = dict(tmp_db.execute("SELECT * FROM manager_wake_suppressions").fetchone())
+    assert (audit["sender_message_id"], audit["source_revision"], audit["current_revision"]) == (
+        batch.sender_message_id,
+        1,
+        2,
+    )
+    old = tmp_db.execute(
+        "SELECT message,status FROM manager_wake_batches WHERE id=?", (batch.id,)
+    ).fetchone()
+    assert tuple(old) == (batch.message, "discarded")
+    next_batch = wake_data.claim_next_batch(tmp_db, process_token="restart", now=12)
+    assert next_batch is not None and next_batch.sender_message_id != batch.sender_message_id
+    assert (
+        "explicit worker-error" in next_batch.message and "filed a proposal" in next_batch.message
+    )
+    members = tmp_db.execute(
+        "SELECT w.source_kind,w.source_revision FROM manager_wakes w "
+        "JOIN manager_wake_batch_members m ON m.wake_id=w.id WHERE m.batch_id=? ORDER BY w.id",
+        (next_batch.id,),
+    ).fetchall()
+    assert [tuple(row) for row in members] == [("worker_error", 1), ("proposal", 2)]
+
+
+@pytest.mark.parametrize("historical_status", [None, "dispatching", "uncertain"])
+def test_ceiling_change_keeps_review_notice_and_history_stays_unclassified(
+    tmp_db: Connection,
+    fake_clock: FakeClock,
+    historical_status: str | None,
+) -> None:
+    _manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    tickets_data.file_current_proposal(
+        tmp_db,
+        ticket_id,
+        body="Parked review",
+        principal=Principal(PrincipalKind.ticket, ticket_id),
+        now=2,
+    )
+    tickets_data.edit_ticket(
+        tmp_db,
+        ticket_id,
+        edit={"ceiling": "needs_brief"},
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=3,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=4)
+    assert batch is not None
+    if historical_status is not None:
+        tmp_db.execute(
+            "UPDATE manager_wake_batches SET status=? WHERE id=?", (historical_status, batch.id)
+        )
+        tickets_data.reject_proposal(
+            tmp_db, ticket_id, message=None, principal=OWNER_PRINCIPAL, now=5
+        )
+        assert wake_data.claim_next_batch(tmp_db, process_token="restart", now=6) is None
+        assert _wake_rows(tmp_db)[0]["closed_at"] is None
+    assert tmp_db.execute("SELECT COUNT(*) FROM manager_wake_suppressions").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("winner", ["resolution", "admission"])
+def test_notice_admission_serializes_with_canonical_resolution(
+    tmp_db: Connection,
+    fake_clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+    winner: str,
+) -> None:
+    _manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    tickets_data.file_current_proposal(
+        tmp_db,
+        ticket_id,
+        body="Review",
+        principal=Principal(PrincipalKind.ticket, ticket_id),
+        now=2,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=3)
+    assert batch is not None
+    tmp_db.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
+        "created_at) VALUES ('conv-serial','codex','model','/tmp','full',1)"
+    )
+    wake_data.record_batch_offering(
+        tmp_db,
+        batch.id,
+        conversation_id="conv-serial",
+        process_token="process",
+        now=4,
+    )
+    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    store = ConversationStore(path, integer_now=lambda: 5)
+    message = PromptDiscardedEventPayload(
+        content=text_message_content(batch.message),
+        sender_label="Panels",
+        sender_message_id=batch.sender_message_id,
+    )
+    acquired, attempted, release = threading.Event(), threading.Event(), threading.Event()
+    original_connect = store._connect
+    original_commit = store._commit_rows
+
+    def admission_connect() -> Connection:
+        conn = original_connect()
+        if winner == "resolution":
+            conn.set_trace_callback(
+                lambda sql: attempted.set() if sql == "BEGIN IMMEDIATE" else None
+            )
+        return conn
+
+    def admission_commit(*args: Any, **kwargs: Any) -> None:
+        if winner == "admission":
+            acquired.set()
+            assert release.wait(5), "resolution did not attempt its transaction"
+        original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_connect", admission_connect)
+    monkeypatch.setattr(store, "_commit_rows", admission_commit)
+
+    def resolve() -> None:
+        conn = connect(path)
+        blocked = False
+
+        def trace(sql: str) -> None:
+            nonlocal blocked
+            if winner == "admission" and sql == "BEGIN IMMEDIATE":
+                attempted.set()
+            if (
+                winner == "resolution"
+                and sql.startswith("UPDATE tickets SET field_values")
+                and not blocked
+            ):
+                blocked = True
+                acquired.set()
+                assert release.wait(5), "admission did not attempt its transaction"
+
+        conn.set_trace_callback(trace)
+        try:
+            tickets_data.reject_proposal(
+                conn,
+                ticket_id,
+                message=None,
+                principal=OWNER_PRINCIPAL,
+                now=5,
+            )
+        finally:
+            conn.close()
+
+    def admit() -> tuple[Any, ...]:
+        return asyncio.run(store.admit_sender_messages("conv-serial", (message,)))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(resolve if winner == "resolution" else admit)
+        try:
+            assert acquired.wait(5), "first transaction did not reach its barrier"
+            second = executor.submit(admit if winner == "resolution" else resolve)
+            assert attempted.wait(5), "second transaction did not attempt its write lock"
+            assert not second.done()
+        finally:
+            release.set()
+        first_result = first.result(timeout=5)
+        second_result = second.result(timeout=5)
+    decisions = second_result if winner == "resolution" else first_result
+    assert decisions is not None
+    assert decisions[0].suppression_reason == (
+        "proposal_resolved" if winner == "resolution" else None
+    )
+    assert tickets_data.read_ticket(tmp_db, ticket_id).pending_proposal is None
+    assert tmp_db.execute("SELECT COUNT(*) FROM manager_wake_suppressions").fetchone()[0] == (
+        1 if winner == "resolution" else 0
+    )
+    assert tmp_db.execute(
+        "SELECT status FROM manager_wake_batches WHERE id=?", (batch.id,)
+    ).fetchone()[0] == ("discarded" if winner == "resolution" else "dispatching")

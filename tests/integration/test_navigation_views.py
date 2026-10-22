@@ -27,6 +27,7 @@ from tests.support.navigation_current import (
 from planner.navigation.views.configuration import DEFAULT_CONFIG
 from planner.navigation.views.contracts import (
     ViewContent,
+    ViewGroup,
     ViewRequest,
     ViewSnapshot,
     ViewWindowRequest,
@@ -78,14 +79,23 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     add_ticket(conn, "blocker")
     add_ticket(conn, "chief-ticket")
     conn.execute("UPDATE tickets SET manager_kind='manager',manager_id='manager' WHERE id='t'")
-    conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='chief-ticket'")
+    conn.execute(
+        "UPDATE tickets SET conversation_id='c',stage='needs_plan' WHERE id='chief-ticket'"
+    )
+    conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id IN ('t','chief-ticket')")
     conn.executemany("INSERT INTO ticket_blocks VALUES('blocker',?)", [("t",), ("chief-ticket",)])
     conn.commit()
     query = descriptor()
     query["windows"] = [
         cast(
             ViewWindowRequest,
-            {**query["windows"][0], "section": section, "owner": owner, "group": grouping},
+            {
+                **query["windows"][0],
+                "section": section,
+                "owner": owner,
+                "group": grouping,
+                "child_filter": "all",
+            },
         )
         for owner in ({"kind": "manager", "id": "manager"}, {"kind": "chief", "id": "chief"})
         for section, grouping in (
@@ -95,7 +105,11 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
         )
     ]
 
-    def memberships(*, answering: bool = False) -> None:
+    def memberships(
+        *, answering: bool = False, grouping: ViewGroup = "blocked", in_rail: bool = False
+    ) -> None:
+        for index in (0, 3):
+            query["windows"][index]["group"] = grouping
         for current in (True, False):
             _, content = read_content(conn, query, current=current)
             for offset, identity in ((0, "t"), (3, "chief-ticket")):
@@ -106,8 +120,17 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
                 assert [row["id"] for row in answer["members"]] == (
                     [identity] if current and answering else []
                 )
-                assert identity not in {row["id"] for row in rail["members"]}
+                assert (identity in {row["id"] for row in rail["members"]}) is in_rail
 
+    # A claimed step with no running turn is still canonically Agent, even with
+    # a dependency. An owner ceiling alone is not an owner-attention request.
+    memberships()
+    _, content = read_content(conn, query, current=True)
+    for row in content["records"]:
+        if row["kind"] == "ticket" and row["id"] in ("t", "chief-ticket"):
+            assert row["value"]["blocked"] is True
+            assert row["value"]["ticket_status"] == "agent"
+            assert row["value"]["ceiling_holder"] == {"kind": "owner", "id": "owner"}
     writer = host.mutation(Turn(), "blocked-working")
     writer.commit()
     memberships()
@@ -116,7 +139,7 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     current_attention = attention["attention"]["current"]
     assert current_attention is not None and current_attention["signal"]["working"] is True
     assert all(
-        row["value"]["ticket_status"] == "blocked"
+        row["value"]["ticket_status"] == "agent"
         for row in content["records"]
         if row["kind"] == "ticket" and row["id"] != "blocker"
     )
@@ -132,6 +155,54 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     _, content = read_content(conn, query, current=False)
     attention = next(row for row in content["records"] if row["kind"] == "conversation")["value"]
     assert attention["attention"]["durable"]["last_turn_failed"] is True
+    conn.execute("BEGIN")
+    proposal = json.dumps(
+        {"field": "plan", "body": "Review", "proposed_by": "worker", "created_at": 1}
+    )
+    conn.execute(
+        "UPDATE tickets SET pending_proposal=? WHERE id IN ('t','chief-ticket')", (proposal,)
+    )
+    conn.commit()
+    memberships(grouping="awaiting_approval")
+    conn.execute("BEGIN")
+    conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id IN ('t','chief-ticket')")
+    conn.commit()
+    memberships(grouping="backlog")
+    conn.execute("BEGIN")
+    conn.execute(
+        "UPDATE tickets SET is_backlogged=0,pending_proposal=NULL WHERE id IN ('t','chief-ticket')"
+    )
+    definition = json.loads(
+        conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+        ).fetchone()[0]
+    )
+    plan_stage = next(stage for stage in definition["stages"] if stage["id"] == "needs_plan")
+    plan_stage["ownership_mode"] = "user"
+    conn.execute(
+        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+        (json.dumps(definition),),
+    )
+    conn.commit()
+    memberships(grouping="assigned")
+    conn.execute("BEGIN")
+    plan_stage["ownership_mode"] = "worker"
+    conn.execute(
+        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+        (json.dumps(definition),),
+    )
+    conn.execute("DELETE FROM ticket_blocks WHERE blocking_ticket_id='blocker'")
+    conn.commit()
+    memberships(grouping="errored", in_rail=True)
+    writer = host.mutation(Turn(), "unblocked-working")
+    writer.commit()
+    # Current activity masks failed history; durable mode deliberately cannot.
+    for current, grouping in ((True, "agent"), (False, "errored")):
+        for index in (0, 3):
+            query["windows"][index]["group"] = cast(ViewGroup, grouping)
+        _, content = read_content(conn, query, current=current)
+        assert [row["id"] for row in content["windows"][0]["members"]] == ["t"]
+        assert [row["id"] for row in content["windows"][3]["members"]] == ["chief-ticket"]
 
 
 def add_review_tickets(conn: sqlite3.Connection) -> None:

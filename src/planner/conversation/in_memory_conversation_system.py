@@ -32,6 +32,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
     PromptQueueReason,
     ResolvedConversationStart,
@@ -335,6 +336,10 @@ class InMemoryConversationSystem:
                 if observed.kind is InMemoryConversationObservationKind.prompt_delivery_uncertain:
                     return AddressedPromptDeliveryReceipt(
                         PromptDeliveryUncertain(), newly_accepted=False
+                    )
+                if observed.kind is InMemoryConversationObservationKind.prompt_discarded:
+                    return AddressedPromptDeliveryReceipt(
+                        PromptDeliverySuppressed(reason="discarded"), newly_accepted=False
                     )
                 raise ValueError("sender_message_id already names a different message")
 

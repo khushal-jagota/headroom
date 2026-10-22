@@ -20,7 +20,7 @@ describe("complete manager page groups", () => {
     expect(managerPageGroups(rows.map((row)=>({...row,awaiting_reply:false}))).map((group)=>group.key)).toEqual(["agent","done"]);
   });
   it("uses normal Backlog rows for approval, manager review and terminal history", () => {
-    const rows = [ticket("owner", { is_backlogged:true, ticket_status:"blocked", awaiting_approval:true, has_pending_proposal:true }),
+    const rows = [ticket("owner", { is_backlogged:true, blocked:true, awaiting_approval:true, has_pending_proposal:true }),
       ticket("manager", { is_backlogged:true, awaiting_agent_approval:true, has_pending_proposal:true }),
       ticket("done", { is_backlogged:true, stage:"done", ticket_status:"empty" })];
     const groups = managerPageGroups(rows);
@@ -33,8 +33,8 @@ describe("complete manager page groups", () => {
   it("retains canonical group order, exceptional rows and completion without changing input", () => {
     const rows = [ticket("done",{stage:"done",ticket_status:"",awaiting_reply:true}),
       ticket("blocked",{ticket_status:"blocked"}), ticket("error",{agent_state:"errored"}),
-      ticket("answer",{ticket_status:"blocked",awaiting_answer:true}), ticket("approval",{ticket_status:"blocked",awaiting_approval:true}),
-      ticket("owner",{ticket_status:"blocked",assigned:true}),ticket("empty",{ticket_status:""})];
+      ticket("answer",{ticket_status:"blocked",awaiting_answer:true}), ticket("approval",{blocked:true,awaiting_approval:true}),
+      ticket("owner",{blocked:true,assigned:true}),ticket("empty",{ticket_status:""})];
     const groups = managerPageGroups(rows);
     expect(groups.map((group)=>group.key)).toEqual(["awaiting_approval","awaiting_answer","assigned","errored","empty","blocked","done"]);
     expect(groups.flatMap((group)=>group.tickets)).toHaveLength(rows.length);
@@ -42,19 +42,27 @@ describe("complete manager page groups", () => {
     expect(rows[0].awaiting_reply).toBe(true);
     expect(groups.at(-1)?.tickets[0]).toBe(rows[0]);
   });
-  it("keeps canonical Blocked ahead of a live or failed worker and closeout fallback", () => {
+  it("keeps dependencies and canonical Blocked ahead of worker and closeout fallbacks until removed", () => {
     const rows = [
-      ticket("working", {ticket_status:"blocked", agent_state:"working", awaiting_reply:true,
+      ticket("working", {blocked:true, agent_state:"working", awaiting_reply:true,
         conversation_signal:{working:true,message_for_owner:true}}),
-      ticket("failed", {ticket_status:"blocked", agent_state:"errored"}),
+      ticket("idle", {blocked:true, agent_state:"idle", conversation_signal:{working:false,message_for_owner:false}}),
+      ticket("failed", {blocked:true, agent_state:"errored"}),
       ticket("closeout", {ticket_status:"blocked", waiting_to_closeout:true, awaiting_agent_approval:true})
     ];
     const groups = managerPageGroups(rows);
     expect(groups.map((group) => [group.key, group.label, group.quiet]))
       .toEqual([["blocked", "Blocked", true]]);
-    expect(groups[0].tickets.map((row) => row.id)).toEqual(["closeout", "failed", "working"]);
-    expect(groups[0].tickets[2]).toBe(rows[0]);
+    expect(groups[0].tickets.map((row) => row.id)).toEqual(["closeout", "failed", "idle", "working"]);
+    for (const row of rows) expect(groups[0].tickets.find((entry) => entry.id === row.id)).toBe(row);
     expect(workspaceUnreadConversationCount(groups[0].tickets)).toBe(1);
     expect(rows[0].conversation_signal?.working).toBe(true);
+    const released = rows.map((row) => ({...row, blocked:false}));
+    const resumed = managerPageGroups(released);
+    expect(resumed.map((group) => [group.key, group.tickets.map((row) => row.id)]))
+      .toEqual([["errored", ["failed"]], ["agent", ["idle", "working"]], ["blocked", ["closeout"]]]);
+    expect(resumed.find((group) => group.key === "agent")?.tickets[1]).toBe(released[0]);
+    expect(workspaceUnreadConversationCount(resumed.flatMap((group) => group.tickets))).toBe(1);
+    expect(rows.every((row) => row.id === "closeout" || row.blocked)).toBe(true);
   });
 });

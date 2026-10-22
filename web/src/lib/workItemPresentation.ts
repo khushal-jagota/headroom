@@ -73,7 +73,7 @@ export function workItemTicketGroupKey(
   if (ticket.is_backlogged) return "backlog";
   const attention = primaryWorkAttention(ticket);
   if (attention !== null) return attention;
-  if (ticket.ticket_status === "blocked") return "blocked";
+  if (ticket.blocked || ticket.ticket_status === "blocked") return "blocked";
   if (ticket.agent_state === "errored") return "errored";
   if (agentHoldsTicket(ticket)) return "agent";
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";

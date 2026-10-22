@@ -10,6 +10,10 @@ export async function prepare({ scratchRoot }) {
   // reload. Network sources use the case fixture through the real navigation transport.
   await writeFile(join(scratchRoot, host), `<script lang="ts">
 import AppWithQueryClient from '../src/AppWithQueryClient.svelte';
+import {installConversationViewReaderFixture} from '../tests/support/conversationViewReaderFixture';
+const overlay = new URLSearchParams(location.search).has('overlay');
+if (overlay) installConversationViewReaderFixture(location.hash.includes('t_overlay0') ? 'ticket-overlay' : 'bounded-reader');
+const ReaderSource = globalThis.EventSource;
 // Supply wire snapshots through the production EventSource transport. The optional
 // fold fixture uses the same App host and the real navigation parser and projection.
 const sources = new Set<any>();
@@ -19,7 +23,7 @@ class QuietEventSource {
   url: string;
   constructor(url: string) {
     this.url = url;
-    if (!url.startsWith('/api/navigation/view/events')) return;
+    if (!url.startsWith('/api/navigation/view/events')) { if (overlay) return new ReaderSource(url); return; }
     sources.add(this);
     void this.refresh();
   }
