@@ -36,22 +36,39 @@
   // The slot's open and close is a 0fr to 1fr row. That cannot carry a swap between two
   // open occupants: both ends are 1fr, so a one line card replaced by a wrapped sentence
   // jumps to its new intrinsic height. Animate that one distance the way the rail does.
-  function glideHeight(previous: number): void {
+  // One owner for every scripted height the slot takes. `from` is always the size on
+  // screen, so a handover never shows a size the user was not already looking at.
+  // A cancelled animation settles its promise after the replacement is already in
+  // hand, so cleanup releases the handle only while it still owns it. Otherwise a
+  // later swap or the collapse has nothing to cancel, and a stale effect outlives both.
+  function animateHeight(from: number, to: number, delay = 0): void {
     dropResize();
     if (!slot || typeof slot.animate !== "function") return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const next = slot.getBoundingClientRect().height;
-    if (Math.abs(next - previous) <= 0.5) return;
-    // A cancelled animation settles its promise after the replacement is already in
-    // hand, so cleanup releases the handle only while it still owns it. Otherwise a
-    // later swap or the collapse has nothing to cancel, and a stale height effect
-    // outlives them both.
-    const animation = slot.animate([{ height: `${previous}px` }, { height: `${next}px` }],
-      { duration: RAIL_MOTION.space, easing: RAIL_MOTION.ease });
+    if (Math.abs(to - from) <= 0.5) return;
+    const animation = slot.animate([{ height: `${from}px` }, { height: `${to}px` }],
+      { duration: RAIL_MOTION.space, delay, easing: RAIL_MOTION.ease, fill: "backwards" });
     resize = animation;
     void animation.finished.catch(() => {}).then(() => {
       if (resize === animation) resize = null;
     });
+  }
+
+  function glideHeight(previous: number): void {
+    // Cancel first, so the measurement is the new card's own height rather than the
+    // height the outgoing animation happens to be passing through.
+    dropResize();
+    if (!slot) return;
+    animateHeight(previous, slot.getBoundingClientRect().height);
+  }
+
+  // The collapse leaves from the size on screen. Cancelling the swap first would put
+  // the slot back at the taller intrinsic height for the row transition to start from,
+  // which reads as a jump up before the fall. The row still collapses underneath on the
+  // same schedule, so both land on zero together.
+  function collapseHeight(): void {
+    if (!resize || !slot) { dropResize(); return; }
+    animateHeight(slot.getBoundingClientRect().height, 0, RAIL_MOTION.exit);
   }
 
   function dropResize(): void {
@@ -82,6 +99,9 @@
       // the row glide already carries it.
       const replacing = untrack(() => open && displayedWord !== null && displayedWord !== word);
       const previousHeight = replacing && slot ? slot.getBoundingClientRect().height : null;
+      // A reversal during the exit restores the card. The row transition owns that, so
+      // any collapse still in hand must let go of the height.
+      if (!replacing) dropResize();
       displayedWord = word;
       closing = false;
       // Establish collapsed layout before entrance. Updates retain the card,
@@ -93,8 +113,7 @@
         frame = window.requestAnimationFrame(() => { if (!obsolete) open = true; });
       });
     } else {
-      // The collapse owns the height from here.
-      dropResize();
+      collapseHeight();
       open = false;
       closing = true;
       timer = window.setTimeout(() => {

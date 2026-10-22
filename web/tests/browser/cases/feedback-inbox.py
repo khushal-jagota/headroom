@@ -384,13 +384,18 @@ def run(browser, urls):
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     page.evaluate("window.__release('shipped')")
     expect(status).to_contain_text("New version ready")
-    overlapped = overlap([[0, "held"], [120, "problem"], [260, "close"]])
+    closed_at = 260
+    overlapped = overlap([[0, "held"], [120, "problem"], [closed_at, "close"]])
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
-    closing = [sample for sample in overlapped if sample["ms"] >= 300]
-    assert all(sample["heightEffects"] == 0 for sample in closing), closing
-    assert overlapped[-1]["height"] < 1, overlapped[-4:]
+    # The close boundary itself, not only the tail. Cancelling the running height used
+    # to reveal the taller intrinsic row here, which showed as a jump up before the fall.
+    leaving = [sample for sample in overlapped if sample["ms"] <= closed_at][-1]
+    closing = [sample for sample in overlapped if sample["ms"] > closed_at]
+    assert all(sample["height"] <= leaving["height"] + 1 for sample in closing), (leaving, closing)
     assert all(current["height"] <= previous["height"] + 1
                for previous, current in zip(closing, closing[1:], strict=False)), closing
+    assert overlapped[-1]["height"] < 1, overlapped[-4:]
+    assert overlapped[-1]["heightEffects"] == 0, overlapped[-4:]
 
     # The same overlap under reduced motion runs with no timed effect at all.
     page.emulate_media(reduced_motion="reduce")
