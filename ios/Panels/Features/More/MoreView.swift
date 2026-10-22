@@ -1,13 +1,36 @@
 import SwiftUI
 
 struct MoreView: View {
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
         List {
-            NavigationLink(value: AppRoute.ideas) { Label("Ideas", systemImage: "lightbulb") }
-            NavigationLink(value: AppRoute.feedback) { Label("Feedback", systemImage: "bubble.left") }
-            NavigationLink(value: AppRoute.usage) { Label("Usage", systemImage: "chart.bar") }
-            NavigationLink(value: AppRoute.vps) { Label("VPS", systemImage: "server.rack") }
-            NavigationLink(value: AppRoute.settings) { Label("Settings", systemImage: "gearshape") }
-        }.navigationTitle("More").panelsScreen()
+            Section("Work") {
+                destination("Ideas", symbol: "lightbulb", route: .ideas)
+                destination("Feedback", symbol: "bubble.left", route: .feedback)
+            }
+            Section("System") {
+                destination("Usage", symbol: "chart.bar", route: .usage)
+                destination("VPS", symbol: "server.rack", route: .vps)
+                destination("Settings", symbol: "gearshape", route: .settings)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("More")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") { Haptics.light(); dismiss() }
+            }
+        }
+        .panelsScreen()
+    }
+
+    private func destination(_ title: String, symbol: String, route: AppRoute) -> some View {
+        NavigationLink(value: route) {
+            Label(title, systemImage: symbol)
+                .padding(.vertical, PanelsTheme.Space.xs)
+        }
+        .listRowBackground(PanelsTheme.raised)
     }
 }

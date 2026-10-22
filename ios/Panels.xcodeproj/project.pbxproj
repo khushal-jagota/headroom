@@ -11,11 +11,14 @@
 		063C8A6F11DADE62594FDDFE /* FeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */; };
 		1350FA8D85AF214989D52105 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F829A52B0ABE0E906313419 /* Haptics.swift */; };
 		18B3FBCD4CC57EEAB99D6336 /* FeedbackContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356BA2ECFEB85ADECDEC8FC5 /* FeedbackContracts.swift */; };
+		1B14E49D1C6A4CDC96C70B5E /* IdeasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E028417D25209D3538F3BD0 /* IdeasModel.swift */; };
 		23C2B5D08DA29C319EDD15F4 /* ArtifactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCEE66ABADAB38227077931 /* ArtifactListView.swift */; };
 		2B76A62CFB6F9FF7119EBA2B /* ChiefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE13519E521C9A6D6DD3A99A /* ChiefView.swift */; };
 		2D3FB57182FBE92C75D051B5 /* VPSModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AAEB17AE9D48BF59E962F0F /* VPSModels.swift */; };
+		3A4F11BA595CDD3DBBFB589A /* IdeasAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F9EF972A1EF8BB5CC7F4BF /* IdeasAPI.swift */; };
 		3E90EAD8718A7CC68F1E9D6B /* managers.json in Resources */ = {isa = PBXBuildFile; fileRef = D00C1733528B6700CE613C4A /* managers.json */; };
 		4421B3D01E0666FF976EEABD /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4FCDBCAD742D3FCA6B73F0 /* Theme.swift */; };
+		473D79B99FE3CF6E6F355589 /* IdeasTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D53F3D14631CC17DFEE6143 /* IdeasTests.swift */; };
 		49318213D8B843BCD9A190DE /* deployment.json in Resources */ = {isa = PBXBuildFile; fileRef = 7D7CB58BED9CB3EA95F712C7 /* deployment.json */; };
 		4DBA282D2CC61CAA1445B83A /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22692A1C4C2E8C12E2E3580 /* AppStore.swift */; };
 		521BBB6845A8EB2A56CDAD2B /* AppShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 915822ADC1565248F5088336 /* AppShell.swift */; };
@@ -85,12 +88,15 @@
 		490342327C1A28E38841549F /* tickets.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tickets.json; sourceTree = "<group>"; };
 		4C8B9D9D1FE5DC39AC9839B9 /* ChiefModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChiefModels.swift; sourceTree = "<group>"; };
 		52AB95DA1ED9D0782197ADB9 /* MoreModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreModels.swift; sourceTree = "<group>"; };
+		5D53F3D14631CC17DFEE6143 /* IdeasTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeasTests.swift; sourceTree = "<group>"; };
+		69F9EF972A1EF8BB5CC7F4BF /* IdeasAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeasAPI.swift; sourceTree = "<group>"; };
 		6A23FBCA302828E0CFB0C48C /* UsageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageModels.swift; sourceTree = "<group>"; };
 		6A9830D58E04792DC32D7D39 /* PanelsTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PanelsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C53D8C52A18D5B5D1295C5F /* PanelsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelsApp.swift; sourceTree = "<group>"; };
 		6C56C713C713662C2E7B1D24 /* ArtifactModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactModels.swift; sourceTree = "<group>"; };
 		6CCEE66ABADAB38227077931 /* ArtifactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactListView.swift; sourceTree = "<group>"; };
 		6D79CCF7EB676CEF0E8B6306 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		6E028417D25209D3538F3BD0 /* IdeasModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeasModel.swift; sourceTree = "<group>"; };
 		6E5637000DA621E2A9B9D641 /* SystemScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemScreenTests.swift; sourceTree = "<group>"; };
 		709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackTests.swift; sourceTree = "<group>"; };
 		71F32ADD51357FC7D1B635FF /* FeedbackModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackModel.swift; sourceTree = "<group>"; };
@@ -209,6 +215,8 @@
 			isa = PBXGroup;
 			children = (
 				39606234AB8F948E15D6F5A2 /* IdeasView.swift */,
+				48A31ECE80C0547228D0CDA2 /* Networking */,
+				510E0EFC6B9DAD959729A2B3 /* State */,
 			);
 			path = Ideas;
 			sourceTree = "<group>";
@@ -231,6 +239,14 @@
 			path = Components;
 			sourceTree = "<group>";
 		};
+		48A31ECE80C0547228D0CDA2 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				69F9EF972A1EF8BB5CC7F4BF /* IdeasAPI.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
 		4AF6E791FFB912CC7FD8DBB4 /* Settings */ = {
 			isa = PBXGroup;
 			children = (
@@ -238,6 +254,14 @@
 				6D79CCF7EB676CEF0E8B6306 /* SettingsView.swift */,
 			);
 			path = Settings;
+			sourceTree = "<group>";
+		};
+		510E0EFC6B9DAD959729A2B3 /* State */ = {
+			isa = PBXGroup;
+			children = (
+				6E028417D25209D3538F3BD0 /* IdeasModel.swift */,
+			);
+			path = State;
 			sourceTree = "<group>";
 		};
 		51D52FB22F67B876A901D2E6 /* State */ = {
@@ -252,6 +276,7 @@
 			isa = PBXGroup;
 			children = (
 				709DA5E0A464CEA464F27E8A /* FeedbackTests.swift */,
+				5D53F3D14631CC17DFEE6143 /* IdeasTests.swift */,
 				2E8189870D845B834795C410 /* ModelDecodingTests.swift */,
 				6E5637000DA621E2A9B9D641 /* SystemScreenTests.swift */,
 				20815F2876B394D504D0AA5F /* Fixtures */,
@@ -481,6 +506,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				063C8A6F11DADE62594FDDFE /* FeedbackTests.swift in Sources */,
+				473D79B99FE3CF6E6F355589 /* IdeasTests.swift in Sources */,
 				56C8379A0AA3BC97F760B875 /* ModelDecodingTests.swift in Sources */,
 				9543F7F44D02038703F8DC57 /* SystemScreenTests.swift in Sources */,
 			);
@@ -506,6 +532,8 @@
 				D863C2DB0472D5E5C45BC142 /* FeedbackPresentation.swift in Sources */,
 				5C1808D01B65A50AFABA730C /* FeedbackView.swift in Sources */,
 				1350FA8D85AF214989D52105 /* Haptics.swift in Sources */,
+				3A4F11BA595CDD3DBBFB589A /* IdeasAPI.swift in Sources */,
+				1B14E49D1C6A4CDC96C70B5E /* IdeasModel.swift in Sources */,
 				736550B721555579BC7085A5 /* IdeasView.swift in Sources */,
 				A29A4D112F11C5E9FC2FB65C /* ManagerModels.swift in Sources */,
 				6A1E7C44719633133DF63A5F /* MoreModels.swift in Sources */,
