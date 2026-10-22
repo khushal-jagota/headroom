@@ -50,7 +50,7 @@ def run(browser, urls):
     metrics.append()
     metrics_calls = []
 
-    fold = {"enabled": False, "count": 3}
+    fold = {"enabled": False, "count": 3, "overflow": False, "active_count": 1, "release_sha": "fixture-boot"}
     fixture = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
 
     def respond(route):
@@ -58,11 +58,21 @@ def run(browser, urls):
         path = parts.path
         if fold["enabled"] and path == "/api/navigation/view/snapshot":
             board = {"managers": [
-                {"id": f"fold_{index}", "title": f"Settled fixture {index}", "created_at": index + 1,
+                {"id": f"fold_{index}", "title": ("Settled" + "UnbrokenTitle" * 12) if fold["overflow"] else f"Settled fixture {index}", "created_at": index + 1,
                  "settled": True, "tickets": []}
                 for index in range(fold["count"])
             ]}
+            if fold["overflow"]:
+                board["managers"].extend(
+                    {"id": f"active_{index}", "title": f"Active fixture {index}", "created_at": index + 1,
+                     "project_id": f"project_{index}", "project": "Project" + "UnbrokenName" * 12,
+                     "settled": False, "tickets": []}
+                    for index in range(fold["active_count"])
+                )
             source = fixture["navigation_response"](board, {"chief_of_staff": {"label": "Chief"}})
+            for record in source["snapshot"]["records"]:
+                if record["kind"] == "manager":
+                    record["value"]["updated_at"] = record["value"]["created_at"]
             view = json.loads(parse_qs(parts.query)["view"][0])
             route.fulfill(json=fixture["scoped_navigation_response"](source, view))
             return
@@ -78,7 +88,7 @@ def run(browser, urls):
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
                 "/api/feedback/count": {"open_count": 0},
-                "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
+                "/api/deployment-status": {"state": "preparing", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))},
             }.get(key)
             if inner is None:
                 unexpected.append(key)
@@ -97,7 +107,7 @@ def run(browser, urls):
         elif path == "/api/feedback/count":
             result = {"open_count": 0}
         elif path == "/api/meta":
-            result = {"test_mode": True, "app_sha": None}
+            result = {"test_mode": True, "app_sha": fold["release_sha"]}
         elif path == "/api/review":
             result = {"items": [], "running_worker_count": 0}
         elif path == "/api/conversation/backends":
@@ -115,6 +125,13 @@ def run(browser, urls):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", respond)
+
+    def host_with_boot_sha(route):
+        response = route.fetch()
+        route.fulfill(response=response, body=response.text().replace(
+            "<head>", '<head><meta name="panels-app-sha" content="fixture-boot">', 1))
+
+    page.route(url, host_with_boot_sha)
     rail = page.locator(".rail-utilities")
     pane = page.locator(".board-workspace-right")
     scroller = page.locator("[data-utility-scroll]")
@@ -284,6 +301,7 @@ def run(browser, urls):
 
     fold["enabled"] = True
     verify_settled_fold(page, url, fold, evidence)
+    verify_rail_overflow(page, fold, evidence)
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
@@ -416,4 +434,164 @@ def verify_settled_fold(page, url, fixture, evidence):
     proof = page.evaluate("window.__foldProof")
     (evidence / "settled-fold-frames.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "flows": proof,
+    }, indent=2))
+
+
+
+def verify_rail_overflow(page, fixture, evidence):
+    """Use the same host to prove real flex sizing and native scroll boundaries.
+
+    Synthetic geometry cannot expose min-content width or programmatic horizontal
+    scroll. Existing fold motion checks above retain the independent motion proof.
+    """
+    started = time.perf_counter()
+    fixture["overflow"] = True
+    rail = page.locator(".workspace-rail")
+    active = page.locator("[data-active-work-scroll]")
+    settled = page.locator("[data-settled-scroll]")
+    head = page.locator(".settled-head")
+    grip = page.get_by_role("separator", name="Resize workspace panel")
+    proof = []
+
+    def status_geometry(word="Deploying"):
+        status = page.locator(".status-card:visible")
+        expect(status).to_contain_text(word)
+        bounds = status.bounding_box()
+        rail_bounds = rail.bounding_box()
+        viewport = page.viewport_size
+        assert bounds and rail_bounds and viewport
+        assert bounds["x"] >= rail_bounds["x"] and bounds["x"] + bounds["width"] <= rail_bounds["x"] + rail_bounds["width"] + 1, bounds
+        assert bounds["y"] >= 0 and bounds["y"] + bounds["height"] <= viewport["height"], bounds
+        for scroller in [active, *([settled] if settled.count() else [])]:
+            box = scroller.bounding_box()
+            assert box and box["y"] + box["height"] <= bounds["y"] + 1, (box, bounds)
+        return bounds
+
+    def geometry(scroller):
+        return scroller.evaluate("""node => {
+          node.scrollLeft=100;
+          const style=getComputedStyle(node);
+          return {clientWidth:node.clientWidth, scrollWidth:node.scrollWidth, scrollLeft:node.scrollLeft,
+            clientHeight:node.clientHeight, scrollHeight:node.scrollHeight,
+            overflowX:style.overflowX, overflowY:style.overflowY, gutter:style.scrollbarGutter,
+            paddingRight:style.paddingRight, marginRight:style.marginRight};
+        }""")
+
+    for width in [232, "default", 520]:
+        if width == "default":
+            grip.dblclick()
+        else:
+            grip.focus()
+            for _ in range(20):
+                page.keyboard.press("Shift+ArrowLeft" if width == 232 else "Shift+ArrowRight")
+            expect(grip).to_have_attribute("aria-valuenow", str(width))
+        for count in [1, 24]:
+            fixture["count"] = count
+            fixture["active_count"] = count
+            page.evaluate("void window.__refreshNavigation()")
+            expect(rail.locator(".manager-card:not(.chief)")).to_have_count(count)
+            expect(head).to_contain_text(f"({count})")
+            for opened in [False, True]:
+                if head.get_attribute("aria-expanded") != str(opened).lower():
+                    head.click()
+                expect(settled).to_have_count(1 if opened else 0)
+                page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+                if opened:
+                    expect(settled.locator("[data-settled-item]")).to_have_count(count)
+                for scroller in [active, *([settled] if opened else [])]:
+                    values = geometry(scroller)
+                    proof.append({"width": width, "count": count, "open": opened,
+                                  "scroller": scroller.get_attribute("class"), **values})
+                    assert values["scrollWidth"] == values["clientWidth"], proof[-1]
+                    assert values["scrollLeft"] == 0, proof[-1]
+                    assert values["overflowY"] == "auto" and values["gutter"] == "stable", proof[-1]
+                    if count == 24:
+                        assert values["scrollHeight"] > values["clientHeight"], proof[-1]
+                    scroller.evaluate("node => node.scrollTop=node.scrollHeight")
+                    last = scroller.locator(".manager-card:not(.chief)" if scroller == active else "[data-settled-item]").last
+                    control = last.locator(".settle" if scroller == active else ".reopen")
+                    page.keyboard.press("Tab")
+                    control.focus()
+                    expect(control).to_be_in_viewport()
+                    expect(control).to_have_css("opacity", "1")
+                    focus = control.evaluate("""node => {
+                      const box=node.getBoundingClientRect(), clip=node.closest('[data-active-work-scroll],[data-settled-scroll]').getBoundingClientRect();
+                      const style=getComputedStyle(node), extent=parseFloat(style.outlineWidth)+parseFloat(style.outlineOffset);
+                      return {focused:document.activeElement===node, outline:style.outlineStyle,
+                        inside:box.left-extent>=clip.left && box.right+extent<=clip.right};
+                    }""")
+                    assert focus["focused"] and focus["outline"] == "solid" and focus["inside"], focus
+                    scroller.evaluate("node => node.scrollTop=0")
+                assert rail.evaluate("node => node.scrollWidth === node.clientWidth")
+                status_geometry()
+        page.screenshot(path=str(evidence / f"rail-overflow-{width}.png"))
+        if width == 232:
+            # Reproduce the old layout in browser memory only for review evidence.
+            old_style = page.add_style_tag(content="""
+                .active-work-scroll,.settled-body { overflow:auto!important; }
+                .settled-title>span { min-width:auto!important; overflow-wrap:normal!important; }
+                .manager-eyebrow.rail>span { min-width:auto!important; overflow-wrap:normal!important; }
+                .manager-eyebrow.rail .settle { flex-shrink:1!important; }
+            """)
+            before = {"active": geometry(active), "settled": geometry(settled)}
+            page.screenshot(path=str(evidence / "rail-overflow-232-before.png"))
+            old_style.evaluate("node => node.remove()")
+            proof.append({"browserOnlyOriginalCss": before})
+            assert before["active"]["scrollWidth"] > before["active"]["clientWidth"], before
+            assert before["settled"]["scrollWidth"] > before["settled"]["clientWidth"], before
+    for viewport_width in [721, 720]:
+        page.set_viewport_size({"width": viewport_width, "height": 700})
+        if viewport_width == 720:
+            page.locator('.workspace-mobile-nav [data-screen="workspace"]').click()
+        expect(rail).to_be_visible()
+        status_geometry()
+        assert geometry(active)["scrollLeft"] == 0
+        assert geometry(settled)["scrollLeft"] == 0
+        page.screenshot(path=str(evidence / f"rail-overflow-status-{viewport_width}.png"))
+    # The predecessor's real prompt shares this slot. Exercise its public monitor
+    # and Update control, rather than a second host or a simulated status card.
+    fixture["release_sha"] = "fixture-next"
+    page.evaluate("dispatchEvent(new Event('pageshow'))")
+    status_samples = []
+    for state, word in [("ready", "New version ready"), ("held", "Update applies when this message is safe")]:
+        if state == "held":
+            page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
+            page.locator("button.status-card:visible").click()
+        for viewport_width in [721, 720]:
+            page.set_viewport_size({"width": viewport_width, "height": 700})
+            expect(rail).to_be_visible()
+            if viewport_width == 721:
+                grip.focus()
+                for _ in range(20):
+                    page.keyboard.press("Shift+ArrowLeft")
+                expect(grip).to_have_attribute("aria-valuenow", "232")
+            bounds = status_geometry(word)
+            status = page.locator(".status-card:visible")
+            assert status.locator(".status-action").count() == (1 if state == "ready" else 0)
+            values = []
+            for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
+                dimensions = geometry(scroller)
+                assert dimensions["scrollWidth"] == dimensions["clientWidth"] and dimensions["scrollLeft"] == 0, dimensions
+                assert dimensions["overflowY"] == "auto" and dimensions["gutter"] == "stable", dimensions
+                assert dimensions["scrollHeight"] > dimensions["clientHeight"], dimensions
+                scroller.evaluate("node => node.scrollTop=node.scrollHeight")
+                control = scroller.locator(selector).last
+                page.keyboard.press("Tab")
+                control.focus()
+                expect(control).to_be_in_viewport()
+                expect(control).to_have_css("opacity", "1")
+                expect(control).to_have_css("outline-style", "solid")
+                focus_inside = control.evaluate("""node => {
+                  const box=node.getBoundingClientRect(), clip=node.closest('[data-active-work-scroll],[data-settled-scroll]').getBoundingClientRect();
+                  const style=getComputedStyle(node), extent=parseFloat(style.outlineWidth)+parseFloat(style.outlineOffset);
+                  return document.activeElement===node && box.left-extent>=clip.left && box.right+extent<=clip.right;
+                }""")
+                assert focus_inside
+                scroller.evaluate("node => node.scrollTop=0")
+                values.append(dimensions)
+            status_samples.append({"state": state, "viewportWidth": viewport_width, "status": bounds, "scrollers": values})
+            page.screenshot(path=str(evidence / f"rail-overflow-status-{state}-{viewport_width}.png"))
+    (evidence / "rail-overflow-status-geometry.json").write_text(json.dumps(status_samples, indent=2))
+    (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
+        "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
     }, indent=2))

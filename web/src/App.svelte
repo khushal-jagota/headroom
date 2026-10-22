@@ -10,10 +10,10 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
+  import { startReleaseMonitor, stopReleaseMonitor } from "./lib/releaseMonitor";
   import type { WorkspaceAddress } from "./lib/workspaceAddress";
   import type { UsageTab } from "./lib/usageAddress";
   import BoardRoute from "./routes/BoardRoute.svelte";
-  import ReleaseUpdate from "./components/ReleaseUpdate.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
   import FeedbackCapture from "./components/FeedbackCapture.svelte";
   import FeedbackToast from "./components/FeedbackToast.svelte";
@@ -215,10 +215,12 @@
     };
     window.addEventListener("hashchange", onHash);
     startChangeStream();
+    startReleaseMonitor();
     return () => {
       media.removeEventListener("change", syncCompact);
       window.removeEventListener("hashchange", onHash);
       stopChangeStream();
+      stopReleaseMonitor();
     };
   });
 </script>
@@ -226,7 +228,6 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
 <div class="shell">
-  <ReleaseUpdate />
   <main class="shell-content">
     <BoardRoute address={workspaceRouteAddress} onDismissed={showDismissedToast} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} />
   </main>

@@ -93,6 +93,24 @@ Worker, to a Manager, or to Khushal, and holding one grants nothing: the approva
 asks the rule again, of whoever turns up. So the question at creation is only who may
 choose that address, and the answer is the one above.
 
+## Control of schedules
+
+Schedules are owner-controlled configuration. Only the owner and Chief can create or
+explicitly edit them. The shared authority rule enforces this at the API and canonical
+actions, including enable, disable, and template edits. Schedule assignment grants no
+control to a Manager or Worker. Their direct Ticket creation rights remain unchanged.
+
+An authorized Manager Project edit also synchronizes the Project of schedules already
+assigned to that Manager. Only the Project and normal update timestamp change. This
+derived update grants no explicit schedule control. It cannot change assignment,
+cadence, enabled state, or other template fields.
+
+Due execution uses trusted scheduler authority, as described in
+[Scheduled Ticket creation](scheduled-tickets.md). The mutation checks close future
+admission. They do not certify historical schedule authorship or change existing rows
+and receipts. Retired schedules remain disable-only. There is no new grant or approval
+flow for schedule activation.
+
 ## What this is not
 
 The rule decides what a caller may do. It does not decide who a caller is. A position is

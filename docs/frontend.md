@@ -112,6 +112,8 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+  Both lists scroll vertically only. Long Settled titles and rail project labels wrap
+  within their available width, with room for the Reopen and Settle controls.
   Manual fold toggles respond immediately, independently of queued rail updates. Height,
   chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
   another row arrival animation. The section resizes from its visible height when those
@@ -323,13 +325,21 @@ share.
 
 The root document carries the deployed app SHA that booted the browser. The browser
 checks `/api/meta` without cache reuse when it loads and when a retained page resumes.
-If the server reports a different SHA, Panels shows an **Update now** action. Panels
-never reloads for a new release without that action.
+If the server reports a different SHA, the deploy status card reads **New version
+ready** with an **Update** action. Panels never reloads for a new release without that
+action.
+
+The card is one slot with one occupant, because the deploy it narrates is what produces
+the release. A failed deploy shows **Problem** and displaces the update, since a rolled
+back release still differs from the booted one. Otherwise a waiting update outranks
+Deploying, Deployed and Reconnecting. One monitor serves the whole app, so the card
+reports the same update at both breakpoints.
 
 Conversation composers publish `panels:composition-state` on `document`, with an
 `active` boolean. If the user requests an update during active composition, Panels
-waits. It checks the server identity again when composition becomes inactive, then
-applies the requested update. The push-only service worker and its subscription remain
+waits, and the card reads **Update applies when this message is safe**. It checks the
+server identity again when composition becomes inactive, then applies the requested
+update. The push-only service worker and its subscription remain
 in place across this page reload.
 
 **Usage** at `#/backends` offers Tokens, Cost, Limits, and Config as tabs. The explicit
