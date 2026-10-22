@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ReviewView: View {
-    let openTicket: (String) -> Void
+    var openTicket: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queue = ReviewQueue()
@@ -9,7 +9,7 @@ struct ReviewView: View {
     var body: some View {
         Group {
             if let item = queue.current(in: store.review?.items ?? []) {
-                ReviewProposalView(item: item, openTicket: { openTicket(item.ticketId) }, onSkip: { advance(item, resolved: false) }, onResolved: {
+                ReviewProposalView(item: item, openTicket: openTicket.map { action in { action(item.ticketId) } }, onSkip: { advance(item, resolved: false) }, onResolved: {
                     advance(item, resolved: true)
                     Task { await store.refresh() }
                 }).id(item.id).transition(.opacity)
@@ -44,7 +44,7 @@ struct ReviewView: View {
 
 private struct ReviewProposalView: View {
     let item: ReviewItem
-    let openTicket: () -> Void
+    let openTicket: (() -> Void)?
     let onSkip: () -> Void
     let onResolved: () -> Void
     @Environment(AppStore.self) private var store
@@ -69,9 +69,9 @@ private struct ReviewProposalView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                    Button(action: openTicket) {
-                        Text(decision.ticket?.title ?? item.title).font(ReviewStyle.title).foregroundStyle(PanelsTheme.strong)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    Group {
+                        if let openTicket { Button(action: openTicket) { ticketTitle } }
+                        else { NavigationLink(value: AppRoute.ticket(item.ticketId)) { ticketTitle } }
                     }.buttonStyle(.plain).accessibilityIdentifier("review.openTicket")
                         .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = decision.ticket?.title ?? item.title; renaming = true } }
                     VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
@@ -142,6 +142,11 @@ private struct ReviewProposalView: View {
                 }
             }
         }
+    }
+
+    private var ticketTitle: some View {
+        Text(decision.ticket?.title ?? item.title).font(ReviewStyle.title).foregroundStyle(PanelsTheme.strong)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var proposalCard: some View {
