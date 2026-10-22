@@ -23,6 +23,7 @@
   let progress = $state<string | null>(null);
   const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
   const row = $derived(body === null ? null : rowForBody(item, body));
+  $effect(() => { if (body !== null) reader.entryBodyReady(item.key); if (error && reader.entryTarget?.key === item.key) reader.failEntry(); });
   $effect(() => {
       if (item.body.kind === 'deferred' && body?.kind === 'turn_ended' && body.ending === 'completed' && body.automatic_compaction_result !== 'not_compacted')
           onEmptyEnding(item.body.reference);
@@ -53,7 +54,7 @@
   });
 </script>
 <SkeletonRegion shape="block" loading={row === null && !error} loadingText="Loading conversation detail…">
-{#if row?.kind==='tool_call'}
+{#if row?.kind==='tool_call' && reader.lens==='full'}
   <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
 {:else if row!==null}
   <ConversationTranscript rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>

@@ -11,15 +11,16 @@ def run(browser, urls):
     page.goto([__file__, *urls][1], wait_until="domcontentloaded")
     page.wait_for_function("window.__tailOpened?.() === 1")
 
-    # A send the server never answers stops claiming to be on its way, and it leaves the
-    # thread rather than sitting under every row in it.
+    # A send the server never answers keeps its bubble and offers actions in place.
     page.locator(INPUT).fill("did this arrive")
     page.locator(INPUT).press("Enter")
     page.wait_for_function("window.__sends?.length === 1")
     sent_id = page.evaluate("window.__sends[0].sender_message_id")
-    page.locator("[data-conversation-held-stack]").wait_for()
-    assert "no answer came" in page.locator("[data-conversation-held-stack]").inner_text()
-    assert page.locator("[data-conversation-outgoing='" + sent_id + "']").count() == 0
+    bubble = page.locator("[data-conversation-outgoing='" + sent_id + "']")
+    bubble.wait_for()
+    bubble.evaluate("node => window.__firstBubble = node")
+    page.wait_for_function("window.__firstBubble.innerText.includes('no answer came')")
+    assert page.locator("[data-conversation-held-stack]").count() == 0
 
     # Neither of the record's own promotions is offered, because there is no held prompt.
     assert page.locator('[data-conversation-held-promote="send_now"]').count() == 0
@@ -38,9 +39,8 @@ def run(browser, urls):
     page.wait_for_function("window.__sends?.length === 2")
     assert page.evaluate("window.__sends[1].sender_message_id") != sent_id
     assert page.evaluate("window.__sends[1].content[0].text") == "did this arrive"
-    page.wait_for_function(
-        "!document.querySelector(\"[data-conversation-held-stack]\")?.innerText?.includes('no answer came')"
-    )
+    assert page.evaluate("document.querySelector('[data-conversation-outgoing=\"' + window.__sends[1].sender_message_id + '\"]') === window.__firstBubble")
+    page.wait_for_function("!window.__firstBubble.innerText.includes('no answer came')")
 
     # Stopping a copy from being drawn needs no held prompt either.
     page.evaluate("window.__theServerAnswers(false)")
@@ -49,9 +49,7 @@ def run(browser, urls):
     page.wait_for_function("window.__sends?.length === 3")
     second_id = page.evaluate("window.__sends[2].sender_message_id")
     page.locator("[data-conversation-held-stop-drawing='" + second_id + "']").click()
-    page.wait_for_function(
-        "!document.querySelector(\"[data-conversation-held-stack]\")?.innerText?.includes('no answer came')"
-    )
+    page.wait_for_function("id => !document.querySelector('[data-conversation-outgoing=\"' + id + '\"]')", arg=second_id)
 
     # A send still on the wire when the page goes away, coming back to a server that is
     # also away. It says nothing at first, because at that point nothing is known.
@@ -69,8 +67,7 @@ def run(browser, urls):
     # to say that nobody ever said whether it arrived.
     page.evaluate("window.__theServerIsDown(false)")
     page.evaluate("window.__setServerReachable(true)")
-    page.locator("[data-conversation-held-stack]").wait_for()
-    assert "no answer came" in page.locator("[data-conversation-held-stack]").inner_text()
+    page.wait_for_function("Array.from(document.querySelectorAll('[data-conversation-outgoing]')).some(node => node.innerText.includes('no answer came'))")
     pass  # Shared runner owns the browser lifecycle.
 
     print("live-conversation-unanswered-send-browser.test.mjs: all assertions passed")

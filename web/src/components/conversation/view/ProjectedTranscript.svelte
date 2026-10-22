@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { reconcileDisplaySlots, isMessageRow, type MessageDisplaySlot } from '../../../lib/conversation/displaySlots';
+  import type { OutgoingMessage } from '../../../lib/conversation/outgoing';
+  import ProjectedMessage from './ProjectedMessage.svelte';
   import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
@@ -10,7 +13,11 @@
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
   import { TURN_STOPPED_SENTENCE } from '../../../lib/conversation/transcript';
-  let { reader, models, ownSenderLabel, livenessPulse }: {
+  let { reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
+      outgoingMessages?: readonly OutgoingMessage[];
+      acknowledgedMessageIds?: ReadonlySet<string>;
+      onStopDrawingMessage?: (id:string)=>Promise<void>|void;
+      onSendAgain?: (id:string)=>Promise<void>|void;
       reader: ConversationViewReader;
       models: readonly BackendModel[];
       ownSenderLabel: string | null;
@@ -23,8 +30,16 @@
   let emptyEndings = new SvelteMap<string, string>();
   const items = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
       for (const item of page.items)
-          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
+          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call')) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
+  let ledger: MessageDisplaySlot[] = [];
+  let ledgerConversation: string | null = null;
+  const displaySlots = $derived.by(() => {
+    if (ledgerConversation !== reader.id) { ledger = []; ledgerConversation = reader.id; }
+    const next = reconcileDisplaySlots(ledger, items, outgoingMessages, acknowledgedMessageIds);
+    ledger = next.filter(slot => slot.local !== null);
+    return next;
+  });
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
           return !item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0;
@@ -97,7 +112,7 @@
       direction: 'older' | 'newer';
   }) {
       let current = request;
-      const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting)
+      const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting && !['loading','placing','error'].includes(reader.entryPhase))
           void reader.load(current.scope, current.cursor, current.direction); }, { root: node.closest('[data-conversation-thread]'), rootMargin: '50% 0px' });
       observer.observe(node);
       return { destroy: () => observer.disconnect(), update: (next: typeof request) => { current = next; observer.unobserve(node); observer.observe(node); } };
@@ -111,6 +126,7 @@
       if (item.kind !== 'turn' && item.kind !== 'work_group') return { destroy: () => { } };
       const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
       const ask = (): void => {
+          if (['loading','placing','error'].includes(reader.entryPhase)) return;
           if (reader.lens !== 'full' && !reader.isExpanded(scope)) return;
           if (reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key)) return;
           void reader.expand(scope, true);
@@ -126,7 +142,13 @@
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
   {/each}
-  {#each items as item (item.key)}
+  {#each displaySlots as slot (slot.key)}
+    {@const item = slot.item}
+    {#if slot.local !== null || item !== null && isMessageRow(item)}
+      <ViewItem itemKey={item?.key ?? slot.key}>
+        <ProjectedMessage item={item?.kind === 'row' ? item : null} local={slot.local} {reader} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
+      </ViewItem>
+    {:else if item !== null}
     {#each reader.pages.filter(page=>page.scope.kind!=='timeline'&&page.items[0]?.key===item.key&&page.older) as page (`older:${page.scope.kind}:${page.scope.key}`)}
       {#if page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
     {/each}
@@ -148,6 +170,7 @@
     {#each reader.pages.filter(page=>page.scope.kind!=='timeline'&&page.items.at(-1)?.key===item.key&&page.newer) as page (`newer:${page.scope.kind}:${page.scope.key}`)}
       {#if page.newer}<div use:edge={{scope:page.scope,cursor:page.newer,direction:'newer'}} data-conversation-history-edge="newer" aria-hidden="true"></div>{/if}
     {/each}
+    {/if}
   {/each}
   {#if reader.lens==='full'&&reader.status?.live_output}
     <ViewItem itemKey="live-output" marker={reader.status.live_output.byte_count===0}><LiveOutput {reader}/></ViewItem>
