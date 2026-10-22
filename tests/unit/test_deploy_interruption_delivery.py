@@ -15,7 +15,10 @@ from planner.conversation.message_content import text_message_content
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.runtime import conversation_start
-from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
+from planner.runtime.worker_step_readiness_loop import (
+    WorkerStepStartResult,
+    start_ready_worker_step,
+)
 from planner.tickets.worker_restart import restart_worker
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -125,7 +128,7 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
             if actual_restart:
                 monkeypatch.setattr(conversation_start, "new_conversation_id", lambda: target)
 
-                async def start_step():
+                async def start_step() -> WorkerStepStartResult:
                     return await start_ready_worker_step(
                         "t",
                         connect_database=lambda: connect(str(path)),

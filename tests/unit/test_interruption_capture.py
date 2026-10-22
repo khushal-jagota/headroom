@@ -92,12 +92,12 @@ def test_timeout_returns_without_helper_or_false_zero_account(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from planner.environments import interruption_capture
-
     original_popen = subprocess.Popen
     marker = capture_database.parent / "helper-owned"
 
-    def blocked_helper(command: list[str], **kwargs: object) -> subprocess.Popen[bytes]:
+    def blocked_helper(
+        command: list[str], *, stdin: int, stdout: int, stderr: int, close_fds: bool
+    ) -> subprocess.Popen[bytes]:
         program = (
             "import sys,time; from pathlib import Path; "
             "from planner.conversation.lifecycle_storage import acquire_runtime_ownership; "
@@ -106,10 +106,13 @@ def test_timeout_returns_without_helper_or_false_zero_account(
         )
         return original_popen(
             [command[0], "-c", program, str(capture_database), str(marker)],
-            **kwargs,  # type: ignore[arg-type,return-value]
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            close_fds=close_fds,
         )
 
-    monkeypatch.setattr(interruption_capture.subprocess, "Popen", blocked_helper)
+    monkeypatch.setattr(subprocess, "Popen", blocked_helper)
     start = time.monotonic()
     capture_after_stop(capture_database, "timeout-release", budget_seconds=0.25)
     duration = time.monotonic() - start
