@@ -406,10 +406,32 @@ to a same-directory temporary file, synced, atomically replaced, and followed by
 directory sync. Panels rejects links, non-regular files, oversized files, unsupported
 versions, malformed fields, and invalid SHAs rather than guessing.
 
+Each workflow command runs under a foreground supervisor from the control checkout.
+After lifecycle start succeeds, the workflow enables renewal for subsequent commands.
+The supervisor renews before each command and every 60 seconds while it runs, changing
+only the timestamps on fresh evidence for that deployment. The file remains version 1,
+so an already-running compatible app reads the renewed timestamps before any restart.
+Renewal stops on a terminal record, command completion, cancellation, or loss of the
+runner parent. Cancellation and parent loss shut down and reap the owned command
+and its descendants, including check servers that create their own sessions. The
+supervisor identifies adopted descendants directly and uses PID handles when signaling
+them, so a reused PID cannot select an unrelated process. Service-manager apps are
+outside this owned tree. There is no independent heartbeat that can outlive the work.
+
+Renewal lock acquisition is limited to five seconds. A refused renewal prevents an
+ordinary command from starting. If renewal fails during a command, the supervisor stops
+renewing and lets that command finish before failing the step; it must not interrupt an
+app swap or rollback just because status storage failed. Cleanup has a narrow exception
+that allows it to start after renewal refusal, still returns failure afterward, and
+renews throughout healthy long cleanup. Cancellation and parent checks still apply.
+The lifecycle finalizer uses Bash directly so renewal refusal cannot prevent the failure
+record. Production cleanup remains before finalization; rehearsal proof and cleanup
+retain their existing order and isolated paths.
+
 `GET /api/deployment-status` projects that evidence into `idle`, `preparing`,
 `restarting`, `back_up`, `problem`, or `unknown`. Preparation and restart evidence
-expires if the runner disappears. A proved success appears as `back_up` only briefly
-and only when the running app SHA exactly matches the requested SHA. Failure and
+expires 15 minutes after the runner last renews it. A proved success appears as
+`back_up` for 24 hours and only when the running app SHA exactly matches the requested SHA. Failure and
 rollback remain problems until a later deployment supersedes them. The server watches
 the lifecycle path and sends the existing contentless change signal after create,
 replace, change, or deletion, so connected browsers re-read the canonical file.
