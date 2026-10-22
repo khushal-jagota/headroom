@@ -263,7 +263,7 @@ export type ConversationEvent =
     >
   | Row<
       "prompt_discarded",
-      StoredMessageContent & { sender_label: string; sender_message_id?: string }
+      StoredMessageContent & { sender_label: string; sender_message_id?: string; suppression_reason?: string | null }
         & AddressedMessageFields
     >
   | Row<
@@ -354,7 +354,8 @@ export type PromptDeliveryFate =
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
   | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
-  | { fate: "uncertain" };
+  | { fate: "uncertain" }
+  | { fate: "suppressed"; reason: string };
 
 export type HeldPromptPromotionResult =
   | { promoted: false }
@@ -363,6 +364,7 @@ export type HeldPromptPromotionResult =
       | { fate: "injected" }
       | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
       | { fate: "uncertain" }
+      | { fate: "suppressed"; reason: string }
     ));
 
 export type BackendIdentity = {

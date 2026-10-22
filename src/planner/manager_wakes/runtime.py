@@ -16,6 +16,7 @@ from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
     PromptDeliveryRefused,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
@@ -197,6 +198,11 @@ async def deliver_batch(
                         conversation_id=delivered.conversation_id,
                         now=now(),
                     )
+                    return False
+                if isinstance(delivered.fate, PromptDeliverySuppressed):
+                    # Final admission already wrote the exact discard receipt and
+                    # retired obsolete sources. Do not reinterpret it as acceptance.
+                    reconcile_batch_outcomes(conn, now=now())
                     return False
                 if isinstance(delivered.fate, PromptDeliveryUncertain):
                     data.record_batch_uncertain(

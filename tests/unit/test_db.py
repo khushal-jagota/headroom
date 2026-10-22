@@ -1234,7 +1234,8 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         for table in unchanged_tables
     }
     create_schema(conn)
-    assert _revision(conn) == "rename_managers"
+    assert _revision(conn) == head_revision()
+    assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
     assert (
         tuple(conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone())
         == ticket
@@ -1353,3 +1354,41 @@ def test_manager_rename_preserves_consumed_ids_when_wake_tables_are_empty(
     assert batch.lastrowid == 81
     conn.rollback()
     conn.close()
+
+
+def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "rename_managers")
+    conn = connect(str(tmp_path / "before-suppression.db"))
+    try:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,"
+            "access,created_at) VALUES ('suppression-upgrade','codex','model','/tmp','full',1)"
+        )
+        conn.execute(
+            "INSERT INTO conversation_lifecycle_facts VALUES "
+            "('suppression-upgrade','turn','1',1,'turn','unavailable',NULL),"
+            "('suppression-upgrade','attempt','prompt:1',1,'prompt','unknown','provider-one')"
+        )
+        facts = [tuple(row) for row in conn.execute("SELECT * FROM conversation_lifecycle_facts")]
+        indexes = _table_structure(conn, "conversation_lifecycle_facts")["indexes"]
+        conn.commit()
+        shutil.copy(
+            shipped / "versions/notice_suppression_audit.py",
+            tree / "versions/notice_suppression_audit.py",
+        )
+        create_schema(conn)
+        after = [tuple(row) for row in conn.execute("SELECT * FROM conversation_lifecycle_facts")]
+        assert after == facts
+        assert _table_structure(conn, "conversation_lifecycle_facts")["indexes"] == indexes
+        conn.execute(
+            "INSERT INTO conversation_lifecycle_facts VALUES "
+            "('suppression-upgrade','attempt','prompt:2',2,'prompt','suppressed',NULL)"
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
+    finally:
+        conn.close()
