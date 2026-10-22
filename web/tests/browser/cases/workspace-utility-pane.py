@@ -934,25 +934,37 @@ def verify_rail_pagination(page, url, fixture, evidence):
             page.mouse.move(bounds['x']+1,bounds['y']+30)
             scroll.evaluate("""n=>{
               window.__exitScrollSamples=[];window.__captureExitScroll=true;
+              n.addEventListener('wheel',event=>window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,
+                before:n.scrollTop,deltaY:event.deltaY},{once:true,capture:true});
               n.addEventListener('scroll',event=>{
                 const row=document.querySelector('[data-ticket-id="page_worker_17"]');
-                window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),trusted:event.isTrusted};
-                const sample=()=>{if(!window.__captureExitScroll)return;
+                const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
+                const exitRunning=exit?.getAnimations().some(a=>a.playState==='running'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
+                window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),
+                  trusted:event.isTrusted,exitRunning,wheel:window.__exitWheel};
+                window.__exitScrollTake=()=>{
                   const row=document.querySelector('[data-ticket-id="page_worker_17"]');
                   window.__exitScrollSamples.push({ms:performance.now(),top:row?.getBoundingClientRect().top,
-                    scrollTop:n.scrollTop,range:n.scrollHeight-n.clientHeight,transform:row?getComputedStyle(row).transform:null});
+                    scrollTop:n.scrollTop,range:n.scrollHeight-n.clientHeight,transform:row?getComputedStyle(row).transform:null,
+                    published:!document.querySelector('[data-ticket-id="page_worker_00"]'),busy:Boolean(document.querySelector('[data-rail-motion-busy]'))});
+                };
+                const sample=()=>{if(!window.__captureExitScroll)return;window.__exitScrollTake();
                   requestAnimationFrame(sample);};sample();
               },{once:true,capture:true});
             }""")
             page.mouse.wheel(0,36)
             page.wait_for_function('window.__exitContinued')
             continued = page.evaluate('window.__exitContinued')
+            assert continued['exitRunning'] and continued['wheel']['trusted'] and continued['wheel']['deltaY']>0, continued
+            assert continued['scrollTop']-continued['wheel']['before']>20 and continued['ms']>=continued['wheel']['ms'], continued
         after_view = page_changed('rail_tickets', prior)
         if queued:
-            page.evaluate('window.__captureExitScroll=false')
+            page.evaluate('window.__exitScrollTake();window.__captureExitScroll=false')
             exit_samples = page.evaluate('window.__exitScrollSamples')
             (evidence / 'queued-publication-scroll-during-exit.json').write_text(json.dumps({
                 'continued':continued,'samples':exit_samples},indent=2))
+            assert not exit_samples[0]['published'] and exit_samples[-1]['published'] and not exit_samples[-1]['busy'], exit_samples
+            assert exit_samples[0]['range']-exit_samples[-1]['range']>5, exit_samples
             assert all(abs(sample['top']-continued['top'])<1.5 for sample in exit_samples), (continued,exit_samples)
         assert abs(top(anchor)-continued['top']) < 1.5, (queued,continued,top(anchor),after_view)
         policy = scroll.evaluate("n=>({value:n.style.getPropertyValue('overflow-anchor'),priority:n.style.getPropertyPriority('overflow-anchor')})")
