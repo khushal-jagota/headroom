@@ -23,6 +23,7 @@ from vps_metrics_fixture import MetricsFixture  # noqa: E402
 
 def run(browser, urls):
     url = urls[0]
+    verify_conversation_overlay(browser, url)
     # Enough Worker types that the Config index is taller than the pane.
     worker_types = [
         "amend_worker", "coding", "debugging", "exploration", "general",
@@ -415,3 +416,227 @@ def verify_settled_fold(page, url, fixture, evidence):
     (evidence / "settled-fold-frames.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "flows": proof,
     }, indent=2))
+
+
+def verify_conversation_overlay(browser, url):
+    """Actual Chief host inside the responsive workspace owns the geometry."""
+    started = time.perf_counter()
+    fixture = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
+    tickets = [dict(id=f"t_overlay{i}", title=f"Overlay document row {i}", worker_type="coding", stage="needs_implementation", ticket_status="agent", recap="Document row remains readable under the floating conversation.") for i in range(36)]
+    tickets[0].update(stage="needs_brief", ticket_status="user", assigned=True, gating_field="brief", conversation_id="ticket-overlay")
+    brief = "\n\n".join(f"Document paragraph {i}. " + "This content retains its place beneath the floating conversation. " * 4 for i in range(30)) + "\n\nFinal document paragraph."
+    detail = {**tickets[0], "project_id": None, "project": "", "manager_id": None, "manager_title": None, "employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None, "employee_configuration_editable": False, "ceiling": "done", "ceiling_holder": {"kind":"owner","id":"owner"}, "blocked": False, "is_backlogged": False, "blocker_summary": {"blocked_by": []}, "field_values": {"brief": brief}, "field_summaries": {"brief": {"revision": brief, "byte_count": len(brief.encode())}}, "pending_proposal": None}
+    manifest = {"worker_types": [{"worker_type":"coding", "label":"Coding", "stages":[{"id":"needs_brief","label":"Brief","gating_field":"brief","is_terminal":False,"ownership_mode":"user"},{"id":"done","label":"Done","gating_field":None,"is_terminal":True,"ownership_mode":None}], "fields":[{"id":"brief","label":"Brief"}], "advance":{"needs_brief":"done"}, "ceiling_range":["none","needs_brief","done"], "default_ceiling":"needs_brief"}]}
+    source = fixture["navigation_response"]({"columns": [{"cards": tickets}]}, {"chief_of_staff": {"label": "Chief", "conversation_id": "bounded-reader"}})
+    evidence = Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-overlay")) / "overlay"
+    evidence.mkdir(parents=True, exist_ok=True)
+    proof = {"nativeKeyboard": "Not tested: desktop Chromium visualViewport simulation proves layout bounds only.", "hosts": []}
+
+    def respond(route):
+        parts = urlsplit(route.request.url)
+        path = parts.path
+        if path == "/api/navigation/view/snapshot":
+            view = json.loads(parse_qs(parts.query)["view"][0])
+            route.fulfill(json=fixture["scoped_navigation_response"](source, view))
+            return
+        key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
+        values = {
+            "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The document keeps its full height beneath the conversation.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
+            "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
+            "/api/tickets/t_overlay0/workspace": detail,
+            "/api/tickets/t_overlay0/conversation/start-values": {"backend_key":"codex","model":None,"reasoning_effort":None},
+            "/api/worker-types?supported=true": manifest,
+            "/api/worker-types": manifest,
+            "/api/feedback/count": {"open_count": 0},
+            "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
+            "/api/meta": {"test_mode": True, "app_sha": None},
+            "/api/review": {"items": [], "running_worker_count": 0},
+        }
+        body = values.get(key, {})
+        route.fulfill(json={"key": key, "epoch": "overlay", "revision": "1", "body": body} if path == "/api/resource-body" else body)
+
+    for name, width, height in (("wide-chief", 1440, 900), ("phone-chief", 390, 844), ("narrow-ticket", 960, 900)):
+        ticket_host = name == "narrow-ticket"
+        print("OVERLAY_HOST " + name, flush=True)
+        context = browser.new_context(viewport={"width": width, "height": height}, reduced_motion="reduce")
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        page.route("**/api/**", respond)
+        page.add_init_script("""(() => {
+          const viewport = new EventTarget();
+          Object.assign(viewport,{offsetTop:0,offsetLeft:0,width:innerWidth,height:innerHeight,scale:1});
+          Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
+          window.__keyboardViewport=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
+        })();""")
+        page.route("**/files/tickets/t_overlay0/overlay.html", lambda route: route.fulfill(content_type="text/html", body="<!doctype html><html><head><style>html{color-scheme:light;background:#fffaf2;color:#29241f;font:16px/1.6 Georgia,serif}body{margin:24px}h1{font-size:24px;line-height:1.2}</style></head><body><h1>Artifact behind the conversation</h1>" + "<p>Artifact content keeps its original frame.</p>" * 40 + "<p id='end'>Final artifact paragraph.</p></body></html>"))
+        page.goto(url + "?overlay=1#/workspace/" + ("t_overlay0" if ticket_host else "chief-of-staff"), wait_until="domcontentloaded")
+        pane = page.locator('[data-conversation-pane]')
+        box = page.locator('[data-conversation-input]')
+        document = page.locator('.ticket-doc' if ticket_host else '.chief-workspace .manager-doc')
+        final_text = 'Final document paragraph.' if ticket_host else 'Overlay document row 35'
+        try:
+            expect(box).to_be_visible()
+        except AssertionError:
+            print('OVERLAY_ERRORS ' + repr(errors),flush=True)
+            raise
+        if ticket_host:
+            grip = page.get_by_role('separator', name='Resize workspace panel')
+            grip_box = grip.bounding_box()
+            page.mouse.move(grip_box['x'] + grip_box['width']/2, grip_box['y'] + grip_box['height']/2)
+            page.mouse.down()
+            page.mouse.move(width - 440, grip_box['y'] + grip_box['height']/2, steps=5)
+            page.mouse.up()
+            page.wait_for_timeout(100)
+        expect(document.get_by_text(final_text, exact=True)).to_have_count(1)
+        # A user-owned Ticket starts opened. Explicitly choose peeked for this proof.
+        if pane.get_attribute('data-conversation-state') == 'opened':
+            page.locator('[data-conversation-collapse]').click()
+        # Open by the same controls as an owner. A viewport read follows each layout.
+        box.click()
+        expect(pane).to_have_attribute('data-conversation-state', 'peeked')
+        page.wait_for_timeout(250)
+        doc_before = document.bounding_box()
+        document.evaluate('e=>e.scrollTop=240')
+        scroll_before = document.evaluate('e=>e.scrollTop')
+        box.fill("Draft keeps its place.\n" * 6)
+        page.wait_for_timeout(250)
+        page.locator('[data-conversation-expand]').click()
+        expect(pane).to_have_attribute('data-conversation-state', 'opened')
+        page.wait_for_timeout(250)
+        doc_open = document.bounding_box()
+        card_open = pane.bounding_box()
+        assert doc_before == doc_open, (name, doc_before, doc_open)
+        assert document.evaluate('e=>e.scrollTop') == scroll_before
+        assert card_open['y'] < doc_open['y'] + doc_open['height'] and card_open['y'] + card_open['height'] > doc_open['y']
+        host = page.locator('.ticket-page' if ticket_host else '.chief-workspace.manager-page').bounding_box()
+        assert card_open['width'] <= host['width'] and card_open['x'] >= host['x']
+        if width > 1000:
+            assert host['width'] < width * .8, (name, host)
+        if ticket_host:
+            assert host['width'] < 500, host
+        # The transcript owns its own trailing clearance and follows its final row.
+        thread = page.locator('[data-conversation-thread]')
+        thread.evaluate('e=>e.scrollTop=e.scrollHeight')
+        page.wait_for_timeout(100)
+        tail = page.get_by_text('Owner answer 2000.', exact=False).last
+        expect(tail).to_be_in_viewport()
+        def transcript_bounds(page=page):
+            return page.evaluate('''() => {const e=document.querySelector('[data-conversation-thread]'),r=e.getBoundingClientRect();const rows=[...e.querySelectorAll('[data-conversation-row]')];const tail=rows.at(-1)?.getBoundingClientRect();return {top:r.top,bottom:r.bottom,scrollTop:e.scrollTop,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight,tail:tail?{top:tail.top,bottom:tail.bottom}:null};}''')
+        transcript_open = transcript_bounds()
+        assert transcript_open['tail']['bottom'] <= transcript_open['bottom'] + 1, (name, transcript_open)
+        highwater = document.evaluate('e=>e.scrollHeight')
+        # A scrollback reader keeps the same content while the composer changes.
+        thread.evaluate('e=>e.scrollTop=Math.max(0,e.scrollHeight-e.clientHeight-500)')
+        page.wait_for_timeout(100)
+        anchor = thread.evaluate('''e=>{const r=e.getBoundingClientRect();const row=[...e.querySelectorAll('[data-conversation-row]')].find(n=>n.getBoundingClientRect().bottom>r.top+10);return row?{key:row.closest('[data-conversation-view-key]')?.getAttribute('data-conversation-view-key'),text:row.textContent,top:row.getBoundingClientRect().top-r.top}:null;}''')
+        assert anchor and anchor['key'], (name, anchor)
+        def assert_anchor(label, thread=thread, anchor=anchor, name=name):
+            measured = thread.evaluate('''(e,key)=>{const row=[...e.querySelectorAll('[data-conversation-view-key]')].find(n=>n.dataset.conversationViewKey===key);const content=row?.querySelector('[data-conversation-row]')??row;return content?{text:content.textContent,top:content.getBoundingClientRect().top-e.getBoundingClientRect().top}:null;}''', anchor['key'])
+            assert measured and measured['text'] == anchor['text'] and abs(measured['top'] - anchor['top']) <= 2, (name,label,anchor,measured)
+            return measured
+        box.fill('A shorter draft')
+        page.wait_for_timeout(250)
+        assert box.input_value() == 'A shorter draft'
+        assert_anchor('composer shrink')
+        box.fill('Draft grows again.\n' * 6)
+        page.wait_for_timeout(250)
+        assert_anchor('composer growth')
+        # Collapse cannot remove document scroll range or clamp the reader.
+        document.evaluate('e=>e.scrollTop=e.scrollHeight')
+        end_scroll = document.evaluate('e=>e.scrollTop')
+        page.locator('[data-conversation-collapse]').click()
+        page.wait_for_timeout(250)
+        assert document.evaluate('e=>e.scrollHeight') >= highwater
+        assert document.evaluate('e=>e.scrollTop') == end_scroll
+        assert_anchor('collapse to peeked')
+        box.click()
+        page.wait_for_timeout(250)
+        final = document.get_by_text(final_text, exact=True)
+        document.evaluate('e=>e.scrollTop=e.scrollHeight')
+        page.wait_for_timeout(100)
+        card_peek = pane.bounding_box()
+        final_box = final.bounding_box()
+        # Wheel through the uncovered gutter to place the document tail above the card.
+        page.mouse.move(host['x'] + (40 if width > 1000 else 5), host['y'] + 150)
+        page.mouse.wheel(0, final_box['y'] + final_box['height'] - card_peek['y'] + 24)
+        page.wait_for_timeout(180)
+        final_box = final.bounding_box()
+        assert final_box['y'] >= host['y'], (name, final_box, host, page.evaluate('''([x,y])=>document.elementFromPoint(x,y)?.outerHTML.slice(0,500)''',[host['x']+(40 if width>1000 else 5),host['y']+150]),document.evaluate('e=>e.scrollTop'))
+        assert final_box['y'] + final_box['height'] <= card_peek['y'] + 1, (name, final_box, card_peek)
+        page.screenshot(path=str(evidence / f'{name}-document-tail.png'), animations='disabled')
+        # Simulated keyboard reduction plus displacement stays inside the host intersection.
+        page.evaluate('window.__keyboardViewport(100, 420)')
+        page.wait_for_timeout(250)
+        card_keyboard = pane.bounding_box()
+        assert card_keyboard['y'] >= max(host['y'], 100) - 1, (name, card_keyboard, host)
+        assert card_keyboard['y'] + card_keyboard['height'] <= min(host['y'] + host['height'], 520) + 1, (name, card_keyboard, host)
+        assert_anchor('keyboard reduction and displacement')
+        thread.evaluate('e=>e.scrollTop=e.scrollHeight')
+        page.wait_for_timeout(100)
+        expect(tail).to_be_in_viewport()
+        keyboard_transcript = transcript_bounds()
+        assert keyboard_transcript['tail']['bottom'] <= keyboard_transcript['bottom'] + 1, (name, keyboard_transcript)
+        page.screenshot(path=str(evidence / f'{name}-keyboard.png'), animations='disabled')
+        page.evaluate('window.__keyboardViewport(0, innerHeight)')
+        document.evaluate('e=>e.scrollTop=0')
+        page.wait_for_timeout(250)
+        thread.evaluate('e=>e.scrollTop=e.scrollHeight')
+        page.wait_for_timeout(100)
+        page.screenshot(path=str(evidence / f'{name}.png'), animations='disabled')
+        artifact_proof = None
+        if ticket_host:
+            page.evaluate('window.__keyboardViewport(0, innerHeight)')
+            page.wait_for_timeout(200)
+            doc_scroll_before_artifact = document.evaluate('e=>e.scrollTop')
+            page.evaluate("location.hash='#/workspace/t_overlay0?source=ticket&ticket=t_overlay0&path=overlay.html'")
+            artifact = page.locator('[data-ticket-artifact]')
+            frame = artifact.locator('iframe')
+            expect(frame).to_be_visible()
+            expect(artifact.locator('[data-ticket-artifact-close]')).to_be_in_viewport()
+            frame_before = frame.bounding_box()
+            page.locator('[data-conversation-expand]').click()
+            page.wait_for_timeout(250)
+            assert frame.bounding_box() == frame_before
+            page.locator('[data-conversation-collapse]').click()
+            page.wait_for_timeout(250)
+            artifact_scroll = artifact.locator('.ticket-artifact-body')
+            assert artifact_scroll.evaluate('e=>e.scrollHeight>e.clientHeight')
+            artifact_scroll.evaluate('e=>e.scrollTop=e.scrollHeight')
+            page.wait_for_timeout(100)
+            card = pane.bounding_box()
+            artifact_scroll.evaluate('(e,bottom)=>{const frame=e.querySelector("iframe");e.scrollTop+=frame.getBoundingClientRect().bottom-bottom;}', card['y'] - 24)
+            page.wait_for_timeout(100)
+            frame_tail = frame.bounding_box()
+            assert frame_tail['y'] + frame_tail['height'] <= card['y'] + 1, (frame_tail, card)
+            assert frame_tail['height'] == frame_before['height']
+            artifact.frame_locator('iframe').locator('#end').evaluate('e=>e.ownerDocument.defaultView.scrollTo(0,e.ownerDocument.documentElement.scrollHeight)')
+            page.wait_for_timeout(100)
+            artifact_end = artifact.frame_locator('iframe').locator('#end').bounding_box()
+            assert artifact_end['y'] + artifact_end['height'] <= card['y'] + 1, (artifact_end,card)
+            assert artifact_end['y'] >= artifact_scroll.bounding_box()['y'], (artifact_end,artifact_scroll.bounding_box())
+            page.screenshot(path=str(evidence / 'narrow-ticket-artifact-tail.png'), animations='disabled')
+            artifact_scroll.evaluate('e=>e.scrollTop=0')
+            page.wait_for_timeout(100)
+            expect(artifact.locator('[data-ticket-artifact-refresh]')).to_be_in_viewport()
+            page.screenshot(path=str(evidence / 'narrow-ticket-artifact.png'), animations='disabled')
+            artifact_proof = {'frameOriginal':frame_before,'frameTail':frame_tail,'finalParagraph':artifact_end,'scrollHeight':artifact_scroll.evaluate('e=>e.scrollHeight'),'clientHeight':artifact_scroll.evaluate('e=>e.clientHeight')}
+            artifact.locator('[data-ticket-artifact-close]').click()
+            expect(artifact).to_have_count(0)
+            assert document.evaluate('e=>e.scrollTop') == doc_scroll_before_artifact
+        proof['hosts'].append({'name':name,'host':host,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
+        draft_before_dismissal = box.input_value()
+        doc_before_dismissal = document.evaluate('e=>e.scrollTop')
+        point = {'x':host['x'] + (40 if name == 'wide-chief' else 8), 'y':pane.bounding_box()['y'] + 10}
+        hit = page.evaluate('''point=>document.elementFromPoint(point.x,point.y)?.closest('.ticket-doc,.manager-doc')!==null''', point)
+        assert hit, (name,point)
+        page.mouse.click(point['x'], point['y'])
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
+        assert box.input_value() == draft_before_dismissal
+        assert document.evaluate('e=>e.scrollTop') == doc_before_dismissal
+        proof['hosts'][-1]['gutterClick'] = {'point':point,'documentHit':hit,'draftPreserved':True,'documentScrollPreserved':True}
+        assert not errors, errors
+        context.close()
+    proof['seconds'] = time.perf_counter() - started
+    (evidence / 'overlay-geometry.json').write_text(json.dumps(proof, indent=2))
+    print('OVERLAY_PROOF ' + json.dumps(proof), flush=True)

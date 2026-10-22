@@ -3230,14 +3230,9 @@ select {
   container-name: ticket-pane conversation-host;
 }
 
-/* The page is a column of two: the reading area, then the conversation, with the page's
- * own gap above the first and below the last. The reading area is the ticket, or an
- * artifact drawn over the ticket. The conversation is NOT over either one — it is the
- * section beneath them, and the two share the page's height between them. That is what makes
- * the whole thing hold together: there is no reserved space to keep in step with anything,
- * nothing can hide behind anything, and growing the conversation is just the ticket getting
- * the smaller share. The page is never taller than the page. */
+/* The document fills the host. The conversation floats over it without changing its box. */
 .ticket-page {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -3248,12 +3243,10 @@ select {
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
-  padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+  --conversation-edge-gap: max(var(--space-6), env(safe-area-inset-bottom));
 }
 
-/* The reading area is the first of the page's two sections: it takes what the
- * conversation is not using. What is read in it is the ticket, or an artifact over the
- * ticket. */
+/* Readers retain the full host height in every conversation state. */
 .ticket-reading {
   position: relative;
   display: flex;
@@ -3272,7 +3265,7 @@ select {
   min-height: 0;
 }
 
-/* The ticket takes what the conversation is not using, and scrolls inside it. */
+/* The ticket scrolls behind the floating conversation. */
 .ticket-doc {
   min-width: 0;
   max-width: 100%;
@@ -3282,11 +3275,7 @@ select {
 }
 
 /* --- The artifact, opened where it was clicked ---------------------------- */
-/* A file opens on the page it was linked from, and takes the reading area's whole box.
- * It is drawn over the ticket rather than in place of it: the ticket keeps its layout and
- * its scroll place underneath, so closing gives back the page the reader left. The
- * conversation is the section below and is not covered, which is the point — the artifact
- * and the person's own worker are on the screen at once. */
+/* Artifacts cover the document while preserving its scroll position beneath them. */
 .ticket-artifact {
   position: absolute;
   inset: 0;
@@ -3352,36 +3341,15 @@ select {
   overflow: auto;
 }
 
-/* --- The conversation, the section under a document ------------------------ */
-/* One card, one class family, every host. The Ticket page, the Manager page and the
- * Atlas manager panel all end in this same conversation, so it is keyed to its own
- * name and not to any one of theirs. A host is any element that ends its column with
- * `.conversation-layer`; a host that also wants the narrow-pane insets names itself a
- * `conversation-host` container. Where one host genuinely differs from another, the
- * difference is written once against that host, next to the host's own rules — never as a
- * second copy of the card.
- *
- * The conversation is not a column beside the document and not a layer over it. It is the
- * second and last section of the page, and the two of them divide that page's
- * height between them. Everything follows from that: nothing is reserved, nothing can be
- * covered, and growing the conversation is only the document taking the smaller share.
- *
- * Its share is a share of the PAGE and never of the window, because these routes
- * also render inside the Workspace's right pane, where the two are nothing
- * like the same rectangle. Sizing against the page gets the full screen and the pane right
- * at once, and it is what decides that Opened is as tall as the page and not the nav.
- *
- * A section and never a mode: the document above stays readable, scrollable and clickable
- * at every height. Clicking the document drops it back a state — the host owns that
- * gesture.
- *
- * The state is drawn on the pane inside, so each height is asked for through :has: rest is
- * its own content, peeked takes a bit over half the page, opened takes all of it. */
+/* --- One floating conversation card, measured against its host pane -------- */
 .conversation-layer {
-  /* The section under the document. At rest it is as tall as it needs to be; the two states
-   * above give it a share of the page and the document keeps the rest. Its own ladder — the
-   * jump button, the overflow menu, the "/" popover — sits inside this stacking context. */
-  z-index: 1;
+  position: absolute;
+  z-index: 2;
+  left: var(--conversation-visible-left, 0px);
+  right: var(--conversation-visible-right, 0px);
+  bottom: calc(var(--conversation-visible-bottom, 0px) + var(--conversation-edge-gap));
+  max-height: max(0px, calc(var(--conversation-visible-height, 100%) - var(--conversation-edge-gap) - var(--space-6)));
+  pointer-events: none;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -3407,7 +3375,8 @@ select {
  * line is the status line at rest and the transcript once it grows. Nothing about how it is
  * drawn changes between rest and peeked — only how much room the part above the line gets. */
 [data-conversation-pane][data-conversation-state="rest"],
-[data-conversation-pane][data-conversation-state="peeked"] {
+[data-conversation-pane][data-conversation-state="peeked"],
+[data-conversation-pane][data-conversation-state="opened"] {
   /* The card's own surface, and the status bar is what you see of it: the well covers the
    * rest, so this colour is the bar at rest and the bar's head once it is opened up. It is
    * the page's own plane, not the ink one: the design separates the card from the page with
@@ -3416,7 +3385,7 @@ select {
   background: var(--surface-1);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-float);
 }
 
 /* Focus is shown on the card, because the card is the thing being used. Lighting the
@@ -3424,16 +3393,15 @@ select {
  * was the object, when the field is one band of it. The ring is drawn outside the
  * border, so nothing inside moves when it arrives. */
 [data-conversation-pane][data-conversation-state="rest"]:focus-within,
-[data-conversation-pane][data-conversation-state="peeked"]:focus-within {
+[data-conversation-pane][data-conversation-state="peeked"]:focus-within,
+[data-conversation-pane][data-conversation-state="opened"]:focus-within {
   border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent);
   box-shadow:
-    0 -8px 24px rgba(0, 0, 0, 0.45),
+    var(--shadow-float),
     0 0 0 3px color-mix(in srgb, var(--accent-bright) 9%, transparent);
 }
 
-/* At full height the well carries focus because the card's outline is the page.
- * Hosts without a state use the same focus rule. The textarea draws no outline of its own. */
-[data-conversation-pane][data-conversation-state="opened"]:focus-within .chat-box,
+/* Hosts without a floating card show focus on the well itself. */
 [data-conversation-pane]:not([data-conversation-state]):focus-within .chat-box {
   box-shadow:
     inset 0 1px 2px rgba(0, 0, 0, 0.35),
@@ -3443,7 +3411,6 @@ select {
 /* A file being dragged onto the well outranks the fact that it has focus: the drop is
  * what is about to happen. Same shape, the colour the app means "this is a target" by. */
 [data-conversation-pane] .chat-box.drag,
-[data-conversation-pane][data-conversation-state="opened"]:focus-within .chat-box.drag,
 [data-conversation-pane]:not([data-conversation-state]):focus-within .chat-box.drag {
   box-shadow:
     inset 0 1px 2px rgba(0, 0, 0, 0.35),
@@ -3454,6 +3421,8 @@ select {
  * the transcript add none of their own here: the card is already holding them off the edge. */
 .conversation-layer [data-conversation-pane] {
   padding-inline: var(--conversation-card-inset);
+  pointer-events: auto;
+  max-height: 100%;
 }
 
 .conversation-layer .chat-thread,
@@ -3479,15 +3448,65 @@ select {
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
-/* Peeked and opened take a share of the page and leave the rest to the document, which
- * keeps scrolling inside whatever it is given. Nothing is covered, so nothing is
- * unreachable. */
+/* State heights use the pane, then fit inside its visible viewport intersection. */
 .conversation-layer:has([data-conversation-state="peeked"]) {
-  height: 60%;
+  height: var(--conversation-peek-height, 60%);
 }
-
 .conversation-layer:has([data-conversation-state="opened"]) {
+  height: var(--conversation-visible-height, 100%);
+}
+/* These tails extend scroll range without changing either reader's original box.
+ * Retaining the largest measured value avoids clamping scrollTop when a card collapses. */
+.ticket-doc, .manager-doc, .ticket-artifact-body {
+  scroll-padding-bottom: var(--conversation-clearance, 0px);
+}
+.ticket-doc::after, .manager-doc::after, .ticket-artifact-body::after {
+  content: "";
+  display: block;
+  height: var(--conversation-clearance, 0px);
+  flex: none;
+  overflow-anchor: none;
+}
+.ticket-artifact-body { display: block; overflow: auto; }
+.ticket-artifact-slot {
   height: 100%;
+  min-height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Large questions and held prompts scroll inside the card; the whole composer
+ * remains one child of the transcript's existing flex layout. */
+.conversation-layer [data-conversation-composer] {
+  min-height: 0;
+  flex-shrink: 1;
+  max-height: calc(var(--conversation-visible-height, 100vh) - 2 * var(--conversation-edge-gap) - var(--space-7));
+}
+.conversation-layer [data-conversation-composer-constrained] {
+  overflow-y: auto;
+}
+.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-menu,
+.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-add-menu,
+.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .listbox-picker-panel {
+  max-height: max(0px, calc(var(--conversation-popup-height, 100vh) - var(--space-6)));
+  overflow-y: auto;
+}
+/* Preserve the catalog's existing list cap when more room is available. */
+.conversation-layer [data-conversation-composer]:not([data-conversation-composer-constrained]) .chat-menu {
+  max-height: min(320px, max(0px, calc(var(--conversation-popup-height, 100vh) - var(--space-6))));
+}
+/* Once a composer needs its own scroller, upward popovers would be clipped by that
+ * scroller. Keep their controls reachable in its flow instead. Ordinary menus float. */
+.conversation-layer [data-conversation-composer-constrained] .chat-menu,
+.conversation-layer [data-conversation-composer-constrained] .chat-add-menu,
+.conversation-layer [data-conversation-composer-constrained] .listbox-picker-panel {
+  position: static;
+  max-width: 100%;
+}
+.conversation-layer .chat-box { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.conversation-layer .chat-overflow-menu {
+  max-height: calc(var(--conversation-visible-height, 100vh) - 2 * var(--conversation-edge-gap) - var(--space-7));
+  overflow-y: auto;
 }
 
 /* A narrow pane gives the conversation its gutters back: 48px a side would spend a
@@ -3527,14 +3546,6 @@ select {
     min-width: 0;
     flex: 0 1 auto;
   }
-}
-
-/* Opened stops being a card: the whole of the page's height, this column's width, no
- * outline and no corners. The line above the well can stay — it belongs to the well. */
-[data-conversation-pane][data-conversation-state="opened"] {
-  /* The surface stays what it wears at rest and peeked; opening it changes its shape, not
-   * its colour. */
-  background: var(--surface-1);
 }
 
 /* Header and body stand in the page's one column, set once further down. The header has no
@@ -3722,11 +3733,7 @@ select {
   box-shadow: var(--shadow-float);
 }
 
-/* The read's own generous tail, and under it the room the conversation layer stands in at
- * rest, so scrolling to the end of the ticket ends at the end of the ticket. */
-/* The body sits in the same measure and the same inset as the header above it. Its end is
- * a plain gap: the conversation is the section after this one rather than a layer over it,
- * so there is nothing here to hold clear of. */
+/* The readable column keeps its own tail before the measured overlay clearance. */
 .ticket-col {
   min-width: 0;
   padding: var(--space-4) var(--page-gutter) var(--space-6);
@@ -3918,7 +3925,7 @@ a.artifact-chip:hover,
  * rather than in the shared card: a Manager's peeked share is 60% at every height. */
 @media (max-width: 720px) and (max-height: 480px) {
   [data-screen="ticket"] .conversation-layer:has([data-conversation-state="peeked"]) {
-    height: 52%;
+    height: var(--conversation-peek-height, 52%);
   }
 
   [data-screen="ticket"] .conversation-column {
@@ -4143,6 +4150,7 @@ a.artifact-chip:hover,
 /* The page is the pane, so it owns the size container, exactly as .ticket-screen does.
  * Inline-size leaves the height chain from the shell to the page untouched. */
 .manager-page {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -4150,7 +4158,7 @@ a.artifact-chip:hover,
   max-width: 100%;
   min-height: 0;
   overflow: hidden;
-  padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+  --conversation-edge-gap: max(var(--space-6), env(safe-area-inset-bottom));
   container-type: inline-size;
   /* Its own name for its own rules, and `conversation-host` for the one question every
    * host of the conversation card asks of its pane. See .ticket-screen. */

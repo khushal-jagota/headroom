@@ -551,8 +551,9 @@ or locale produces identical arbitrary-text ordering.
   file clicked inside either reading area does not go to the preview address. The screen catches the click
   and draws the file over its own reading area, with a strip carrying the file's name and
   a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
-  back the page the reader left, and the conversation keeps its own section at the bottom
-  of the page — the artifact and the worker are on screen together, which is the point.
+  back the page the reader left. The conversation floats above the artifact. An outer
+  artifact scroller adds clearance below its original-height reader, including framed
+  HTML and PDF files, without changing file bytes or the frame's own scrolling.
   An opened conversation is the whole page, so opening a file steps it back to peeked.
   Escape closes the file. This is the same on every screen width. A click asking for a
   new tab or window is left alone. On the Workspace the open file rides in the address
@@ -712,7 +713,7 @@ hand-rolling the same shapes per screen. Each does one job:
   one line above it saying what happened last — whoever produced it, so your own message
   can be that line, and so can a request waiting on you. Clicking the input **peeks** it
   open: a card over the page, with the line gone because the transcript now says the same
-  thing. A control takes it **opened**, the full height of the page, and the same control
+  thing. A control takes it **opened**, the available visible height of the pane, and the same control
   brings it back. Clicking the ticket behind it, or pressing Escape, drops it one state.
 
   Three things are true of all three. Nothing moves it but a person — a request arriving
@@ -722,6 +723,24 @@ hand-rolling the same shapes per screen. Each does one job:
   screens. A move between peeked and opened keeps the reader's place in the transcript.
   Reopening from rest lands on the newest unanswered request or the end of the conversation.
   Every state keeps whatever the person had half-typed.
+
+  The document retains its full height beneath the floating card in all three states.
+  Peeked uses 60% of its host pane (52% for a short landscape Ticket); opened fits between
+  the pane's top and bottom gaps. The host intersects its own rectangle with the browser's
+  visual viewport, including keyboard displacement, and bounds the card within it.
+  Oversized composer questions and held prompts scroll inside the card. A composer
+  becomes scrollable when its contents exceed its bounded height by more than one CSS
+  pixel. Ordinary catalog, attachment, and run menus retain their floating placement,
+  with their height limited to the visible space above the composer. If an open menu
+  cannot fit one control target plus the top gap there, it joins the composer's scroll
+  flow instead. This keeps its choices reachable on a reduced keyboard viewport.
+  Keyboard activation of a run-picker rail action first focuses its option list. An
+  action that removes its own button therefore keeps the picker open. Escape returns
+  focus to the stable picker trigger.
+  Document and
+  artifact scrollers gain trailing space equal to the largest measured card clearance
+  during that host visit. Collapsing retains that blank space so it cannot clamp the
+  reader's scroll position. Uncovered gutters pass clicks to the document below.
 
   The Chief and ordinary Managers share one layout with this layer and the same
   outside-click dismissal. Dismissal uses the start of a primary pointer gesture.
