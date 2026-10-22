@@ -289,6 +289,7 @@ def run(browser, urls):
     verify_settled_fold(page, url, fold, evidence)
     capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
+    verify_rail_pagination(page, url, card_fixture, evidence)
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
@@ -744,3 +745,142 @@ def capture_card_motion(browser, url, fixture, respond, evidence):
             video.delete()
             recordings.append({"reducedMotion": reduced, "seconds": round(time.perf_counter()-started, 3)})
     (evidence / "card-review-clips.json").write_text(json.dumps({"newHosts": 0, "contexts": 2, "recordings": recordings}, indent=2))
+
+
+def verify_rail_pagination(page, url, fixture, evidence):
+    """Actual scoped pages, DOM publication, native scrolling, and surviving rows.
+
+    Coordinator arbitration uses cheap unit coverage. This existing App flow proves
+    the boundary that unit hosts cannot: projected pages become measured real rows.
+    """
+    started = time.perf_counter()
+    chief_rows = [{"id": f"page_worker_{i:02}", "manager_id": None, "title": f"Paging Worker {i:02}",
+                   "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
+                  for i in range(40)]
+    fixture.update(enabled=True, board={"managers": [
+        {"id": f"page_manager_{i:02}", "title": f"Paging manager {i:02}", "created_at": i+1, "tickets": []}
+        for i in range(70)
+    ], "columns": [{"cards": chief_rows}]}, chief={"label": "Chief"})
+    page.set_viewport_size({"width": 1100, "height": 650})
+    page.emulate_media(reduced_motion="no-preference")
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('.chief [data-ticket-id]')).to_have_count(30)
+    expect(page.locator('[data-manager]')).to_have_count(60)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    scroll = page.locator('[data-active-work-scroll]')
+    page.mouse.move(900, 600)
+    proof = []
+
+    def window(section):
+        return page.evaluate("""section => window.__navigationFrames.flatMap(frame=>frame.content.windows)
+          .filter(window=>window.request.section===section &&
+            (section!=='rail_tickets'||window.request.owner?.kind==='chief')).at(-1)""", section)
+
+    def members(section):
+        selector = '.chief [data-ticket-id]' if section == 'rail_tickets' else '[data-manager]'
+        key = 'ticketId' if section == 'rail_tickets' else 'manager'
+        return page.locator(selector).evaluate_all("(nodes,key)=>nodes.map(n=>n.dataset[key])", key)
+
+    def settled():
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+
+    def top(selector):
+        return page.locator(selector).evaluate("n=>n.getBoundingClientRect().top")
+
+    def settle_scroll():
+        page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame)}")
+
+    def page_changed(section, prior):
+        page.wait_for_function("""([section,prior])=>window.__navigationFrames.flatMap(frame=>frame.content.windows)
+          .filter(window=>window.request.section===section &&
+            (section!=='rail_tickets'||window.request.owner?.kind==='chief')).at(-1)?.request.anchor!==prior""",
+                               arg=[section, prior["request"]["anchor"]])
+        # A future window in navigation alone cannot prove rendered membership.
+        page.wait_for_function("""section=>{
+          const view=window.__navigationFrames.flatMap(frame=>frame.content.windows)
+            .filter(w=>w.request.section===section&&(section!=='rail_tickets'||w.request.owner?.kind==='chief')).at(-1);
+          const nodes=[...document.querySelectorAll(section==='rail_tickets'?'.chief [data-ticket-id]':'[data-manager]')];
+          const actual=nodes.map(n=>section==='rail_tickets'?n.dataset.ticketId:n.dataset.manager).sort();
+          return JSON.stringify(actual)===JSON.stringify(view.members.map(k=>k.id).sort());
+        }""", arg=section)
+        settled()
+        return window(section)
+
+    # A native scroll requests a child overlap before the visible half disappears.
+    prior = window('rail_tickets')
+    anchor = '[data-ticket-id="page_worker_17"]'
+    before = scroll.evaluate("""(surface,selector)=>{
+      const row=document.querySelector(selector);surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
+      return row.getBoundingClientRect().top;
+    }""", anchor)
+    after_view = page_changed('rail_tickets', prior)
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    assert after_view['request']['direction'] == 'after' and after_view['request']['anchor'] == prior['forward_overlap']
+    proof.append({"name":"card-forward-native-scroll","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_tickets')})
+
+    # Home at the physical boundary requests the backward page. The first visible
+    # surviving row remains fixed while earlier rows re-enter the same card.
+    scroll.evaluate("n=>n.scrollTop=0")
+    settle_scroll()
+    prior = window('rail_tickets')
+    first_id = members('rail_tickets')[0]
+    anchor = f'[data-ticket-id="{first_id}"]'
+    before = top(anchor)
+    page.locator('.chief .item-head').focus()
+    page.keyboard.press('Home')
+    after_view = page_changed('rail_tickets', prior)
+    assert after_view['request']['direction'] == 'before' and after_view['request']['anchor'] == prior['backward_overlap']
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    proof.append({"name":"card-backward-keyboard","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_tickets')})
+    page.locator('.chief .item-head').evaluate('n=>n.blur()')
+
+    # A live completion publication must not request another page. It also leaves
+    # the first parent visible at the physical top for backward anchor proof.
+    chief_request = window('rail_tickets')['request']
+    for row in chief_rows:
+        row.update(stage='done',ticket_status='done')
+    page.evaluate('async()=>{await window.__refreshNavigation();await new Promise(requestAnimationFrame)}')
+    expect(page.locator('.chief [data-ticket-id]')).to_have_count(0)
+    settled()
+    assert (window('rail_tickets')['request']['anchor'],window('rail_tickets')['request']['direction']) == (chief_request['anchor'],chief_request['direction']), (chief_request,window('rail_tickets')['request'])
+
+    # Parent pages use the same physical scroller, with a different surviving row.
+    prior = window('rail_parents')
+    anchor = '[data-manager="page_manager_35"]'
+    before = scroll.evaluate("""(surface,selector)=>{
+      const row=document.querySelector(selector);surface.scrollTop+=row.getBoundingClientRect().top-surface.getBoundingClientRect().top-8;
+      return row.getBoundingClientRect().top;
+    }""", anchor)
+    after_view = page_changed('rail_parents', prior)
+    (evidence / 'parent-pagination-state.json').write_text(json.dumps({
+        'before':before,'after':top(anchor),'scrollTop':scroll.evaluate('n=>n.scrollTop'),
+        'oldWindow':prior,'newWindow':after_view,'parentMembers':members('rail_parents'),
+        'chiefMembers':members('rail_tickets'),
+    },indent=2))
+    assert after_view['request']['direction'] == 'after' and after_view['request']['anchor'] == prior['forward_overlap']
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    proof.append({"name":"parent-forward-native-scroll","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_parents')})
+
+    prior = window('rail_parents')
+    first_id = members('rail_parents')[0]
+    anchor = f'[data-manager="{first_id}"]'
+    # The wheel first moves to the physical top. Compare the surviving row with
+    # that user-requested position, rather than its position before user travel.
+    before = top(anchor)+scroll.evaluate('n=>n.scrollTop')
+    bounds = scroll.bounding_box()
+    page.mouse.move(bounds['x']+1, bounds['y']+30)
+    page.mouse.wheel(0, -100000)
+    after_view = page_changed('rail_parents', prior)
+    (evidence / 'parent-pagination-state.json').write_text(json.dumps({
+        'before':before,'after':top(anchor),'scrollTop':scroll.evaluate('n=>n.scrollTop'),
+        'oldWindow':prior,'newWindow':after_view,'parentMembers':members('rail_parents'),
+        'chiefMembers':members('rail_tickets'),
+    },indent=2))
+    assert after_view['request']['direction'] == 'before' and after_view['request']['anchor'] == prior['backward_overlap']
+    assert abs(top(anchor)-before) < 1.5, (before, top(anchor), after_view)
+    proof.append({"name":"parent-backward-wheel","before":before,"after":top(anchor),"request":after_view['request'],"members":members('rail_parents')})
+    page.mouse.move(900, 600)
+    page.screenshot(path=str(evidence / 'rail-pagination-final.png'))
+    (evidence / 'rail-pagination.json').write_text(json.dumps({
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,
+    }, indent=2))

@@ -108,6 +108,17 @@ One screen per part of the system:
   Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
   animation and scripted travel, including travel already in progress.
 
+  Active rail pages restore a visible row only after an explicit page request.
+  The requested cursor, direction, and anchor stay with that request. Publication
+  identity and window metadata travel with the displayed rows through the motion queue.
+  Restoration waits for that rendered page and checks its displayed membership.
+  It runs before the controller measures final geometry, without a later restore callback.
+  When parent and card requests share a scroller, an eligible parent goes first.
+  The card retains its request for the next measured phase. Missing anchors retire
+  their requests. Scripted restoration resets every action's scroll baseline.
+  Ordinary rail updates do not restore scroll. Native wheel, touch, and keyboard
+  navigation remain available. Settled and ManagerChildren keep their existing policy.
+
   The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
   pixels with a pointer or arrow keys. Double click resets it. The preference persists
   in the browser. The existing narrow layout stacks the rail and hides this splitter.

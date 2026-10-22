@@ -1,5 +1,6 @@
 import { tick } from "svelte";
 import { refreshWorkspaceRailSignals, stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
+import type { ViewWindow } from "./navigation/contracts";
 
 // The approved Glide timing: distance changes duration, never the easing.
 export const RAIL_MOTION = {
@@ -16,6 +17,8 @@ export type WorkspaceRailPresentation = {
   settledOpen: boolean;
   /** Keep the closing body mounted while the header acknowledges the click. */
   settledBodyOpen?: boolean;
+  /** Metadata travels with its rows through hover freeze and the structural queue. */
+  scrollPublication?: { publicationId: number | null; windows: readonly ViewWindow[] };
 };
 
 type MotionSurface = { background: string; surrounding: string };
@@ -53,7 +56,8 @@ function snapshot(root: HTMLElement | null): Map<string, Part> {
 
 /** Defer structure during motion or hover; conversation facts stay live during hover. */
 export function createRailMotionController(root: () => HTMLElement | null,
-  read: () => WorkspaceRailPresentation, apply: (presentation: WorkspaceRailPresentation) => void) {
+  read: () => WorkspaceRailPresentation, apply: (presentation: WorkspaceRailPresentation) => void,
+  flushPageRestoration: () => boolean = () => false) {
   let pending: WorkspaceRailPresentation | null = null;
   let frozen = false;
   let busy = false;
@@ -229,6 +233,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     present(next);
     await tick();
     if (disposed) return;
+    const deferredPageRestoration = flushPageRestoration();
     const last = measure();
     const plays: Promise<void>[] = [];
     if (section && !directFold()) {
@@ -293,6 +298,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
       }
     }
     await Promise.all(plays);
+    // A parent and a card can receive their requested pages in one publication.
+    // Give the losing eligible card its own measured phase without waiting for data.
+    if (deferredPageRestoration && !disposed) pending ??= read();
     busy = false;
     markBusy();
     void drain();

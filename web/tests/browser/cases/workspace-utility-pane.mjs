@@ -18,6 +18,7 @@ import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 // Supply wire snapshots through the production EventSource transport. The optional
 // fold fixture uses the same App host and the real navigation parser and projection.
 const sources = new Set<any>();
+(globalThis as any).__navigationFrames = [];
 class QuietEventSource {
   onopen = null; onmessage = null; onerror = null;
   listeners = new Map(); closed = false;
@@ -33,7 +34,11 @@ class QuietEventSource {
     if (!response.ok) return;
     const data = await response.text();
     await new Promise<void>(resolve => setTimeout(() => {
-      if (!this.closed) this.listeners.get('snapshot')?.({data});
+      if (!this.closed) {
+        const frames = (globalThis as any).__navigationFrames;
+        frames.push(JSON.parse(data)); if (frames.length > 30) frames.shift();
+        this.listeners.get('snapshot')?.({data});
+      }
       resolve();
     }, (globalThis as any).__navigationDelay ?? 0));
   }
