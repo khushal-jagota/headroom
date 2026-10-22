@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from tests.integration.test_navigation_attention import Host, Turn
+from tests.integration.test_navigation_attention import prepared as prepared
 from tests.integration.test_navigation_signal_publication import (
     _ActualBinding,
 )
@@ -64,6 +66,72 @@ def activate(conn: sqlite3.Connection) -> None:
     prepare(conn)
     rebuild(conn)
     conn.commit()
+
+
+def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Host) -> None:
+    host = prepared
+    host.attach()
+    conn = host.connect()
+    activate(conn)
+    conn.execute("BEGIN")
+    add_parent(conn, "manager")
+    add_ticket(conn, "blocker")
+    add_ticket(conn, "chief-ticket")
+    conn.execute("UPDATE tickets SET manager_kind='manager',manager_id='manager' WHERE id='t'")
+    conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='chief-ticket'")
+    conn.executemany("INSERT INTO ticket_blocks VALUES('blocker',?)", [("t",), ("chief-ticket",)])
+    conn.commit()
+    query = descriptor()
+    query["windows"] = [
+        cast(
+            ViewWindowRequest,
+            {**query["windows"][0], "section": section, "owner": owner, "group": grouping},
+        )
+        for owner in ({"kind": "manager", "id": "manager"}, {"kind": "chief", "id": "chief"})
+        for section, grouping in (
+            ("children", "blocked"),
+            ("children", "awaiting_answer"),
+            ("rail_tickets", "all"),
+        )
+    ]
+
+    def memberships(*, answering: bool = False) -> None:
+        for current in (True, False):
+            _, content = read_content(conn, query, current=current)
+            for offset, identity in ((0, "t"), (3, "chief-ticket")):
+                blocked, answer, rail = content["windows"][offset : offset + 3]
+                assert [row["id"] for row in blocked["members"]] == (
+                    [] if current and answering else [identity]
+                )
+                assert [row["id"] for row in answer["members"]] == (
+                    [identity] if current and answering else []
+                )
+                assert identity not in {row["id"] for row in rail["members"]}
+
+    writer = host.mutation(Turn(), "blocked-working")
+    writer.commit()
+    memberships()
+    _, content = read_content(conn, query, current=True)
+    attention = next(row for row in content["records"] if row["kind"] == "conversation")["value"]
+    current_attention = attention["attention"]["current"]
+    assert current_attention is not None and current_attention["signal"]["working"] is True
+    assert all(
+        row["value"]["ticket_status"] == "blocked"
+        for row in content["records"]
+        if row["kind"] == "ticket" and row["id"] != "blocker"
+    )
+    writer = host.mutation(Turn({"permission"}), "blocked-awaiting-answer")
+    writer.commit()
+    memberships(answering=True)
+    writer = host.mutation(None, "blocked-failed-history")
+    writer.execute(
+        "INSERT INTO conversation_events VALUES('c',1,'turn_ended','{\"ending\":\"failed\"}',0)"
+    )
+    writer.commit()
+    memberships()
+    _, content = read_content(conn, query, current=False)
+    attention = next(row for row in content["records"] if row["kind"] == "conversation")["value"]
+    assert attention["attention"]["durable"]["last_turn_failed"] is True
 
 
 def add_review_tickets(conn: sqlite3.Connection) -> None:

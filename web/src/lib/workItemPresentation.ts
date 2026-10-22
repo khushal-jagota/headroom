@@ -73,11 +73,11 @@ export function workItemTicketGroupKey(
   if (ticket.is_backlogged) return "backlog";
   const attention = primaryWorkAttention(ticket);
   if (attention !== null) return attention;
+  if (ticket.ticket_status === "blocked") return "blocked";
   if (ticket.agent_state === "errored") return "errored";
   if (agentHoldsTicket(ticket)) return "agent";
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
   if (ticket.awaiting_agent_approval) return "status_awaiting_approval";
-  if (ticket.ticket_status === "blocked") return "blocked";
   if (ticket.stage === "done") return "done";
   return "empty";
 }
@@ -97,10 +97,29 @@ export function workItemTicketGroups<T extends WorkItemTicketFacts>(
   tickets: readonly T[],
   keys: readonly WorkItemTicketGroupKey[] = WORK_ITEM_TICKET_GROUPS.map((group) => group.key)
 ): WorkItemTicketGroup<T>[] {
+  return groupTickets(tickets, keys, workItemTicketGroupKey);
+}
+
+/** Work lists share classification and initial order; unread remains a row fact. */
+export function workItemWorkGroups<T extends WorkItemTicketFacts>(
+  tickets: readonly T[]
+): WorkItemTicketGroup<T>[] {
+  return groupTickets(
+    tickets,
+    WORK_ITEM_TICKET_GROUPS.filter((group) => group.key !== "awaiting_reply").map((group) => group.key),
+    (ticket) => workItemTicketGroupKey({...ticket, awaiting_reply: false})
+  );
+}
+
+function groupTickets<T extends WorkItemTicketFacts>(
+  tickets: readonly T[],
+  keys: readonly WorkItemTicketGroupKey[],
+  groupKey: (ticket: T) => WorkItemTicketGroupKey
+): WorkItemTicketGroup<T>[] {
   const definitions = new Map(WORK_ITEM_TICKET_GROUPS.map((group) => [group.key, group]));
   return keys.flatMap((key) => {
     const grouped = tickets
-      .filter((ticket) => workItemTicketGroupKey(ticket) === key)
+      .filter((ticket) => groupKey(ticket) === key)
       .sort(workItemTicketOrder);
     const definition = definitions.get(key);
     return grouped.length && definition ? [{ ...definition, tickets: grouped }] : [];
