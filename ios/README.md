@@ -106,13 +106,13 @@ writes need not emit a database change.
 `ConversationPlaceholder` is the clearly named integration slot on Chief,
 Orchestrator and Ticket. No transcript, composer, read marker, or conversation
 layout has been implemented; the agreed conversation design comes later. Artifact
-viewing and the Ideas, Usage and VPS destinations are placeholders. Feedback
-implements the Open/Handled inbox, grouped Ticket links, page context links and
-Dismiss/Reopen actions through its API adapter. It follows foreground change
-revisions and supports pull-to-refresh. Its empty state omits the web's capture
-button instruction because native global feedback capture is not yet implemented.
-Live simulator verification is read-only; Feedback writes are exercised only with
-an injected stub or URLProtocol interception.
+viewing and Ideas remain placeholders. Usage, VPS and Settings now have native
+read-only screens. Feedback implements the Open/Handled inbox, grouped Ticket
+links, page context links and Dismiss/Reopen actions through its API adapter. It
+follows foreground change revisions and supports pull-to-refresh. Its empty state
+omits the web's capture button instruction because native global feedback capture
+is not yet implemented. Feedback writes are exercised only with an injected stub
+or URLProtocol interception.
 
 Haptic helpers offer light, medium, success and selection. Navigation and tab
 changes use them, as does saving Settings. Native navigation transitions supply
@@ -127,3 +127,37 @@ and the POST adapter's encoding of one identifier component. Tests reuse the
 shared decoder, one small synthetic response, an actor stub and an ephemeral
 URLSession; they start no backend or browser host. Feedback's views, contracts,
 presentation and API extension are confined to `Features/More/Feedback`.
+
+## Usage, VPS and Settings
+
+Usage reads cached Codex and Claude allowances, plus recorded local CLI token and
+cost totals for today, 7, 30 or 90 days. Provider filters apply to the totals and
+chart. Missing values stay unavailable and partial source reads show their issues.
+Pull-to-refresh rereads the stored snapshot; it does not ingest CLI files, refresh
+provider credentials, sign in or update a backend. Cost estimates are not bills.
+
+VPS reads machine measurements, CPU history, services and paged processes. Its
+15-second foreground poll preserves the loaded process window. CPU history offers
+5 minutes, 24 hours and 30 days; points do not connect across missing samples.
+The app never renews the server's activity lease. Stale readings keep their sample
+time and show “No feed”. Pull-to-refresh also reloads history.
+
+Settings reads agent launch defaults, role skills, schedules and notification
+preferences. Server preferences are read-only; management remains on the web.
+The Server sheet changes only this app's stored HTTPS address. Its save closure
+can be replaced by a stub. Native push is not connected in this preview.
+
+The four system-screen tests cover gaps not covered by the foundation fixtures:
+nullable recorded cost versus a real zero; per-core CPU conversion and missing
+memory; fractional allowance timestamps and an absent feed; and unsafe server
+addresses. They reuse the API decoder and have no connected test host. Run them
+on macOS without a simulator:
+
+```sh
+ios/scripts/test-system-models.sh
+```
+
+For this delivery, firstmate explicitly deferred all simulator testing and Gemini
+motion review. Verification is a generic iOS Simulator SDK compile, these host
+unit tests, and decoding eight read-only endpoint snapshots. No iOS interaction,
+motion, or physical haptic behavior is claimed as verified.
