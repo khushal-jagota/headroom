@@ -724,7 +724,9 @@ hand-rolling the same shapes per screen. Each does one job:
   Reopening from rest lands on the newest unanswered request or the end of the conversation.
   Every state keeps whatever the person had half-typed.
 
-  The document retains its full height beneath the floating card in all three states.
+  The card spans its column's full width without an outer horizontal inset. The text
+  keeps the card's inner padding. The document retains its full height beneath the card
+  in all three states.
   Peeked uses 60% of its host pane (52% for a short landscape Ticket); opened fits between
   the pane's top and bottom gaps. The host intersects its own rectangle with the browser's
   visual viewport, including keyboard displacement, and bounds the card within it.
@@ -740,7 +742,7 @@ hand-rolling the same shapes per screen. Each does one job:
   Document and
   artifact scrollers gain trailing space equal to the largest measured card clearance
   during that host visit. Collapsing retains that blank space so it cannot clamp the
-  reader's scroll position. Uncovered gutters pass clicks to the document below.
+  reader's scroll position. Uncovered document space above the card remains clickable.
 
   The Chief and ordinary Managers share one layout with this layer and the same
   outside-click dismissal. Dismissal uses the start of a primary pointer gesture.

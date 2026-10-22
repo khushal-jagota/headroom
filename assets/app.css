@@ -3358,16 +3358,15 @@ select {
   min-height: 0;
 }
 
-/* The conversation stands in the page's one column, with its inset, so it stays in the
- * same column the document is written in instead of stretching across the whole screen.
- * The column itself is set once, further down, for all of its users. */
+/* The card spans the page's full column. Its text retains the card's own inset.
+ * The column's width is shared with the document further down. */
 .conversation-column {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   min-width: 0;
-  padding-inline: var(--space-7);
+  padding-inline: 0;
 }
 
 /* One card, in every state. The recessed well the person types into is cut into its lower
@@ -3509,29 +3508,15 @@ select {
   overflow-y: auto;
 }
 
-/* A narrow pane gives the conversation its gutters back: 48px a side would spend a
- * quarter of the width on margin. The pane and not the window decides, because the
- * Workspace right pane is narrow on a window that is not — and the Manager beside
- * this Ticket in that same slot has always measured its pane. Two rulers for one inset
- * put a step between the two of them at every width where the pane and the window
- * disagree. On the full-screen route the pane is the window, so nothing moves there.
- *
- * The query names `conversation-host` rather than one screen's pane, so every host of the
- * card gets this from its own pane and one block serves them all. A host that declares no
- * such container never asks the question — the Atlas panel is that case today, and it
- * draws the wide insets at every width, exactly as it did. */
+/* Narrow panes reduce the card's inner text inset without narrowing the card. */
 @container conversation-host (max-width: 720px) {
-  .conversation-column {
-    padding-inline: var(--page-gutter);
-  }
-
   .conversation-layer [data-conversation-pane] {
     --conversation-card-inset: var(--surface-pad);
   }
 }
 
 /* Narrower still, and the card gives the words the width its edges were holding. This is
- * the card's own inset and nothing else: the column and the page gutter are untouched, so
+ * the card's own inset and nothing else: the column width is untouched, so
  * the page is exactly as wide as it was. */
 @container conversation-host (max-width: 480px) {
   .conversation-layer [data-conversation-pane] {
@@ -3926,10 +3911,6 @@ a.artifact-chip:hover,
 @media (max-width: 720px) and (max-height: 480px) {
   [data-screen="ticket"] .conversation-layer:has([data-conversation-state="peeked"]) {
     height: var(--conversation-peek-height, 52%);
-  }
-
-  [data-screen="ticket"] .conversation-column {
-    padding-inline: var(--page-gutter);
   }
 }
 

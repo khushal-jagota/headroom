@@ -506,6 +506,8 @@ def verify_conversation_overlay(browser, url):
         page.wait_for_timeout(250)
         doc_open = document.bounding_box()
         card_open = pane.bounding_box()
+        column = page.locator('.conversation-column').bounding_box()
+        assert abs(card_open['x'] - column['x']) <= 1 and abs(card_open['width'] - column['width']) <= 1, (name, card_open, column)
         assert doc_before == doc_open, (name, doc_before, doc_open)
         assert document.evaluate('e=>e.scrollTop') == scroll_before
         assert card_open['y'] < doc_open['y'] + doc_open['height'] and card_open['y'] + card_open['height'] > doc_open['y']
@@ -557,12 +559,14 @@ def verify_conversation_overlay(browser, url):
         page.wait_for_timeout(100)
         card_peek = pane.bounding_box()
         final_box = final.bounding_box()
-        # Wheel through the uncovered gutter to place the document tail above the card.
-        page.mouse.move(host['x'] + (40 if width > 1000 else 5), host['y'] + 150)
+        # Wheel over uncovered document space above the full-column card.
+        uncovered_point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + card_peek['y'])/2}
+        assert page.evaluate('point=>document.elementFromPoint(point.x,point.y)?.closest(".ticket-doc,.manager-doc")!==null', uncovered_point), (name, uncovered_point)
+        page.mouse.move(uncovered_point['x'], uncovered_point['y'])
         page.mouse.wheel(0, final_box['y'] + final_box['height'] - card_peek['y'] + 24)
         page.wait_for_timeout(180)
         final_box = final.bounding_box()
-        assert final_box['y'] >= host['y'], (name, final_box, host, page.evaluate('''([x,y])=>document.elementFromPoint(x,y)?.outerHTML.slice(0,500)''',[host['x']+(40 if width>1000 else 5),host['y']+150]),document.evaluate('e=>e.scrollTop'))
+        assert final_box['y'] >= host['y'], (name, final_box, host, page.evaluate('''([x,y])=>document.elementFromPoint(x,y)?.outerHTML.slice(0,500)''',[uncovered_point['x'],uncovered_point['y']]),document.evaluate('e=>e.scrollTop'))
         assert final_box['y'] + final_box['height'] <= card_peek['y'] + 1, (name, final_box, card_peek)
         page.screenshot(path=str(evidence / f'{name}-document-tail.png'), animations='disabled')
         # Simulated keyboard reduction plus displacement stays inside the host intersection.
@@ -624,17 +628,17 @@ def verify_conversation_overlay(browser, url):
             artifact.locator('[data-ticket-artifact-close]').click()
             expect(artifact).to_have_count(0)
             assert document.evaluate('e=>e.scrollTop') == doc_scroll_before_artifact
-        proof['hosts'].append({'name':name,'host':host,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
+        proof['hosts'].append({'name':name,'host':host,'column':column,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
         draft_before_dismissal = box.input_value()
         doc_before_dismissal = document.evaluate('e=>e.scrollTop')
-        point = {'x':host['x'] + (40 if name == 'wide-chief' else 8), 'y':pane.bounding_box()['y'] + 10}
+        point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + pane.bounding_box()['y'])/2}
         hit = page.evaluate('''point=>document.elementFromPoint(point.x,point.y)?.closest('.ticket-doc,.manager-doc')!==null''', point)
         assert hit, (name,point)
         page.mouse.click(point['x'], point['y'])
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         assert box.input_value() == draft_before_dismissal
         assert document.evaluate('e=>e.scrollTop') == doc_before_dismissal
-        proof['hosts'][-1]['gutterClick'] = {'point':point,'documentHit':hit,'draftPreserved':True,'documentScrollPreserved':True}
+        proof['hosts'][-1]['documentClickAboveCard'] = {'point':point,'documentHit':hit,'draftPreserved':True,'documentScrollPreserved':True}
         assert not errors, errors
         context.close()
     proof['seconds'] = time.perf_counter() - started
