@@ -484,9 +484,28 @@ def _run(browser, urls):
         return restored
 
     def settled(page):
-        page.evaluate(
-            "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
-        )
+        # Endpoint assertions follow the actual coordinator, not a fixed frame count.
+        # Two idle, unchanged frames also let ResizeObserver and reconciliation settle.
+        page.evaluate("""() => new Promise((resolve, reject) => {
+          const started = performance.now();
+          let previous = '', quiet = 0;
+          const sample = () => {
+            const pane = document.querySelector('[data-conversation-pane]');
+            const thread = pane?.querySelector('[data-conversation-thread]');
+            const box = pane?.getBoundingClientRect();
+            const geometry = JSON.stringify([box?.top, box?.height, thread?.clientHeight,
+              thread?.scrollTop, thread?.scrollHeight]);
+            const active = pane?.hasAttribute('data-conversation-motion')
+              || pane?.getAnimations({subtree:true}).some(animation =>
+                animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+            quiet = !active && geometry === previous ? quiet + 1 : 0;
+            previous = geometry;
+            if (quiet >= 2) return resolve();
+            if (performance.now() - started > 10000) return reject(Error('Conversation did not reach an idle layout: ' + geometry));
+            requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        })""")
 
     def newest_reading(page):
         return page.locator(THREAD).evaluate("""thread => {
@@ -708,7 +727,9 @@ def _run(browser, urls):
         assert smaller["viewport"] < partial["viewport"] - 50, (partial, smaller)
         assert smaller["room"] <= partial["room"] - 50, (partial, smaller)
         assert abs(smaller["promptTop"] - partial["promptTop"]) <= 3, (partial, smaller)
-        page.evaluate("window.__answerScrollRegression(20)")
+        # Four paragraphs exhaust this small answer room without an unrelated
+        # twenty-paragraph backlog of the approved line-at-a-time travel.
+        page.evaluate("window.__answerScrollRegression(4)")
         settled(page)
         exhausted = answer_room_reading(page)
         assert exhausted["room"] == 0, exhausted
@@ -2858,6 +2879,9 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'legacy':
+            _run(browser, urls)
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'bounded':
             _bounded_reader(browser, urls[0])
             return

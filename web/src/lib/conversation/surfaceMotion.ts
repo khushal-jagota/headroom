@@ -6,10 +6,11 @@ type Move = { position: boolean; start: number; duration: number; apply: (fracti
 const surfaces = new WeakMap<HTMLElement, ReturnType<typeof createSurfaceMotion>>();
 
 /** Size writes and the reader's position share one frame, in that order. */
-function createSurfaceMotion() {
+function createSurfaceMotion(pane: HTMLElement) {
   const moves = new Map<object, Move>();
   const followers = new Set<(keys: readonly object[]) => void>();
   let frame = 0;
+  function mark() { pane.toggleAttribute?.("data-conversation-motion", moves.size > 0); }
   function step(now: number) {
     frame = 0;
     const keys = [...moves.keys()];
@@ -19,6 +20,7 @@ function createSurfaceMotion() {
       move.apply(fraction);
       if (fraction === 1 && moves.get(key) === move) { moves.delete(key); move.done?.(); move.finish(true); }
     }
+    mark();
     for (const follow of followers) follow(keys);
     if (moves.size) frame = requestAnimationFrame(step);
   }
@@ -30,11 +32,12 @@ function createSurfaceMotion() {
         apply(1); for (const follow of followers) follow([key]); done?.(); return Promise.resolve(true);
       }
       const result = new Promise<boolean>(finish => moves.set(key, { position, start: performance.now(), duration, apply, done, finish }));
+      mark();
       apply(0);
       if (!frame) frame = requestAnimationFrame(step);
       return result;
     },
-    cancel(key: object) { moves.get(key)?.finish(false); moves.delete(key); },
+    cancel(key: object) { moves.get(key)?.finish(false); moves.delete(key); mark(); },
     following(callback: (keys: readonly object[]) => void) { followers.add(callback); return () => followers.delete(callback); },
     active(key: object) { return moves.has(key); }
   };
@@ -42,7 +45,7 @@ function createSurfaceMotion() {
 export function conversationMotion(element: HTMLElement) {
   const pane = element.closest<HTMLElement>('[data-conversation-pane]') ?? element;
   let motion = surfaces.get(pane);
-  if (!motion) { motion = createSurfaceMotion(); surfaces.set(pane, motion); }
+  if (!motion) { motion = createSurfaceMotion(pane); surfaces.set(pane, motion); }
   return motion;
 }
 
