@@ -14,6 +14,7 @@ function createSurfaceMotion() {
     frame = 0;
     const keys = [...moves.keys()];
     for (const [key, move] of [...moves].sort((a, b) => Number(a[1].position) - Number(b[1].position))) {
+      if (moves.get(key) !== move) continue;
       const fraction = Math.min(1, Math.max(0, (now - move.start) / move.duration));
       move.apply(fraction);
       if (fraction === 1 && moves.get(key) === move) { moves.delete(key); move.done?.(); move.finish(true); }
@@ -66,18 +67,38 @@ export function conversationHeight(windowElement: HTMLElement) {
   return { destroy() { observer.disconnect(); motion.cancel(windowElement); } };
 }
 
-export async function fadeConversationExit(element: HTMLElement | null): Promise<void> {
-  if (!element || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+const exitOpacity = new WeakMap<HTMLElement, { value: string; priority: string; release: () => void }>();
+function restoreExitOpacity(element: HTMLElement): void {
+  const original = exitOpacity.get(element);
+  if (!original) return;
+  original.release();
+  if (original.value) element.style.setProperty('opacity', original.value, original.priority);
+  else element.style.removeProperty('opacity');
+  exitOpacity.delete(element);
+}
+
+export async function fadeConversationExit(element: HTMLElement | null, signal?: AbortSignal): Promise<void> {
+  if (!element || signal?.aborted || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  restoreExitOpacity(element);
   const animation = element.animate([{ opacity: 1 }, { opacity: 0 }], {
     duration: RAIL_MOTION.exit, easing: RAIL_MOTION.leave, fill: 'forwards'
   });
-  try { await animation.finished; } catch { /* A detached surface cancels its exit. */ }
-  element.style.opacity = "0";
-  animation.cancel();
+  const abort = () => { animation.cancel(); restoreExitOpacity(element); };
+  exitOpacity.set(element, {
+    value: element.style.getPropertyValue('opacity'), priority: element.style.getPropertyPriority('opacity'),
+    release: () => signal?.removeEventListener('abort', abort)
+  });
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    await animation.finished;
+    if (!signal?.aborted) element.style.opacity = '0';
+  } catch { restoreExitOpacity(element); }
+  finally { animation.cancel(); }
 }
 
 /** Close the row only after its ink leaves. The negative margin consumes its flex gap. */
-export async function collapseConversationRow(element: HTMLElement): Promise<() => void> {
+export async function collapseConversationRow(element: HTMLElement, signal?: AbortSignal): Promise<() => void> {
+  if (signal?.aborted) { restoreExitOpacity(element); return () => undefined; }
   const row = element.closest<HTMLElement>('[data-conversation-view-key]') ?? element;
   const original = row.style.cssText;
   const style = getComputedStyle(row);
@@ -87,14 +108,29 @@ export async function collapseConversationRow(element: HTMLElement): Promise<() 
   const margin = Number.parseFloat(style.marginBottom) || 0;
   const content = row.closest<HTMLElement>('[data-conversation-content]');
   const gap = content ? Number.parseFloat(getComputedStyle(content).rowGap) || 0 : 0;
+  const motion = conversationMotion(row);
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    signal?.removeEventListener('abort', restore);
+    motion.cancel(row);
+    row.style.cssText = original;
+    restoreExitOpacity(element);
+  };
+  // The collapse now owns restoration, including the fade's original opacity.
+  exitOpacity.get(element)?.release();
+  signal?.addEventListener('abort', restore, { once: true });
   row.style.overflow = 'clip';
   row.style.boxSizing = 'border-box';
   row.style.minHeight = '0';
-  await conversationMotion(row).move(row, fraction => {
+  const completed = await motion.move(row, fraction => {
+    if (signal?.aborted) return;
     row.style.height = `${height * (1 - fraction)}px`;
     row.style.paddingTop = `${paddingTop * (1 - fraction)}px`;
     row.style.paddingBottom = `${paddingBottom * (1 - fraction)}px`;
     row.style.marginBottom = `${margin - gap * fraction}px`;
   });
-  return () => { row.style.cssText = original; element.style.removeProperty('opacity'); };
+  if (!completed) restore();
+  return restore;
 }

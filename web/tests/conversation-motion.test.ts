@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { conversationMotion } from '../src/lib/conversation/surfaceMotion';
+import { conversationMotion, fadeConversationExit, collapseConversationRow } from '../src/lib/conversation/surfaceMotion';
 
 afterEach(() => vi.unstubAllGlobals());
 function rig(reduced = false) {
@@ -9,7 +9,7 @@ function rig(reduced = false) {
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
   const pane = {} as HTMLElement;
   const node = { closest: () => pane } as unknown as HTMLElement;
-  return { motion: conversationMotion(node), frame: (time: number) => frames.shift()!(time), frames };
+  return { pane, motion: conversationMotion(node), frame: (time: number) => frames.shift()!(time), frames };
 }
 describe('conversation surface frame ownership', () => {
   it('writes concurrent sizes before the viewport reads the same frame', async () => {
@@ -50,4 +50,48 @@ describe('conversation surface frame ownership', () => {
     expect(order).toEqual(['size:1', 'scroll']);
     expect(frames).toHaveLength(0);
   });
+});
+
+
+it('restores pre-fade opacity on cancellation and suppresses the late completion', async () => {
+  rig();
+  let finish!: () => void;
+  const finished = new Promise<void>(resolve => { finish = resolve; });
+  const style = { opacity: '.6', getPropertyValue: () => '.6', getPropertyPriority: () => '',
+    setProperty: (_: string, value: string) => { style.opacity = value; }, removeProperty: () => { style.opacity = ''; } };
+  const cancel = vi.fn();
+  const element = { style, animate: () => ({ finished, cancel }) } as unknown as HTMLElement;
+  const abort = new AbortController();
+  const fading = fadeConversationExit(element, abort.signal);
+  abort.abort();
+  expect(style.opacity).toBe('.6');
+  expect(cancel).toHaveBeenCalledTimes(1);
+  finish();
+  await fading;
+  expect(style.opacity).toBe('.6');
+});
+
+it('cancels collapse immediately and restores opacity from before its completed fade', async () => {
+  const { pane, frame } = rig();
+  const style = { cssText: 'color: red', opacity: '.6', height: '',
+    getPropertyValue: () => '.6', getPropertyPriority: () => '',
+    setProperty: (_: string, value: string) => { style.opacity = value; }, removeProperty: () => { style.opacity = ''; } };
+  const node = { style, getBoundingClientRect: () => ({ height: 100 }),
+    closest: (selector: string) => selector === '[data-conversation-pane]' ? pane : null,
+    animate: () => ({ finished: Promise.resolve(), cancel: () => undefined }) } as unknown as HTMLElement;
+  vi.stubGlobal('getComputedStyle', () => ({ paddingTop: '0', paddingBottom: '0', marginBottom: '0' }));
+  const abort = new AbortController();
+  await fadeConversationExit(node, abort.signal);
+  expect(style.opacity).toBe('0');
+  const collapsing = collapseConversationRow(node, abort.signal);
+  frame(120);
+  expect(style.height).toBe('50px');
+  abort.abort();
+  expect(style.cssText).toBe('color: red');
+  expect(style.opacity).toBe('.6');
+  const restoredHeight = style.height;
+  frame(240);
+  await collapsing;
+  expect(style.height).toBe(restoredHeight);
+  expect(style.opacity).toBe('.6');
 });
