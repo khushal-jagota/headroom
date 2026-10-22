@@ -72,7 +72,7 @@ struct TicketStepPage: View {
                             .padding(PanelsTheme.Space.md).background(PanelsTheme.recessed)
                     } else {
                         let text = detail?.fieldValues[field.id] ?? ""
-                        TicketMarkdownText(text: text.isEmpty ? "Not started" : text)
+                        ArtifactMarkdownContent(source: text.isEmpty ? "Not started" : text, baseURL: store.baseURL)
                     }
                 } else if error == nil { ProgressView() }
             }.padding(PanelsTheme.Space.xl)
@@ -100,7 +100,7 @@ struct TicketStepPage: View {
             .task(id: store.revision) { await load() }
             .navigationDestination(item: $artifact) { RouteDestination(route: $0) }
             .environment(\.openURL, OpenURLAction { url in
-                if let route = TicketArtifactRoute.linkedDestination(url, title: url.lastPathComponent) { artifact = route; return .handled }
+                if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { artifact = route; return .handled }
                 return .systemAction
             })
     }

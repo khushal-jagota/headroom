@@ -1,23 +1,10 @@
 import Foundation
 
+/// Adapt managed links in ticket prose to the shared artifact destination.
 enum TicketArtifactRoute {
-    static func linkedDestination(_ url: URL, title: String) -> AppRoute? {
-        let parts = url.path.split(separator: "/").map(String.init)
-        guard parts.count >= 4, parts[0] == "files",
-              let kind: ArtifactOwner.Kind = parts[1] == "tickets" ? .ticket : parts[1] == "managers" ? .manager : nil else { return nil }
-        return .artifact(owner: ArtifactOwner(kind: kind, id: parts[2]), path: parts.dropFirst(3).joined(separator: "/"), title: title)
-    }
-    static func destination(_ entry: ArtifactEntry, owner: ArtifactOwner) -> AppRoute {
-        if let directory = entry.directory { return .artifacts(owner: owner, directory: directory) }
-        // Catalogs also include links to another ticket's or manager's files.
-        if let href = entry.href, let url = URLComponents(string: href) {
-            let parts = url.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-            if parts.count >= 4, parts[0] == "files",
-               let kind: ArtifactOwner.Kind = parts[1] == "tickets" ? .ticket : parts[1] == "managers" ? .manager : nil {
-                return .artifact(owner: ArtifactOwner(kind: kind, id: parts[2]),
-                                 path: parts.dropFirst(3).joined(separator: "/"), title: entry.label)
-            }
-        }
-        return .artifact(owner: owner, path: entry.path, title: entry.label)
+    static func linkedDestination(_ url: URL, baseURL: URL, title: String) -> AppRoute? {
+        guard let resolved = URL(string: url.relativeString, relativeTo: baseURL)?.absoluteURL,
+              let target = ArtifactTarget.from(resolved, baseURL: baseURL, title: title) else { return nil }
+        return .artifact(owner: target.owner, path: target.path, title: target.title)
     }
 }

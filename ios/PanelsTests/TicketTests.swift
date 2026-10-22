@@ -3,9 +3,9 @@ import XCTest
 
 final class TicketTests: XCTestCase {
     func testLinkedArtifactKeepsItsActualOwner() {
-        let entry = ArtifactEntry(key: "linked", path: "artifacts/proof.html", label: "Proof", kind: "html",
-                                  href: "/files/tickets/t_other/artifacts/proof.html", directory: nil, childCount: 0)
-        XCTAssertEqual(TicketArtifactRoute.destination(entry, owner: ArtifactOwner(kind: .ticket, id: "t_here")),
+        let baseURL = URL(string: "https://ticket-stub.invalid")!
+        let link = URL(string: "/files/tickets/t_other/artifacts/proof.html")!
+        XCTAssertEqual(TicketArtifactRoute.linkedDestination(link, baseURL: baseURL, title: "Proof"),
                        .artifact(owner: ArtifactOwner(kind: .ticket, id: "t_other"), path: "artifacts/proof.html", title: "Proof"))
     }
 
