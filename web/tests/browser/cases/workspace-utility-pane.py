@@ -7,8 +7,11 @@ scroll has to be its own, which means proving it after loading finishes and the 
 is gone, with a real layout and a real scroll height.
 """
 
+import json
 import os
+import runpy
 import sys
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -47,9 +50,22 @@ def run(browser, urls):
     metrics.append()
     metrics_calls = []
 
+    fold = {"enabled": False, "count": 3}
+    fixture = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
+
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if fold["enabled"] and path == "/api/navigation/view/snapshot":
+            board = {"managers": [
+                {"id": f"fold_{index}", "title": f"Settled fixture {index}", "created_at": index + 1,
+                 "settled": True, "tickets": []}
+                for index in range(fold["count"])
+            ]}
+            source = fixture["navigation_response"](board, {"chief_of_staff": {"label": "Chief"}})
+            view = json.loads(parse_qs(parts.query)["view"][0])
+            route.fulfill(json=fixture["scoped_navigation_response"](source, view))
+            return
         if path.startswith("/api/vps-metrics/"):
             metrics_calls.append(path)
             response = metrics.client.request(route.request.method, path + ("?" + parts.query if parts.query else ""))
@@ -264,8 +280,138 @@ def run(browser, urls):
     page.set_viewport_size({"width": 1280, "height": 700})
     page.screenshot(animations="disabled", path=str(evidence / 'shell-desktop-minimum-rail.png'))
 
+    fold["enabled"] = True
+    verify_settled_fold(page, url, fold, evidence)
+
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
     assert not unwanted, unwanted
     context.close()
     metrics.close()
+
+
+def verify_settled_fold(page, url, fixture, evidence):
+    """Real Svelte/layout/WAAPI proof that the controller's synthetic DOM cannot give.
+
+    One sequential flow exercises delayed navigation publication and fresh scoped
+    snapshots during folds. Geometry comes from animation frames, never a fake DOM.
+    """
+    started = time.perf_counter()
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    head = page.locator(".settled-head")
+    expect(head).to_contain_text("(3)")
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    page.evaluate("""() => {
+      window.__foldProof = [];
+      window.__foldCapture = (name, duration) => {
+        const samples = [], start = performance.now();
+        window.__foldProof.push({name, samples});
+        return new Promise(resolve => {
+          const sample = () => {
+            const section = document.querySelector('.settled');
+            const body = section.querySelector('[data-settled-scroll]');
+            const rows = [...section.querySelectorAll('[data-settled-item]')];
+            const animations = section.getAnimations({subtree:true});
+            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height,
+              body:body?.getBoundingClientRect().height ?? 0, rows:rows.length,
+              bodyPresent:!!body, expanded:section.querySelector('button').getAttribute('aria-expanded'),
+              cap:parseFloat(getComputedStyle(section).maxHeight),
+              rowEffects:animations.filter(a => a.effect?.target?.closest?.('[data-settled-item]')).length,
+              sectionEffects:section.getAnimations().length,
+              opacity:body ? +getComputedStyle(body).opacity : null,
+              scrollHeight:body?.scrollHeight ?? 0});
+            if (performance.now()-start < duration) requestAnimationFrame(sample);
+            else resolve(samples);
+          }; requestAnimationFrame(sample);
+        });
+      };
+      window.__foldStart = (name, duration, toggles=[]) => {
+        window.__foldDone=false;
+        window.__foldCapture(name,duration).then(() => window.__foldDone=true);
+        document.querySelector('.settled-head').click();
+        for (const ms of toggles) setTimeout(() => document.querySelector('.settled-head').click(),ms);
+      };
+    }""")
+
+    def start(name, duration=850, delay=0, toggles=None):
+        page.evaluate("([name,duration,delay,toggles]) => { window.__navigationDelay=delay; window.__foldStart(name,duration,toggles); }",
+                      [name, duration, delay, toggles or []])
+
+    def finish():
+        page.wait_for_function("window.__foldDone")
+        return page.evaluate("window.__foldProof.at(-1).samples")
+
+    def smooth(samples, opening=True):
+        heights = [sample["height"] for sample in samples]
+        assert max(heights) - min(heights) > 20, samples
+        low, high = min(heights), max(heights)
+        assert sum(low + 2 < value < high - 2 for value in heights) >= 3, samples
+        # A stale animation target used to disappear and jump to intrinsic height.
+        assert all(abs(current["height"] - previous["height"]) < 2
+                   for previous, current in zip(samples, samples[1:], strict=False)
+                   if not current["sectionEffects"]), samples
+        assert abs(heights[-1] - heights[-3]) < 1, samples[-4:]
+        assert all(sample["rowEffects"] == 0 for sample in samples), samples
+        assert samples[-1]["expanded"] == ("true" if opening else "false"), samples[-1]
+
+    # A settled window arrives within Glide, then grows while the fold still moves.
+    start("late-within-glide-and-refresh", delay=100)
+    page.wait_for_function("document.querySelectorAll('[data-settled-item]').length === 3")
+    fixture["count"] = 7
+    page.evaluate("window.__navigationDelay=0; void window.__refreshNavigation()")
+    samples = finish()
+    smooth(samples)
+    assert samples[-1]["rows"] == 7, samples[-1]
+    page.screenshot(path=str(evidence / "settled-fold-open.png"))
+
+    # The body survives until the close completes, even when the source changes.
+    start("close-with-refresh", duration=650)
+    page.wait_for_timeout(70)
+    fixture["count"] = 5
+    page.evaluate("void window.__refreshNavigation()")
+    samples = finish()
+    smooth(samples, False)
+    assert any(sample["bodyPresent"] and sample["height"] > samples[-1]["height"] + 2 for sample in samples)
+    assert not samples[-1]["bodyPresent"], samples[-1]
+
+    # Content arrives after the original Glide deadline. It still enters as a fold.
+    start("late-after-glide", duration=1050, delay=450)
+    samples = finish()
+    smooth(samples)
+    assert samples[-1]["rows"] == 5, samples[-1]
+    assert any(sample["ms"] > 450 and sample["sectionEffects"] for sample in samples), samples
+
+    # Rapid close/open/close preserves the sampled starting height and latest intent.
+    start("reversal", duration=850, toggles=[90, 180])
+    samples = finish()
+    smooth(samples, False)
+    assert not samples[-1]["bodyPresent"], samples[-1]
+
+    # The production flex cap and internal scrollbar constrain a large settled page.
+    fixture["count"] = 30
+    start("capped-open", duration=850)
+    samples = finish()
+    smooth(samples)
+    final = samples[-1]
+    assert final["rows"] == 30 and final["scrollHeight"] > final["body"] + 50, final
+    bounds = page.locator('.settled').bounding_box()
+    rail = page.locator('.workspace-rail').bounding_box()
+    assert bounds and rail and bounds['height'] <= rail['height'] * .5 + 1, (bounds, rail)
+    body = page.locator('[data-settled-scroll]')
+    body.evaluate("node => node.scrollTop=node.scrollHeight")
+    assert body.evaluate("node => node.scrollTop") > 0
+    page.screenshot(path=str(evidence / "settled-fold-capped.png"))
+
+    # Reduced motion uses the same body lifecycle without timed effects.
+    page.emulate_media(reduced_motion="reduce")
+    start("reduced-close", duration=100)
+    samples = finish()
+    assert not samples[-1]["bodyPresent"] and all(sample["sectionEffects"] == 0 for sample in samples), samples
+    start("reduced-open", duration=180)
+    samples = finish()
+    assert samples[-1]["rows"] == 30 and all(sample["sectionEffects"] == 0 for sample in samples), samples
+    proof = page.evaluate("window.__foldProof")
+    (evidence / "settled-fold-frames.json").write_text(json.dumps({
+        "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "flows": proof,
+    }, indent=2))

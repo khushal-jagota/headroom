@@ -114,7 +114,10 @@ One screen per part of the system:
   viewports. The height share is a layout value, without a preference or settings UI.
   Manual fold toggles respond immediately, independently of queued rail updates. Height,
   chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
-  another arrival animation. Closing returns focus to the header when necessary.
+  another row arrival animation. The section resizes from its visible height when those
+  rows arrive, even after the original fold beat ends. A content refresh retargets that
+  resize to the new height within the existing cap. Each resize uses the same 340
+  millisecond timing and easing. Closing returns focus to the header when necessary.
   Reduced motion skips that beat. Settle/Reopen retains its separate row choreography.
 
   Settling fades the active card and its rows out over 160 milliseconds before
@@ -123,7 +126,7 @@ One screen per part of the system:
   first, then its Workers. Layout changes share the existing 340 millisecond
   space adjustment. A closed Settled section stays closed and its count crossfades.
   Manual fold requests bypass that structural queue. Coherent settled page updates
-  do not restart the fold animation. The latest manual choice wins during rapid reversal.
+  do not restart the chevron or body fade. The latest manual choice wins during rapid reversal.
 
   Manager pages show active groups first, then Backlogged and Done headers.
   Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,

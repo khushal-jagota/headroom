@@ -17,7 +17,10 @@ from tests.integration.test_navigation_signal_publication import (
     actual_binding as actual_binding,
 )
 from tests.integration.test_navigation_transactions import add_conversation, add_parent, add_ticket
-from tests.support.navigation_current import current_navigation_database
+from tests.support.navigation_current import (
+    current_navigation_database,
+    prepared_navigation_database,
+)
 
 from planner.navigation.views.configuration import DEFAULT_CONFIG
 from planner.navigation.views.contracts import (
@@ -27,10 +30,11 @@ from planner.navigation.views.contracts import (
     ViewWindowRequest,
 )
 from planner.navigation.views.delivery import difference
-from planner.navigation.views.logic import compact, digest
+from planner.navigation.views.logic import compact, digest, section_key
 from planner.navigation.views.projection import rebuild
 from planner.navigation.views.read import read_content, request
 from planner.navigation.views.schema import prepare
+from planner.tickets.views import _review_items, review_view
 
 
 def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
@@ -60,6 +64,118 @@ def activate(conn: sqlite3.Connection) -> None:
     prepare(conn)
     rebuild(conn)
     conn.commit()
+
+
+def add_review_tickets(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN")
+    for identity in ("active-a", "active-b", "backlogged-a", "backlogged-b"):
+        add_ticket(conn, identity)
+    proposal = json.dumps(
+        {"field": "implementation", "body": "Review me", "proposed_by": "worker", "created_at": 1}
+    )
+    conn.execute("UPDATE tickets SET pending_proposal=?,pending_proposal_revision=1", (proposal,))
+    conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id LIKE 'backlogged-%'")
+    conn.commit()
+
+
+def assert_review_queue(conn: sqlite3.Connection, expected: set[str]) -> None:
+    assert {item["ticket_id"] for item in _review_items(conn)} == expected
+    assert {item["ticket_id"] for item in review_view(conn)["items"]} == expected
+    query = descriptor()
+    query["windows"] = [
+        {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+    ]
+    for current in (True, False):
+        _, content = read_content(conn, query, current=current)
+        assert {item["id"] for item in content["windows"][0]["members"]} == expected
+        assert content["windows"][0]["total"] == len(expected)
+        assert content["counts"]["review"] == len(expected)
+
+
+def test_backlog_changes_review_membership_and_counts_without_removing_proposals(
+    tmp_path: Path,
+) -> None:
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        add_review_tickets(conn)
+        proposals = list(conn.execute("SELECT id,pending_proposal FROM tickets ORDER BY id"))
+        assert_review_queue(conn, {"active-a", "active-b"})
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET is_backlogged=0 WHERE id='backlogged-a'")
+        conn.commit()
+        assert_review_queue(conn, {"active-a", "active-b", "backlogged-a"})
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id='backlogged-a'")
+        conn.commit()
+        assert_review_queue(conn, {"active-a", "active-b"})
+        assert (
+            list(conn.execute("SELECT id,pending_proposal FROM tickets ORDER BY id")) == proposals
+        )
+
+
+def test_signal_install_repairs_persisted_backlogged_review_memberships(tmp_path: Path) -> None:
+    path = tmp_path / "db"
+    with current_navigation_database(path) as conn:
+        activate(conn)
+        add_review_tickets(conn)
+        proposals = [
+            tuple(row)
+            for row in conn.execute("SELECT id,pending_proposal FROM tickets ORDER BY id")
+        ]
+    review_section = section_key("review", None, "all", "all")
+    # Persist the old bug's derived state without a canonical write or rebuild.
+    # Both backlogged Tickets already retain their unchanged pending proposals.
+    with sqlite3.connect(path) as stale:
+        stale.execute("UPDATE navigation_view_index SET review=1 WHERE kind='ticket'")
+        for identity in ("backlogged-a", "backlogged-b"):
+            stale.execute(
+                "INSERT INTO navigation_view_memberships "
+                "SELECT section_key,profile,locale,kind,?,rank,title_key,? "
+                "FROM navigation_view_memberships WHERE section_key=? AND id='active-a'",
+                (identity, identity.encode(), review_section),
+            )
+        stale.execute(
+            "UPDATE navigation_view_counts SET value=4 WHERE section_key=?", (review_section,)
+        )
+        stale.execute("UPDATE navigation_view_globals SET value=4 WHERE name='review'")
+    # Physical preparation alone must leave the stale state intact. Only the
+    # canonical Signal installation in the next context can repair it.
+    with prepared_navigation_database(path) as persisted:
+        assert (
+            persisted.execute(
+                "SELECT value FROM navigation_view_globals WHERE name='review'"
+            ).fetchone()[0]
+            == 4
+        )
+        assert (
+            persisted.execute(
+                "SELECT count(*) FROM navigation_view_index WHERE review=1"
+            ).fetchone()[0]
+            == 4
+        )
+        assert {
+            tuple(row)
+            for row in persisted.execute(
+                "SELECT value FROM navigation_view_counts WHERE section_key=?", (review_section,)
+            )
+        } == {(4,)}
+        assert {
+            tuple(row)
+            for row in persisted.execute(
+                "SELECT id FROM navigation_view_memberships WHERE section_key=?", (review_section,)
+            )
+        } == {(identity,) for identity in ("active-a", "active-b", "backlogged-a", "backlogged-b")}
+    # The real producer installation on reopen must repair every derived surface.
+    with current_navigation_database(path) as reopened:
+        assert_review_queue(reopened, {"active-a", "active-b"})
+        assert set(
+            tuple(row)
+            for row in reopened.execute("SELECT id FROM navigation_view_index WHERE review=1")
+        ) == {("active-a",), ("active-b",)}
+        assert [
+            tuple(row)
+            for row in reopened.execute("SELECT id,pending_proposal FROM tickets ORDER BY id")
+        ] == proposals
 
 
 def test_indexed_windows_counts_and_scope_eviction_are_atomic(tmp_path: Path) -> None:
@@ -515,8 +631,7 @@ def test_cursor_domain_rebase_empty_edge_and_all_count_scopes(tmp_path: Path) ->
         # Ordinary documents need up to 138 distinct count identities.
         query = descriptor(limit=0)
         query["windows"] = [
-            {**query["windows"][0], "owner": {"kind": "manager", "id": f"o{i}"}}
-            for i in range(138)
+            {**query["windows"][0], "owner": {"kind": "manager", "id": f"o{i}"}} for i in range(138)
         ]
         checked = request(query)
         _, counts = read_content(conn, checked, current=True)

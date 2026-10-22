@@ -81,11 +81,53 @@ export function createRailMotionController(root: () => HTMLElement | null,
   }
   const present = (value: WorkspaceRailPresentation) => apply(withFold(value));
   function markBusy() {
-    if (busy || foldBusy) root()?.setAttribute("data-rail-motion-busy", "");
+    if (busy || foldBusy || sectionBusy) root()?.setAttribute("data-rail-motion-busy", "");
     else root()?.removeAttribute("data-rail-motion-busy");
   }
   const animations = new Set<Animation>();
   let surfaces = new Map<HTMLElement, MotionSurface>();
+  let sectionGeneration = 0;
+  let sectionBusy = false;
+  let sectionTarget: number | null = null;
+  // Every publisher shares the section height. Hold its current visual size
+  // until Svelte commits, then measure without a stale WAAPI height effect.
+  function holdSection() {
+    const section = root()?.querySelector<HTMLElement>(".settled");
+    if (!section) return null;
+    const generation = ++sectionGeneration;
+    const height = section.getBoundingClientRect().height;
+    section.style.height = `${height}px`;
+    section.style.overflow = "hidden";
+    return {section, generation, height};
+  }
+  async function resizeSection(held: ReturnType<typeof holdSection>, closing = false): Promise<void> {
+    if (!held || disposed || held.generation !== sectionGeneration) return;
+    const {section, generation, height} = held;
+    const effects = [...animations].filter(animation =>
+      (animation.effect as KeyframeEffect)?.target === section).map(animation => ({animation, effect:animation.effect}));
+    for (const {animation} of effects) animation.effect = null;
+    section.style.removeProperty("height");
+    const target = closing
+      ? section.querySelector<HTMLElement>(".settled-head")?.getBoundingClientRect().height ?? 0
+      : section.getBoundingClientRect().height;
+    for (const {animation, effect} of effects) animation.effect = effect;
+    // Facts changing without geometry must not restart the existing beat.
+    if (effects.length && sectionTarget !== null && Math.abs(target - sectionTarget) <= .5) {
+      await Promise.all(effects.map(({animation}) => animation.finished.catch(() => {})));
+    } else {
+      for (const {animation} of effects) animation.cancel();
+      sectionTarget = target;
+      sectionBusy = Math.abs(target - height) > .5;
+      markBusy();
+      if (sectionBusy) await animate(section, [{height:`${height}px`}, {height:`${target}px`}], RAIL_MOTION.space);
+    }
+    if (disposed || generation !== sectionGeneration) return;
+    sectionTarget = null;
+    sectionBusy = false;
+    section.style.removeProperty("height");
+    section.style.removeProperty("overflow");
+    markBusy();
+  }
   function measure() {
     const parts = snapshot(root());
     surfaces = new Map([...parts.values()].map((part) => [part.node, part.surface]));
@@ -136,7 +178,6 @@ export function createRailMotionController(root: () => HTMLElement | null,
     const railRoot = root();
     markBusy();
     const section = railRoot?.querySelector<HTMLElement>(".settled");
-    const oldHeight = section?.getBoundingClientRect().height ?? 0;
     const oldCount = railRoot?.querySelector<HTMLElement>("[data-settled-count]")?.textContent;
     const first = measure();
     // Exit while the old space still exists. Headings leave with their last row.
@@ -165,18 +206,14 @@ export function createRailMotionController(root: () => HTMLElement | null,
       markBusy();
       return;
     }
+    const heldSection = !directFold() ? holdSection() : null;
     present(next);
     await tick();
     if (disposed) return;
     const last = measure();
     const plays: Promise<void>[] = [];
     if (section && !directFold()) {
-      const newHeight = section.getBoundingClientRect().height;
-      if (Math.abs(oldHeight - newHeight) > .5) {
-        section.style.overflow = "hidden";
-        plays.push(animate(section, [{height:`${oldHeight}px`}, {height:`${newHeight}px`}], RAIL_MOTION.space)
-          .then(() => { if (!foldBusy) section.style.removeProperty("overflow"); }));
-      }
+      plays.push(resizeSection(heldSection, manualOpen === false));
       if (previous.settledOpen !== next.settledOpen) {
         const chevron = section.querySelector<HTMLElement>(".settled-chevron");
         if (chevron) plays.push(animate(chevron,
@@ -255,7 +292,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     if (disposed || (manualOpen ?? read().settledOpen) === open) return;
     const generation = ++foldGeneration;
     const section = root()?.querySelector<HTMLElement>(".settled");
-    const oldHeight = section?.getBoundingClientRect().height ?? 0;
+    const heldSection = holdSection();
     const chevron = section?.querySelector<HTMLElement>(".settled-chevron");
     const oldRotation = chevron ? getComputedStyle(chevron).transform : "none";
     const oldBody = section?.querySelector<HTMLElement>("[data-settled-scroll]");
@@ -281,11 +318,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     if (disposed || generation !== foldGeneration) return;
     const plays: Promise<void>[] = [];
     if (section) {
-      const headerHeight = section.querySelector<HTMLElement>(".settled-head")?.getBoundingClientRect().height ?? 0;
-      const height = open ? section.getBoundingClientRect().height : headerHeight;
-      section.style.overflow = "hidden";
-      if (Math.abs(height - oldHeight) > .5) plays.push(animate(section,
-        [{height:`${oldHeight}px`}, {height:`${height}px`}], RAIL_MOTION.space, 0, false, RAIL_MOTION.ease, true));
+      plays.push(resizeSection(heldSection, !open));
       if (chevron) plays.push(animate(chevron,
         [{transform:oldRotation}, {transform:`rotate(${open ? 180 : 0}deg)`}], RAIL_MOTION.space, 0, false, RAIL_MOTION.ease, true));
       const body = section.querySelector<HTMLElement>("[data-settled-scroll]");
@@ -294,7 +327,6 @@ export function createRailMotionController(root: () => HTMLElement | null,
     }
     await Promise.all(plays);
     if (disposed || generation !== foldGeneration) return;
-    section?.style.removeProperty("overflow");
     foldBodyOpen = open;
     closingBody = null;
     foldBusy = false;
@@ -310,7 +342,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
       if (manualOpen !== null) {
         directSettled = activeParents(read()) === activeParents(next) ? next : null;
         if (closingBody) closingBody = signalsOnly(next);
+        const heldSection = manualOpen && !closingBody && directSettled ? holdSection() : null;
         present(frozen ? signalsOnly(next) : read());
+        if (heldSection) void tick().then(() => resizeSection(heldSection));
       } else if (frozen) present(signalsOnly(next));
       void drain();
     },
@@ -319,6 +353,6 @@ export function createRailMotionController(root: () => HTMLElement | null,
       if (value && pending && !disposed) present(signalsOnly(pending));
       if (!value) void drain();
     },
-    dispose() { root()?.removeAttribute("data-rail-motion-busy"); root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("overflow"); disposed = true; ++foldGeneration; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
+    dispose() { ++sectionGeneration; root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("height"); root()?.removeAttribute("data-rail-motion-busy"); root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("overflow"); disposed = true; ++foldGeneration; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };
 }
