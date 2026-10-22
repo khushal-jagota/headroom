@@ -389,6 +389,7 @@ def controlled_writer(tmp_path: Path, lifecycle: Path, mode: str) -> Path:
     writer.write_text(
         "import importlib.util, json, os, signal, stat, sys\n"
         "from datetime import datetime\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(LIFECYCLE_WRITER.parent)!r})\n"
         f"root = Path({str(tmp_path)!r})\nmode = {mode!r}\n"
         f"spec = importlib.util.spec_from_file_location('writer', {str(LIFECYCLE_WRITER)!r})\n"
         "module = importlib.util.module_from_spec(spec)\n"
