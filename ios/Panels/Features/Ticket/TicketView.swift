@@ -141,7 +141,7 @@ struct TicketView: View {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                     Text("Blocked by").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     ForEach(blockers, id: \.ticketId) { blocker in
-                        NavigationLink(value: AppRoute.ticket(blocker.ticketId)) { Text(blocker.title) }
+                        NavigationLink(value: AppRoute.ticket(blocker.ticketId)) { Text(blocker.title).multilineTextAlignment(.leading) }
                             .font(PanelsTheme.TypeScale.small).padding(.vertical, PanelsTheme.Space.xs)
                             .contextMenu {
                                 Button("Remove blocker", systemImage: "minus.circle", role: .destructive) {

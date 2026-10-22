@@ -72,10 +72,7 @@ struct TicketStepPage: View {
                             .padding(PanelsTheme.Space.md).background(PanelsTheme.recessed)
                     } else {
                         let text = detail?.fieldValues[field.id] ?? ""
-                        Text((try? AttributedString(markdown: text.isEmpty ? "Not started" : text,
-                                                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text))
-                            .font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.text)
-                            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                        TicketMarkdownText(text: text.isEmpty ? "Not started" : text)
                     }
                 } else if error == nil { ProgressView() }
             }.padding(PanelsTheme.Space.xl)
