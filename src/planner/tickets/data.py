@@ -125,6 +125,32 @@ def _validate_ceiling_holder(
         )
 
 
+def _validate_explicit_ceiling_holder(
+    conn: sqlite3.Connection,
+    holder: Principal,
+    *,
+    ticket_id: str,
+    manager_id: str | None,
+) -> None:
+    """Validate the explicitly selected address against the resulting assignment."""
+    _validate_ceiling_holder(conn, holder, ticket_id=ticket_id)
+    target = authority.ticket(ticket_id)
+    facts = replace(
+        authority.chain_facts(conn, holder, target),
+        target_parent_manager_id=manager_id,
+        target_is_itself_a_principal=True,
+    )
+    if not authority.stands_above(holder, target, facts):
+        raise PlannerError(
+            ErrorCode.validation,
+            "ceiling holder must have authority to decide this Ticket",
+            {
+                "holder": {"kind": holder.kind.value, "id": holder.id},
+                "ticket_id": ticket_id,
+            },
+        )
+
+
 @contextmanager
 def _txn(conn: sqlite3.Connection) -> Iterator[None]:
     if conn.in_transaction:
@@ -1001,6 +1027,10 @@ def create_ticket(
             authority.require_above_a_ticket_being_created(
                 conn, principal, ticket_id=ticket_id, parent_manager_id=manager_id
             )
+        if stated_holder is not None:
+            _validate_explicit_ceiling_holder(
+                conn, stated_holder, ticket_id=ticket_id, manager_id=manager_id
+            )
         ceiling = (
             default_ceiling
             if stated_ceiling is None
@@ -1392,6 +1422,9 @@ def accept_proposal(
             next_holder,
             worker_type_definition=worker_type_definition,
             approval=_explicit_approval(conn, principal),
+        )
+        _validate_explicit_ceiling_holder(
+            conn, next_holder, ticket_id=ticket.id, manager_id=ticket.manager_id
         )
         updated = _apply_decision(conn, ticket, decision, now)
         _give_back_worker_step_claim(conn, updated, now=now)
@@ -1834,8 +1867,13 @@ def edit_ticket(
 
         if "ceiling_holder" in edit:
             holder_decision = resolution.decide_set_ceiling_holder(ticket, edit["ceiling_holder"])
+            _validate_explicit_ceiling_holder(
+                conn,
+                holder_decision.ceiling_holder,
+                ticket_id=ticket.id,
+                manager_id=manager_id,
+            )
             if holder_decision.ceiling_holder != ticket.ceiling_holder:
-                _validate_ceiling_holder(conn, holder_decision.ceiling_holder, ticket_id=ticket.id)
                 changes.append(
                     (
                         "ceiling_holder",
@@ -1875,7 +1913,7 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        if any(change[0] == "manager_id" for change in changes):
+        if "ceiling_holder" not in edit and any(change[0] == "manager_id" for change in changes):
             _release_a_holder_the_move_left_below(
                 conn,
                 ticket_id,

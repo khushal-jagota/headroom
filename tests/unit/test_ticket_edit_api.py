@@ -251,15 +251,35 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
         assert unchanged["manager_id"] == vylo_item["id"]
         assert unchanged["project_id"] == "project_vylo"
 
+        with connect(str(db_path)) as conn:
+            before_invalid_holder = tuple(conn.iterdump())
+        invalid_holder = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={
+                "manager": {"kind": "manager", "id": personal_item["id"]},
+                "ceiling_holder": {"kind": "manager", "id": vylo_item["id"]},
+                "recap": "Must not persist",
+            },
+        )
+        assert invalid_holder.status_code == 400, invalid_holder.text
+        assert invalid_holder.json()["error"]["code"] == "validation"
+        assert invalid_holder.json()["error"]["message"] == (
+            "ceiling holder must have authority to decide this Ticket"
+        )
+        with connect(str(db_path)) as conn:
+            assert tuple(conn.iterdump()) == before_invalid_holder
+
         moved = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
                 "manager": {"kind": "manager", "id": personal_item["id"]},
                 "project_id": "project_personal",
+                "ceiling_holder": {"kind": "manager", "id": personal_item["id"]},
             },
         )
         assert moved.status_code == 200, moved.text
         assert moved.json()["project_id"] == "project_personal"
+        assert moved.json()["ceiling_holder"] == {"kind": "manager", "id": personal_item["id"]}
         with connect(str(db_path)) as conn:
             assert (
                 conn.execute("SELECT project_id FROM tickets WHERE id=?", (ticket_id,)).fetchone()[
