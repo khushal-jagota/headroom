@@ -121,6 +121,18 @@ title field captures; project chips assign the new idea, matching the web. Faile
 captures keep the draft. The capture POST lives behind `IdeasServing`; its tests
 use a stub transport, and simulator verification never submits a live capture.
 
+Orchestrator and Chief pages show expandable recaps and grouped workers, with
+working and unread marks from the server. Active groups start open; Backlogged
+and Done start folded. Chief loads its own paginated workers and retains loaded
+pages after live updates. Both pages condense the title into the navigation bar
+on scroll and honor Reduce Motion.
+
+Ask for a recap uses the existing recap-request endpoint through the API adapter.
+It sends only after an explicit tap, prevents overlapping requests, and displays
+refused or uncertain delivery without claiming success. Simulator verification
+uses read-only navigation; recap requests are verified with an in-process mocked
+URL session and never sent to the live server during tests.
+
 Haptic helpers offer light, medium, success and selection. Navigation and tab
 changes use them, as does saving Settings. Native navigation transitions supply
 motion, respect system accessibility preferences, and avoid custom bouncing.

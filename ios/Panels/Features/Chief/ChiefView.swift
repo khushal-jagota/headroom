@@ -2,13 +2,109 @@ import SwiftUI
 
 struct ChiefView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var chief: ChiefRosterEntry?
+    @State private var active: TicketsResponse?
+    @State private var backlogged: TicketsResponse?
+    @State private var done: TicketsResponse?
+    @State private var error: String?
+    @State private var loadingMore = false
+    @State private var headerCollapsed = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                if let error = store.errors["Chief"] { LoadErrorView(message: error) { await store.refresh() } }
-                if let chief = store.chief { Text(chief.recap).textSelection(.enabled) }
-                ConversationPlaceholder()
-            }.padding(PanelsTheme.Space.lg)
-        }.navigationTitle(store.chief?.label ?? "Chief of Staff").panelsScreen()
+                if let error { LoadErrorView(message: error) { await load() } }
+                if let chief {
+                    VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
+                        AgentBreadcrumb(title: "Workspace", signal: chief.conversationSignal)
+                        AgentPageTitle(title: chief.label)
+                        AgentRecap(recap: chief.recap, target: Principal(kind: "chief", id: "chief")) { await store.refresh() }
+                    }
+                    VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+                        Text("Workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).accessibilityAddTraits(.isHeader)
+                        if let active {
+                            if active.tickets.isEmpty {
+                                Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
+                            } else {
+                                WorkerSections(tickets: active.tickets, showHistory: false)
+                            }
+                            loadMoreButton(page: active.page, filter: .active)
+                        }
+                        WorkerDisclosure(title: "Backlogged", count: backlogged?.page.matchCount ?? 0) {
+                            WorkerRows(tickets: WorkerGroup.ordered(backlogged?.tickets ?? []))
+                            if let page = backlogged?.page { loadMoreButton(page: page, filter: .backlogged) }
+                        }
+                        WorkerDisclosure(title: "Done", count: done?.page.matchCount ?? 0) {
+                            WorkerRows(tickets: WorkerGroup.ordered(done?.tickets ?? []))
+                            if let page = done?.page { loadMoreButton(page: page, filter: .done) }
+                        }
+                    }
+                    ConversationPlaceholder()
+                } else if error == nil {
+                    ProgressView().frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.xxl)
+                }
+            }.padding(PanelsTheme.Space.xl)
+        }
+        .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 80 } action: { _, collapsed in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base)) { headerCollapsed = collapsed }
+        }
+        .navigationTitle(headerCollapsed ? chief?.label ?? "Chief of Staff" : "")
+        .navigationBarTitleDisplayMode(.inline).panelsScreen()
+        .task(id: store.revision) { await load() }
+        .refreshable { Haptics.light(); await load() }
+        .accessibilityIdentifier("chief-screen")
+    }
+
+    @ViewBuilder private func loadMoreButton(page: PageFacts, filter: TicketFilter) -> some View {
+        if let offset = page.nextOffset {
+            Button {
+                Haptics.light()
+                Task { await loadMore(filter: filter, offset: offset) }
+            } label: {
+                HStack {
+                    Text("Load more")
+                    if loadingMore { ProgressView().controlSize(.mini) }
+                }.font(PanelsTheme.TypeScale.small).frame(minHeight: 44).frame(maxWidth: .infinity)
+            }.disabled(loadingMore)
+        }
+    }
+
+    private func load() async {
+        let api = store.client
+        // Keep a single local writer while paging so a refresh cannot shrink its window.
+        while loadingMore {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+        loadingMore = true
+        defer { loadingMore = false }
+        do {
+            async let roster = api.chiefRoster()
+            async let activeRead = api.chiefWorkers(filter: .active, through: active?.page.offset ?? 0)
+            async let backlogRead = api.chiefWorkers(filter: .backlogged, through: backlogged?.page.offset ?? 0)
+            async let doneRead = api.chiefWorkers(filter: .done, through: done?.page.offset ?? 0)
+            let result = try await (roster, activeRead, backlogRead, doneRead)
+            try Task.checkCancellation()
+            guard api.baseURL == store.baseURL else { return }
+            chief = result.0.chiefOfStaff; active = result.1; backlogged = result.2; done = result.3; error = nil
+        } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
+    }
+
+    private func loadMore(filter: TicketFilter, offset: Int) async {
+        guard !loadingMore else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let api = store.client
+        do {
+            let page = try await api.chiefWorkers(filter: filter, through: offset)
+            try Task.checkCancellation()
+            guard api.baseURL == store.baseURL else { return }
+            switch filter {
+            case .active: active = page
+            case .backlogged: backlogged = page
+            case .done: done = page
+            }
+            error = nil
+        } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
     }
 }
