@@ -50,7 +50,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(record.kind==='ticket') {
       const row=record.value;
       if(row.worker_step_claim_out) exactOutClaimCount+=1;
-      if(row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
+      if(!row.is_backlogged && row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
         && row.gating_field!==null && row.proposal_field!==null && row.proposal_created_at!==null) {
         reviewItems.push({review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
           title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision});

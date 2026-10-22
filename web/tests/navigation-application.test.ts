@@ -16,6 +16,30 @@ const titleImpact:RecordImpact={kind:'ticket',id:'a',fields:['title','updated_at
 const fence={...continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic'};
 
 describe('application presentation and command evidence',()=>{
+  it('excludes a backlogged proposal loaded by a child view and restores it after backlog clears',()=>{
+    const collection=createNavigationCollection(),knowledge=createNavigationKnowledge(),presentationFor=createNavigationPresentationCache();
+    const pending:TicketRecord={...ticket,value:{...ticket.value,ticket_status:'awaiting_approval',
+      proposal_field:'plan',proposal_revision:1,proposal_created_at:1,is_backlogged:true}};
+    try {
+      collection.publishSnapshot(currentSnapshot({...continuity,records:records.map(row=>row===ticket?pending:row)}),'base');
+      const base=collection.getPublication()!;
+      const childWindow={window_id:'backlog-children',request:{section:'children' as const,
+        owner:{kind:'manager' as const,id:'parent'},group:'all' as const,child_filter:'backlogged' as const,
+        anchor:null,direction:'after' as const,limit:30},members:[{kind:'ticket' as const,id:'a'}],
+        total:1,previous:null,next:null,forward_overlap:null,backward_overlap:null};
+      const publication={...base,view:{id:'scoped',scopeGeneration:1,contentVersion:'one',orderingGeneration:'fixture',
+        windows:[childWindow],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
+      const excluded=presentationFor(knowledge.accept(publication));
+      expect(excluded.ticketsById.get('a')?.is_backlogged).toBe(true);
+      expect(excluded.review.items).toEqual([]);
+      const restored=presentationFor(knowledge.accept({...publication,records:publication.records.map(row=>
+        row.kind==='ticket'?{...pending,value:{...pending.value,is_backlogged:false}}:row),
+        view:{...publication.view,contentVersion:'two',counts:{...publication.view.counts,review:1}}}));
+      expect(restored.review.items.map(item=>item.ticket_id)).toEqual(['a']);
+      expect(restored.ticketsById.get('a')?.is_backlogged).toBe(false);
+    } finally {collection.destroy();}
+  });
+
   it('shares one effective result and parent indexes while knowledge-only loss/read changes invalidate it',()=>{
     const collection=createNavigationCollection(),knowledge=createNavigationKnowledge(),presentationFor=createNavigationPresentationCache();
     try {

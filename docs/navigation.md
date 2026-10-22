@@ -200,6 +200,10 @@ Ticket masthead Project names follow the existing parent-or-own Project rule. Th
 
 The Review and shell count deduplicates current Ticket, Chief, and existing manager conversation pointers. Historical-only and unlinked conversations do not contribute. The exact unfiltered Worker out-claim count remains a separate fact. Unknown runtime count is null and omits the runtime mark or count line. Known zero preserves the existing behavior.
 
+The proposal review queue contains active Tickets that await owner approval and have a stage gate and a pending proposal. Backlogged Tickets do not contribute to this queue or its count, even when another selected surface loads their records. The Ticket API, navigation index, and browser presentation use this eligibility rule. Backlog preserves the proposal. Resume restores an otherwise eligible Ticket to the queue.
+
+After the operator deploys this fix and starts Panels, the existing complete Signal installation rebuilds navigation records and view indexes before delivery starts. This rebuild removes retained review membership and counts for backlogged Tickets without a new migration or a wire version change. It preserves canonical Tickets and proposals.
+
 ```text
 complete snapshot / revision batches
                 |
