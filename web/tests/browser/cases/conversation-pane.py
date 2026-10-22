@@ -2002,7 +2002,19 @@ def _bounded_reader(browser, url):
     # A transport call records request start, before the reader admits its page.
     # Wait for both edges of the older page and its layout before requesting Latest.
     page.wait_for_function("() => document.querySelector('[data-conversation-view-key=\"e1801\"]') && document.querySelector('[data-conversation-view-key=\"e1900\"]')")
-    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    # Leave both automatic history-edge demand zones before testing an explicit read.
+    page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=(node.scrollHeight-node.clientHeight)/2;node.dispatchEvent(new Event('scroll'));}")
+    page.wait_for_function("""async () => {
+      const reads = () => window.__viewCalls.filter(url => url.includes('/view/pages')).length;
+      const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+      const before = reads();
+      await frame();
+      if (reads() !== before) return false;
+      await frame();
+      const thread = document.querySelector('[data-conversation-thread]');
+      return reads() === before && thread.scrollTop > thread.clientHeight
+        && thread.scrollTop + 2 * thread.clientHeight < thread.scrollHeight;
+    }""")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     # A delayed latest-page read must respect focus moved during the request.
