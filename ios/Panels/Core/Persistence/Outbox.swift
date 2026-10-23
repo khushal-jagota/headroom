@@ -154,7 +154,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
                     work.state = .sending; work.note = "Sending…"; try save(work, server: server)
                     writeStarted = true
                     if let approval = work.approval { try await api.approveReview(ticketID, field: expected.field, approval: approval) }
-                    else { try await api.returnReview(ticketID, message: work.guidance ?? "") }
+                    else { try await api.returnReview(ticketID, message: work.guidance ?? "", expectedProposalRevision: expected.revision) }
                     work.state = .sent; work.note = work.kind == .approval ? "Approved" : "Sent back"; work.completed = .now
                 }
                 try save(work, server: server)
@@ -162,8 +162,9 @@ struct PendingWork: Codable, Identifiable, Sendable {
                 if let error = error as? APIError, error.status >= 500, writeStarted {
                     work.state = .uncertain; work.note = "Delivery uncertain"
                 } else if let error = error as? APIError {
-                    work.state = error.status == 409 ? .changed : .failed
-                    work.note = error.status == 409 ? "This changed, review again" : "Not sent · \(error.message)"
+                    let changed = error.status == 409 || error.isChangedProposal
+                    work.state = changed ? .changed : .failed
+                    work.note = changed ? "This changed, review again" : "Not sent · \(error.message)"
                 } else if let error = error as? URLError, [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(error.code) {
                     work.state = writeStarted ? .waiting : priorState; work.note = "Waiting for connection"
                 } else if work.state == .sending {

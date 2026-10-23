@@ -57,7 +57,7 @@ final class TicketTests: XCTestCase {
         try await client.completeTicketField(ticket.id, field: "answer", body: "Owner answer")
         try await client.acceptTicketProposal(ticket, proposal: proposal, ceiling: "done", holder: Principal(kind: "owner", id: "owner"), editedBody: proposal.body)
         try await client.acceptTicketProposal(ticket, proposal: proposal, ceiling: "done", holder: Principal(kind: "owner", id: "owner"), editedBody: "Edited proposal")
-        try await client.returnTicketProposal(ticket.id, message: "Please revise")
+        try await client.returnTicketProposal(ticket.id, message: "Please revise", expectedProposalRevision: proposal.revision)
         try await client.removeTicketBlocker(ticket.id, blockerID: "t_blocker")
         try await client.setTicketWorkerConfiguration(ticket.id, backend: "codex", model: nil, effort: nil)
     }
@@ -127,7 +127,9 @@ private final class TicketStubProtocol: URLProtocol, @unchecked Sendable {
                     if let edited = body["edited_body"] as? String { XCTAssertEqual(edited, "Edited proposal") }
                 case "/api/tickets/t_02zd37tz/reject":
                     XCTAssertEqual(request.httpMethod, "POST")
-                    XCTAssertEqual(body as? [String: String], ["message": "Please revise"])
+                    XCTAssertEqual(body["message"] as? String, "Please revise")
+                    XCTAssertEqual(body["expected_proposal_revision"] as? Int, 15)
+                    XCTAssertEqual(body.keys.sorted(), ["expected_proposal_revision", "message"])
                 case "/api/collections/blockers/t_02zd37tz/t_blocker":
                     XCTAssertEqual(request.httpMethod, "DELETE"); XCTAssertTrue(body.isEmpty)
                 case "/api/tickets/t_02zd37tz/employee-configuration":

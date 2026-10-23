@@ -143,6 +143,7 @@ async def reject_ticket_proposal(
     message: str | None,
     ctx: RequestContext,
     clock: Clock,
+    expected_proposal_revision: int | None = None,
 ) -> Ticket:
     """Send the proposal back, with guidance for the executing agent or without."""
     if message is not None:
@@ -165,6 +166,7 @@ async def reject_ticket_proposal(
         principal=principal,
         now=now,
         expected_proposal=ticket.pending_proposal,
+        expected_proposal_revision=expected_proposal_revision,
     )
     if source_turn is not None:
         try:

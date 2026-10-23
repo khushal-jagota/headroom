@@ -62,9 +62,9 @@ extension APIClient {
                                              edited_body: editedBody == proposal.body ? nil : editedBody))
     }
 
-    func returnTicketProposal(_ id: String, message: String) async throws {
-        struct Body: Encodable { let message: String }
-        _ = try await ticketWrite("/api/tickets/\(id)/reject", method: "POST", body: Body(message: message))
+    func returnTicketProposal(_ id: String, message: String, expectedProposalRevision: Int) async throws {
+        struct Body: Encodable { let message: String; let expected_proposal_revision: Int }
+        _ = try await ticketWrite("/api/tickets/\(id)/reject", method: "POST", body: Body(message: message, expected_proposal_revision: expectedProposalRevision))
     }
 
     func removeTicketBlocker(_ id: String, blockerID: String) async throws {

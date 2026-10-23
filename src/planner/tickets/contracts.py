@@ -258,6 +258,7 @@ class GateCompletionBody(TypedDict, total=False):  # POST /tickets/{id}/complete
 
 
 class RejectionBody(TypedDict, total=False):  # POST /tickets/{id}/reject
+    expected_proposal_revision: int | None  # visible proposal identity for send-back gestures
     message: str | None  # optional guidance for the executing agent
 
 

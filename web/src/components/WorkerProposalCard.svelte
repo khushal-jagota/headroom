@@ -11,7 +11,7 @@
     manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
     onScope: (body: Record<string,unknown>) => Promise<void>;
-    onReturn: (message: string) => Promise<unknown>;
+    onReturn: (message: string, expectedProposalRevision: number) => Promise<unknown>;
     canReturn?: boolean;
     disabled?: boolean;
     revisionEditor?: Snippet;
@@ -61,7 +61,7 @@
   async function sendBack(): Promise<void> {
     if (proposal.field === "brief" || disabled || !canReturn || busy || resolved || !note.trim()) return;
     busy = true; error = null;
-    try { await onReturn(note.trim()); resolved = true; }
+    try { await onReturn(note.trim(), proposal.revision); resolved = true; }
     catch (err) { error = err; }
     finally { busy = false; }
   }

@@ -43,10 +43,9 @@ text and locks the field until the response. Failure keeps the words available.
 
 A decision is saved before its ask leaves the screen. A pending row shows waiting,
 sending, completion, or a need to review again. Both queued writes first check that
-the proposal is still current. Approval also sends the revision to the server,
-which atomically refuses an outdated revision. The existing send-back endpoint
-has no conditional revision parameter, so another writer can change the proposal
-between that check and the send-back request; this is not an atomic guarantee.
+the proposal is still current. Both send the displayed revision to the server,
+which checks it in the same transaction as the decision. If it changed after the
+last read, the pending row says “This changed, review again” and keeps the saved words.
 
 This screen does not implement the pending conversation redesign. The title opens
 its ticket in Workspace. Cross-tab navigation sets the destination without an

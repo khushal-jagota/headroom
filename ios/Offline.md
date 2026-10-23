@@ -46,15 +46,15 @@ crash or across an unknown newly created conversation.
 
 Approval and send-back first enter the local outbox. The ask leaves Review and a
 pending row shows its state. Approvals send the original expected proposal
-revision. Send-backs fetch the proposal immediately before posting and compare
-field, creation time and revision. A mismatch or conflict becomes “This changed,
+revision. Send-backs also send the saved proposal revision. Both fetch the proposal
+immediately before posting and compare field, creation time and revision.
+A mismatch or a server refusal of the revision becomes “This changed,
 review again”; saved words remain readable and selectable in the pending row.
 
-The send-back endpoint has no atomic client revision parameter. A change between
-the final read and the POST is still possible. Neither decision endpoint has an
-operation receipt. A response lost after a decision starts is held for review,
-never automatically replayed. These limits are explicit; no backend route or
-server-side queue changed.
+The server checks the expected revision in the same transaction as either decision,
+so a change between the final read and the POST is refused. Neither decision endpoint
+has an operation receipt. A response lost after a decision starts is held for review,
+never automatically replayed.
 
 Review microphone recordings use files in Application Support, with an owning
 outbox record saved before recording starts. Stopping or leaving the composer

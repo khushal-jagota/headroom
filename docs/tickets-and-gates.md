@@ -416,9 +416,10 @@ ceiling. Reviewer-only changes reroute without approval. Direct Approve remains 
 explicit approval for such historical proposals. New answers follow the ceiling alone,
 including answers to user-owned Stages.
 
-The acceptance request can include `expected_proposal_revision`. The server checks
-that revision inside the existing transaction before settlement. A stale visible
-submission cannot approve its replacement. Legacy accept callers can omit the field.
+Approval and Send back requests can include `expected_proposal_revision`. The server
+checks that revision inside the decision transaction. A stale submission cannot
+approve its replacement or attach guidance to it. The web and iOS clients send the
+revision they displayed. Legacy callers can omit the field.
 Generic ceiling PATCH requests that cross a waiting boundary are refused with the
 explicit acceptance path identified. No separate permission or settlement mechanism
 is introduced.
