@@ -29,6 +29,7 @@
   import type {
     BackendModel,
   } from "../../../lib/conversation/wire";
+  import { REPLY_LINE_MOVE_MS, SENT_MESSAGE_TOP_GAP_PIXELS } from "./viewportConfiguration";
   import { threadGeometry, type ThreadReading } from "./threadGeometry";
 
   let {
@@ -75,6 +76,11 @@
   let newestLineBottomPixels = 0;
   let settledOnOpening = false;
   let settledMessageIds = new Set<string>();
+  let acceptedMessageIds = new Set<string>();
+  let newestPlacementMessageId: string | null = null;
+  let displayIds = new Map<string, string>();
+  let liftedDisplayIds = new Set<string>();
+  let sentMessagePlacement: "newest" | "top" = "newest";
   let conversationOnScreen: string | null = null;
   let stateOnScreen: ConversationState | null = null;
   let stateHasBeenDrawn = false;
@@ -88,7 +94,7 @@
   } | null = null;
   let readerOnScreen: ConversationViewReader | null = null;
   let sentMessageToPlace: string | null = null;
-  let answerRoomMessageId: string | null = null;
+  let answerRoomMessageId = $state<string | null>(null);
   let dirty = false;
   let queued = false;
   let disposed = false;
@@ -108,23 +114,24 @@
 
   const positionMotion = {};
   let gestureGeneration = 0;
-  let heldUnreadKey: string | null = null;
+  let heldUnreadKey = $state<string | null>(null);
   function stopAutomaticTravel(): void {
     gestureGeneration += 1;
     heldUnreadKey = null;
     reader?.releaseEntry();
     sentMessageToPlace = null;
+    newestPlacementMessageId = null;
     latestIntent = null;
     latestPending = false;
     if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
     withTheNewestLineBeforeTheWrite = false;
   }
-  async function travel(thread: HTMLDivElement, wanted: number): Promise<boolean> {
+  async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS): Promise<boolean> {
     const from = thread.scrollTop;
     if (Math.abs(wanted - from) < .5) return true;
     return conversationMotion(thread).move(positionMotion, fraction => {
       moveTheThread(thread, from + (wanted - from) * fraction);
-    }, CONVERSATION_MOVE_MS, undefined, true);
+    }, duration, undefined, true);
   }
 
   function moveTheThread(thread: HTMLDivElement, wanted: number): void {
@@ -272,19 +279,48 @@
         takeTheReading(geometry.read(reservedSpacePixels));
 
         const newest = outgoingMessages[outgoingMessages.length - 1];
+        if (newest?.restored) settledMessageIds.add(newest.messageId);
         if (newest !== undefined && !settledMessageIds.has(newest.messageId)) {
+          newestPlacementMessageId = null;
           const sent = geometry.sentMessage(newest.messageId);
           if (sent !== null) {
             heldUnreadKey = null;
             reader?.releaseEntry();
             settledMessageIds.add(newest.messageId);
-            answerRoomMessageId = newest.messageId;
-            sentMessageToPlace = newest.messageId;
-            reservedSpacePixels = geometry.answerRoomPixels(sent);
+            newestPlacementMessageId = newest.messageId;
+            const displayId = newest.displayMessageId ?? newest.messageId;
+            displayIds.set(newest.messageId, displayId);
+            if (liftedDisplayIds.has(displayId)) {
+              answerRoomMessageId = newest.messageId;
+              reservedSpacePixels = geometry.answerRoomPixels(sent);
+            } else {
+              // Before acceptance there is no answer to make room for. The outcome is
+              // unknowable at this point, unlike the artifact's preselected demo fate.
+              answerRoomMessageId = null;
+              sentMessageToPlace = newest.messageId;
+              sentMessagePlacement = "newest";
+              reservedSpacePixels = 0;
+              withTheNewestLineBeforeTheWrite = true;
+            }
           }
         } else if (reservedSpacePixels > 0 && answerRoomMessageId !== null) {
           const asking = geometry.sentMessage(answerRoomMessageId);
           if (asking !== null) reservedSpacePixels = geometry.answerRoomPixels(asking);
+        }
+
+        const newlyAccepted = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]')]
+          .filter(element => settledMessageIds.has(element.dataset.conversationOutgoing!) && !acceptedMessageIds.has(element.dataset.conversationOutgoing!));
+        // Consume older acknowledgements too: none may steal placement on a later pass.
+        for (const element of newlyAccepted) acceptedMessageIds.add(element.dataset.conversationOutgoing!);
+        const accepted = newlyAccepted.find(element => element.dataset.conversationOutgoing === newestPlacementMessageId);
+        if (accepted) {
+          const id = accepted.dataset.conversationOutgoing!;
+          acceptedMessageIds.add(id);
+          liftedDisplayIds.add(displayIds.get(id) ?? id);
+          answerRoomMessageId = id;
+          sentMessageToPlace = id;
+          sentMessagePlacement = "top";
+          reservedSpacePixels = geometry.answerRoomPixels(accepted);
         }
 
         if (heldUnreadKey !== null) {
@@ -324,7 +360,7 @@
           await travel(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
         } else if (sentMessageToPlace !== null) {
           const sent = geometry.sentMessage(sentMessageToPlace);
-          if (sent !== null) await travel(thread, geometry.sentMessageScrollTop(sent));
+          if (sent !== null) await travel(thread, sentMessagePlacement === "top" ? geometry.sentMessageScrollTop(sent) : geometry.newestLineScrollTop(newestLineBottomPixels));
         } else if (heldUnreadKey !== null) {
           const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
             .find(node => node.dataset.conversationViewKey === heldUnreadKey);
@@ -335,7 +371,7 @@
             const last = contentElement?.lastElementChild;
             const line = last ? Number.parseFloat(getComputedStyle(last).lineHeight) : 24;
             const step = Number.isFinite(line) && line > 0 ? line : 24;
-            await travel(thread, Math.min(wanted, thread.scrollTop + step));
+            await travel(thread, Math.min(wanted, thread.scrollTop + step), REPLY_LINE_MOVE_MS);
             if (wanted > thread.scrollTop + .5) { dirty = true; followingMore = true; }
           }
         }
@@ -382,6 +418,10 @@
         heldUnreadKey = null;
         settledOnOpening = false;
         settledMessageIds = new Set();
+        acceptedMessageIds = new Set();
+        newestPlacementMessageId = null;
+        displayIds = new Map();
+        liftedDisplayIds = new Set();
         reservedSpacePixels = 0;
         answerRoomMessageId = null;
         sentMessageToPlace = null;
@@ -445,9 +485,11 @@
       }
       requestReconciliation();
     });
+    const acceptanceObserver = new MutationObserver(requestReconciliation);
+    acceptanceObserver.observe(content, {subtree:true, attributes:true, attributeFilter:["data-conversation-accepted"]});
     observer.observe(thread);
     observer.observe(content);
-    return () => { observer.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
+    return () => { observer.disconnect(); acceptanceObserver.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };
   });
 
   onMount(() => {
@@ -471,6 +513,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div
     class="chat-thread"
+    style:padding-top={heldUnreadKey !== null || answerRoomMessageId !== null ? `${SENT_MESSAGE_TOP_GAP_PIXELS}px` : undefined}
     data-conversation-thread
     role="region"
     aria-label="Conversation"
@@ -523,7 +566,7 @@
       class="chat-jump"
       aria-label="Jump to latest message"
       onclick={(event) => void jumpToTheNewestLine(event.currentTarget)}
-    ><span>{belowCount > 0 ? `${belowCount} below` : "Latest"}</span><span aria-hidden="true">↓</span></button>
+    >{belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Latest"}</button>
   {/if}
 </div>
 

@@ -598,7 +598,8 @@
         await openConversation(delivered.conversation_id);
       }
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
-      fateNote = terminalFate ? fateSentence(fate) : null;
+      // A durable refusal/uncertainty speaks on its bubble, not a second receipt.
+      fateNote = terminalFate && delivered.conversation_id === null ? fateSentence(fate) : null;
       fateNoteIsTerminal = terminalFate;
       fateNoteMessageId = terminalFate ? message.messageId : null;
       if (terminalFate) {
@@ -609,6 +610,9 @@
         await stopDrawing(message.messageId, recordedOutcome);
         await refreshView();
         return recordedOutcome;
+      }
+      if (fate.fate === "started" || fate.fate === "injected") {
+        await holdOnTo(sentMessages.map(candidate => candidate.messageId === message.messageId ? {...candidate, accepted:true} : candidate));
       }
       // Held for a busy agent: it has reached nothing yet, and it says so rather than
       // sitting there looking like a message something is answering.
@@ -627,6 +631,7 @@
         return false;
       }
       await whatIsKnownAbout(message.messageId, "answer_never_came_back");
+      errorNote = null; // The retained bubble now states this unanswered transport outcome.
       return true;
     }
   }
@@ -937,7 +942,7 @@
   ownerReadThroughSequence={view?.owner_read_through_sequence ?? 0}
   bind:lens
   composerPlaceholder={composerPlaceholder
-    ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
+    ?? (started ? "Steer the work" : "Send the first message to start it...")}
   composerDisabled={busy || opening}
   onSend={send}
   onStop={() => void stop()}

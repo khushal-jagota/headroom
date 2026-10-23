@@ -48,6 +48,12 @@ export type OutgoingMessage = {
   messageId: string;
   /** The mounted bubble retains this identity when its words are sent again. */
   displayMessageId?: string;
+  /** Transport acknowledged this send; preserves its UI placement before the record body.
+   * This is not authority for backend history admission. */
+  accepted?: boolean;
+  /** Viewport intent only: recalled content does not request fresh send placement.
+   * Set on recall, ignored by the storage decoder. */
+  restored?: boolean;
   /** The message as it will be sent, which is what this browser has until the record
    *  answers for it. A message on its way names no kept file, because nothing has kept
    *  anything yet — it holds what it is about to hand over. */
@@ -558,9 +564,7 @@ export async function recallOutgoingMessages(conversationId: string): Promise<Ou
   includeRememberedMessagesInReservations();
   await rememberTails.get(conversationId);
   return (await outgoingMessagesStoredUnder(conversationId)).map((message) =>
-    message.knownFate === "nothing_yet"
-      ? { ...message, knownFate: "sent_before_this_page" as const }
-      : message
+    ({ ...message, restored: true, knownFate: message.knownFate === "nothing_yet" ? "sent_before_this_page" as const : message.knownFate })
   );
 }
 
@@ -738,6 +742,8 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   return {
     messageId,
     content: pieces,
+    ...(held.accepted === true ? { accepted: true } : {}),
+    ...(typeof held.displayMessageId === "string" ? { displayMessageId: held.displayMessageId } : {}),
     senderLabel,
     mode: decodedMode as PromptDeliveryMode,
     sentAtUnixMilliseconds,

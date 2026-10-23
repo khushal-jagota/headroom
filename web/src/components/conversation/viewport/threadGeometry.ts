@@ -137,9 +137,7 @@ export function threadGeometry(
       const drawn = Array.from(
         thread.querySelectorAll<HTMLElement>("[data-conversation-outgoing]")
       ).find((element) => element.dataset.conversationOutgoing === messageId);
-      if (drawn !== undefined) return drawn;
-      const recorded = thread.querySelectorAll('[data-conversation-row="prompt"]');
-      return recorded[recorded.length - 1] ?? null;
+      return drawn ?? null;
     },
 
     answerRoomMessage(): Element | null {
