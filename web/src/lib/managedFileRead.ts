@@ -23,8 +23,11 @@ type SharedRead = {
 
 const running = new Map<string, SharedRead>();
 
-export function readManagedFile(href: string, untilTheReaderLeaves: AbortSignal): Promise<string> {
-  const shared = running.get(href) ?? startRead(href);
+export type ManagedFileReadOptions = { artifactRootHref?: string; fresh?: boolean };
+
+export function readManagedFile(href: string, untilTheReaderLeaves: AbortSignal, options: ManagedFileReadOptions = {}): Promise<string> {
+  const key = JSON.stringify([href, options.artifactRootHref ?? null, Boolean(options.fresh)]);
+  const shared = running.get(key) ?? startRead(href, key, options);
   shared.readers += 1;
   // One preview leaving must not take the read away from the others, so the request is
   // abandoned only when the last of them has gone.
@@ -36,7 +39,7 @@ export function readManagedFile(href: string, untilTheReaderLeaves: AbortSignal)
       // Dropped before the abort, not after. Aborting settles the read, and a preview
       // that arrives in between would otherwise join a request already on its way out
       // and be handed its failure.
-      forget(href, shared);
+      forget(key, shared);
       shared.request.abort();
     },
     { signal: shared.listeners.signal }
@@ -44,16 +47,20 @@ export function readManagedFile(href: string, untilTheReaderLeaves: AbortSignal)
   return shared.body;
 }
 
-function startRead(href: string): SharedRead {
+function startRead(href: string, key: string, options: ManagedFileReadOptions): SharedRead {
   const request = new AbortController();
-  const body = fetch(href, { signal: request.signal }).then((response) => {
+  const body = fetch(href, {
+    signal: request.signal,
+    ...(options.artifactRootHref ? {headers: {'X-Panels-Artifact-Root': options.artifactRootHref}, redirect: 'error' as const} : {}),
+    ...(options.fresh ? {cache: 'no-store' as const} : {})
+  }).then((response) => {
     if (!response.ok) throw new Error(`file fetch failed: ${response.status}`);
     return response.text();
   });
   const shared: SharedRead = { body, request, listeners: new AbortController(), readers: 0 };
-  running.set(href, shared);
+  running.set(key, shared);
   const done = (): void => {
-    forget(href, shared);
+    forget(key, shared);
     // Nothing more can be decided about a read that is over, and letting the listeners
     // go is what lets the response text be collected.
     shared.listeners.abort();
