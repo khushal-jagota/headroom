@@ -8,7 +8,10 @@ enum ConversationLayout {
     static let restingHeight: CGFloat = 48
     static let cardHeight: CGFloat = 95
     static let shapeMotion = Animation.timingCurve(0.2, 0.7, 0.5, 1, duration: 0.31)
-    static let pageMotion = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.35)
+    static let pageMotion = Animation.spring(duration: 0.38, bounce: 0)
+    static let restingCornerRadius: CGFloat = 12
+    static let lineHeight: CGFloat = 44
+    static let surfaceTopPadding: CGFloat = 8
 }
 
 struct ConversationOverlay: ViewModifier {
@@ -60,7 +63,8 @@ private struct ConversationSurface: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .body) private var iconSize = 18.0
     @State private var closingDistance: CGFloat = 0
-    @State private var composerHeight: CGFloat = 105
+    @State private var composerHeight: CGFloat = 61
+    @State private var lineHeight = ConversationLayout.lineHeight
     @State private var changingQueue = false
 
     var body: some View {
@@ -99,44 +103,41 @@ private struct ConversationSurface: View {
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
 
-    // One host and one composer stay mounted for the whole page lifetime. Only
-    // the space above the input grows; the page's inset remains unchanged.
+    // The line, thread and composer are children of one persistent surface. Its
+    // height grows from the bottom edge; there is no replacement sheet or fill.
     private var conversation: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    header
-                    if opened { ConversationThread(model: model, owner: owner, opened: opened) }
-                }
-                .frame(height: opened ? max(0, geometry.size.height - composerHeight - closingDistance) : 0, alignment: .top)
-                .clipped()
-                .background(PanelsTheme.surface)
-                .padding(.bottom, composerHeight)
-                .accessibilityHidden(!opened)
-                .allowsHitTesting(opened)
-                .animation(reduceMotion ? nil : ConversationLayout.pageMotion, value: opened)
-
-                // The composer has its own bottom anchor. Expanding the thread
-                // never changes its parent frame, alignment, or identity.
+            let topPadding = opened ? geometry.safeAreaInsets.top : ConversationLayout.surfaceTopPadding
+            let expandedHeight = geometry.size.height + geometry.safeAreaInsets.top
+            let collapsedHeight = composerHeight + lineHeight + ConversationLayout.surfaceTopPadding
+            let height = opened ? max(collapsedHeight, expandedHeight - closingDistance) : collapsedHeight
+            let radius = opened ? min(ConversationLayout.restingCornerRadius, closingDistance / 10) : ConversationLayout.restingCornerRadius
+            VStack(spacing: 0) {
+                header
+                    .fixedSize(horizontal: false, vertical: true)
+                    .geometryGroup()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { lineHeight = $0 }
+                ConversationThread(model: model, owner: owner, opened: opened)
+                    .frame(height: max(0, height - topPadding - lineHeight - composerHeight))
+                    .clipped()
+                    .accessibilityHidden(!opened)
+                    .allowsHitTesting(opened)
                 bottom
                     .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                        composerHeight = height
-                        if !opened { restingHeight = height }
-                    }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-            .background(alignment: .top) {
-                if opened && closingDistance == 0 {
-                    PanelsTheme.surface.frame(height: geometry.safeAreaInsets.top)
-                        .offset(y: -geometry.safeAreaInsets.top)
-                }
-            }
+            .padding(.top, topPadding)
+            .padding(.bottom, geometry.safeAreaInsets.bottom)
+            .background(PanelsTheme.raised)
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius))
+            .offset(y: geometry.safeAreaInsets.bottom)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottom)
+            .animation(reduceMotion ? nil : ConversationLayout.pageMotion, value: opened)
+            .onChange(of: collapsedHeight, initial: true) { _, height in restingHeight = height }
         }
         .foregroundStyle(PanelsTheme.text)
         .tint(PanelsTheme.accent)
         .preferredColorScheme(.dark)
-
     }
 
     private func show() {
@@ -148,47 +149,53 @@ private struct ConversationSurface: View {
         closingDistance = 0
         opened = false
     }
+
+    // This is the resting line itself, carried upward by the growing surface.
     private var header: some View {
-        HStack {
-            Button { close() } label: { Image(systemName: "chevron.down").font(.system(size: min(iconSize, 28))).frame(width: 44, height: 44) }.accessibilityLabel("Close conversation")
-            Spacer(minLength: 0)
-            Text(title).font(.headline).lineLimit(2)
-            Spacer(minLength: 0)
+        HStack(spacing: 0) {
+            Button { if opened { close() } else { show() } } label: {
+                HStack(spacing: 8) {
+                    Group {
+                        if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil { ProgressView().controlSize(.mini) }
+                        else { Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0) }
+                    }.frame(width: 12)
+                    let latest = model.latestMessage
+                    Text(.init(latest?.previewText ?? "Conversation")).font(PanelsTheme.TypeScale.small).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if latest?.own == true, let note = latest?.note, note != "Sent" {
+                        Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
+                    }
+                    Image(systemName: "chevron.up")
+                        .rotationEffect(.degrees(opened ? 180 : 0))
+                        .font(.system(size: 11))
+                }
+                .padding(.leading, 20).padding(.trailing, 14)
+                .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(opened ? "Close conversation" : model.latestMessage?.previewText ?? "Open conversation")
+            .accessibilityIdentifier(opened ? "conversation-close" : "conversation-line")
             Button(model.lens.rawValue.capitalized) { model.lens = model.lens == .focus ? .full : .focus; Haptics.selection() }
-                .font(.body).frame(minWidth: 44, minHeight: 44).accessibilityLabel("Conversation lens")
-        }.padding(.horizontal, 12).frame(minHeight: 52).foregroundStyle(PanelsTheme.text)
-            .accessibilityIdentifier("conversation-header")
-            .contentShape(Rectangle()).gesture(DragGesture()
-                .onChanged { closingDistance = max(0, $0.translation.height) }
-                .onEnded { value in
+                .font(PanelsTheme.TypeScale.small).frame(width: 60, height: ConversationLayout.lineHeight)
+                .frame(width: opened ? 60 : 0, alignment: .trailing).clipped()
+                .accessibilityLabel("Conversation lens").accessibilityHidden(!opened).allowsHitTesting(opened)
+        }
+        .foregroundStyle(PanelsTheme.faint)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation-header")
+        .contentShape(Rectangle())
+        .highPriorityGesture(DragGesture()
+            .onChanged { if opened { closingDistance = max(0, $0.translation.height) } }
+            .onEnded { value in
+                if opened {
                     if value.translation.height > 110 || value.predictedEndTranslation.height > 220 { close() }
                     else { withAnimation(reduceMotion ? nil : ConversationLayout.pageMotion) { closingDistance = 0 } }
-                })
+                } else if -value.translation.height > 110 || -value.predictedEndTranslation.height > 220 { show() }
+            })
     }
 
     private var bottom: some View {
         VStack(spacing: 8) {
-            if !opened {
-                Button { show() } label: {
-                    HStack(spacing: 8) {
-                        Group {
-                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil { ProgressView().controlSize(.mini) }
-                            else { Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0) }
-                        }.frame(width: 12)
-                        let latest = model.latestMessage
-                        Text(.init(latest?.previewText ?? "Conversation")).font(PanelsTheme.TypeScale.small).lineLimit(1)
-                        if latest?.own == true, let note = latest?.note, note != "Sent" {
-                            Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
-                        }
-                        Image(systemName: "chevron.up").font(.system(size: 11)).foregroundStyle(PanelsTheme.faint)
-                    }.foregroundStyle(PanelsTheme.faint).padding(.leading, 20).padding(.trailing, 14).frame(minHeight: 44)
-                }.buttonStyle(.plain)
-                    .accessibilityIdentifier("conversation-line")
-                    .simultaneousGesture(DragGesture()
-                        .onEnded { value in
-                            if -value.translation.height > 110 || -value.predictedEndTranslation.height > 220 { show() }
-                        })
-            }
             if !model.heldPrompts.isEmpty {
                 VStack(spacing: 4) {
                     ForEach(model.heldPrompts, id: \.heldPromptId) { held in
@@ -209,9 +216,9 @@ private struct ConversationSurface: View {
             }
             ConversationComposer(model: model, owner: owner, speech: speech, refreshError: refreshError, retry: retry)
         }
-        .padding(.top, 8).padding(.bottom, 1)
-        .background((opened ? PanelsTheme.surface : PanelsTheme.raised).ignoresSafeArea(edges: .bottom))
-        .overlay(alignment: .top) { if !opened { Rectangle().fill(PanelsTheme.border).frame(height: 1) } }
+        .padding(.bottom, 1)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation-composer-region")
     }
 
     private func changeQueue(_ held: ConversationConfiguration.HeldPrompt, discard: Bool) {
@@ -428,6 +435,19 @@ extension View {
 }
 
 #if DEBUG
+/// Uses real detail pages with the existing loopback-only conversation test host.
+struct ConversationDetailSmokeView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                NavigationLink("Ticket fixture") { TicketView(ticketID: "t_02zd37tz") }
+                NavigationLink("Orchestrator fixture") { OrchestratorView(managerID: "si_4chgag3w") }
+                NavigationLink("Chief fixture") { ChiefView() }
+            }.panelsScreen()
+        }
+    }
+}
+
 struct ConversationSmokeView: View {
     @Environment(AppStore.self) private var store
     @State private var refreshError: String?

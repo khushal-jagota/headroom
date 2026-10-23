@@ -13,8 +13,11 @@ struct ChiefView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
+                AgentPageControls {
+                    AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
+                }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                    AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff")
+                    AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: chief?.conversationSignal)
                     AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
                 }
                 if chief != nil {
@@ -39,20 +42,9 @@ struct ChiefView: View {
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
-        .navigationTitle(chief?.label ?? store.chief?.label ?? "Chief of Staff")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.bar, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationOverlay(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", refreshError: error, retry: { await load() })
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                AgentNavigationHeader(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: chief?.conversationSignal)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
-            }
-        }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }

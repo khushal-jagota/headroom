@@ -27,7 +27,7 @@ final class ConversationOperationTests: XCTestCase {
         assertFrame(input.frame, equals: restingInputFrame, context: "Expand with keyboard closed")
         XCTAssertFalse(line.exists, "Expanded chat must not show the resting status line")
         XCTAssertLessThan(close.frame.minY, 100, "Chat header must occupy the full screen")
-        let header = app.staticTexts["conversation-header"]
+        let header = app.descendants(matching: .any).matching(identifier: "conversation-header").firstMatch
         let start = header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 45)), withVelocity: .slow, thenHoldForDuration: 0.5)
         XCTAssertTrue(close.exists, "A short pull should return the chat to its open position")
@@ -186,6 +186,57 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         XCTAssertEqual(input.value as? String, "Return to this draft")
 
+    }
+
+    /// The native navigation stack and growing surface must be exercised together;
+    /// host logic cannot detect duplicate bars, lost focus or a changed page offset.
+    /// Reuses the existing stub, fixture files and one simulator host.
+    @MainActor func testDetailPageExpansionAgainstLocalStub() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_CONVERSATION_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-smoke", "--conversation-stub", base, "--conversation-detail-pages"]
+        app.launch()
+        for name in ["Ticket", "Orchestrator", "Chief"] {
+            let link = app.buttons["\(name) fixture"]
+            XCTAssertTrue(link.waitForExistence(timeout: 8))
+            link.tap()
+            let back = app.buttons["detail-back"]
+            let line = app.buttons["conversation-line"]
+            XCTAssertTrue(back.waitForExistence(timeout: 8))
+            XCTAssertTrue(line.waitForExistence(timeout: 8))
+            XCTAssertEqual(app.navigationBars.count, 0, "Detail controls must be in the page")
+            let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
+            let restingFrame = input.frame
+            capture(app, "\(name)-resting")
+            try await proof(base, "start/\(name.lowercased())-open-close")
+            line.tap()
+            let close = app.buttons["Close conversation"]
+            XCTAssertTrue(close.waitForExistence(timeout: 5))
+            assertFrame(input.frame, equals: restingFrame, context: "\(name) opening")
+            XCTAssertLessThan(close.frame.minY, 100)
+            capture(app, "\(name)-expanded")
+            close.tap()
+            XCTAssertTrue(line.waitForExistence(timeout: 5))
+            assertFrame(input.frame, equals: restingFrame, context: "\(name) closing")
+            try await proof(base, "stop")
+            try await proof(base, "start/\(name.lowercased())-top-scroll")
+            if name == "Ticket" {
+                app.buttons.matching(identifier: "ticket-recap").firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.9)).tap()
+            }
+            let top = back.frame.minY
+            let page = app.scrollViews.matching(NSPredicate(format: "identifier != %@", "conversation-thread")).firstMatch
+            page.swipeUp(velocity: .slow)
+            XCTAssertTrue(!back.isHittable || back.frame.minY < top - 20, "Back must scroll with the page")
+            XCTAssertEqual(app.navigationBars.count, 0, "Scrolling added a bar or title")
+            capture(app, "\(name)-scrolled")
+            page.swipeDown(velocity: .fast)
+            if !back.isHittable { page.swipeDown(velocity: .fast) }
+            try await proof(base, "stop")
+            back.tap()
+        }
+        app.terminate()
     }
 
     /// Scaled layout needs a native render; reuse the same host and loopback fixture.

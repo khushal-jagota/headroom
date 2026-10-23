@@ -134,8 +134,8 @@ use a stub transport, and simulator verification never submits a live capture.
 Orchestrator and Chief pages show expandable recaps and grouped workers, with
 working and unread marks from the server. Active groups start open; Backlogged
 and Done start folded. Chief loads its own paginated workers and retains loaded
-pages after live updates. Both pages condense the title into the navigation bar
-on scroll and honor Reduce Motion.
+pages after live updates. Detail-page Back and page actions sit in the content margin and scroll away
+with the page. No navigation-bar title appears at any scroll position.
 
 The page menu holds Ask for a recap and Copy link; orchestrators also offer
 Settle or Reopen. Recaps show up to eight lines and offer Copy/Edit on long press.
@@ -302,10 +302,13 @@ pass, and do not establish physical-device haptics or frame-rate performance.
 
 Chief, Orchestrator and Ticket share a latest-message line and a composer. Tapping
 or swiping up on the line extends that bar upward into a full-screen conversation.
-The same input stays in place, keeping its draft and keyboard focus. The chat uses
-the app background and has no latest-message status line inside it. Its header
-contains the name, a close control and the Focus/Full word. Pulling down the header
-shrinks the thread with the finger; a short pull returns it to full height. The
+The same input stays in place, keeping its draft and keyboard focus. The line,
+thread and composer share one persistent raised surface. Its height grows with a
+bounce-free spring, and its top corners become square as it fills the page. The
+latest-message line travels with its top edge and becomes the close control;
+Focus/Full is revealed beside it. The thread is revealed inside the growing
+container. There is no second background or cross-fade. Pulling down the line
+shrinks the same surface with the finger; a short pull returns it to full height. The
 close control collapses it too. The page underneath stays still and retains its
 scroll position. At rest the line remains visible while typing and recording,
 with the latest message from either side and “You:” for outgoing messages.
@@ -363,6 +366,13 @@ animations. The header still follows an interactive pull.
 UI scenarios in the same host for the keyboard, scroll position, delivery transitions, model
 sheet, voice-draft flow, page opening/closing, queue controls after relaunch,
 offline status geometry, largest-text controls and system sender attribution. The layout/attribution case can run independently of delivery waits.
+The detail-page scenario reuses that host and the existing Ticket/Orchestrator
+fixtures to check the real navigation stack, scrolling controls, and input
+position through expansion. It records open/close and scroll clips for frame
+review. This native layout boundary is absent from host model tests and the
+synthetic conversation page. The added case takes about 38 seconds, with no
+additional server or browser host.
+
 It locks PanelsLaneA, uses the
 separate task bundle, and does not boot, shut down or erase a simulator. Set
 `PANELS_CONVERSATION_OUTPUT` to an external evidence directory. The optional
@@ -450,8 +460,7 @@ this lane did not run a simulator or write to a live server.
 
 Rows and page titles share one activity mark: an unread dot takes precedence over
 the fixed-size working spinner, matching the web. They never appear together. Reduce Motion substitutes a static
-working mark. Detail-page activity sits with the context in the native navigation
-bar. The Chief Workspace heading aligns at the top of its minimum touch area,
+working mark. Detail-page activity sits beside the full title in the scrolling page. The Chief Workspace heading aligns at the top of its minimum touch area,
 matching the first-content inset on orchestrator cards.
 
 Verification: the four-job iOS Simulator build and four existing conversation host
@@ -505,7 +514,7 @@ Speech updates trim leading and trailing whitespace from the recognized text and
 the existing draft before joining them. Internal line breaks remain. The multiline
 input uses its intrinsic height, within the five-line limit. The conversation
 card relies on the system bottom safe area rather than adding another 12-point gap;
-the latest line occupies its own surface above it.
+the latest line shares the growing conversation surface above it.
 
 Verification for this change: generic iOS Simulator build with four jobs, six
 conversation host tests and six system/synchronization host tests. The added speech
@@ -514,8 +523,8 @@ host model, without a connected host. Locked PanelsLaneA fixture captures compar
 the bottom spacing and show collapsed Steps. They do not exercise microphone
 recognition, keyboard transitions, or live-server behavior.
 
-Detail pages keep their native navigation bar material visible so Back and page
-actions share one continuous bar above the scrolling header. Yours marks stage
+Detail pages hide the native navigation bar. Quiet Back and page actions live
+in the page's own scrolling top margin, aligned with its content edge. Yours marks stage
 ownership, separately from a conversation waiting for an answer. Its current field
 is shown for reading rather than as a required answer form. Workspace and worker
 rows give Yours the same attention emphasis as desktop.

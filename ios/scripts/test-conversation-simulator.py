@@ -24,7 +24,10 @@ BUNDLE = os.environ.get("PANELS_CONVERSATION_BUNDLE", "app.panels.ios.pios-convo
 
 
 def row(
-    key: str, text: str, own: bool = False, sender: str | None = None,
+    key: str,
+    text: str,
+    own: bool = False,
+    sender: str | None = None,
     kind: str | None = None,
 ) -> dict[str, Any]:
     return {
@@ -152,6 +155,40 @@ def main() -> int:
         for d in group
     ), f"{LANE} must already be booted"
     stub = Stub(output)
+    fixtures = ROOT / "ios/PanelsTests/Fixtures"
+    ticket = json.loads((fixtures / "ticket-full.json").read_text())
+    ticket["conversation_id"] = "stub"
+    manager = json.loads((fixtures / "manager.json").read_text())
+    manager["manager"]["conversation_id"] = "stub"
+    manifest = {
+        "worker_types": [
+            {
+                "worker_type": "product_design",
+                "label": "Product design",
+                "stages": [
+                    {
+                        "id": "needs_brief",
+                        "label": "Brief",
+                        "gating_field": "brief",
+                        "is_terminal": False,
+                        "ownership_mode": "worker",
+                    },
+                    {
+                        "id": "needs_wireframe",
+                        "label": "Wireframe",
+                        "gating_field": "wireframe",
+                        "is_terminal": False,
+                        "ownership_mode": "worker",
+                    },
+                    {"id": "done", "label": "Done", "is_terminal": True},
+                ],
+                "fields": [
+                    {"id": "brief", "label": "Brief"},
+                    {"id": "wireframe", "label": "Wireframe"},
+                ],
+            }
+        ]
+    }
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
@@ -168,6 +205,47 @@ def main() -> int:
 
         def do_GET(self) -> None:
             path = urlparse(self.path).path
+            if path == "/api/managers/si_4chgag3w/workspace":
+                self.respond(manager)
+                return
+            if path == "/api/tickets":
+                query = parse_qs(urlparse(self.path).query)
+                if query.get("detail") == ["full"]:
+                    self.respond(ticket)
+                else:
+                    rows = manager["tickets"] if query.get("is_backlogged") == ["false"] else []
+                    self.respond(
+                        {
+                            "tickets": rows,
+                            "page": {
+                                "match_count": len(rows),
+                                "return_count": len(rows),
+                                "limit": 30,
+                                "offset": 0,
+                                "complete": True,
+                            },
+                        }
+                    )
+                return
+            if path == "/api/worker-types/product_design/manifest":
+                self.respond(manifest)
+                return
+            if path == "/api/workers":
+                self.respond(
+                    {
+                        "chief_of_staff": {
+                            "label": "Chief of Staff",
+                            "recap": manager["recap"],
+                            "conversation_signal": manager["conversation_signal"],
+                        }
+                    }
+                )
+                return
+            if path.startswith("/api/artifact-catalog/"):
+                self.respond(
+                    {"revision": "fixture", "directory": "", "offset": 0, "total": 0, "entries": []}
+                )
+                return
             if path.startswith("/proof/start/"):
                 stub.start_clip(path.rsplit("/", 1)[-1])
                 self.respond({})

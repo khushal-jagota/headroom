@@ -3,10 +3,8 @@ import SwiftUI
 struct OrchestratorView: View {
     let managerID: String
     @Environment(AppStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var detail: ManagerDetail?
     @State private var error: String?
-    @State private var headerCollapsed = false
     @State private var actions = AgentPageActions()
 
     private var summary: ManagerSummary? { store.managers.first { $0.id == managerID } }
@@ -14,8 +12,11 @@ struct OrchestratorView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
+                AgentPageControls {
+                    AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
+                }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator")
+                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: detail?.conversationSignal ?? summary?.conversationSignal)
                     if let detail {
                         AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
                     }
@@ -40,25 +41,9 @@ struct OrchestratorView: View {
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
-        .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 100 } action: { _, collapsed in
-            withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
-        }
-        .navigationTitle(headerCollapsed ? detail?.title ?? "Orchestrator" : "")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.bar, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", refreshError: error, retry: { await load() })
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                AgentNavigationHeader(title: detail?.title ?? summary?.title ?? "Orchestrator",
-                                      eyebrow: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""),
-                                      collapsed: headerCollapsed, signal: detail?.conversationSignal ?? summary?.conversationSignal)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
-            }
-        }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
@@ -95,20 +80,24 @@ enum AgentPageLayout {
     static let rowInset: CGFloat = 14
 }
 
-/// Keeps the page context beside native Back and actions, above the full scrolling title.
-struct AgentNavigationHeader: View {
-    let title: String
-    var eyebrow: String = ""
-    var collapsed = false
-    var signal: ConversationSignal? = nil
+/// Page controls belong to the scrolling content, with no bar or duplicate title.
+struct AgentPageControls<Actions: View>: View {
+    @Environment(\.dismiss) private var dismiss
+    @ViewBuilder let actions: () -> Actions
 
     var body: some View {
-        HStack(spacing: PanelsTheme.Space.sm) {
-            Text(collapsed || eyebrow.isEmpty ? title : eyebrow)
-                .font(collapsed || eyebrow.isEmpty ? .headline : PanelsTheme.TypeScale.small)
-                .foregroundStyle(collapsed || eyebrow.isEmpty ? PanelsTheme.strong : PanelsTheme.faint)
-                .lineLimit(1)
-            ConversationSignalMark(signal: signal)
-        }.conversationAccessibility(label: collapsed || eyebrow.isEmpty ? title : eyebrow, signal: signal)
+        HStack {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .frame(width: 44, height: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }.accessibilityLabel("Back").accessibilityIdentifier("detail-back")
+            Spacer(minLength: 0)
+            actions()
+        }
+        .font(.system(size: 16))
+        .foregroundStyle(PanelsTheme.faint)
+        .tint(PanelsTheme.faint)
+        .buttonStyle(.plain)
     }
 }

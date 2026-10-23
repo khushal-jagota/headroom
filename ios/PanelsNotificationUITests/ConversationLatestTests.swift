@@ -15,6 +15,7 @@ final class ConversationLatestTests: XCTestCase {
         let line = app.buttons["conversation-line"]
         XCTAssertTrue(line.waitForExistence(timeout: 8))
         line.tap()
+        let composer = app.descendants(matching: .any).matching(identifier: "conversation-composer-region").firstMatch
         app.buttons["Conversation lens"].tap()
         try await Task.sleep(for: .seconds(2))
         let thread = app.scrollViews.firstMatch
@@ -28,7 +29,7 @@ final class ConversationLatestTests: XCTestCase {
         if !baseline { XCTAssertFalse(latest.exists, "A tiny scroll should not show Latest") }
         thread.swipeDown(velocity: .slow)
         XCTAssertTrue(latest.waitForExistence(timeout: 3))
-        XCTAssertLessThan(latest.frame.maxY, line.frame.minY, "Latest overlaps the conversation line")
+        XCTAssertLessThan(latest.frame.maxY, composer.frame.minY, "Latest overlaps the composer")
         latest.tap()
         try await Task.sleep(for: .seconds(2))
         if !baseline { XCTAssertFalse(latest.exists, "Latest did not land") }
@@ -50,7 +51,7 @@ final class ConversationLatestTests: XCTestCase {
         try await Task.sleep(for: .seconds(2))
         if !baseline {
             XCTAssertFalse(latest.exists, "Completion lost bottom following")
-            try assertLastLineVisible(app, above: line)
+            try assertLastLineVisible(app, above: composer)
         }
         try await proof(base, "stop")
 
@@ -60,19 +61,19 @@ final class ConversationLatestTests: XCTestCase {
         input.tap(); input.typeText("Keep my draft")
         XCTAssertTrue(app.keyboards.firstMatch.exists)
         XCTAssertTrue(latest.waitForExistence(timeout: 3))
-        XCTAssertLessThan(latest.frame.maxY, line.frame.minY)
+        XCTAssertLessThan(latest.frame.maxY, composer.frame.minY)
         latest.tap()
         try await Task.sleep(for: .seconds(2))
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Latest dismissed the keyboard")
         XCTAssertEqual(input.value as? String, "Keep my draft")
         if !baseline { XCTAssertFalse(latest.exists, "Latest failed with the keyboard open") }
-        if !baseline { try assertLastLineVisible(app, above: line) }
+        if !baseline { try assertLastLineVisible(app, above: composer) }
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "latest-keyboard-landing"; capture.lifetime = .keepAlways; add(capture)
         try await proof(base, "stop")
     }
 
-    @MainActor private func assertLastLineVisible(_ app: XCUIApplication, above line: XCUIElement) throws {
+    @MainActor private func assertLastLineVisible(_ app: XCUIApplication, above composer: XCUIElement) throws {
         // SwiftUI's single multiline accessibility frame can extend beyond its
         // rendered text. Measure the visible final glyphs in the screenshot.
         let capture = app.screenshot()
@@ -83,8 +84,8 @@ final class ConversationLatestTests: XCTestCase {
             $0.topCandidates(1).first?.string.contains("End of streamed reply.") == true
         }, "The final line is not visible")
         let bottom = app.frame.height * (1 - last.boundingBox.minY)
-        XCTAssertLessThan(bottom, line.frame.minY, "Latest text is below the viewport")
-        XCTAssertGreaterThan(bottom, line.frame.minY - 60, "Latest landed with excess empty space")
+        XCTAssertLessThan(bottom, composer.frame.minY, "Latest text is below the viewport")
+        XCTAssertGreaterThan(bottom, composer.frame.minY - 60, "Latest landed with excess empty space")
     }
 
     @MainActor private func proof(_ base: String, _ operation: String) async throws {

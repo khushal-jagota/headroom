@@ -9,7 +9,11 @@ import SwiftUI
             Group {
 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--conversation-smoke") {
-                    ConversationSmokeView()
+                    if ProcessInfo.processInfo.arguments.contains("--conversation-detail-pages") {
+                        ConversationDetailSmokeView()
+                    } else {
+                        ConversationSmokeView()
+                    }
                 } else {
                     AppShell()
                 }
