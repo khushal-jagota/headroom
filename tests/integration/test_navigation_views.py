@@ -590,6 +590,69 @@ def test_hidden_historical_unread_counts_distinct_conversations(tmp_path: Path) 
         assert read_content(conn, query, current=True)[1]["counts"]["unread"] == 1
 
 
+def test_global_working_count_deduplicates_current_pointers_and_excludes_history(
+    prepared: Host,
+) -> None:
+    host = prepared
+    host.attach()
+    conn = host.connect()
+    activate(conn)
+    query = descriptor(limit=0)
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 0
+
+    writer = host.mutation(Turn(), "global-count-start")
+    writer.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    # An unread owner message does not cancel a working turn.
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO conversation_events VALUES('c',1,'message_to_owner','{}',0)")
+    conn.commit()
+    _, content = read_content(conn, query, current=True)
+    assert content["counts"]["unread"] == 1
+    assert content["counts"]["running_conversations"] == 1
+    assert content["windows"][0]["members"] == []
+
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO agents VALUES('chief_of_staff','c')")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    add_parent(conn, "manager")
+    conn.execute("INSERT INTO agents VALUES('manager_manager','c')")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO ticket_conversations VALUES('c','t')")
+    conn.execute("UPDATE tickets SET conversation_id=NULL WHERE id='t'")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    conn.execute("DELETE FROM agents WHERE agent_key='chief_of_staff'")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    conn.execute("DELETE FROM agents WHERE agent_key='manager_manager'")
+    conn.commit()
+    _, historical = read_content(conn, query, current=True)
+    assert historical["counts"]["running_conversations"] == 0
+    assert historical["counts"]["unread"] == 1
+    assert host.runtime.running_turn is not None
+
+    conn.execute("BEGIN")
+    conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='t'")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    writer = host.mutation(None, "global-count-stop")
+    writer.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 0
+
+
 def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _ActualBinding) -> None:
     from planner.navigation.delivery_authority import DeliveryUnavailable
     from planner.navigation.views.delivery import ScopedDeliveryRuntime
