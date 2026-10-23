@@ -6,6 +6,12 @@ The queue and badge follow the shared change stream. Skip keeps an item out of t
 changing it on the server. When every remaining item was skipped, Revisit skipped
 items brings them back. A new proposal on the same ticket appears again.
 
+The finished screen says “You’re caught up.” and “All done for now.” in the
+center. It has no agent progress indicator. A quiet rounded button at the bottom
+shows how many skipped items are still available and brings them back into the
+queue. Removed or resolved asks do not contribute to that count. When none remain,
+the button is absent. Pull down to refresh still works.
+
 Review uses the system font throughout. Skip stays in the top bar. Send back and
 Approve have equal weight at the end of the scrollable proposal, with Approve on
 the right. Both use rounded rectangles. Approve uses the filled accent background with dark
@@ -129,3 +135,18 @@ Mark read, exact historical navigation, Skip and revisit. Run it on an already
 booted PanelsLaneA under its lock; `PANELS_OFFLINE_BUNDLE` selects the task bundle.
 This proof uses loopback writes. The optional live test requires
 `TEST_RUNNER_PANELS_LIVE_READ_ONLY=1` and only reads Workspace, Review and Conversation.
+
+Finished-state verification extends the existing local-skip unit test to cover
+removed, replaced, and resolved asks in the revisit count. One connected case,
+`ReviewMessagesTests/testCompletionAndRevisit`, reuses the offline HTTP stub and
+UI test host to check the real bottom button, restore the skipped queue, and
+remove the button after fixture approvals. Model tests cannot prove that SwiftUI
+wires the button to the queue or keeps it above the tab bar. This case took 27.8
+seconds on PanelsLaneB; the stub recorded no writes for Skip and three approvals
+only after Revisit. The fixture supplies seven running agents to check that Review
+shows no agent status. No live server writes or physical-device checks were made.
+Run with `PANELS_REVIEW_COMPLETION=1`,
+`PANELS_OFFLINE_BUNDLE=app.panels.ios.pios-review-done`, and a task-owned
+`PANELS_OFFLINE_OUTPUT` directory using `python3 ios/scripts/test-offline-simulator.py`.
+The completion mode takes `/tmp/panels-PanelsLaneB.lock` and requires that lane to
+be already booted; it does not operate simulator lifecycle.

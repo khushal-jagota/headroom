@@ -10,7 +10,7 @@ enum ReviewStyle {
     static let swipeOut = 0.15
     static let swipeFraction: CGFloat = 0.30
     static let title = Font.title
-    static let empty = Font.title3
+    static let empty = Font.title.weight(.semibold)
     static var entrance: Animation { .timingCurve(0.2, 0.7, 0.3, 1, duration: enter) }
     @MainActor static func error() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
     @MainActor static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }

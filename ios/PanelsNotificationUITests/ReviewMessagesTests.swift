@@ -2,6 +2,56 @@ import XCTest
 
 /// Reuses the offline harness: real SwiftUI, persisted outbox and loopback HTTP only.
 final class ReviewMessagesTests: XCTestCase {
+    /// One connected case proves the finished view's count and queue-restoring button,
+    /// which the queue model alone cannot prove. Reuses the existing loopback host.
+    @MainActor func testCompletionAndRevisit() async throws {
+        guard ProcessInfo.processInfo.environment["PANELS_REVIEW_COMPLETION"] == "1" else {
+            throw XCTSkip("Run with the completion fixture")
+        }
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Review"].tap()
+        for title in ["Approve offline", "Send back offline", "Record offline"] {
+            XCTAssertTrue(app.buttons["review.openTicket"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["review.openTicket"].label.contains(title))
+            app.buttons["review.skip"].tap()
+        }
+        let revisit = app.buttons["review.revisitSkipped"]
+        XCTAssertTrue(revisit.waitForExistence(timeout: 8))
+        XCTAssertEqual(revisit.label, "Revisit 3 skipped items")
+        XCTAssertTrue(app.staticTexts["You’re caught up."].exists)
+        XCTAssertFalse(app.staticTexts["7 agents in progress"].exists)
+        XCTAssertTrue(revisit.isHittable)
+        XCTAssertLessThan(revisit.frame.maxY, app.tabBars.firstMatch.frame.minY)
+        let skipped = XCTAttachment(screenshot: app.screenshot())
+        skipped.name = "review-finished-secondary-action"; skipped.lifetime = .keepAlways; add(skipped)
+        let (before, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
+        XCTAssertEqual(try JSONDecoder().decode([String].self, from: before), [])
+        revisit.tap()
+        // Revisit must actually return the original asks, then completion must clear
+        // the button once the approved asks leave the server queue.
+        for title in ["Approve offline", "Send back offline", "Record offline"] {
+            XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["review.openTicket"].label.contains(title))
+            app.buttons["review.approve"].tap()
+            let confirm = app.buttons["review.confirmApproval"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+            confirm.tap()
+        }
+        XCTAssertTrue(app.staticTexts["You’re caught up."].waitForExistence(timeout: 10))
+        XCTAssertFalse(revisit.exists)
+        let empty = XCTAttachment(screenshot: app.screenshot())
+        empty.name = "review-finished-no-skips"; empty.lifetime = .keepAlways; add(empty)
+        let (after, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
+        XCTAssertEqual(try JSONDecoder().decode([String].self, from: after), ["approve", "approve", "approve"])
+    }
+
     @MainActor func testLiveReadOnlyWorkspaceAndReview() throws {
         guard ProcessInfo.processInfo.environment["PANELS_LIVE_READ_ONLY"] == "1" else { throw XCTSkip("Explicit read-only live pass only") }
         continueAfterFailure = false
@@ -11,7 +61,7 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(chief.waitForExistence(timeout: 20))
         let workspace = XCTAttachment(screenshot: app.screenshot()); workspace.name = "live-workspace"; workspace.lifetime = .keepAlways; add(workspace)
         app.tabBars.buttons["Review"].tap()
-        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["There is nothing to review right now."].exists)
+        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["You’re caught up."].exists)
         let review = XCTAttachment(screenshot: app.screenshot()); review.name = "live-review-read-only"; review.lifetime = .keepAlways; add(review)
         app.tabBars.buttons["Workspace"].tap()
         chief.tap()
@@ -61,8 +111,8 @@ final class ReviewMessagesTests: XCTestCase {
         let historical = XCTAttachment(screenshot: app.screenshot()); historical.name = "review-exact-history"; historical.lifetime = .keepAlways; add(historical)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["review.markRead"].tap()
-        XCTAssertTrue(app.buttons["Revisit skipped items"].waitForExistence(timeout: 8))
-        app.buttons["Revisit skipped items"].tap()
+        XCTAssertTrue(app.buttons["review.revisitSkipped"].waitForExistence(timeout: 8))
+        app.buttons["review.revisitSkipped"].tap()
         XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 8))
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         let writes = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]

@@ -16,6 +16,7 @@ struct ReviewView: View {
             !savedDecisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
         }
     }
+    private var skippedCount: Int { queue.skippedCount(in: queueItems) }
     private var pending: [ReviewItem] { queueItems.filter { !queue.skipped.contains($0.id) && !queue.resolved.contains($0.id) } }
 
     var body: some View {
@@ -33,21 +34,32 @@ struct ReviewView: View {
                 }).id(item.id).transition(.identity)
                 }
             } else if store.review != nil {
-                ScrollView {
-                    VStack(spacing: PanelsTheme.Space.lg) {
-                        Circle().stroke(PanelsTheme.faint, lineWidth: 1.5).frame(width: 10, height: 10).accessibilityHidden(true)
-                        Text("There is nothing to review right now.").font(ReviewStyle.empty).multilineTextAlignment(.center)
-                        if let count = store.review?.runningWorkerCount {
-                            Text("\(count) \(count == 1 ? "agent" : "agents") in progress").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                GeometryReader { geometry in
+                    ScrollView {
+                        VStack(spacing: PanelsTheme.Space.sm) {
+                            Text("You’re caught up.").font(ReviewStyle.empty).foregroundStyle(PanelsTheme.strong)
+                            Text("All done for now.").font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.faint)
                         }
-                        if !queue.skipped.isEmpty, !(store.review?.items.isEmpty ?? true) {
-                            Button("Revisit skipped items") { Haptics.selection(); withAnimation(ReviewStyle.entrance) { queue.revisit() } }
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                        .padding(.horizontal, ReviewStyle.gutter)
+                    }.refreshable { await store.refresh() }
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if skippedCount > 0 {
+                        Button("Revisit \(skippedCount) skipped \(skippedCount == 1 ? "item" : "items")") {
+                            Haptics.selection()
+                            withAnimation(ReviewStyle.entrance) { queue.revisit() }
                         }
-                    }.frame(maxWidth: .infinity).padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.hero * 4)
-                }.refreshable { await store.refresh() }
-                    .opacity(emptyVisible ? 1 : 0)
-                    .task { withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { emptyVisible = true } }
-                    .onDisappear { emptyVisible = false }
+                        .buttonStyle(ReviewActionStyle())
+                        .accessibilityIdentifier("review.revisitSkipped")
+                        .padding(.horizontal, ReviewStyle.gutter)
+                        .padding(.vertical, PanelsTheme.Space.xl)
+                    }
+                }
+                .opacity(emptyVisible ? 1 : 0)
+                .task { withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { emptyVisible = true } }
+                .onDisappear { emptyVisible = false }
             } else { ScrollView { Color.clear.frame(height: 1) }.refreshable { await store.refresh() } }
         }
         .safeAreaInset(edge: .top, spacing: 0) {

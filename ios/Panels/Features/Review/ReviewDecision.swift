@@ -133,6 +133,9 @@ struct ReviewQueue {
     func current(in items: [ReviewItem]) -> ReviewItem? {
         items.first { !skipped.contains($0.id) && !resolved.contains($0.id) }
     }
+    func skippedCount(in items: [ReviewItem]) -> Int {
+        items.filter { skipped.contains($0.id) && !resolved.contains($0.id) }.count
+    }
     mutating func skip(_ item: ReviewItem) { skipped.insert(item.id) }
     mutating func resolve(_ item: ReviewItem) { resolved.insert(item.id) }
     mutating func restore(_ item: ReviewItem) { resolved.remove(item.id); skipped.remove(item.id) }
