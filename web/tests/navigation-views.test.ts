@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {parseFrame,applyFrame} from '../src/lib/navigation/views/validation';
-import {createNavigationPresentationCache} from '../src/lib/navigation/presentation';
+import {createNavigationPresentationCache,navigationReviewPresentation,navigationWorkingAgentCount} from '../src/lib/navigation/presentation';
 import {WORK_ITEM_TICKET_GROUPS} from '../src/lib/workItemPresentation';
 import {createScopedNavigationOwner,viewWindow,defaultViewRequest} from '../src/lib/navigation/views/owner';
 import type {CurrentViewSnapshot,ViewFrame,ViewRequest,Fence} from '../src/lib/navigation/contracts';
@@ -15,16 +15,51 @@ function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapsh
     content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
 }
 function fixture() {
-  const connections:{request:ViewRequest;send:(frame:ViewFrame)=>void;signal:AbortSignal;closed:boolean}[]=[];
+  const connections:{request:ViewRequest;send:(frame:ViewFrame)=>void;error:()=>void;signal:AbortSignal;closed:boolean}[]=[];
   const transport:ViewTransport={
     snapshot:async(request)=>snapshot(request),
-    connect(request,callbacks,signal){const connection={request,send:callbacks.frame,signal,closed:false};connections.push(connection);return()=>connection.closed=true;},
+    connect(request,callbacks,signal){const connection={request,send:callbacks.frame,error:callbacks.error,signal,closed:false};connections.push(connection);return()=>connection.closed=true;},
   };
   const owner=createScopedNavigationOwner({transport,reconnectDelayMs:100000});
   return {owner,connections};
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 describe('bounded navigation owner',()=>{
+  it('supplies the global working count beyond resident pointers and preserves unknown through runtime loss',async()=>{
+    const {owner,connections}=fixture();
+    try {
+      expect(navigationWorkingAgentCount(null)).toBeNull();
+      expect(navigationWorkingAgentCount(undefined)).toBeNull();
+      const started=owner.start();const source=connections[0];const initial=snapshot(source.request);
+      initial.content.records.push({kind:'chief',id:'chief',value:{label:'Chief',conversation_id:'c'}});
+      initial.content.counts.running_conversations=7;
+      source.send(initial);await started;
+      const count=()=>navigationWorkingAgentCount(owner.getState().effective);
+      expect(count()).toBe(7);
+      expect(navigationReviewPresentation(owner.getState().effective!)).toMatchObject({runningConversationCount:7,currentConversationIds:new Set(['c'])});
+      let revision=0;
+      for(const total of [9,0,null,6]) {
+        const previous=owner.getState().publication!;
+        source.send({event:'patch',wire_version:3,projection_version:4,view_id:initial.view_id,
+          scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
+          coverage:{...continuity,revision:String(++revision)},previous_coverage:previous.continuity,
+          content_version:`count-${revision}`,previous_content_version:previous.view!.contentVersion,
+          upserts:[],evictions:[],windows:[],counts:{...initial.content.counts,running_conversations:total}});
+        expect(count()).toBe(total);
+        expect(navigationReviewPresentation(owner.getState().effective!).runningConversationCount).toBe(total);
+        expect(owner.getState().publication!.records).toEqual(initial.content.records);
+      }
+      source.error();
+      expect(count()).toBeNull();
+      expect(owner.getState().publication!.view!.counts.running_conversations).toBe(6);
+      const recovering=owner.recover();
+      expect(count()).toBeNull();
+      const replacement=snapshot(connections[1].request,'5','recovered');
+      replacement.content.counts.running_conversations=12;
+      connections[1].send(replacement);await recovering;
+      expect(count()).toBe(12);
+    } finally {owner.dispose();}
+  });
   it('advances a checkpoint without selector work while requiring new DOM evidence for changed content',async()=>{
     const {owner,connections}=fixture();let notifications=0;const stop=owner.subscribe(()=>notifications++);
     try{
