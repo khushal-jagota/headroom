@@ -221,6 +221,7 @@ struct TicketView: View {
         Task { await perform { try await store.client.setTicketBacklogged(ticket, backlogged: !ticket.isBacklogged); return nil } }
     }
     private func load() async {
+        if detail == nil { detail = store.client.cachedTicket(ticketID) }
         loadGeneration += 1
         let generation = loadGeneration
         let client = store.client

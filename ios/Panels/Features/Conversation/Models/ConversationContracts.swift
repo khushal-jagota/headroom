@@ -1,7 +1,7 @@
 import Foundation
 
 // Subset of conversation/views/contracts.py, shared with the web projection.
-enum ConversationOwner: Hashable, Sendable {
+enum ConversationOwner: Codable, Hashable, Sendable {
     case chief, manager(String), ticket(String)
     var path: String {
         switch self {
@@ -92,17 +92,17 @@ struct ConversationStatus: Decodable, Sendable {
         return rest.latestHappened?.excerpt ?? "Conversation"
     }
 }
-struct ConversationSend: Encodable, Sendable {
+struct ConversationSend: Codable, Sendable {
     let conversationId: String?
     let content: [Piece]
-    let senderLabel = "You"
+    var senderLabel = "You"
     var mode = "steer"
     var backendKey: String? = nil
     var model: String? = nil
     var reasoningEffort: String? = nil
     let senderMessageId: String
     let sentAtUnixMilliseconds: Int64
-    struct Piece: Encodable, Sendable {
+    struct Piece: Codable, Sendable {
         var piece = "text"
         var text: String? = nil
         var data: String? = nil

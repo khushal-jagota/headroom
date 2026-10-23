@@ -11,8 +11,6 @@ struct ChiefView: View {
     @State private var loadingMore = false
     @State private var headerCollapsed = false
     @State private var actions = AgentPageActions()
-    @State private var scrolling = false
-    @State private var refreshAfterScroll = false
 
     var body: some View {
         ScrollView {
@@ -43,13 +41,6 @@ struct ChiefView: View {
                     }
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
-        }
-        .onScrollPhaseChange { _, phase in
-            scrolling = phase != .idle
-            if !scrolling && refreshAfterScroll {
-                refreshAfterScroll = false
-                Task { await load() }
-            }
         }
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 80 } action: { _, collapsed in
             withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
@@ -82,6 +73,21 @@ struct ChiefView: View {
 
     private func load() async {
         let api = store.client
+        if chief == nil {
+            let roster: ChiefRoster? = api.cached("/api/workers")
+            chief = roster?.chiefOfStaff
+            func saved(_ filter: TicketFilter) -> TicketsResponse? {
+                var query: [URLQueryItem] = [.init(name: "detail", value: "summary"), .init(name: "limit", value: "30"), .init(name: "offset", value: "0")]
+                switch filter {
+                case .active: query.append(.init(name: "is_backlogged", value: "false"))
+                case .backlogged: query.append(.init(name: "is_backlogged", value: "true"))
+                case .done: query += [.init(name: "include_terminal", value: "true"), .init(name: "stage", value: "done")]
+                }
+                query.append(.init(name: "manager_kind", value: "chief"))
+                return api.cached("/api/tickets", query: query)
+            }
+            active = saved(.active); backlogged = saved(.backlogged); done = saved(.done)
+        }
         // Keep a single local writer while paging so a refresh cannot shrink its window.
         while loadingMore {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
@@ -96,7 +102,6 @@ struct ChiefView: View {
             let result = try await (roster, activeRead, backlogRead, doneRead)
             try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
-            if scrolling { refreshAfterScroll = true; return }
             chief = result.0.chiefOfStaff; active = result.1; backlogged = result.2; done = result.3; error = nil
         } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
     }

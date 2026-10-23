@@ -8,11 +8,19 @@ struct ReviewView: View {
     @State private var decisions: [String: ReviewDecision] = [:]
     @State private var cardHeight: CGFloat = 180
     @State private var emptyVisible = false
-    private var pending: [ReviewItem] { (store.review?.items ?? []).filter { !queue.skipped.contains($0.id) && !queue.resolved.contains($0.id) } }
+    private var savedDecisions: [PendingWork] {
+        Outbox.shared.entries(LocalStore.server(store.baseURL)).filter { $0.kind == .approval || $0.kind == .sendBack }
+    }
+    private var queueItems: [ReviewItem] {
+        (store.review?.items ?? []).filter { item in
+            !savedDecisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
+        }
+    }
+    private var pending: [ReviewItem] { queueItems.filter { !queue.skipped.contains($0.id) && !queue.resolved.contains($0.id) } }
 
     var body: some View {
         Group {
-            if let item = displayedItem ?? queue.current(in: store.review?.items ?? []) {
+            if let item = displayedItem ?? queue.current(in: queueItems) {
                 ReviewProposalView(item: item, decision: decisions[item.id] ?? ReviewDecision(), cardHeight: $cardHeight, openTicket: openTicket.map { action in { action(item.ticketId) } }, onSkip: { advance(item, resolved: false) }, onResolved: {
                     advance(item, resolved: true)
                     Task { await store.refresh() }
@@ -35,15 +43,49 @@ struct ReviewView: View {
                     .onDisappear { emptyVisible = false }
             } else { ScrollView { Color.clear.frame(height: 1) }.refreshable { await store.refresh() } }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(savedDecisions.filter { $0.state != .sent || Date().timeIntervalSince($0.completed ?? .distantPast) < 3 }) { work in
+                    HStack {
+                        Image(systemName: work.state == .sent ? "checkmark" : work.state == .changed ? "exclamationmark.circle" : "clock")
+                        VStack(alignment: .leading) {
+                            Text(work.displayText).font(.subheadline.weight(.semibold))
+                            Text(work.note).font(.caption).foregroundStyle(PanelsTheme.faint)
+                            if [.changed, .uncertain, .failed].contains(work.state), let words = work.guidance ?? work.approval?.editedBody, !words.isEmpty {
+                                DisclosureGroup("Saved words") { Text(words).font(.body).textSelection(.enabled) }
+                            }
+                        }
+                        Spacer()
+                        if work.state == .changed || work.state == .uncertain {
+                            Button("Review") {
+                                if let id = work.ticketID { openTicket?(id) }
+                            }
+                        }
+                        if work.state == .failed { Button("Retry") { Outbox.shared.retry(work.id, api: store.client) } }
+                    }.padding(.horizontal, ReviewStyle.gutter).padding(.vertical, 8)
+                }
+            }.background(PanelsTheme.surface)
+        }
+        .onChange(of: LocalStore.shared.revision) { _, _ in
+            for decision in decisions.values { decision.refreshVoiceDraft() }
+            if let item = displayedItem, !queueItems.contains(where: { $0.id == item.id }) { displayedItem = queue.current(in: queueItems) }
+            for work in savedDecisions where work.state == .changed {
+                if let item = queueItems.first(where: { $0.ticketId == work.ticketID }) {
+                    queue.restore(item)
+                    if decisions[item.id]?.resolved == true { decisions[item.id] = nil }
+                    if displayedItem == nil { displayedItem = item }
+                }
+            }
+        }
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
         .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:] }
-        .task(id: "\(store.baseURL):\(pending.prefix(2).map(\.id).joined(separator: ","))") {
+        .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
             // Pin the visible ask until its exit finishes, including when the server
             // removes it from the live queue while its approval sheet is closing.
-            if displayedItem == nil { displayedItem = queue.current(in: store.review?.items ?? []) }
+            if displayedItem == nil || !queueItems.contains(where: { $0.id == displayedItem?.id }) { displayedItem = queue.current(in: queueItems) }
             // Keep the next complete ask ready before the current one leaves.
-            for item in pending.prefix(2) {
+            for item in pending.prefix(30) {
                 let decision = decisions[item.id] ?? ReviewDecision()
                 decisions[item.id] = decision
                 if decision.proposal == nil { await decision.load(item: item, api: store.client) }
@@ -58,7 +100,7 @@ struct ReviewView: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             if resolved { queue.resolve(item) } else { queue.skip(item) }
-            displayedItem = queue.current(in: store.review?.items ?? [])
+            displayedItem = queue.current(in: queueItems)
         }
     }
 }
@@ -118,7 +160,7 @@ private struct ReviewProposalView: View {
                             proposalCard
                                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
                                 .transition(.opacity)
-                        } else { ProgressView("Loading proposal").frame(maxWidth: .infinity, minHeight: cardHeight) }
+                        } else if decision.error == nil { ScreenLoadingView(title: "review").frame(height: cardHeight) }
                         if decision.proposal?.field != "brief", decision.proposal != nil, !decision.canReturn {
                             Text("No existing Worker conversation to send a revision to.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                         }
@@ -225,7 +267,7 @@ private struct ReviewProposalView: View {
                 } label: { ReviewProse(text: decision.draft) }
                     .buttonStyle(.plain).accessibilityLabel("Proposal").accessibilityValue(decision.draft)
                     .accessibilityHint("Edits proposal").accessibilityIdentifier("review.edit")
-                    .disabled(decision.busy || decision.loading || decision.changed)
+                    .disabled(decision.busy || decision.changed)
             }
         }
         .padding(ReviewStyle.gutter)
@@ -275,7 +317,7 @@ private struct ReviewProposalView: View {
     }
     private func openApproval() { guard decision.ready else { return }; Haptics.light(); editorFocused = false; editing = false; sheet = .approve }
     private func complete() {
-        Haptics.success()
+        Haptics.light()
         if sheet != nil { resolvedAfterDismiss = true; sheet = nil }
         else { leave(resolved: true) }
     }
@@ -376,7 +418,7 @@ private struct ReviewReturnComposer: View {
                 .disabled(voice.phase != .idle || decision.busy)
             } else { voiceStatus }
             if voice.phase == .idle {
-                Button { Haptics.light(); focused = false; Task { await voice.start() } } label: { Image(systemName: "mic").frame(width: 44, height: 44) }
+                Button { Haptics.light(); focused = false; Task { await voice.start(api: api, draftID: decision.revisionDraftID) } } label: { Image(systemName: "mic").frame(width: 44, height: 44) }
                     .buttonStyle(.plain).foregroundStyle(PanelsTheme.muted).accessibilityLabel("Record a revision").disabled(decision.busy)
             }
             }.padding(.leading, PanelsTheme.Space.md)
@@ -399,7 +441,9 @@ private struct ReviewReturnComposer: View {
             }
             if let error = decision.error ?? voice.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
         }.padding(.bottom, PanelsTheme.Space.md)
-            .onAppear { focused = true }.onDisappear { voice.cancel() }
+            .onAppear { decision.refreshVoiceDraft(); focused = true; voice.restore(api: api, draftID: decision.revisionDraftID) }
+            .onChange(of: LocalStore.shared.revision) { _, _ in decision.refreshVoiceDraft(); voice.restore(api: api, draftID: decision.revisionDraftID) }
+            .onDisappear { voice.preserve() }
     }
     @ViewBuilder private var voiceStatus: some View {
         HStack(spacing: PanelsTheme.Space.md) {
@@ -415,7 +459,7 @@ private struct ReviewReturnComposer: View {
                 Button { Haptics.light(); Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg)).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
             case .transcribing: Text("transcribing"); Spacer(); ProgressView()
             case .failed:
-                Text("transcription failed · kept").font(.footnote)
+                Text("recording saved on this phone").font(.footnote)
                 Spacer()
                 Button("Retry") { Task { append(await voice.transcribe(api: api)) } }
             case .idle: EmptyView()
@@ -423,7 +467,7 @@ private struct ReviewReturnComposer: View {
         }.foregroundStyle(PanelsTheme.muted)
     }
     private func append(_ transcript: String?) {
-        if let transcript { decision.revisionDraft = ReviewVoiceCapture.append(transcript, to: decision.revisionDraft) }
+        if transcript != nil { decision.refreshVoiceDraft() }
         focused = true
     }
 }

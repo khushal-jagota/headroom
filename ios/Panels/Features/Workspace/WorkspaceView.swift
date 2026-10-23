@@ -29,7 +29,6 @@ struct WorkspaceView: View {
     private var motion: Animation? { reduceMotion ? nil : PanelsTheme.Motion.disclosure }
 
     @GestureState private var fingerDown = false
-    @State private var pendingSettled: ManagersResponse?
     @State private var scrolling = false
     @State private var previewOpen = false
     @State private var selectedRoute: AppRoute?
@@ -84,7 +83,7 @@ struct WorkspaceView: View {
         .onChange(of: store.revision, initial: true) { _, _ in updateGroups() }
         .onChange(of: store.baseURL) { _, _ in
             groups = [:]; managers = []; settled = nil; chiefSignal = nil
-            settledError = nil; chiefSignalError = nil; settledOpen = false; settledRequestedOffset = 0; pendingSettled = nil
+            settledError = nil; chiefSignalError = nil; settledOpen = false; settledRequestedOffset = 0
         }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await refreshSupplementary() }
         }
@@ -172,20 +171,6 @@ struct WorkspaceView: View {
 
     private func updateGroups() {
         let tickets = store.tickets
-        if fingerDown || scrolling || previewOpen {
-            // Keep content fresh without moving a target beneath the finger.
-            let latest = Dictionary(tickets.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-            groups = groups.mapValues { old in
-                old.map { WorkspaceTicketGroup(section: $0.section, tickets: $0.tickets.map { latest[$0.id] ?? $0 }) }
-            }
-            let latestManagers = Dictionary(store.managers.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-            managers = managers.map { latestManagers[$0.id] ?? $0 }
-            return
-        }
-        if let pendingSettled {
-            withAnimation(motion) { settled = pendingSettled }
-            self.pendingSettled = nil
-        }
         let nextManagers = store.managers.sorted {
             $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt
         }
@@ -226,11 +211,7 @@ struct WorkspaceView: View {
         do {
             let result = try await api.workspaceSettledWindow(through: offset)
             guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
-            if settled != nil && (fingerDown || scrolling || previewOpen) {
-                pendingSettled = result
-            } else {
-                withAnimation(settled == nil ? nil : motion) { settled = result }
-            }
+            withAnimation(settled == nil ? nil : motion) { settled = result }
             settledError = nil
         } catch {
             guard !Task.isCancelled, api.baseURL == store.baseURL else { return }

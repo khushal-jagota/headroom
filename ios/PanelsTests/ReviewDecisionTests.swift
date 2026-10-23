@@ -22,9 +22,18 @@ import XCTest
     }
 
     private func fixture(_ name: String) throws -> Data {
+#if SWIFT_PACKAGE
+        try Data(contentsOf: XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures")))
+#else
         try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "json")))
+#endif
     }
     private func setupDecision() async throws -> (ReviewDecision, APIClient, ReviewItem) {
+        for kind in ["cache", "draft", "outbox"] {
+            for entry in try LocalStore.shared.records(server: "https://review.invalid", kind: kind) {
+                try LocalStore.shared.remove(server: "https://review.invalid", kind: kind, id: entry.key.components(separatedBy: "\u{1f}").last!)
+            }
+        }
         let ticket = try fixture("ticket-full")
         let detail = try APIClient.decoder().decode(TicketDetail.self, from: ticket)
         let proposal = try XCTUnwrap(detail.pendingProposal)
@@ -48,6 +57,7 @@ import XCTest
         XCTAssertEqual(decision.approvalStages.first?.id, "next_gate")
         let accepted = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(accepted)
+        await settle(api)
         let request = try XCTUnwrap(ReviewStub.state.writes.first)
         XCTAssertTrue(request.url!.path.hasSuffix("/accept/wireframe"))
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
@@ -76,25 +86,34 @@ import XCTest
         XCTAssertEqual(decision.draft, decision.proposal?.body)
         ReviewStub.state.bumpRevision()
         let staleGesture = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
-        XCTAssertFalse(staleGesture)
+        XCTAssertTrue(staleGesture) // Saved locally; the drainer owns the fresh revision check.
+        await settle(api)
+        XCTAssertEqual(Outbox.shared.entries("https://review.invalid").last?.state, .changed)
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
     }
 
-    func testSendBackTrimsGuidanceAndFailedWriteKeepsDecision() async throws {
+    func testSendBackTrimsGuidanceAndRefusalKeepsSavedDecision() async throws {
         let (decision, api, _) = try await setupDecision()
-        XCTAssertTrue(decision.canReturn)
         ReviewStub.state.failWrites = true
-        let failed = await decision.sendBack(api: api, message: "  Clarify the transition.\n ")
-        XCTAssertFalse(failed)
-        XCTAssertFalse(decision.resolved)
-        XCTAssertNotNil(decision.error)
+        let saved = await decision.sendBack(api: api, message: "  Clarify the transition.\n ")
+        XCTAssertTrue(saved)
+        await settle(api)
         let request = try XCTUnwrap(ReviewStub.state.writes.first)
         XCTAssertTrue(request.url!.path.hasSuffix("/reject"))
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String])
         XCTAssertEqual(body["message"], "Clarify the transition.")
-        ReviewStub.state.failWrites = false
-        let success = await decision.sendBack(api: api, message: "Clarify the transition.")
-        XCTAssertTrue(success)
+        let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
+        XCTAssertEqual(work.state, .changed)
+        XCTAssertEqual(work.guidance, "Clarify the transition.")
+    }
+
+    private func settle(_ api: APIClient) async {
+        await Outbox.shared.drain(api: api)
+        for _ in 0..<100 {
+            if !Outbox.shared.entries("https://review.invalid").contains(where: { [.waiting, .sending].contains($0.state) }) { return }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Outbox did not finish the stub request")
     }
 
     func testVoiceUsesExistingTranscriptionContractAndAppendsWithoutLosingDraft() async throws {
@@ -106,8 +125,31 @@ import XCTest
         XCTAssertEqual(request.url?.path, "/api/conversation/voice-transcriptions")
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String])
         XCTAssertEqual(body, ["audio": "AQID", "media_type": "audio/mp4"])
+#if os(iOS)
         XCTAssertEqual(ReviewVoiceCapture.append(transcript, to: "Typed guidance."), "Typed guidance.\n\nAdd the opened state.")
         XCTAssertEqual(ReviewVoiceCapture.append("", to: " Keep this "), " Keep this ")
+#endif
+    }
+
+    func testGuidanceAloneIsKeptWhenProposalChanges() async throws {
+        let (decision, api, item) = try await setupDecision()
+        decision.revisionDraft = "Keep my send-back words"
+        ReviewStub.state.bumpRevision()
+        await decision.load(item: item, api: api)
+        XCTAssertTrue(decision.changed)
+        XCTAssertEqual(decision.revisionDraft, "Keep my send-back words")
+        XCTAssertFalse(decision.ready)
+    }
+
+    func testStaleReviewModelCannotOverwriteNewTranscriptionWhenEditingProposal() async throws {
+        let (decision, _, _) = try await setupDecision()
+        let id = try XCTUnwrap(decision.revisionDraftID)
+        LocalStore.shared.saveDraft("Recovered recording", server: "https://review.invalid", id: id)
+        decision.draft += " An edit."
+        decision.revisionDraft = "" // SwiftUI may set the existing binding value on appearance.
+        XCTAssertEqual(LocalStore.shared.draft(server: "https://review.invalid", id: id), "Recovered recording")
+        decision.refreshVoiceDraft()
+        XCTAssertEqual(decision.revisionDraft, "Recovered recording")
     }
 
     func testSkipIsLocalAndNewProposalIdentityReturns() {

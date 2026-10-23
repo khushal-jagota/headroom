@@ -36,7 +36,11 @@ struct APIClient: Sendable {
         request.timeoutInterval = 25
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
-        return try Self.decoder().decode(T.self, from: data)
+        let value = try Self.decoder().decode(T.self, from: data)
+        if Self.cacheable(path) {
+            try? await LocalStore.shared.put(server: LocalStore.server(baseURL), kind: "cache", id: request.url!.absoluteString, data: data)
+        }
+        return value
     }
 
     static func validate(_ response: URLResponse, data: Data = Data()) throws {
@@ -102,5 +106,24 @@ extension APIClient {
             rows += page.tickets.filter { !ids.contains($0.id) }
         }
         return TicketsResponse(tickets: rows, page: page.page)
+    }
+}
+
+// Cached data is explicit: preflight checks and receipt requests always use the network.
+extension APIClient {
+    static func cacheable(_ path: String) -> Bool {
+        !path.contains("/receipts") && !path.contains("/body") && !path.contains("/pages") &&
+        (path == "/api/review" || path == "/api/workers" || path.hasPrefix("/api/tickets") ||
+         path.hasPrefix("/api/managers") || path.hasPrefix("/api/worker-types") ||
+         path == "/api/workers/chief-of-staff/settings" || path == "/api/chief/conversation" ||
+         path.hasPrefix("/api/conversation/conversations/"))
+    }
+    @MainActor func cached<T: Decodable>(_ path: String, query: [URLQueryItem] = []) -> T? {
+        guard let url = try? url(path, query: query),
+              let row = try? LocalStore.shared.record(server: LocalStore.server(baseURL), kind: "cache", id: url.absoluteString) else { return nil }
+        return try? Self.decoder().decode(T.self, from: row.payload)
+    }
+    @MainActor func cachedTicket(_ id: String) -> TicketDetail? {
+        cached("/api/tickets", query: [.init(name: "detail", value: "full"), .init(name: "id", value: id)])
     }
 }

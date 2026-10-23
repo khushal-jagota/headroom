@@ -19,6 +19,7 @@ import Observation
     private var loadingMore = false
 
     init() {
+        defer { restore() }
 #if DEBUG
         if let at = ProcessInfo.processInfo.arguments.firstIndex(of: "--conversation-stub"), ProcessInfo.processInfo.arguments.indices.contains(at + 1),
            let local = URL(string: ProcessInfo.processInfo.arguments[at + 1]), ["localhost", "127.0.0.1"].contains(local.host) {
@@ -41,6 +42,16 @@ import Observation
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; chief = nil; review = nil; deployment = nil
         managerPage = nil; ticketPage = nil; errors = [:]
+        restore()
+    }
+
+    private func restore() {
+        let managers: ManagersResponse? = client.cached("/api/managers", query: [.init(name: "detail", value: "summary"), .init(name: "limit", value: "30"), .init(name: "offset", value: "0"), .init(name: "settled", value: "false")])
+        let tickets: TicketsResponse? = client.cached("/api/tickets", query: [.init(name: "detail", value: "summary"), .init(name: "limit", value: "30"), .init(name: "offset", value: "0"), .init(name: "is_backlogged", value: "false")])
+        self.managers = managers?.managers ?? []; managerPage = managers?.page
+        self.tickets = tickets?.tickets ?? []; ticketPage = tickets?.page
+        chief = client.cached("/api/workers/chief-of-staff/settings")
+        review = client.cached("/api/review")
     }
 
     /// Owned by the foreground shell task. SwiftUI cancels it on background or URL change.
@@ -85,6 +96,7 @@ import Observation
         _ = await (managerRead, ticketRead, chiefRead, reviewRead, deployRead)
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
         revision += 1
+        if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
     }
 
     private func read<T: Sendable>(_ key: String, from api: APIClient, fetch: @Sendable () async throws -> T, apply: @MainActor @Sendable (T) -> Void) async {

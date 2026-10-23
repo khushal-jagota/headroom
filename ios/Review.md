@@ -37,11 +37,12 @@ field takes focus. Cancel dismisses the keyboard and restores the buttons while
 keeping the draft for that ask. Swipe-to-skip is disabled while it is open. The
 mic records AAC locally after permission, then calls the existing conversation
 voice-transcription endpoint. Words append to typed guidance. Failed transcription
-retains audio for Retry while the composer remains open. Closing it cancels voice
-work and removes temporary audio; typed words remain. Sending requires nonempty
+retains audio on disk for retry after reconnect or relaunch. Closing the composer
+preserves the recording; only explicit discard removes it. Sending requires nonempty
 text and locks the field until the response. Failure keeps the words available.
 
-A decision remains on screen if its request fails. Both writes first check that
+A decision is saved before its ask leaves the screen. A pending row shows waiting,
+sending, completion, or a need to review again. Both queued writes first check that
 the proposal is still current. Approval also sends the revision to the server,
 which atomically refuses an outdated revision. The existing send-back endpoint
 has no conditional revision parameter, so another writer can change the proposal
@@ -67,7 +68,7 @@ URLProtocol transport. Five Review checks cover gaps in the foundation tests:
   and cannot be submitted twice after success.
 - A changed proposal preserves an unsaved draft and blocks either decision until
   reload, including a change discovered only during the submission's preflight.
-- Send-back trims guidance; a refused write leaves the decision available to retry.
+- Send-back trims guidance; a changed proposal holds the saved decision for review.
 - Skip changes only local selection, and a newer proposal can appear again.
 - Voice uses the existing base64/audio-mp4 request contract and appends returned
   words without losing typed guidance; an empty transcript does not change a draft.
@@ -96,3 +97,5 @@ After the one capture pass, source review removed a redundant prefetched read,
 pinned the current ask against a concurrent queue refresh during sheet dismissal,
 used sentence-case group labels, and hid Skip’s system toolbar capsule. Those
 small follow-ups received a fresh jobs-4 compile, without a second capture.
+
+See [offline recovery](Offline.md) for persistence, response-loss handling and focused verification.
