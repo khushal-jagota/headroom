@@ -40,7 +40,8 @@ def _marks(root: Locator, working: bool, message: bool) -> None:
     # Arguments are independent backend facts; presentation has one winner.
     for kind, present in (("working", working and not message), ("message", message)):
         expect(root.locator(f'[data-conversation-signal="{kind}"]')).to_have_count(
-            int(present), timeout=WAIT_MS,
+            int(present),
+            timeout=WAIT_MS,
         )
 
 
@@ -227,3 +228,127 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         )
     )
     page.evaluate("window.signalProofStream.close()")
+
+
+def test_review_reply_preserves_later_unread_and_updates_live_count(
+    signal_server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    api: ApiHelper,
+) -> None:
+    """The real browser, addressed send, runtime queue, and count must agree.
+
+    Reuses the existing isolated Signal host. Only its backend wire is scripted.
+    A component mock cannot prove bounded queue admission and live count delivery.
+    """
+    from tests.support.connected_rows import _message, _propose
+
+    from planner.core.contracts import Principal, PrincipalKind
+
+    server = signal_server
+    project = api.direct_post(server, "/api/projects", {"name": "Review message proof"})
+    ticket = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Reply in review",
+            "worker_type": "coding",
+            "brief": "Approved task.",
+            "project_id": project["id"],
+            "manager": {"kind": "chief", "id": "chief"},
+        },
+    )
+    identity = str(ticket["id"])
+    api.direct_post(
+        server,
+        f"/api/tickets/{identity}/accept/brief",
+        {
+            "next_ceiling": "needs_success_condition",
+            "next_holder": {"kind": "owner", "id": "owner"},
+        },
+    )
+    _propose(server, identity, "The proposal remains beside the conversation.")
+    conversation = "review-reply-proof"
+    _post(server, f"/api/test/signals/{conversation}/start")
+    _bind(server, "ticket", identity, conversation)
+    sender = Principal(PrincipalKind.ticket, identity)
+    _message(server, conversation, sender, "Please answer this displayed message.")
+    context = context_factory()
+    page = open_page(context, server, "#/review", '[data-review-card]')
+    if page.locator('[data-review-item-type="proposal"]').count():
+        page.get_by_role("button", name="Skip", exact=False).click()
+    page.set_default_timeout(WAIT_MS)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    card = page.locator('[data-review-item-type="message"]')
+    expect(card.locator("[data-review-message-sequence]")).to_have_count(1)
+    bound = int(
+        card.locator("[data-review-message-sequence]").get_attribute("data-review-message-sequence")
+        or "0"
+    )
+    badge = page.locator("[data-review-badge]").first
+    expect(badge).to_have_text("2")
+    card.locator("[data-review-reply]").fill("The reply reaches this conversation once.")
+    capture_success(page, "connected-review-desktop.png")
+    page.set_viewport_size({"width": 390, "height": 844})
+    capture_success(page, "connected-review-narrow.png")
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    submitted: list[dict[str, object]] = []
+
+    def newer_message_before_send(route: Route) -> None:
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        submitted.append(body)
+        _message(server, conversation, sender, "This newer message stays unread.")
+        route.continue_()
+
+    page.route(f"**/api/tickets/{identity}/conversation/send", newer_message_before_send, times=1)
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/tickets/{identity}/conversation/send")
+    ) as sent:
+        card.locator("[data-review-send]").click()
+    assert sent.value.ok, sent.value.text()
+    assert sent.value.json()["fate"] == "queued"
+    assert submitted[0]["owner_read_through_sequence"] == bound
+    snapshot = api.get(server, f"/api/conversation/conversations/{conversation}")
+    assert snapshot["owner_read_through_sequence"] == bound
+    assert any(
+        prompt["sender_message_id"] == submitted[0]["sender_message_id"]
+        for prompt in snapshot["held_prompts"]
+    )
+    expect(card.locator("[data-review-message-sequence]")).to_have_count(1)
+    expect(card.locator(".review-message-run")).to_have_text("This newer message stays unread.")
+    expect(badge).to_have_text("2")
+    _post(server, f"/api/test/signals/{conversation}/finish")
+    page.wait_for_function(
+        """async ({conversation, identity}) => {
+        const endpoint = `/api/conversation/conversations/${conversation}/events?after=0`;
+        const response = await fetch(endpoint);
+        const value = await response.json();
+        const rows = Array.isArray(value) ? value : value.events;
+        return rows.some(row => row.kind === 'prompt'
+            && row.payload.sender_message_id === identity);
+    }""",
+        arg={"conversation": conversation, "identity": submitted[0]["sender_message_id"]},
+        timeout=WAIT_MS,
+    )
+    snapshot = api.get(server, f"/api/conversation/conversations/{conversation}")
+    assert snapshot["owner_read_through_sequence"] == bound
+    card.locator("[data-review-mark-read]").click()
+    expect(page.locator("[data-review-item-type=message]")).to_have_count(0)
+    expect(badge).to_have_text("1")
+    page.reload()
+    expect(page.locator("[data-approval-block]")).to_be_visible()
+    # A reset leaves the old unread run addressable. Open must not follow the new pointer.
+    replacement = "review-replacement-proof"
+    _post(server, f"/api/test/signals/{replacement}/start")
+    _bind(server, "ticket", identity, replacement)
+    _message(server, conversation, sender, "An unread message in the earlier conversation.")
+    page.reload()
+    page.locator('[data-review-item-type="proposal"] [data-skip]').click()
+    historical = page.locator('[data-review-item-type="message"]')
+    expect(historical).to_have_attribute("data-conversation-id", conversation)
+    historical.get_by_role("link", name="Open conversation", exact=False).click()
+    pane = page.locator("[data-conversation-pane]")
+    expect(pane).to_have_attribute("data-conversation-id", conversation)
+    expect(pane).to_have_attribute("data-conversation-read-only", "true")
+    expect(pane).to_have_attribute("data-conversation-state", "opened")

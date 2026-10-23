@@ -22,9 +22,19 @@ One screen per part of the system:
 
 - **Removed calendar screens** — Day and date-range Sprint screens no longer exist.
   Old dated links use the unavailable-route view. A bare former Home address opens Chief.
-- **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
-  walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
-  Proposal items add their labelled recap, ask, approval, and send-back controls.
+- **Review** — one oldest-first queue holds owner-addressed proposals and unread conversations.
+  Each conversation gets one card with its complete unread run, including progress messages.
+  A proposal from the same Worker remains a separate decision. The badge counts both kinds.
+  The title and recap name the conversation. Skip and Open conversation stay above the card.
+  Mini bars separate messages. Linked artifacts appear where the message links them.
+  The reply field holds paperclip, microphone, and send controls. Mark read sits below it.
+  Opening Review does not acknowledge a message. Mark read or an accepted reply clears only
+  the messages displayed when the owner acts. Later messages remain unread.
+  A failed reply stays in place with its words and attachments. An uncertain send retains
+  its identity until the recorded outcome resolves it. The card fades out after acceptance.
+  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal
+  guard, with the draft intact. Open conversation names the exact conversation.
+  Proposal items keep their recap, ask, approval, and send-back controls.
   A proposal routed to a Manager also creates a durable manager wake. Other
   non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
   Keyboard shortcuts drive the actions that apply to the current item when the
@@ -652,6 +662,10 @@ hand-rolling the same shapes per screen. Each does one job:
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
+- **ReviewMessageCard** — the complete unread run for one conversation, read from its
+  durable watermark. It reuses message rendering, file previews, voice capture, and durable
+  composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
+  Navigation publications carry identity and recap facts, never message bodies.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
@@ -731,7 +745,7 @@ hand-rolling the same shapes per screen. Each does one job:
 
   The transcript retains native browser anchoring for ordinary history prepends.
   Internal motion writes sizes and scroll position in the same animation frame,
-  over 240ms with linear timing, including card state travel. Reader navigation
+  over 240ms with linear timing. Card state travel uses a separate 150ms duration. Reader navigation
   cancels automatic travel. Replies consume reserved answer room. A new streaming
   line can advance over 120ms when new text arrives and the reader already follows
   newest. A multi-line chunk advances one line per step, bounded by the height
@@ -772,7 +786,19 @@ hand-rolling the same shapes per screen. Each does one job:
   can be that line, and so can a request waiting on you. Clicking the input **peeks** it
   open: a card over the page, with the line gone because the transcript now says the same
   thing. A control takes it **opened**, the available visible height of the pane, and the same control
-  brings it back. Clicking the ticket behind it, or pressing Escape, drops it one state.
+  brings it back. A primary press outside the conversation returns it directly to rest.
+  Escape moves it back one state. Ticket and Manager surfaces share the outside-press rule,
+  including artifact controls beside the document. Presses inside the card keep menus,
+  selection, and conversation previews usable. Outside presses retain their normal action.
+
+  An open HTML artifact announces primary presses through one fixed message from its
+  sandboxed frame. The surface explicitly registers that exact frame. Only its current,
+  visible frame can return that surface to rest. Inline previews do not register.
+  Hidden, detached, fully clipped, unrelated, and offscreen frames cannot dismiss a card.
+  The frame keeps its script-only sandbox and its original document restrictions.
+  State changes measure in the mutation callback before the next paint. Resize and
+  content measurements stay coalesced in an animation frame. Rapid card reversals start
+  at the current rendered height.
 
   Three things are true of all three. Nothing moves it but a person — a request arriving
   or a turn starting never opens it, which is why the line at rest has to carry that news.

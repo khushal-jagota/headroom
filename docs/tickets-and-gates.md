@@ -22,6 +22,27 @@ single-door rule.
    field                                               package)           report)
 ```
 
+## HTML artifacts
+
+The viewer opens HTML links inside the same artifact directory, including its subdirectories.
+It keeps the Panels address unchanged and gives each viewer its own Back button.
+A new artifact starts a new history. Refresh reloads the current child document.
+Fragments scroll inside the current document without a new file read.
+Empty links, bare `#` links, and anchors without `href` keep their authored behavior.
+
+The parent viewer resolves each raw link against the current trusted file address.
+Authored base elements do not control navigation. Absolute and scheme-relative links must use the same origin and permitted directory.
+Dot segments resolve before the directory check. Encoded separators, double encoding, backslashes, credentials, and queries cause rejection.
+Only HTML and HTM links open here. Middle clicks, modified clicks, download links, and explicit targets use the same viewer.
+A rejected or missing link leaves the current document and history intact.
+The parent draws the rejection notice outside the artifact frame.
+
+The server checks the resolved file against the resolved artifact directory before each viewer read, including the first document.
+A symlink that leaves that directory returns the same generic 404 as a missing file.
+Valid files retain their attachment headers and the `allow-scripts` sandbox.
+Only the current visible frame and its current document generation can request navigation.
+Concurrent viewers share an unfinished read only when their original directory and freshness rules match.
+
 ## Execution locale
 
 Each Ticket stores the machine where its Worker can run: `vps` or `macos`.

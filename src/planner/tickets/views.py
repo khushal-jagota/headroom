@@ -18,6 +18,7 @@ from planner.files.logic.paths import ticket_files_root
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.managers import data as managers_data
 from planner.managers import views as managers_views
+from planner.navigation.review import review_message_items
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
@@ -610,7 +611,14 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
                 "waiting_since": proposal.created_at,
             }
         )
-    items.sort(key=lambda item: (item["waiting_since"], item["ticket_id"]))
+    items.extend(review_message_items(conn))
+    items.sort(
+        key=lambda item: (
+            item["waiting_since"],
+            item["review_item_type"],
+            item.get("conversation_id", item.get("ticket_id", "")),
+        )
+    )
     return items
 
 

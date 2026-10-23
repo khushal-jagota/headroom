@@ -30,7 +30,7 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
-  let { showRequestErrorLine = true }: { showRequestErrorLine?: boolean } = $props();
+  let { showRequestErrorLine = true, requestedConversationId = null }: { showRequestErrorLine?: boolean; requestedConversationId?: string | null } = $props();
   const navigation = (() => {
     const value = navigationApplication();
     if (!value) throw new Error("Chief conversation requires the application navigation owner");
@@ -45,10 +45,19 @@
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let chief = $derived(displayed ? navigation.presentationFor(displayed).chief : null);
-  $effect(()=>navigation.owner.setDemand('chief',{selected:{kind:'chief',id:'chief'},windows:[]}));
+  $effect(()=>navigation.owner.setDemand('chief',{selected:{kind:'chief',id:'chief'},selected_conversation_id:selectedPastConversationId,windows:[]}));
   onDestroy(()=>navigation.owner.setDemand('chief',undefined));
   let conversationState = $state<ConversationState>("rest");
   let conversationId = $state<string | null>(null);
+  let selectedPastConversationId = $state<string | null>(null);
+  let shownConversationId = $derived(selectedPastConversationId ?? conversationId);
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!chief || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== chief.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
+  });
   let observedPointer: string | undefined = $state();
   let backends = $state<readonly BackendSnapshot[]>([]);
   // What a conversation for the Chief would start on. It is a query rather than a read on
@@ -70,16 +79,16 @@
     const generation = navigation.state.generation;
     const element = root;
     const source = chief;
-    const localPointer = conversationId;
-    if (!effective?.runtimeCurrent || !element || !source || source.conversation_id !== localPointer) return;
+    const localPointer = shownConversationId;
+    if (!effective?.runtimeCurrent || !element || !source || (selectedPastConversationId === null && source.conversation_id !== localPointer)) return;
     const publication = effective.publication;
     const observation = observer.observeSelectors(publication,generation);
     let obsolete = false;
     void tick().then(() => {
       if (obsolete || !element.isConnected || navigation.selectors.effective !== effective
-        || navigation.state.generation !== generation || conversationId !== source.conversation_id) return;
+        || navigation.state.generation !== generation || shownConversationId !== localPointer) return;
       const pane = element.querySelector('[data-conversation-pane]');
-      if (pane?.getAttribute('data-conversation-id') !== (source.conversation_id ?? '')) return;
+      if (pane?.getAttribute('data-conversation-id') !== (localPointer ?? '')) return;
       const region=element.querySelector('.manager-workspace-title');
       if(JSON.stringify(region ? actualMark(region) : [null,null]) !== JSON.stringify(expectedMark(source.conversation_signal,source.conversation_id))) return;
       observer.acknowledgeRender(publication,observation);
@@ -142,7 +151,9 @@
   <LiveConversation
     ownerLoading={!chief}
     bind:conversationState
-    {conversationId}
+    conversationId={shownConversationId}
+    bind:selectedPastConversationId
+    readOnly={selectedPastConversationId !== null}
     persistenceKey="owner:chief"
     label="Chief of Staff"
     bind:backends
