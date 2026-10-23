@@ -86,20 +86,25 @@ It creates no provider ending, answer, or missing-reply marker. Historical noteb
 rows remain unchanged. Old databases have no recoverable live identities, so migration
 adds no invented lifecycle facts. An absent fact does not establish capability.
 
-Restart restores no queue content or callbacks. It sends no prompt or answer and resumes
-no interrupted work. Queue persistence, replay, and automatic continuation remain separate
-product decisions. The source contract lives in `conversation/lifecycle.py` and its
-transaction and terminal-transition rules live beside the conversation store.
+Lifecycle reconciliation restores no queue content or callbacks. It sends no prompt or answer.
+Deployment recovery runs separately after runtime admission, as described below.
+The source contract lives in `conversation/lifecycle.py`. Its transaction and terminal-transition rules live beside the conversation store.
 
 ## Sessions that a deploy ends
 
 A deploy leaves a durable account of the sessions that it interrupts. The account stays outside the application backup and restore set. A rollback therefore keeps evidence from both the old application and its replacement. Missing evidence means that the account is unavailable. It never means that no sessions were interrupted.
 
-The shell keeps an expandable session list after the deployment status expires. Each entry names the agent, explains the interruption, and states the recovery status. The shared conversation pane shows the same notice. Removed conversations remain historical entries with no broken conversation link.
+After runtime admission, Panels resumes each eligible interrupted conversation through the ordinary send path. This includes Worker, Manager, Chief, and unowned conversations. Both interruption displays and their read API are removed.
 
-Recovery stays manual. An authorized supervisor or Khushal can restart an eligible Worker through the existing action. Other conversations use their existing composer. Backlogged and completed Tickets receive no restart action. A conversation that changed since capture cannot authorize a restart of its replacement.
+Recovery checks current ownership before dispatch. Worker recovery also checks the current claim, stage, ceiling, backlog, blockers, and pending proposal. A changed link or claim cannot authorize recovery of its replacement. Recovery never raises a ceiling or accepts a proposal.
 
-The next authorized prompt tells the agent that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. A queued receipt does not count as resumption. Only a new turn with the notice in its actual prompt counts. Refusal or uncertain delivery remains explicit and receives no automatic retry.
+The recovery prompt explains that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. Panels never replays an unknown prompt or permission answer.
+
+A durable delivery intent prevents another restart from sending the same uncertain recovery again. A queued receipt does not count as resumption. Only a started turn with the notice in its actual prompt counts. Refusal or uncertain delivery receives no automatic retry.
+
+A genuine Worker delivery failure leaves its exact claim errored. The existing Errored group and Ticket attention carry that failure. Other conversations use their existing transcript rows: “not delivered” or “delivery uncertain · do not resend.” In the Chief conversation, Khushal sees that existing one-line row in his chat with Chief. Recovery adds no other owner-facing surface.
+
+An authorized supervisor or Khushal can still use Restart Worker or the existing composer. Those actions retain their ordinary admission rules.
 
 ## Exercising permission requests
 

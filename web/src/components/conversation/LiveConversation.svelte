@@ -1,5 +1,4 @@
 <script lang="ts">
-  import DeploymentInterruptions from "../DeploymentInterruptions.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
@@ -896,12 +895,7 @@
   });
 </script>
 
-{#snippet deploymentInterruptionNotice()}
-  {#if openedId}<DeploymentInterruptions conversationId={openedId} />{/if}
-{/snippet}
-
 <ConversationPane
-  systemNotice={deploymentInterruptionNotice}
   conversationId={openedId ?? ""}
   {backendKey}
   conversationExists={started}

@@ -41,3 +41,13 @@ def claim_matches(
         and captured_revision is not None
         and captured_revision == current_revision
     )
+
+
+def recovery_message_identity(interruption_ids: tuple[str, ...]) -> str:
+    """One sender identity for the selected immutable interrupted occurrences."""
+    import hashlib
+
+    return (
+        "deployment-recovery:"
+        + hashlib.sha256("\n".join(sorted(interruption_ids)).encode()).hexdigest()
+    )

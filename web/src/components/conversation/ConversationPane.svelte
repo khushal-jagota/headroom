@@ -77,7 +77,6 @@
     lens = $bindable("focus"),
     conversationState = $bindable(null),
     emptyState,
-    systemNotice,
     reader = null,
     acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
@@ -169,7 +168,6 @@
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
     emptyState?: Snippet;
-    systemNotice?: Snippet;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -468,7 +466,6 @@
   </div>
 
   {#if conversationState !== "rest" && transcriptVisible}
-  {@render systemNotice?.()}
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
