@@ -382,15 +382,6 @@
       node.closest('[data-visible-content-state="released"], [data-visible-content-state="retained"]') !== null);
   }
 
-  /** A bounded page can end in structural markers. Reuse answer room rather than
-   * clamp a real anchor or admit an unbounded amount of history to fill the screen. */
-  function reserveRestoredPosition(thread: HTMLDivElement, wanted: number): void {
-    const reserve = reservedSpaceElement?.offsetHeight ?? 0;
-    const gap = reserve > 0 ? Number.parseFloat(getComputedStyle(thread).rowGap) || 0 : 0;
-    const withoutReserve = thread.scrollHeight - thread.clientHeight - reserve - gap;
-    reservedSpacePixels = Math.max(0, Math.ceil(wanted - withoutReserve));
-  }
-
   function landTheOpen(thread: HTMLDivElement): void {
     if(viewAnchor!==null&&!viewAnchor.following){
       const element=restoredAnchorElement(thread);
@@ -437,11 +428,6 @@
 
         let geometry = threadGeometry(thread, reservedSpaceElement);
         takeTheReading(geometry.read(reservedSpacePixels));
-        // Restoration room belongs to the current reading, never an accepted send.
-        // Return it as real trailing content fills the bounded page.
-        if (!pendingOpen && answerRoomMessageId === null && reservedSpacePixels > 0) {
-          reserveRestoredPosition(thread, thread.scrollTop);
-        }
 
         for (const key of arrivingMessages.keys()) {
           const message = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key], [data-conversation-source-key]')].find(node => node.dataset.conversationViewKey === key || node.dataset.conversationSourceKey === key);
@@ -510,10 +496,6 @@
           if (viewAnchor !== null && !viewAnchor.following) {
             const held = restoredAnchorElement(thread);
             if (held) {
-              const wanted = thread.scrollTop + held.getBoundingClientRect().top - thread.getBoundingClientRect().top - viewAnchor.offset;
-              reserveRestoredPosition(thread, wanted);
-              await tick();
-              if (startedIn !== generation || !canMeasure() || thread !== threadElement) return;
               // This provisional hidden position gives lazy content near the held
               // line a chance to hydrate before the final placement is revealed.
               landTheOpen(thread);

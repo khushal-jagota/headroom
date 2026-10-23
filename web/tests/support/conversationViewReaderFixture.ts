@@ -28,7 +28,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   (window as any).__backlog=(count:number)=>{sequence+=count;};
   const returnBodies=new Map<string,string>();
   const returnBodyReleases:Array<()=>void>=[];
-  const returnProbe={hold:false,fail:false,markers:false,bodies:false,bodyHold:false,bodyWaiting:0,waiting:0,release:()=>{},
+  const returnProbe={hold:false,fail:false,bodies:false,bodyHold:false,bodyWaiting:0,waiting:0,release:()=>{},
     releaseBodies:()=>{returnProbe.bodyHold=false;for(const release of returnBodyReleases.splice(0))release();}};
   (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
@@ -97,9 +97,6 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const start=cursor!==null&&direction==='newer'?cursor.order.sequence+1:Math.max(1,end-99);
     const items=Array.from({length:end-start+1},(_,index)=>{
       const row=item(start+index);
-      if(returnProbe.markers && row.source_sequence>2000){
-        row.row_kind='token_usage';row.body={kind:'inline',value:{kind:'token_usage',input_tokens:1,output_tokens:1,cached_input_tokens:0,cost_usd:null}};
-      }
       if(hiddenUnread && unread!==null && row.source_sequence>unread && row.source_sequence<=unread+100){
         row.row_kind='token_usage';row.body={kind:'inline',value:{kind:'token_usage',input_tokens:1,output_tokens:1,cached_input_tokens:0,cost_usd:null}};
       }
@@ -211,12 +208,6 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const before=sequence;sequence++;status.revision=sequence;
     for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,location.origin).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:1,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
   }};
-  (window as any).__revealReturnBacklog=()=>{
-    const row=item(2001);
-    row.body={kind:'inline',value:{kind:'agent_message',to_owner:true,content:[{piece:'text',text:'Visible backlog now supplies real room below the remembered line. '.repeat(100)}]}};
-    const before=sequence;sequence++;status.revision=sequence;
-    for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,location.origin).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:1,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[row],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
-  };
   (window as any).__expireDiagnostics=()=>{
     expired=true;status.diagnostics_expired=true;
     for(const source of sources){if((source as Source).closed)continue;source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL(source.raw,location.origin)),coverage:{through_sequence:sequence},status})}));}

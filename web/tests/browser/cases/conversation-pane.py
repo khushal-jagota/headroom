@@ -3107,7 +3107,7 @@ def _tab_return(browser, url):
             ('scrollback', 0, 'immediate'), ('latest', 0, 'immediate'),
             ('scrollback', 120, 'immediate'), ('latest', 120, 'immediate'),
             ('scrollback', 120, 'delayed'), ('scrollback', 120, 'failed'),
-            ('latest', 120, 'markers'), ('scrollback', 120, 'bodies'),
+            ('scrollback', 120, 'bodies'),
         ):
             page.goto(url+'?reader=1')
             page.locator('[data-conversation-entry="complete"]').wait_for()
@@ -3122,7 +3122,7 @@ def _tab_return(browser, url):
             page.wait_for_timeout(100)
             calls_before = page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length')
             page.evaluate('(count)=>window.__backlog(count)', backlog)
-            page.evaluate('(mode)=>{window.__returnProbe.hold=mode==="delayed";window.__returnProbe.fail=mode==="failed";window.__returnProbe.markers=mode==="markers";window.__returnProbe.bodies=mode==="bodies";window.__returnProbe.bodyHold=mode==="bodies";}', admission)
+            page.evaluate('(mode)=>{window.__returnProbe.hold=mode==="delayed";window.__returnProbe.fail=mode==="failed";window.__returnProbe.bodies=mode==="bodies";window.__returnProbe.bodyHold=mode==="bodies";}', admission)
             page.wait_for_timeout(100)
             assert page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length') == calls_before
             page.evaluate(sample_return, held)
@@ -3155,13 +3155,6 @@ def _tab_return(browser, url):
                 page.evaluate('window.__returnProbe.fail=false')
                 retry.click()
             page.wait_for_timeout(1000)
-            if admission == 'markers':
-                reserved=page.locator('[data-conversation-reserved-space]')
-                reserve_before=reserved.evaluate('node=>node.getBoundingClientRect().height')
-                assert reserve_before>0,reserve_before
-                page.evaluate('window.__revealReturnBacklog()')
-                page.wait_for_function("document.querySelector('[data-conversation-reserved-space]').getBoundingClientRect().height<1")
-                page.wait_for_timeout(350)
             frames = page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
             assert_frames(held, frames)
             after = page.evaluate(reading)
