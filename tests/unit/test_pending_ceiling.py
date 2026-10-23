@@ -148,6 +148,7 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
     from planner.core.config import load_config
     from planner.core.db import connect
     from planner.core.server import create_app
+    from planner.managers import data as managers_data
 
     original = _park(tmp_db)
     assert original.pending_proposal is not None
@@ -172,6 +173,23 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
         assert response.json()["error"]["code"] == "validation"
         assert data.read_ticket(tmp_db, original.id) == original
         body["expected_proposal_revision"] = original.pending_proposal_revision
+        stranger = managers_data.create_manager(
+            tmp_db, title="Unrelated Manager", project_id="project_vylo", clock=build_clock(config)
+        )
+        tmp_db.execute("UPDATE tickets SET worker_step_claim='out' WHERE id=?", (original.id,))
+        tmp_db.commit()
+        before = tuple(tmp_db.iterdump())
+        refused = client.post(
+            f"/api/tickets/{original.id}/accept/success_condition",
+            json={**body, "next_holder": {"kind": "manager", "id": stranger.id}},
+        )
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"]["code"] == "validation"
+        assert refused.json()["error"]["message"] == (
+            "ceiling holder must have authority to decide this Ticket"
+        )
+        # The proposal, revision, extant claim, attention, and wake rows stay untouched.
+        assert tuple(tmp_db.iterdump()) == before
         response = client.post(f"/api/tickets/{original.id}/accept/success_condition", json=body)
         assert response.status_code == 200, response.text
         accepted = response.json()

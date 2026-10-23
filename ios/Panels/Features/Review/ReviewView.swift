@@ -320,7 +320,6 @@ private struct ReviewApprovalSheet: View {
         var values = [("User", Principal(kind: "owner", id: "owner"))]
         if let id = decision.ticket?.managerId { values.append(("Manager", Principal(kind: "manager", id: id))) }
         values.append(("Chief", Principal(kind: "chief", id: "chief")))
-        if let current = decision.ticket?.ceilingHolder, !values.contains(where: { $0.1 == current }) { values.append(("Worker", current)) }
         return values
     }
     private var selectedLabel: String { decision.approvalStages.first(where: { $0.id == ceiling })?.label ?? "…" }
@@ -354,7 +353,7 @@ private struct ReviewApprovalSheet: View {
                 if let error = decision.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
             }.padding(ReviewStyle.gutter).padding(.top, PanelsTheme.Space.lg)
         }.background(PanelsTheme.raised)
-        .onAppear { ceiling = decision.approvalStages.first?.id ?? ""; holder = decision.ticket?.ceilingHolder ?? holder }
+        .onAppear { ceiling = decision.approvalStages.first?.id ?? ""; if let current = decision.ticket?.ceilingHolder, holders.contains(where: { $0.1 == current }) { holder = current } }
         .onChange(of: ceiling) { _, _ in Haptics.selection() }.onChange(of: holder) { _, _ in Haptics.selection() }
         .presentationDetents([.medium, .large]).presentationDragIndicator(.visible).interactiveDismissDisabled(decision.busy)
     }

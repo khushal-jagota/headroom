@@ -1,13 +1,12 @@
 import type { Lifecycle } from "./lifecycle";
-import { workspaceChildMessageConversations, workspaceMessageIndex, type WorkspaceMessageIndex } from "./workspaceMessageDiscovery";
 import type {
   BoardCard,
   BoardManager,
-  WorkspaceMessageConversation,
 } from "./types";
 import {
   workItemTicketGroupKey,
   workItemTicketGroups,
+  workItemWorkGroups,
   type WorkItemAttentionFacts,
   type WorkItemTicketFacts
 } from "./workItemPresentation";
@@ -16,11 +15,11 @@ import {
 /** Only fields the workspace presentation reads, independent of detail/config responses. */
 export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'manager' | 'manager_id' | 'manager_title'>;
 export type WorkspaceManager = Pick<BoardManager,
-  'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap' | 'recap_preview' | 'conversation_id'>
+  'id' | 'title' | 'created_at' | 'updated_at' | 'settled' | 'project_id' | 'project' | 'recap' | 'recap_preview' | 'conversation_id'>
   & WorkItemAttentionFacts & {recap_reference?:import("./navigation/contracts").ViewContentReference|null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
 /** Settled-only membership never fabricates full recap or Project facts. */
 export type WorkspaceSettledManager = Pick<WorkspaceManager,
-  'id' | 'title' | 'created_at' | 'conversation_id' | 'conversation_signal' | 'tickets'>
+  'id' | 'title' | 'created_at' | 'updated_at' | 'conversation_id' | 'conversation_signal' | 'tickets'>
   & WorkItemAttentionFacts & {settled:true};
 export type WorkspaceRailManager = WorkspaceManager | WorkspaceSettledManager;
 export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
@@ -37,6 +36,7 @@ export type WorkspaceRailItem = {
   id: string;
   title: string;
   createdAt: number;
+  updatedAt: number;
   conversationSignal: WorkspaceManager["conversation_signal"];
   conversationId: string | null;
   groups: WorkspaceTicketGroup[];
@@ -61,16 +61,12 @@ function railGroups(
   cards: readonly WorkItemTicketFacts[],
   sidebarPresentation = false
 ): WorkspaceTicketGroup[] {
-  // Unread stays an independent mark in the rail, never a category or tone.
-  const originals = new Map(cards.map((card) => [card.id, card]));
-  const groups = workItemTicketGroups(
-    sidebarPresentation ? cards.map((card) => ({...card, awaiting_reply: false})) : cards
-  );
+  const groups = sidebarPresentation ? workItemWorkGroups(cards) : workItemTicketGroups(cards);
   return groups.map((group) => ({
     key: group.key,
     label: sidebarPresentation && group.key === "empty" ? "Other" : group.label,
     defaultCollapsed: group.quiet,
-    cards: group.tickets.map((card) => originals.get(card.id)!)
+    cards: group.tickets
   }));
 }
 
@@ -147,22 +143,6 @@ export function workspaceListRecap(recap = ""): string {
   return recap.trim() ? recap : "";
 }
 
-/** Sidebar visibility stays separate from the durable unread conversation index. */
-export function workspaceRailChildMessageConversations(
-  rows: readonly WorkspaceMessageConversation[],
-  parent: Pick<WorkspaceManager, "id" | "title" | "settled"> & { tickets: readonly WorkItemTicketFacts[] },
-  cards: readonly WorkspaceTicket[] = [],
-  index:WorkspaceMessageIndex=workspaceMessageIndex(rows,cards)
-): WorkspaceMessageConversation[] {
-  const byTicket = new Map(parent.tickets.map((ticket) => [ticket.id, ticket]));
-  const visible = (id: string) => !(index.ticketsById.get(id) ?? byTicket.get(id))?.is_backlogged;
-  return workspaceChildMessageConversations(
-    rows,
-    {...parent, tickets: parent.tickets.filter((ticket) => visible(ticket.id))},
-    cards,index
-  ).filter((row) => visible(row.id));
-}
-
 export function buildWorkspaceRail(
   cards: readonly WorkspaceTicket[],
   managers: readonly WorkspaceRailManager[] = []
@@ -172,6 +152,7 @@ export function buildWorkspaceRail(
     id: item.id,
     title: item.title,
     createdAt: item.created_at,
+    updatedAt: item.updated_at,
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets),
@@ -195,7 +176,8 @@ export function buildWorkspaceRail(
     // Legacy projection remains available to references outside the new rail.
     groups: workspaceGroups(cards),
     items: items.filter((item) => !item.settled),
-    settledItems: items.filter((item) => item.settled),
+    settledItems: items.filter((item) => item.settled).sort((left, right) =>
+      right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)),
     chiefGroups: workspaceAttentionGroups(chiefTickets)
   };
 }

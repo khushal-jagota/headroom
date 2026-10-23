@@ -6,6 +6,7 @@ protocol GroupedWorker: Identifiable where ID == String {
     var recapPreview: String { get }
     var stage: String { get }
     var ticketStatus: String { get }
+    var isBlocked: Bool { get }
     var isBacklogged: Bool { get }
     var awaitingApproval: Bool { get }
     var awaitingAnswer: Bool { get }
@@ -16,8 +17,8 @@ protocol GroupedWorker: Identifiable where ID == String {
     var activityAt: Double? { get }
     var conversationSignal: ConversationSignal? { get }
 }
-extension ManagerTicket: GroupedWorker {}
-extension TicketSummary: GroupedWorker {}
+extension ManagerTicket: GroupedWorker { var isBlocked: Bool { blocked } }
+extension TicketSummary: GroupedWorker { var isBlocked: Bool { blocked == true } }
 
 enum WorkerGroup: String, CaseIterable, Identifiable {
     case approval, answer, yours, errored, agent, consequences, agentApproval, empty, blocked, backlogged, done
@@ -47,11 +48,11 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         if ticket.awaitingAnswer { return .answer }
         if ticket.assigned { return .yours }
         // Replies remain unread dots; the complete page has no Messages bucket.
+        if ticket.ticketStatus == "blocked" || ticket.isBlocked { return .blocked }
         if ticket.agentState == "errored" { return .errored }
         if ticket.ticketStatus == "agent" || ticket.agentState == "working" { return .agent }
         if ticket.waitingToCloseout == true { return .consequences }
         if ticket.awaitingAgentApproval { return .agentApproval }
-        if ticket.ticketStatus == "blocked" { return .blocked }
         return .empty
     }
 

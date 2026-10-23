@@ -385,6 +385,7 @@ class _Harness:
         idle_child_stop_after_seconds: float = 30 * 60,
         idle_child_sweep_interval_seconds: float = 5 * 60,
     ) -> None:
+        self.db_path = db_path
         self.clock = _FakeMonotonicClock() if clock is None else clock
         self.store = ConversationStore(str(db_path), integer_now=lambda: int(self.clock.now))
         self.backends: dict[str, _FakeBackend] = {}
@@ -2558,5 +2559,447 @@ def test_held_promotion_and_locale_move_cannot_cross(
             assert backend.written_texts() == ("incumbent", "selected")
         finally:
             conn.close()
+
+    _run(exercise)
+
+
+# These cases exercise the real durable queue and admission transaction. The fake only
+# replaces the child wire; session barriers expose state changes before final admission.
+def _review_notice(db_path: Path, *, conversation_id: str = "c") -> tuple[str, str, str]:
+    from planner.manager_wakes import data as wake_data
+    from planner.tickets import data as tickets_data
+    from planner.tickets.contracts import TITLE_MAX_CHARS
+
+    conn = connect(str(db_path))
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            title="Review dispatch",
+            principal=CHIEF_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+            brief="Review",
+            stated_ceiling="needs_success_condition",
+        )
+        tickets_data.file_current_proposal(
+            conn,
+            ticket.id,
+            body="Success",
+            principal=Principal(PrincipalKind.ticket, ticket.id),
+            now=2,
+        )
+        batch = wake_data.claim_next_batch(conn, process_token="test", now=3)
+        assert batch is not None
+        wake_data.record_batch_offering(
+            conn,
+            batch.id,
+            conversation_id=conversation_id,
+            process_token="test",
+            now=3,
+        )
+        return ticket.id, batch.sender_message_id, batch.message
+    finally:
+        conn.close()
+
+
+def _resolve_review(db_path: Path, ticket_id: str) -> None:
+    from planner.tickets import data as tickets_data
+
+    conn = connect(str(db_path))
+    try:
+        tickets_data.accept_proposal(
+            conn,
+            ticket_id,
+            field="success_condition",
+            principal=CHIEF_PRINCIPAL,
+            next_holder=CHIEF_PRINCIPAL,
+            next_ceiling="needs_what_changes",
+            now=4,
+        )
+    finally:
+        conn.close()
+
+
+def test_review_resolution_during_session_preparation_suppresses_duplicate_waiters_and_replay(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.contracts import (
+        AddressedPromptDeliveryReceipt,
+        PromptDeliverySuppressed,
+    )
+
+    async def exercise() -> None:
+        await _start(harness)
+        ticket_id, sender_id, message = _review_notice(harness.db_path)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_start = _FakeBackendChild.start
+
+        async def delayed_start(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            await original_start(self, *args, **kwargs)
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(_FakeBackendChild, "start", delayed_start)
+
+        async def send() -> AddressedPromptDeliveryReceipt:
+            return await harness.system.send_with_receipt(
+                "c",
+                text_message_content(message),
+                sender_label="Chief",
+                sender_message_id=sender_id,
+                sender=CHIEF_PRINCIPAL,
+                recipient=Principal(PrincipalKind.manager, "reviewer"),
+            )
+
+        first = asyncio.create_task(send())
+        await entered.wait()
+        duplicate = asyncio.create_task(send())
+        _resolve_review(harness.db_path, ticket_id)
+        release.set()
+        receipts = await asyncio.gather(first, duplicate)
+        assert all(isinstance(receipt.fate, PromptDeliverySuppressed) for receipt in receipts)
+        assert receipts[0].newly_accepted and not receipts[1].newly_accepted
+        assert isinstance((await send()).fate, PromptDeliverySuppressed)
+        assert harness.backend("c").writes == []
+        assert not await harness.system.is_running("c")
+        discards = [
+            e.payload
+            for e in await harness.events("c")
+            if isinstance(e.payload, PromptDiscardedEventPayload)
+        ]
+        assert len(discards) == 1
+        assert discards[0].sender_message_id == sender_id
+        assert discards[0].suppression_reason == "proposal_resolved"
+        assert _turn_failure_notice_count(harness.db_path) == 0
+        conn = connect(str(harness.db_path))
+        try:
+            statuses = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT status FROM conversation_lifecycle_facts WHERE conversation_id='c'"
+                )
+            }
+        finally:
+            conn.close()
+        assert {"unavailable", "suppressed"} <= statuses
+        await harness.system.shutdown()
+        restarted = _Harness(harness.db_path)
+        try:
+            replay = await restarted.system.send_with_receipt(
+                "c",
+                text_message_content(message),
+                sender_label="Chief",
+                sender_message_id=sender_id,
+                sender=CHIEF_PRINCIPAL,
+                recipient=Principal(PrincipalKind.manager, "reviewer"),
+            )
+            assert isinstance(replay.fate, PromptDeliverySuppressed)
+            assert not replay.newly_accepted
+            assert restarted.backends == {}
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_queue_admission_removes_stale_envelope_and_its_reply_obligation(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("Start"), sender_label="Owner")
+        ticket_id, sender_id, message = _review_notice(harness.db_path)
+        await harness.system.send(
+            "c",
+            text_message_content(message),
+            sender_label="Stale Chief",
+            sender_message_id=sender_id,
+            sender=CHIEF_PRINCIPAL,
+            recipient=Principal(PrincipalKind.manager, "reviewer"),
+        )
+        await harness.system.send(
+            "c",
+            text_message_content("Current owner work"),
+            sender_label="Owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=Principal(PrincipalKind.manager, "reviewer"),
+        )
+        _resolve_review(harness.db_path, ticket_id)
+        await harness.complete_turn("c")
+        writes = harness.backend("c").writes
+        assert len(writes) == 2
+        assert message not in writes[-1].text
+        assert "Current owner work" in writes[-1].text
+        assert "--chief" not in writes[-1].text
+        assert "--owner" in writes[-1].text
+        assert harness.backend("c").sender_message_counts[-1] == 1
+        prompts = [
+            e.payload
+            for e in await harness.events("c")
+            if isinstance(e.payload, PromptEventPayload)
+        ]
+        assert [message_content_text(p.content) for p in prompts] == ["Start", "Current owner work"]
+        await harness.complete_turn("c")
+        assert _turn_failure_notice_count(harness.db_path) == 0
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "promotion", [None, HeldPromptPromotionMode.send_now, HeldPromptPromotionMode.steer]
+)
+def test_obsolete_review_never_reaches_direct_or_promoted_steer(
+    harness: _Harness,
+    promotion: HeldPromptPromotionMode | None,
+) -> None:
+    from planner.conversation.contracts import PromptDeliverySuppressed
+
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("Start"), sender_label="Owner")
+        ticket_id, sender_id, message = _review_notice(harness.db_path)
+        if promotion is not None:
+            await harness.system.send(
+                "c",
+                text_message_content(message),
+                sender_label="Chief",
+                sender_message_id=sender_id,
+            )
+            held = (await harness.system.held_prompts("c"))[0]
+        _resolve_review(harness.db_path, ticket_id)
+        if promotion is None:
+            fate = await harness.system.send(
+                "c",
+                text_message_content(message),
+                sender_label="Chief",
+                sender_message_id=sender_id,
+                mode=PromptDeliveryMode.steer,
+            )
+        else:
+            promoted = await harness.system.promote_held_prompt("c", held.held_prompt_id, promotion)
+            assert promoted is not None
+            fate = promoted
+        assert isinstance(fate, PromptDeliverySuppressed)
+        assert harness.backend("c").sender_written_texts() == ("Start",)
+        assert await harness.system.held_prompts("c") == ()
+        assert _turn_failure_notice_count(harness.db_path) == 0
+
+    _run(exercise)
+
+
+def test_rebind_rechecks_review_and_discards_child_with_uncommitted_model(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.contracts import PromptDeliverySuppressed
+
+    async def exercise() -> None:
+        await _start(harness, model="original", reasoning_effort="low")
+        await harness.system.send("c", text_message_content("Start"), sender_label="Owner")
+        await harness.complete_turn("c")
+        ticket_id, sender_id, message = _review_notice(harness.db_path)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_start = _FakeBackendChild.start
+
+        async def delayed_start(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            await original_start(self, *args, **kwargs)
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(_FakeBackendChild, "start", delayed_start)
+        harness.backend("c").needs_rebind_once = True
+        sending = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content(message),
+                sender_label="Chief",
+                sender_message_id=sender_id,
+                model_change="new-model",
+                reasoning_effort_change="high",
+            )
+        )
+        await entered.wait()
+        _resolve_review(harness.db_path, ticket_id)
+        release.set()
+        assert isinstance(await sending, PromptDeliverySuppressed)
+        assert harness.backend("c").sender_written_texts() == ("Start",)
+        assert harness.backend("c").live_children == 0
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert (record.model, record.reasoning_effort) == ("original", "low")
+        assert not await harness.system.is_running("c")
+
+    _run(exercise)
+
+
+def test_refused_review_command_is_rechecked_when_its_queue_departure_arrives(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("Start"), sender_label="Owner")
+        ticket_id, sender_id, message = _review_notice(harness.db_path)
+        harness.backend("c").steer_outcome = BackendSteerRefused(
+            PromptDeliveryRefusalReason.command_cannot_join_running_turn
+        )
+        fate = await harness.system.send(
+            "c",
+            text_message_content(message),
+            sender_label="Chief",
+            sender_message_id=sender_id,
+            mode=PromptDeliveryMode.steer,
+        )
+        assert isinstance(fate, PromptDeliveryQueued)
+        _resolve_review(harness.db_path, ticket_id)
+        await harness.complete_turn("c")
+        assert harness.backend("c").sender_written_texts() == ("Start",)
+        assert await harness.system.held_prompts("c") == ()
+        assert not await harness.system.is_running("c")
+        discards = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptDiscardedEventPayload)
+        ]
+        assert len(discards) == 1 and discards[0].suppression_reason == "proposal_resolved"
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("resolve_first", [False, True])
+def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doors(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    resolve_first: bool,
+) -> None:
+    from datetime import UTC, datetime
+
+    from planner.core.clock import TestClock
+    from planner.manager_wakes import data as wake_data
+    from planner.manager_wakes.contracts import WakeBatch
+    from planner.manager_wakes.runtime import deliver_batch
+    from planner.managers import data as managers_data
+    from planner.tickets import data as tickets_data
+    from planner.tickets.contracts import TITLE_MAX_CHARS
+
+    async def exercise() -> None:
+        conn = connect(str(harness.db_path))
+        try:
+            manager = managers_data.create_manager(
+                conn,
+                title="New reviewer",
+                project_id="project_vylo",
+                clock=TestClock(datetime.fromtimestamp(10, UTC)),
+            )
+            manager_principal = Principal(PrincipalKind.manager, manager.id)
+            ticket = tickets_data.create_ticket(
+                conn,
+                title="Transfer review",
+                principal=CHIEF_PRINCIPAL,
+                now=1,
+                title_max_chars=TITLE_MAX_CHARS,
+                worker_type="coding",
+                brief="Review",
+                stated_ceiling="needs_success_condition",
+            )
+            worker = Principal(PrincipalKind.ticket, ticket.id)
+            tickets_data.file_current_proposal(
+                conn,
+                ticket.id,
+                body="Old review",
+                principal=worker,
+                now=2,
+            )
+            old_batch = wake_data.claim_next_batch(conn, process_token="test", now=3)
+            assert old_batch is not None
+        finally:
+            conn.close()
+
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_start = _FakeBackendChild.start
+        first_start = True
+
+        async def delayed_start(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal first_start
+            await original_start(self, *args, **kwargs)
+            if first_start:
+                first_start = False
+                entered.set()
+                await release.wait()
+
+        monkeypatch.setattr(_FakeBackendChild, "start", delayed_start)
+
+        async def deliver(batch: WakeBatch) -> bool:
+            return await deliver_batch(
+                batch,
+                connect_database=lambda: connect(str(harness.db_path)),
+                conversation_system=harness.system,
+                process_token="test",
+                now=lambda: 10,
+            )
+
+        old_delivery = asyncio.create_task(deliver(old_batch))
+        await entered.wait()
+        conn = connect(str(harness.db_path))
+        try:
+            if resolve_first:
+                tickets_data.accept_proposal(
+                    conn,
+                    ticket.id,
+                    field="success_condition",
+                    principal=CHIEF_PRINCIPAL,
+                    next_holder=CHIEF_PRINCIPAL,
+                    next_ceiling="needs_what_changes",
+                    now=4,
+                )
+            tickets_data.edit_ticket(
+                conn,
+                ticket.id,
+                edit={"manager_id": manager.id, "ceiling_holder": manager_principal},
+                principal=OWNER_PRINCIPAL,
+                title_max_chars=TITLE_MAX_CHARS,
+                now=5,
+            )
+            if resolve_first:
+                tickets_data.file_current_proposal(
+                    conn,
+                    ticket.id,
+                    body="New review",
+                    principal=worker,
+                    now=6,
+                )
+            current_batch = wake_data.claim_next_batch(conn, process_token="test", now=10)
+            assert current_batch is not None
+            assert current_batch.target == manager_principal
+        finally:
+            conn.close()
+        release.set()
+        assert not await old_delivery
+        assert await deliver(current_batch)
+        assert len(harness.backends) == 2
+        all_writes = [write for backend in harness.backends.values() for write in backend.writes]
+        assert len(all_writes) == 1
+        assert all_writes[0].sender_content is not None
+        assert message_content_text(all_writes[0].sender_content) == current_batch.message
+        assert old_batch.sender_message_id != current_batch.sender_message_id
+        delivered_prompts = [
+            event.payload
+            for conversation_id in harness.backends
+            for event in await harness.events(conversation_id)
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert [prompt.sender_message_id for prompt in delivered_prompts] == [
+            current_batch.sender_message_id
+        ]
+        chief_events = [
+            event
+            for conversation_id, backend in harness.backends.items()
+            if not backend.writes
+            for event in await harness.events(conversation_id)
+        ]
+        assert any(
+            isinstance(event.payload, PromptDiscardedEventPayload)
+            and event.payload.sender_message_id == old_batch.sender_message_id
+            for event in chief_events
+        )
 
     _run(exercise)

@@ -100,6 +100,7 @@ struct ConversationDelivery: Decodable, Sendable {
     let conversationId: String?
     let fate: String
     let refusalReason: String?
+    var reason: String? = nil
 }
 protocol ConversationServing: Sendable {
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot

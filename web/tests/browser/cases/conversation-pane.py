@@ -1854,7 +1854,8 @@ def _run(browser, urls):
         return { columnWidth: column.width, viewportWidth: innerWidth,
             paneLeft: pane.left, paneRight: pane.right, controls };
     }""")
-    assert abs(phone_bounds["columnWidth"] - phone_bounds["viewportWidth"]) <= 1, phone_bounds
+    # The card uses the title/text channel, with 24px outside each edge.
+    assert abs(phone_bounds["columnWidth"] - min(720, phone_bounds["viewportWidth"] - 48)) <= 1, phone_bounds
     assert (
         0 <= phone_bounds["paneLeft"] < phone_bounds["paneRight"] <= phone_bounds["viewportWidth"]
     ), phone_bounds
@@ -1986,9 +1987,167 @@ def _owner_width_frames(browser, url):
     print("OWNER_WIDTH_PROOF " + json.dumps(proof), flush=True)
 
 
-def _bounded_reader(browser, url):
+def _latest_obsolete_intents(browser, url):
+    import json
+    import time
+
+    started = time.perf_counter()
+    page = browser.new_page(viewport={"width":1000,"height":900})
+    proof=[]
+    try:
+        for case in ("refusal", "superseded", "reader-swap"):
+            page.goto(url + "?intent=1")
+            thread=page.locator('[data-conversation-thread]')
+            thread.wait_for()
+            page.wait_for_function("document.querySelector('[data-conversation-thread]').scrollHeight > 1000")
+            thread.evaluate("node=>{node.scrollTop=500;node.dispatchEvent(new Event('scroll'));}")
+            latest=page.get_by_role("button",name="Jump to latest message",exact=True)
+            latest.wait_for()
+            latest.click()
+            page.wait_for_function("window.__intentProbe.loads.length===1")
+            if case == "superseded":
+                latest.click()
+                page.wait_for_function("window.__intentProbe.loads.length===2")
+            # No geometry can settle while hidden. Complete the obsolete request,
+            # then restore geometry, exercising deferred placement and focus.
+            thread.evaluate("node=>node.style.display='none'")
+            if case == "reader-swap":
+                # Keep the original button's focus claim alive. Admission succeeds
+                # first, but geometry cannot settle until after reader replacement.
+                latest.evaluate("node=>node.blur()")
+            else:
+                page.locator('[data-conversation-input]').focus()
+            page.evaluate("admitted=>window.__intentProbe.finish(0,admitted)",case != "refusal")
+            page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
+            if case == "reader-swap":
+                assert page.evaluate("document.activeElement===document.body")
+                page.evaluate("window.__intentProbe.swap()")
+            thread.evaluate("node=>node.style.display=''")
+            page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
+            assert thread.evaluate("node=>Math.abs(node.scrollTop-500)<2"), (case,thread.evaluate("node=>node.scrollTop"))
+            if case == "reader-swap":
+                assert page.evaluate("document.activeElement===document.body"),case
+            else:
+                assert page.evaluate("document.activeElement===document.querySelector('[data-conversation-input]')"),case
+            assert latest.is_visible(),case
+            if case == "superseded":
+                page.evaluate("window.__intentProbe.finish(1,true)")
+                page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
+                assert page.evaluate("document.activeElement===document.querySelector('[data-conversation-input]')")
+            proof.append({"case":case,"obsoletePlacement":False,"focus":"body preserved after admitted reader swap" if case == "reader-swap" else "composer preserved"})
+        # Swap after placement removes Latest, in the mutation callback before
+        # the focus tick resumes. The old button's body-focus claim must not pass
+        # to a reader that did not own that click.
+        page.goto(url + "?intent=1")
+        thread=page.locator('[data-conversation-thread]')
+        thread.wait_for()
+        page.wait_for_function("document.querySelector('[data-conversation-thread]').scrollHeight > 1000")
+        thread.evaluate("node=>{node.scrollTop=500;node.dispatchEvent(new Event('scroll'));}")
+        latest=page.get_by_role("button",name="Jump to latest message",exact=True)
+        latest.click()
+        page.wait_for_function("window.__intentProbe.loads.length===1")
+        page.evaluate("""() => {
+          const thread=document.querySelector('[data-conversation-thread]');
+          const focus=thread.focus.bind(thread);
+          window.__obsoleteFocusCalls=0;
+          thread.focus=(...args)=>{window.__obsoleteFocusCalls++;focus(...args);};
+          const observer=new MutationObserver(()=>{
+            if(document.querySelector('button[aria-label="Jump to latest message"]'))return;
+            observer.disconnect();
+            window.__focusTickSwap=true;
+            window.__intentProbe.swapSynchronously();
+          });
+          observer.observe(document.querySelector('[data-conversation-pane]'),{subtree:true,childList:true});
+          window.__intentProbe.finish(0,true);
+        }""")
+        page.wait_for_function("window.__focusTickSwap===true")
+        page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
+        assert page.evaluate("window.__obsoleteFocusCalls===0"), "Obsolete focus crossed reader replacement during focus tick"
+        assert page.evaluate("document.activeElement===document.body")
+        proof.append({"case":"reader-swap-at-focus-tick","obsoleteFocusCalls":0})
+        print("LATEST_OBSOLETE_INTENTS_PROOF "+json.dumps({"cases":proof,"seconds":round(time.perf_counter()-started,3),"newHosts":0}),flush=True)
+    finally:
+        page.close()
+
+
+def _latest_destination(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
     page = browser.new_page(viewport={"width": 1000, "height": 900})
+    output = Path(os.environ.get("PANELS_LATEST_ARTIFACT_DIR", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")))
+    output.mkdir(parents=True, exist_ok=True)
+    try:
+        page.goto(url + "?reader=1")
+        page.wait_for_selector('[data-conversation-view-key="e2000"]')
+        page.evaluate("window.__latestProbe.blockForward = true")
+        # Three historical pages exceed the real 300-row retention bound.
+        for _ in range(3):
+            before = page.evaluate("Math.min(...[...document.querySelectorAll('[data-conversation-view-key]')].map(n=>+n.dataset.conversationViewKey.slice(1)))")
+            page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+            page.wait_for_function("before => Math.min(...[...document.querySelectorAll('[data-conversation-view-key]')].map(n=>+n.dataset.conversationViewKey.slice(1))) < before", arg=before)
+        assert page.locator('[data-conversation-view-key="e2000"]').count() == 0
+        assert page.locator('[data-conversation-view-key]').count() <= 300
+        page.evaluate("window.__latestProbe.holdHistory = true")
+        page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        page.wait_for_function("window.__latestProbe.historyWaiting > 0")
+        page.evaluate("""() => {
+          window.__latestFrames=[];
+          const sample = () => {
+            const thread=document.querySelector('[data-conversation-thread]');
+            const edge=thread.getBoundingClientRect();
+            const row=document.querySelector('[data-conversation-view-key="e2000"]');
+            const bounds=row?.getBoundingClientRect();
+            const visible=!!bounds && bounds.bottom>edge.top && bounds.top<edge.bottom;
+            window.__latestFrames.push({visibleNewest:visible,
+              latest:!!document.querySelector('button[aria-label="Jump to latest message"]'),
+              latestResponses:window.__latestProbe.latestResponses,
+              scrollTop:thread.scrollTop, scrollHeight:thread.scrollHeight});
+            if(!window.__stopLatestFrames)requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }""")
+        page.get_by_role("button", name="Jump to latest message", exact=True).click()
+        page.evaluate("window.__latestProbe.holdHistory=false;window.__latestProbe.releaseHistory()")
+        # On the defect, Latest disappears at the retained historical endpoint.
+        # Do not wait for a fetch hook: destination and control trajectory decide.
+        try:
+            page.wait_for_function("window.__latestFrames.some(f => !f.latest)", timeout=10000)
+        finally:
+            frames=page.evaluate("window.__latestFrames")
+            (output / "latest-destination-frames.json").write_text(json.dumps(frames, indent=2))
+        first_hidden=next(frame for frame in frames if not frame["latest"])
+        assert first_hidden["visibleNewest"], {"failure":"Latest disappeared before the true newest destination", "frame":first_hidden}
+        assert first_hidden["latestResponses"] > 0, first_hidden
+        assert page.evaluate("window.__latestProbe.blockForward"), "Recovery gate opened before destination assertion"
+        # All frames that presented Latest as complete must already show e2000.
+        assert all(frame["visibleNewest"] for frame in frames if not frame["latest"]), frames
+        page.screenshot(path=str(output / "latest-destination.png"))
+        proof={"destination":"e2000 visible before Latest disappears", "recovery":"blocked through destination assertion", "seconds":round(time.perf_counter()-started,3), "newHosts":0}
+        (output / "latest-destination-proof.json").write_text(json.dumps(proof,indent=2))
+        print("LATEST_DESTINATION_PROOF " + json.dumps(proof), flush=True)
+        page.evaluate("window.__latestProbe.blockForward=false;window.__latestProbe.holdHistory=false;window.__latestProbe.releaseForward();window.__latestProbe.releaseHistory();window.__stopLatestFrames=true")
+    finally:
+        page.close()
+
+
+def _bounded_reader(browser, url):
+    from playwright.sync_api import expect
+
+    page = browser.new_page(viewport={"width": 1000, "height": 900})
+    page.route("**/api/deployment-interruptions", lambda route: route.fulfill(json={"accounts": [{
+        "deployment_id": "deploy", "capture_state": "captured", "detail": None,
+        "entries": [{"interruption_id": "notice", "deployment_id": "deploy",
+            "conversation_id": "bounded-reader", "display_name": "Worker", "owner_kind": "ticket",
+            "owner_id": "worker", "original_status": "active", "recovery_state": "awaiting_action",
+            "detail": "The deploy ended this turn. Inspect current work before another action.",
+            "can_restart": False}]
+    }]}))
     page.goto(url + "?reader=1")
+    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_contain_text("The deploy ended this turn.")
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
     page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
     # What the reader retains is what is drawn. One bound, not two: a row that is
@@ -1999,9 +2158,27 @@ def _bounded_reader(browser, url):
     before = page.evaluate("() => window.__viewCalls.filter(url => url.includes('/view/pages')).length")
     page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
     page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
+    # A transport call records request start, before the reader admits its page.
+    # Wait for both edges of the older page and its layout before requesting Latest.
+    page.wait_for_function("() => document.querySelector('[data-conversation-view-key=\"e1801\"]') && document.querySelector('[data-conversation-view-key=\"e1900\"]')")
+    # Leave both automatic history-edge demand zones before testing an explicit read.
+    page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=(node.scrollHeight-node.clientHeight)/2;node.dispatchEvent(new Event('scroll'));}")
+    page.wait_for_function("""async () => {
+      const reads = () => window.__viewCalls.filter(url => url.includes('/view/pages')).length;
+      const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+      const before = reads();
+      await frame();
+      if (reads() !== before) return false;
+      await frame();
+      const thread = document.querySelector('[data-conversation-thread]');
+      return reads() === before && thread.scrollTop > thread.clientHeight
+        && thread.scrollTop + 2 * thread.clientHeight < thread.scrollHeight;
+    }""")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     # A delayed latest-page read must respect focus moved during the request.
+    import time
+    focus_started = time.perf_counter()
     page.evaluate("""() => {
       const original = window.fetch;
       window.fetch = async (...args) => {
@@ -2021,11 +2198,14 @@ def _bounded_reader(browser, url):
     page.evaluate("window.__releaseLatestPage()")
     page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
     page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
+    print(f"LATEST_DELAYED_FOCUS_PROOF composer focus preserved after controlled admission ({time.perf_counter()-focus_started:.3f}s)", flush=True)
     page.evaluate("() => window.__readerState('rest')")
     page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
+    expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     assert page.locator('[data-conversation-view-key]').count() == 0
     page.evaluate("() => window.__readerState('opened')")
     page.wait_for_selector('[data-conversation-thread]')
+    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_be_visible()
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     # Persisted projected prompts must retain the same bubble layout as outgoing
@@ -2336,10 +2516,213 @@ def _manager_recap_header(browser, url):
         print(f"Manager recap header browser scenario: {time.perf_counter() - started:.3f}s", flush=True)
 
 
+def _overlay_menu_bounds(browser, url):
+    """Overlay scroll bounds must leave every existing menu action operable."""
+    import json
+    import os
+    import re
+    import time
+    from pathlib import Path
+
+    from playwright.sync_api import expect
+
+    started = time.perf_counter()
+    output = Path(os.environ.get("PANELS_MENU_ARTIFACT_DIR", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-menu-proof")))
+    output.mkdir(parents=True, exist_ok=True)
+    page = browser.new_page(viewport={"width": 1100, "height": 900})
+    page.add_init_script("""(() => {
+      const viewport = new EventTarget();
+      Object.assign(viewport, {offsetTop:0,offsetLeft:0,width:1100,height:900});
+      Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
+      window.__keyboardBounds=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
+    })()""")
+    proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
+    def settle():
+        page.evaluate("() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+    def hit(item):
+        item.scroll_into_view_if_needed()
+        settle()
+        bounds = item.bounding_box()
+        assert bounds, item
+        x,y=bounds["x"]+bounds["width"]/2,bounds["y"]+bounds["height"]/2
+        assert item.evaluate("(el,p)=>el.contains(document.elementFromPoint(p.x,p.y))", {"x":x,"y":y}), (item.get_attribute("class"), bounds)
+        viewport = page.evaluate("({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height})")
+        assert viewport["top"] <= y <= viewport["bottom"], (bounds,viewport)
+        return x,y
+    def keyboard_rail(item, key):
+        picker.get_by_role('listbox').press('ArrowLeft')
+        page.keyboard.press('Home')
+        count=picker.locator('[data-listbox-picker-action]').count()
+        for _ in range(count):
+            if item.evaluate('el=>el===document.activeElement'):
+                break
+            page.keyboard.press('ArrowDown')
+        expect(item).to_be_focused()
+        item.press(key)
+        settle()
+
+    try:
+        page.route('**/api/conversation/backends/refresh', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
+        page.goto(url, wait_until="domcontentloaded")
+        page.evaluate("window.__setConversationState('opened')")
+        input_box = page.locator('[data-conversation-input]')
+        input_box.fill('/')
+        settle()
+        assert page.locator('[data-conversation-composer-constrained]').count()==0
+        assert page.locator('.chat-menu').evaluate("el=>getComputedStyle(el).position")=='absolute'
+        proof["ordinaryMenusFloating"]=True
+        input_box.fill('')
+        for mode,top,height in (("keyboard",120,340),("constrained",200,190)):
+            page.evaluate("([top,height])=>window.__keyboardBounds(top,height)",[top,height])
+            settle()
+            input_box.fill('/')
+            settle()
+            snapshot=page.locator('[data-conversation-composer]').evaluate("""el=>({height:el.clientHeight,scrollHeight:el.scrollHeight,top:el.getBoundingClientRect().top,popupRoom:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-popup-height')),target:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-target')),gap:parseFloat(getComputedStyle(el).getPropertyValue('--space-6')),constrained:el.hasAttribute('data-conversation-composer-constrained'),viewportTop:visualViewport.offsetTop,viewportHeight:visualViewport.height})""")
+            assert snapshot['constrained'] == (mode=='constrained'), snapshot
+            assert page.locator('.chat-menu').evaluate('el=>getComputedStyle(el).position') == ('static' if mode=='constrained' else 'absolute')
+            snapshot['mode']=mode
+            proof['states'].append(snapshot)
+            page.screenshot(path=str(output / (mode+'-catalog.png')))
+            entries=page.locator('[data-conversation-catalog-entry]').evaluate_all("els=>els.map(el=>el.dataset.conversationCatalogEntry)")
+            for method in ('pointer','keyboard'):
+                for index,entry in enumerate(entries):
+                    input_box.fill('')
+                    input_box.fill('/')
+                    settle()
+                    item=page.locator('[data-conversation-catalog-entry]').nth(index)
+                    if method=='pointer':
+                        hit(item)
+                        item.click()
+                    else:
+                        active = page.locator('[data-conversation-catalog-active]').get_attribute('data-conversation-catalog-entry')
+                        for _ in range((index-entries.index(active)) % len(entries)):
+                            input_box.press('ArrowDown')
+                        input_box.press('Enter')
+                    expect(input_box).to_have_value(entry+' ')
+                    proof['actions'].append([mode,'catalog',method,entry])
+            input_box.fill('')
+            add=page.locator('[data-conversation-add]')
+            for method in ('pointer','keyboard'):
+                for attribute in ('image','file','camera','slash'):
+                    input_box.fill('')
+                    settle()
+                    add.click()
+                    settle()
+                    item=page.locator('[data-conversation-'+attribute+']')
+                    if method=='pointer':
+                        hit(item)
+                    else:
+                        add.focus()
+                        for _ in range(('image','file','camera','slash').index(attribute)+1):
+                            page.keyboard.press('Tab')
+                        expect(item).to_be_focused()
+                    if attribute=='slash':
+                        item.click() if method=='pointer' else item.press('Enter')
+                        expect(input_box).to_have_value('/')
+                        input_box.fill('')
+                    else:
+                        with page.expect_file_chooser() as chosen_file:
+                            item.click() if method=='pointer' else item.press('Enter')
+                        chosen_file.value.set_files([])
+                        expect(page.locator('.chat-add-menu')).to_have_count(0)
+                    proof['actions'].append([mode,'attachment',method,attribute])
+            picker=page.locator('[data-conversation-model-picker]')
+            trigger=picker.locator('[data-conversation-picker-trigger]')
+            for method in ('pointer','keyboard'):
+                for index,model in enumerate(('opus','sonnet')):
+                    trigger.click()
+                    settle()
+                    item=picker.locator('[data-conversation-picker-choice="'+model+'"]')
+                    if method=='pointer':
+                        hit(item)
+                        item.click()
+                    else:
+                        box=picker.get_by_role('listbox')
+                        box.press('Home' if index==0 else 'End')
+                        box.press('Enter')
+                    if model=='opus':
+                        effort=picker.locator('[data-conversation-picker-choice="high"]')
+                        if method=='pointer':
+                            hit(effort)
+                            effort.click()
+                        else:
+                            picker.get_by_role('listbox').press('Home')
+                            picker.get_by_role('listbox').press('Enter')
+                        proof['actions'].append([mode,'effort',method,'high'])
+                    expect(trigger).to_have_attribute('aria-label', re.compile(model,re.I))
+                    proof['actions'].append([mode,'model',method,model])
+            for method in ('pointer','keyboard'):
+                # Opus offers reasoning; Sonnet deliberately has no effort choices.
+                trigger.click()
+                picker.locator('[data-conversation-picker-choice="opus"]').click()
+                picker.locator('[data-conversation-picker-choice="high"]').click()
+                trigger.click()
+                for control in ('backend:claude','backend:codex','backend:hermes','reasoning','models','refresh'):
+                    settle()
+                    selector = '[data-conversation-backend="'+control.split(':')[1]+'"]' if control.startswith('backend:') else '[data-conversation-picker-'+control+']'
+                    item=picker.locator(selector)
+                    if method=='pointer':
+                        x,y=hit(item)
+                        page.mouse.click(x,y)
+                    else:
+                        keyboard_rail(item,'Space')
+                    if control.startswith('backend:'):
+                        expect(picker.locator('[data-conversation-picker-feedback]')).to_be_visible()
+                    elif control=='reasoning':
+                        expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
+                    elif control=='models':
+                        expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
+                    else:
+                        expect(picker.locator('[data-conversation-picker-feedback]')).to_have_text('Fixture refresh boundary')
+                    settle()
+                    proof['actions'].append([mode,'runRail',method,control])
+                page.screenshot(path=str(output / (mode+'-run-picker.png')))
+                picker.get_by_role('listbox').press('Escape')
+                expect(trigger).to_be_focused()
+            # Models removes its own rail button. Enter and Space must both leave
+            # the surviving list usable, then dismiss back to the stable trigger.
+            for key in ('Enter','Space'):
+                trigger.click()
+                keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
+                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                box=picker.get_by_role('listbox')
+                expect(box).to_be_focused()
+                expect(box).to_have_attribute('aria-label','Models')
+                box.press('Home')
+                box.press('Enter')
+                expect(picker.get_by_role('listbox')).to_have_attribute('aria-label','Reasoning efforts')
+                picker.get_by_role('listbox').press('Enter')
+                expect(trigger).to_have_attribute('aria-label',re.compile('opus high',re.I))
+                trigger.click()
+                keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
+                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                picker.get_by_role('listbox').press('Escape')
+                expect(trigger).to_be_focused()
+                proof['actions'].append([mode,'modelsFocus',key,'selection works; Escape restores trigger'])
+        proof['elapsedSeconds']=round(time.perf_counter()-started,3)
+        (output/'menu-proof.json').write_text(json.dumps(proof,indent=2))
+        print('OVERLAY_MENU_PROOF '+json.dumps(proof),flush=True)
+    finally:
+        (output/'menu-proof-latest.json').write_text(json.dumps(proof,indent=2))
+        page.close()
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'destination':
+            _latest_destination(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'intents':
+            _latest_obsolete_intents(browser, urls[0])
+            return
+        _latest_destination(browser, urls[0])
+        _latest_obsolete_intents(browser, urls[0])
+        _overlay_menu_bounds(browser, urls[0])
+        if __import__('os').environ.get('PANELS_CONVERSATION_MENU_ONLY') == '1':
+            print('Focused overlay menu proof only; other conversation scenarios were not run.',flush=True)
+            return
         _manager_recap_header(browser, urls[0])
         _owner_width_frames(browser, urls[0])
         _conversation_repairs(browser, urls[0])

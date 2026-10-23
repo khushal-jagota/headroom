@@ -91,27 +91,3 @@ struct AppShell: View {
         RouteDestination(route: route)
     }
 }
-
-// Match the web's expiry rules: stale progress becomes reconnecting, and a
-// successful deployment only stays visible until its server-provided expiry.
-enum DeploymentStatusPresentation: String {
-    case deploying = "Deploying", reconnecting = "Reconnecting", problem = "Problem", deployed = "Deployed"
-
-    static func resolve(_ status: DeploymentStatus?, connected: Bool, readFailed: Bool, now: Date) -> Self? {
-        guard let status else { return .reconnecting }
-        if status.state == "problem" || status.outcome == "failed" || status.outcome == "rolled_back" { return .problem }
-        if readFailed { return .problem }
-        let expiry = status.validUntil.flatMap { value in
-            let format = ISO8601DateFormatter()
-            format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            return format.date(from: value) ?? ISO8601DateFormatter().date(from: value)
-        }
-        let fresh = expiry.map { now < $0 } ?? false
-        switch status.state {
-        case "preparing", "restarting": return fresh ? .deploying : .reconnecting
-        case "back_up": return connected ? (fresh ? .deployed : nil) : .reconnecting
-        case "idle": return connected ? nil : .reconnecting
-        default: return .reconnecting
-        }
-    }
-}

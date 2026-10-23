@@ -39,7 +39,7 @@ struct ConversationOverlay: ViewModifier {
                             .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(PanelsTheme.border))
                             .shadow(color: .black.opacity(0.45), radius: 12, y: -4)
                             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                                retainedClearance = max(retainedClearance, height + ConversationLayout.edgeGap * 2)
+                                if presentation == .rest { retainedClearance = height + ConversationLayout.edgeGap * 2 }
                             }
                     }
                     .padding(.horizontal, ConversationLayout.gutter)
@@ -83,7 +83,12 @@ struct ConversationOverlay: ViewModifier {
                         ForEach(ConversationLens.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
                     }.pickerStyle(.segmented).frame(maxWidth: 180)
                     Spacer()
-                    Button { latestRequest += 1 } label: {
+                    Button {
+                        Task {
+                            await model.refresh(using: store.client, transcript: true)
+                            if model.error == nil { latestRequest += 1 }
+                        }
+                    } label: {
                         Image(systemName: "arrow.down").frame(width: 44, height: 44)
                     }.accessibilityLabel("Latest messages")
                     Button { Haptics.selection(); presentation = presentation == .opened ? .peeked : .opened } label: {
@@ -106,6 +111,10 @@ struct ConversationOverlay: ViewModifier {
             }.buttonStyle(.plain).padding(.horizontal, PanelsTheme.Space.lg)
             if let error = model.error ?? speech.error {
                 Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error).padding(.horizontal, PanelsTheme.Space.lg)
+            }
+            if !preview, let id = model.conversationID {
+                DeploymentInterruptionsView(conversationID: id)
+                    .padding(.horizontal, PanelsTheme.Space.lg)
             }
             composer.disabled(preview)
         }.foregroundStyle(PanelsTheme.text)

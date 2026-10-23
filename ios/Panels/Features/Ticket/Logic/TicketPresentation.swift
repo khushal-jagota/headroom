@@ -45,7 +45,6 @@ struct TicketPresentation {
         var result = [Principal(kind: "owner", id: "owner")]
         if let id = ticket.managerId { result.append(Principal(kind: "manager", id: id)) }
         result.append(Principal(kind: "chief", id: "chief"))
-        if !result.contains(ticket.ceilingHolder) { result.append(ticket.ceilingHolder) }
         return result
     }
 }

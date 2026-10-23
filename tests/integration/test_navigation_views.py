@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from tests.integration.test_navigation_attention import Host, Turn
+from tests.integration.test_navigation_attention import prepared as prepared
 from tests.integration.test_navigation_signal_publication import (
     _ActualBinding,
 )
@@ -25,6 +27,7 @@ from tests.support.navigation_current import (
 from planner.navigation.views.configuration import DEFAULT_CONFIG
 from planner.navigation.views.contracts import (
     ViewContent,
+    ViewGroup,
     ViewRequest,
     ViewSnapshot,
     ViewWindowRequest,
@@ -49,7 +52,7 @@ def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
     }
     return request(
         {
-            "projection_version": 3,
+            "projection_version": 4,
             "scope_generation": 1,
             "locale": "en-US",
             "selected": None if selected is None else {"kind": "ticket", "id": selected},
@@ -64,6 +67,142 @@ def activate(conn: sqlite3.Connection) -> None:
     prepare(conn)
     rebuild(conn)
     conn.commit()
+
+
+def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Host) -> None:
+    host = prepared
+    host.attach()
+    conn = host.connect()
+    activate(conn)
+    conn.execute("BEGIN")
+    add_parent(conn, "manager")
+    add_ticket(conn, "blocker")
+    add_ticket(conn, "chief-ticket")
+    conn.execute("UPDATE tickets SET manager_kind='manager',manager_id='manager' WHERE id='t'")
+    conn.execute(
+        "UPDATE tickets SET conversation_id='c',stage='needs_plan' WHERE id='chief-ticket'"
+    )
+    conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id IN ('t','chief-ticket')")
+    conn.executemany("INSERT INTO ticket_blocks VALUES('blocker',?)", [("t",), ("chief-ticket",)])
+    conn.commit()
+    query = descriptor()
+    query["windows"] = [
+        cast(
+            ViewWindowRequest,
+            {
+                **query["windows"][0],
+                "section": section,
+                "owner": owner,
+                "group": grouping,
+                "child_filter": "all",
+            },
+        )
+        for owner in ({"kind": "manager", "id": "manager"}, {"kind": "chief", "id": "chief"})
+        for section, grouping in (
+            ("children", "blocked"),
+            ("children", "awaiting_answer"),
+            ("rail_tickets", "all"),
+        )
+    ]
+
+    def memberships(
+        *, answering: bool = False, grouping: ViewGroup = "blocked", in_rail: bool = False
+    ) -> None:
+        for index in (0, 3):
+            query["windows"][index]["group"] = grouping
+        for current in (True, False):
+            _, content = read_content(conn, query, current=current)
+            for offset, identity in ((0, "t"), (3, "chief-ticket")):
+                blocked, answer, rail = content["windows"][offset : offset + 3]
+                assert [row["id"] for row in blocked["members"]] == (
+                    [] if current and answering else [identity]
+                )
+                assert [row["id"] for row in answer["members"]] == (
+                    [identity] if current and answering else []
+                )
+                assert (identity in {row["id"] for row in rail["members"]}) is in_rail
+
+    # A claimed step with no running turn is still canonically Agent, even with
+    # a dependency. An owner ceiling alone is not an owner-attention request.
+    memberships()
+    _, content = read_content(conn, query, current=True)
+    for row in content["records"]:
+        if row["kind"] == "ticket" and row["id"] in ("t", "chief-ticket"):
+            assert row["value"]["blocked"] is True
+            assert row["value"]["ticket_status"] == "agent"
+            assert row["value"]["ceiling_holder"] == {"kind": "owner", "id": "owner"}
+    writer = host.mutation(Turn(), "blocked-working")
+    writer.commit()
+    memberships()
+    _, content = read_content(conn, query, current=True)
+    attention = next(row for row in content["records"] if row["kind"] == "conversation")["value"]
+    current_attention = attention["attention"]["current"]
+    assert current_attention is not None and current_attention["signal"]["working"] is True
+    assert all(
+        row["value"]["ticket_status"] == "agent"
+        for row in content["records"]
+        if row["kind"] == "ticket" and row["id"] != "blocker"
+    )
+    writer = host.mutation(Turn({"permission"}), "blocked-awaiting-answer")
+    writer.commit()
+    memberships(answering=True)
+    writer = host.mutation(None, "blocked-failed-history")
+    writer.execute(
+        "INSERT INTO conversation_events VALUES('c',1,'turn_ended','{\"ending\":\"failed\"}',0)"
+    )
+    writer.commit()
+    memberships()
+    _, content = read_content(conn, query, current=False)
+    attention = next(row for row in content["records"] if row["kind"] == "conversation")["value"]
+    assert attention["attention"]["durable"]["last_turn_failed"] is True
+    conn.execute("BEGIN")
+    proposal = json.dumps(
+        {"field": "plan", "body": "Review", "proposed_by": "worker", "created_at": 1}
+    )
+    conn.execute(
+        "UPDATE tickets SET pending_proposal=? WHERE id IN ('t','chief-ticket')", (proposal,)
+    )
+    conn.commit()
+    memberships(grouping="awaiting_approval")
+    conn.execute("BEGIN")
+    conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id IN ('t','chief-ticket')")
+    conn.commit()
+    memberships(grouping="backlog")
+    conn.execute("BEGIN")
+    conn.execute(
+        "UPDATE tickets SET is_backlogged=0,pending_proposal=NULL WHERE id IN ('t','chief-ticket')"
+    )
+    definition = json.loads(
+        conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+        ).fetchone()[0]
+    )
+    plan_stage = next(stage for stage in definition["stages"] if stage["id"] == "needs_plan")
+    plan_stage["ownership_mode"] = "user"
+    conn.execute(
+        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+        (json.dumps(definition),),
+    )
+    conn.commit()
+    memberships(grouping="assigned")
+    conn.execute("BEGIN")
+    plan_stage["ownership_mode"] = "worker"
+    conn.execute(
+        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+        (json.dumps(definition),),
+    )
+    conn.execute("DELETE FROM ticket_blocks WHERE blocking_ticket_id='blocker'")
+    conn.commit()
+    memberships(grouping="errored", in_rail=True)
+    writer = host.mutation(Turn(), "unblocked-working")
+    writer.commit()
+    # Current activity masks failed history; durable mode deliberately cannot.
+    for current, grouping in ((True, "agent"), (False, "errored")):
+        for index in (0, 3):
+            query["windows"][index]["group"] = cast(ViewGroup, grouping)
+        _, content = read_content(conn, query, current=current)
+        assert [row["id"] for row in content["windows"][0]["members"]] == ["t"]
+        assert [row["id"] for row in content["windows"][3]["members"]] == ["chief-ticket"]
 
 
 def add_review_tickets(conn: sqlite3.Connection) -> None:
@@ -178,6 +317,128 @@ def test_signal_install_repairs_persisted_backlogged_review_memberships(tmp_path
         ] == proposals
 
 
+def test_settled_update_order_pages_and_live_changes_preserve_active_order(tmp_path: Path) -> None:
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        conn.execute("BEGIN")
+        for identity, created_at, updated_at, settled in (
+            ("a", 10, 100, 1),
+            ("b", 20, 300, 1),
+            ("c", 30, 300, 1),
+            ("d", 40, 200, 1),
+            ("x", 60, 900, 0),
+            ("y", 50, 100, 0),
+        ):
+            add_parent(conn, identity)
+            conn.execute(
+                "UPDATE managers SET created_at=?,updated_at=?,settled=? WHERE id=?",
+                (created_at, updated_at, settled, identity),
+            )
+        conn.commit()
+        query = descriptor(limit=2)
+        settled_window: ViewWindowRequest = {
+            **query["windows"][0],
+            "section": "settled",
+            "owner": None,
+            "child_filter": "all",
+        }
+        query["windows"] = [settled_window]
+        for current in (True, False):
+            _, first = read_content(conn, query, current=current)
+            assert [row["id"] for row in first["windows"][0]["members"]] == ["b", "c"]
+            page = {**query, "windows": [{**settled_window, "anchor": first["windows"][0]["next"]}]}
+            _, second = read_content(conn, cast(ViewRequest, page), current=current)
+            assert [row["id"] for row in second["windows"][0]["members"]] == ["d", "a"]
+            previous = {
+                **query,
+                "windows": [
+                    {
+                        **settled_window,
+                        "anchor": second["windows"][0]["previous"],
+                        "direction": "before",
+                    }
+                ],
+            }
+            _, back = read_content(conn, cast(ViewRequest, previous), current=current)
+            assert back["windows"][0]["members"] == first["windows"][0]["members"]
+            assert first["counts"]["settled"] == second["windows"][0]["total"] == 4
+        conn.execute("BEGIN")
+        conn.execute("UPDATE managers SET updated_at=400 WHERE id='a'")
+        conn.commit()
+        for current in (True, False):
+            _, changed = read_content(conn, query, current=current)
+            assert [row["id"] for row in changed["windows"][0]["members"]] == ["a", "b"]
+            manager = next(
+                row for row in changed["records"] if row["kind"] == "manager" and row["id"] == "a"
+            )
+            assert manager["value"]["updated_at"] == 400
+            query["windows"] = [{**settled_window, "section": "rail_parents"}]
+            _, active = read_content(conn, query, current=current)
+            assert [row["id"] for row in active["windows"][0]["members"]] == ["y", "x"]
+            query["windows"] = [settled_window]
+
+
+def test_signal_install_repairs_old_settled_records_order_and_cursors(tmp_path: Path) -> None:
+    path = tmp_path / "db"
+    query = descriptor(limit=1)
+    query["windows"] = [
+        {**query["windows"][0], "section": "settled", "owner": None, "child_filter": "all"}
+    ]
+    with current_navigation_database(path) as conn:
+        activate(conn)
+        conn.execute("BEGIN")
+        for identity, created_at, updated_at in (("a", 10, 100), ("b", 20, 200)):
+            add_parent(conn, identity)
+            conn.execute(
+                "UPDATE managers SET settled=1,created_at=?,updated_at=? WHERE id=?",
+                (created_at, updated_at, identity),
+            )
+        conn.commit()
+        before, content = read_content(conn, query, current=True)
+        old_anchor = content["windows"][0]["next"]
+    settled_section = section_key("settled", None)
+    # Reproduce the prior build's persisted wire shape and creation-time ranks.
+    with sqlite3.connect(path) as stale:
+        for identity, created_at in (("a", 10), ("b", 20)):
+            raw = json.loads(
+                stale.execute(
+                    "SELECT value FROM navigation_records WHERE kind='manager' AND id=?",
+                    (identity,),
+                ).fetchone()[0]
+            )
+            del raw["updated_at"]
+            stale.execute(
+                "UPDATE navigation_records SET value=? WHERE kind='manager' AND id=?",
+                (json.dumps(raw), identity),
+            )
+            stale.execute(
+                "UPDATE navigation_view_memberships SET rank=? WHERE section_key=? AND id=?",
+                (created_at, settled_section, identity),
+            )
+    with prepared_navigation_database(path) as prepared:
+        assert {
+            row[0]
+            for row in prepared.execute(
+                "SELECT rank FROM navigation_view_memberships WHERE section_key=?",
+                (settled_section,),
+            )
+        } == {10, 20}
+    with current_navigation_database(path) as reopened:
+        after, content = read_content(reopened, query, current=True)
+        assert after["epoch"] != before["epoch"]
+        assert [row["id"] for row in content["windows"][0]["members"]] == ["b"]
+        assert (
+            next(row for row in content["records"] if row["kind"] == "manager")["value"][
+                "updated_at"
+            ]
+            == 200
+        )
+        stale_query = {**query, "windows": [{**query["windows"][0], "anchor": old_anchor}]}
+        _, rebased = read_content(reopened, cast(ViewRequest, stale_query), current=True)
+        assert rebased["windows"][0]["request"]["anchor"] is None
+        assert rebased["windows"][0]["members"] == content["windows"][0]["members"]
+
+
 def test_indexed_windows_counts_and_scope_eviction_are_atomic(tmp_path: Path) -> None:
     with current_navigation_database(tmp_path / "db") as conn:
         activate(conn)
@@ -252,7 +513,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         assert footprint == {"globals": False, "keys": [], "sections": []}
         common = {
             "wire_version": 3,
-            "projection_version": 3,
+            "projection_version": 4,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -346,7 +607,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         runtime = ScopedDeliveryRuntime(host.delivery)
         query = descriptor(selected="t")
         current, access = asyncio.run(runtime.snapshot(query))
-        assert current["projection_version"] == 3
+        assert current["projection_version"] == 4
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
@@ -357,7 +618,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
             asyncio.run(runtime.snapshot(query, captured=captured))
         degraded, _ = asyncio.run(runtime.snapshot(query))
         assert degraded["mode"] == "degraded"
-        assert degraded["projection_version"] == 3
+        assert degraded["projection_version"] == 4
         assert degraded["authority"]["permit"] is None
         assert degraded["content"]["counts"]["running_conversations"] is None
         assert degraded["content"]["counts"]["unread"] == 1
@@ -406,7 +667,7 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
             for owner in ("o000", "o001", "o002")
         )
         _, lean = read_content(conn, query, current=True)
-        expected_fields = {"title", "created_at", "settled", "conversation_id"}
+        expected_fields = {"title", "created_at", "updated_at", "settled", "conversation_id"}
         managers = [row for row in lean["records"] if row["kind"] == "manager"]
         assert len(managers) == 60
         assert all(set(row["value"]) == expected_fields for row in managers)
@@ -547,7 +808,8 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
             assert refused["windows"][1]["total"] == 1
             assert not any(row["kind"] in ("project", "address") for row in refused["records"])
             assert all(
-                set(row["value"]) == {"title", "created_at", "settled", "conversation_id"}
+                set(row["value"])
+                == {"title", "created_at", "updated_at", "settled", "conversation_id"}
                 for row in refused["records"]
                 if row["kind"] == "manager"
             )
@@ -556,7 +818,7 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
 def test_scoped_request_refuses_the_retired_projection() -> None:
     query = descriptor(limit=0)
     with pytest.raises(ValueError, match="invalid view generation"):
-        request({**query, "projection_version": 1})
+        request({**query, "projection_version": 3})
 
 
 def test_byte_budget_shrinks_pages_fairly_and_overlap_keeps_cursor_neighbors(

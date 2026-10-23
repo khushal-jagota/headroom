@@ -9,7 +9,8 @@ cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Models/*.swift \
   ios/Panels/Features/More/Usage/UsageModels.swift \
   ios/Panels/Features/More/VPS/VPSModels.swift \
   ios/Panels/Features/More/Settings/SettingsModels.swift "$build/Sources/Panels/"
-cp ios/PanelsTests/SystemScreenTests.swift "$build/Tests/PanelsTests/"
+cp ios/Panels/Features/Orchestrator/Logic/WorkerGroups.swift ios/Panels/Features/Workspace/Logic/WorkspaceGrouping.swift "$build/Sources/Panels/"
+cp ios/PanelsTests/SyncMainTests.swift ios/PanelsTests/SystemScreenTests.swift "$build/Tests/PanelsTests/"
 cat > "$build/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.0
 import PackageDescription

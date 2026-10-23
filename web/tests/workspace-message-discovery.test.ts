@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { workspaceChildMessageConversations, workspaceMessageConversations, workspaceSettledUnreadCount, workspaceUnreadConversationCount, workspaceMessageIndex } from "../src/lib/workspaceMessageDiscovery";
-import { buildWorkspaceRail, workspaceRailChildMessageConversations } from "../src/lib/workspaceRail";
+import { buildWorkspaceRail } from "../src/lib/workspaceRail";
 import type { BoardCard, BoardManager, ChiefManagementSettings, ManagerWorkspaceTicket } from "../src/lib/types";
 
 const quiet = { awaiting_reply:false, awaiting_answer:false, awaiting_approval:false,
@@ -11,7 +11,7 @@ const card = (id:string, values:Partial<BoardCard> = {}): BoardCard & ManagerWor
   ...values
 } as BoardCard & ManagerWorkspaceTicket);
 const item = (id:string, values:Partial<BoardManager> = {}): BoardManager => ({
-  ...quiet, id, title:id, recap:"",recap_preview:"", created_at:1, conversation_id:`manager-${id}`,
+  ...quiet, id, title:id, recap:"",recap_preview:"", created_at:1, updated_at:1, conversation_id:`manager-${id}`,
   ticket_rollup:quiet, tickets:[], ...values
 });
 const chief = (values:Partial<ChiefManagementSettings> = {}):ChiefManagementSettings => ({
@@ -48,42 +48,6 @@ describe("exact unread conversation discovery", () => {
     expect(workspaceUnreadConversationCount(rows)).toBe(4);
     expect(workspaceMessageConversations(rows.map((row) => ({ ...row, awaiting_reply:false })), []))
       .toEqual([]);
-  });
-
-  it("excludes backlog from settled sidebar Messages while preserving global discovery", () => {
-    const saved = card("saved", {is_backlogged:true, awaiting_reply:true, manager_id:"parent"});
-    const fallback = card("fallback", {is_backlogged:true, awaiting_reply:true});
-    const ordinary = card("ordinary", {awaiting_reply:true, manager_id:"parent"});
-    const parent = item("parent", {settled:true, tickets:[{...saved,is_backlogged:false},fallback,ordinary]});
-    const cards = [saved,ordinary];
-    const rows = workspaceMessageConversations(cards,[parent]);
-    expect(rows.map((row) => row.id)).toEqual(["saved","ordinary","fallback"]);
-    expect(workspaceChildMessageConversations(rows,parent,cards).map((row) => row.id))
-      .toEqual(["saved","fallback","ordinary"]);
-    expect(workspaceRailChildMessageConversations(rows,parent,cards).map((row) => row.id)).toEqual(["ordinary"]);
-    const noChild = {...parent,tickets:[]};
-    expect(workspaceRailChildMessageConversations(rows,noChild,cards).map((row) => row.id))
-      .toEqual(["ordinary","fallback"]);
-    // A canonical resume wins over a stale backlogged child, including fallback index rows.
-    const resumed = {...saved,is_backlogged:false};
-    expect(workspaceRailChildMessageConversations(rows,{...parent,tickets:[saved,fallback]},[resumed])
-      .map((row) => row.id)).toEqual(["saved","ordinary"]);
-    // A same-conversation alias cannot reintroduce a backlogged child.
-    const alias = {...fallback,conversation_id:ordinary.conversation_id};
-    expect(workspaceRailChildMessageConversations(rows,{...parent,tickets:[alias,ordinary]},cards)
-      .map((row) => row.id)).toEqual(["ordinary"]);
-  });
-
-  it("retains an eligible alias when backlog is the global unread representative", () => {
-    const saved = card("saved", {is_backlogged:true, awaiting_reply:true, manager_id:"parent",conversation_id:"shared"});
-    const ordinary = card("ordinary", {awaiting_reply:true, manager_id:"parent",conversation_id:"shared"});
-    const parent = item("parent", {settled:true,tickets:[saved,ordinary]});
-    const rows = workspaceMessageConversations([saved,ordinary],[parent]);
-    expect(rows.map((row) => row.id)).toEqual(["saved"]);
-    const index=workspaceMessageIndex(rows,[saved,ordinary]);
-    expect(workspaceRailChildMessageConversations(rows,parent,[saved,ordinary],index).map((row) => row.id))
-      .toEqual(["ordinary"]);
-    expect(rows.map((row) => row.id)).toEqual(["saved"]);
   });
 
   it("never invents unread from ask, approval, child rollups, error or incomplete conversation identity", () => {

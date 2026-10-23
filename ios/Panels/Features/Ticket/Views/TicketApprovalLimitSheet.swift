@@ -15,7 +15,7 @@ struct TicketApprovalLimitSheet: View {
         self.save = save
         self.approval = approval
         _ceiling = State(initialValue: approval ? (presentation.manifest.advance?[presentation.ticket.stage] ?? presentation.ticket.ceiling) : presentation.ticket.ceiling)
-        _holder = State(initialValue: presentation.ticket.ceilingHolder)
+        _holder = State(initialValue: presentation.holders.contains(presentation.ticket.ceilingHolder) ? presentation.ticket.ceilingHolder : Principal(kind: "owner", id: "owner"))
     }
 
     var body: some View {

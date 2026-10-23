@@ -34,6 +34,8 @@ from tests.support.probe import (
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
+from planner.core import authority
+from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -169,12 +171,16 @@ def _propose(client: TestClient, ticket_id: str, body: str) -> None:
 
 
 
-def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> None:
+def test_proposal_route_accepts_only_the_ticket_own_worker(
+    app_db: AppDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
     app, db_path = app_db
     with TestClient(app) as client:
         target = _create(client, "coding")
-        parent = _create(client, "coding")
+        parent = _create(client, "probe")
         unrelated = _create(client, "coding")
+        # Even a declared reviewer cannot file another Ticket's own proposal.
+        monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "probe", (authority.ticket(target),))
         scoped = client.post(
             f"/api/tickets/{target}/accept/brief",
             json={

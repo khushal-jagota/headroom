@@ -34,6 +34,11 @@ describe("message-specific settlement", () => {
     expect(recordedMessageFateSentence([event], "queued", null)).toBe(`not delivered · ${detail}`);
   });
 
+  it("reports intentional suppression with its reason", () => {
+    expect(fateSentence({ fate: "suppressed", reason: "proposal_revision_changed" }))
+      .toBe("not sent · proposal_revision_changed");
+  });
+
   it("provides a readable model refusal before its persisted detail arrives", () => {
     expect(fateSentence({ fate: "refused", refusal_reason: "model_resolution_failed" }))
       .toBe("not delivered · the selected model could not be resolved");

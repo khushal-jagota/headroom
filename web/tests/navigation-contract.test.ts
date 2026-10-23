@@ -11,7 +11,7 @@ describe('canonical browser protocol boundary', () => {
       is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,
       proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
     const manager={kind:'manager',id:'o',value:{title:'Manager',recap:'Manager recap',recap_preview:'Manager recap',project_id:'p',
-      created_at:3,settled:false,conversation_id:null}};
+      created_at:3,updated_at:4,settled:false,conversation_id:null}};
     const parse=(records:unknown[])=>parseSnapshotResponse({wire_version:WIRE_VERSION,mode:'current',authority:authority('navigation'),cursor:encodeCursor(continuity),
       snapshot:{...continuity,records},proof:null});
     expect(parse([ticket,manager]).snapshot.records).toHaveLength(2);
@@ -21,7 +21,7 @@ describe('canonical browser protocol boundary', () => {
       const value: Record<string,unknown>={...ticket.value};delete value[field];
       expect(()=>parse([{...ticket,value}])).toThrow();
     }
-    for (const field of ['created_at','recap','recap_preview']) {
+    for (const field of ['created_at','updated_at','recap','recap_preview']) {
       const value: Record<string,unknown>={...manager.value};delete value[field];
       expect(()=>parse([{...manager,value}])).toThrow();
     }

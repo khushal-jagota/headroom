@@ -44,8 +44,10 @@ One screen per part of the system:
   Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty
   group. Done, Backlog, and Blocked stay outside this list, even if they carry
   attention facts. Unread alone does not change a row’s category, order, or tone.
-  The rail omits the Messages group. The sidebar preserves all facts, global unread
-  discovery, and the shared classifier on other surfaces.
+  The rail and complete Manager and Chief pages use one work grouping rule and initial
+  ticket order. Classification ignores unread replies; original records and unread
+  counts remain intact. The sidebar applies its own exclusions before grouping.
+  Global Messages keeps its separate reply classification and discovery.
 
   Attention rows are bright. Ongoing rows and their working spinners are dim.
   Unread message dots stay bright and take precedence over working spinners.
@@ -93,15 +95,31 @@ One screen per part of the system:
   only the ask remains.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
-  moves take 360–560 milliseconds according to distance. A new row opens space before
+  moves without a card size change take 360–560 milliseconds according to distance. A new row opens space before
   its fade. An exit fades before its space closes. Each moving surface uses its effective
   background before motion starts. Its opaque edge uses the surrounding background,
   so an active row keeps its shape. Selected cards keep their accent border through motion.
   The travelling row and its card stay above their neighbors. Row and spinner colors blend
   across group changes. Structural updates wait while a pointer rests on a Worker row.
   Exact conversation signals and their conversation IDs stay live during that wait.
+  Each card sits in a nonvisual slot. When a surviving card changes height, its slot
+  reserves the final space. The real card border and neighboring positions share one
+  340 millisecond beat, including header changes without new Workers. Text keeps its
+  natural size, and rows travel without clipping. Temporary heights clear after the
+  beat, cancellation, reduced motion, or controller disposal.
   Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
   animation and scripted travel, including travel already in progress.
+
+  Active rail pages restore a visible row only after an explicit page request.
+  The requested cursor, direction, and anchor stay with that request. Publication
+  identity and window metadata travel with the displayed rows through the motion queue.
+  Restoration waits for that rendered page and checks its displayed membership.
+  It runs before the controller measures final geometry, without a later restore callback.
+  When parent and card requests share a scroller, an eligible parent goes first.
+  The card retains its request for the next measured phase. Missing anchors retire
+  their requests. Scripted restoration resets every action's scroll baseline.
+  Ordinary rail updates do not restore scroll. Native wheel, touch, and keyboard
+  navigation remain available. Settled and ManagerChildren keep their existing policy.
 
   The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
   pixels with a pointer or arrow keys. Double click resets it. The preference persists
@@ -112,6 +130,8 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+  Both lists scroll vertically only. Long Settled titles and rail project labels wrap
+  within their available width, with room for the Reopen and Settle controls.
   Manual fold toggles respond immediately, independently of queued rail updates. Height,
   chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
   another row arrival animation. The section resizes from its visible height when those
@@ -128,6 +148,13 @@ One screen per part of the system:
   Manual fold requests bypass that structural queue. Coherent settled page updates
   do not restart the chevron or body fade. The latest manual choice wins during rapid reversal.
 
+  Manager and Chief pages give Tickets blocked by dependencies or by their status a distinct
+  Blocked header.
+  Backlog and owner approval, answer, and assignment retain precedence; Blocked wins
+  over worker errors, ongoing work, and closeout fallback. A dependency can block an
+  Agent Ticket even while its conversation is idle. Removing the dependency restores
+  ordinary grouping unless its status still says blocked. Blocked keeps its existing
+  group order before Done. Group collapse choices remain presentation rules.
   Manager pages show active groups first, then Backlogged and Done headers.
   Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
   including completed Tickets that retain a backlog flag. Both headers start closed.
@@ -245,7 +272,7 @@ One screen per part of the system:
   Chief keeps an editable recap in its managed settings, through the same header control.
   Chief cannot settle and has no Project or parent navigation.
 - **Chief children** — the Chief and ordinary Managers show one scoped Worker list.
-  Active groups stay visible. Backlogged and Done have independent collapsible headers.
+  Active groups stay visible. Backlogged, Blocked, and Done have independent collapsible headers.
   Each Chief section retains its own bounded pages and reader choices. Ordinary
   managers retain exact group counts and independent reader choices. Open groups
   request bounded scrolling windows; closed groups request counts without row bodies.
@@ -323,13 +350,21 @@ share.
 
 The root document carries the deployed app SHA that booted the browser. The browser
 checks `/api/meta` without cache reuse when it loads and when a retained page resumes.
-If the server reports a different SHA, Panels shows an **Update now** action. Panels
-never reloads for a new release without that action.
+If the server reports a different SHA, the deploy status card reads **New version
+ready** with an **Update** action. Panels never reloads for a new release without that
+action.
+
+The card is one slot with one occupant, because the deploy it narrates is what produces
+the release. A failed deploy shows **Problem** and displaces the update, since a rolled
+back release still differs from the booted one. Otherwise a waiting update outranks
+Deploying, Deployed and Reconnecting. One monitor serves the whole app, so the card
+reports the same update at both breakpoints.
 
 Conversation composers publish `panels:composition-state` on `document`, with an
 `active` boolean. If the user requests an update during active composition, Panels
-waits. It checks the server identity again when composition becomes inactive, then
-applies the requested update. The push-only service worker and its subscription remain
+waits, and the card reads **Update applies when this message is safe**. It checks the
+server identity again when composition becomes inactive, then applies the requested
+update. The push-only service worker and its subscription remain
 in place across this page reload.
 
 **Usage** at `#/backends` offers Tokens, Cost, Limits, and Config as tabs. The explicit
@@ -551,8 +586,9 @@ or locale produces identical arbitrary-text ordering.
   file clicked inside either reading area does not go to the preview address. The screen catches the click
   and draws the file over its own reading area, with a strip carrying the file's name and
   a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
-  back the page the reader left, and the conversation keeps its own section at the bottom
-  of the page — the artifact and the worker are on screen together, which is the point.
+  back the page the reader left. The conversation floats above the artifact. An outer
+  artifact scroller adds clearance below its original-height reader, including framed
+  HTML and PDF files, without changing file bytes or the frame's own scrolling.
   An opened conversation is the whole page, so opening a file steps it back to peeked.
   Escape closes the file. This is the same on every screen width. A click asking for a
   new tab or window is left alone. On the Workspace the open file rides in the address
@@ -712,7 +748,7 @@ hand-rolling the same shapes per screen. Each does one job:
   one line above it saying what happened last — whoever produced it, so your own message
   can be that line, and so can a request waiting on you. Clicking the input **peeks** it
   open: a card over the page, with the line gone because the transcript now says the same
-  thing. A control takes it **opened**, the full height of the page, and the same control
+  thing. A control takes it **opened**, the available visible height of the pane, and the same control
   brings it back. Clicking the ticket behind it, or pressing Escape, drops it one state.
 
   Three things are true of all three. Nothing moves it but a person — a request arriving
@@ -722,6 +758,29 @@ hand-rolling the same shapes per screen. Each does one job:
   screens. A move between peeked and opened keeps the reader's place in the transcript.
   Reopening from rest lands on the newest unanswered request or the end of the conversation.
   Every state keeps whatever the person had half-typed.
+
+  The title and document text define one channel: at most 720px wide, with 24px
+  margins when the pane is narrower. The card's outer edges start and end on that
+  channel, including in Chief and Manager panes. The card keeps its own inner text
+  padding. Its horizontal bounds follow the document's client area so a native
+  scrollbar cannot shift it away from the title. The document retains its full height
+  beneath the card in all three states.
+  Peeked uses 60% of its host pane (52% for a short landscape Ticket); opened fits between
+  the pane's top and bottom gaps. The host intersects its own rectangle with the browser's
+  visual viewport, including keyboard displacement, and bounds the card within it.
+  Oversized composer questions and held prompts scroll inside the card. A composer
+  becomes scrollable when its contents exceed its bounded height by more than one CSS
+  pixel. Ordinary catalog, attachment, and run menus retain their floating placement,
+  with their height limited to the visible space above the composer. If an open menu
+  cannot fit one control target plus the top gap there, it joins the composer's scroll
+  flow instead. This keeps its choices reachable on a reduced keyboard viewport.
+  Keyboard activation of a run-picker rail action first focuses its option list. An
+  action that removes its own button therefore keeps the picker open. Escape returns
+  focus to the stable picker trigger.
+  Document and
+  artifact scrollers gain trailing space equal to the largest measured card clearance
+  during that host visit. Collapsing retains that blank space so it cannot clamp the
+  reader's scroll position. Uncovered document space above the card remains clickable.
 
   The Chief and ordinary Managers share one layout with this layer and the same
   outside-click dismissal. Dismissal uses the start of a primary pointer gesture.
