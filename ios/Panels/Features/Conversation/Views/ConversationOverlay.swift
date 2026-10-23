@@ -112,10 +112,6 @@ struct ConversationOverlay: ViewModifier {
             if let error = model.error ?? speech.error {
                 Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error).padding(.horizontal, PanelsTheme.Space.lg)
             }
-            if !preview, let id = model.conversationID {
-                DeploymentInterruptionsView(conversationID: id)
-                    .padding(.horizontal, PanelsTheme.Space.lg)
-            }
             composer.disabled(preview)
         }.foregroundStyle(PanelsTheme.text)
     }

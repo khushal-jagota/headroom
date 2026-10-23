@@ -424,11 +424,7 @@ The server now derives notification attention from current external requests and
 suppresses obsolete internal review notices; iOS continues to read those facts.
 
 Deployed appears only while both `valid_until` and `success_display_until` are
-usable and in the future, with a connected stream. More retains the deployment
-interruption account after status expiry. The same account appears in the relevant
-conversation. Missing evidence is shown as unavailable. Restart Worker is manual
-and offered only when the server says it is eligible; queued restart never claims
-resumption. Removed conversations have no link. No automatic replay was added.
+usable and in the future, with a connected stream.
 
 Dependency-blocked workers take precedence over Agent and Errored on complete
 worker pages; Workspace continues to exclude blocked work. Loaded settled rows
@@ -439,9 +435,11 @@ reload prompts have no native counterpart. The shared conversation still uses
 native scrolling; Latest refreshes its newest page before placement, and opening
 the card does not permanently enlarge the page's reserved bottom space.
 
-`SyncMainTests` adds three host checks: independent success deadlines (old coverage
+`SyncMainTests` contains two host checks: independent success deadlines (old coverage
 had one deadline), blocked Agent classification (old coverage checked rail exclusion
-only), and the interruption GET/manual restart wire path with queued versus resumed
-wording (a new API boundary). They reuse the existing host package, decoder and
-URLProtocol pattern, with no connected host. The conversation host test adds the
-new suppressed fate so it cannot be mistaken for uncertain delivery or retried.
+only). They reuse the existing host package and decoder, with no connected host.
+The conversation host test adds the new suppressed fate so it cannot be mistaken for uncertain delivery or retried.
+
+The iOS app no longer displays interruption accounts or manual worker restart in
+More or conversations, and no longer requests the interruption endpoint. The
+remaining deployment status decoding does not require interruption fields.
