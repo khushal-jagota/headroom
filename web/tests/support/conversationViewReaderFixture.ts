@@ -1,7 +1,6 @@
 /** A finite indexed-page transport for browser lifecycle and scroll admission checks. */
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
-export function installConversationViewReaderFixture():void {
-  const id='bounded-reader';
+export function installConversationViewReaderFixture(id='bounded-reader'):void {
   const ownerWidth=new URLSearchParams(location.search).get('owner-width');
   const widthBody=JSON.stringify({kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:1,content:[{piece:'text',text:'Short prompt.'}]});
   let releaseOwnerBody: (()=>void)|null=null;
@@ -89,17 +88,46 @@ export function installConversationViewReaderFixture():void {
     const position=(n:number):ViewPageCursor=>({projection_version:1,lens,scope:{kind:'timeline',key:null},order:{sequence:n,slot:0}});
     return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope:{kind:'timeline',key:null},items,older:start>1?position(start):null,newer:end<sequence?position(end):null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
   }
+  // Gates model a cancellable transport, so superseding history can release the
+  // existing serialized reader queue. Forward recovery stays blocked until the
+  // destination proof explicitly releases it.
+  const latestProbe = {
+    holdHistory: false, holdLatest: false, blockForward: false,
+    historyWaiting: 0, latestWaiting: 0, forwardWaiting: 0,
+    latestResponses: 0,
+    releaseHistory: () => {}, releaseLatest: () => {}, releaseForward: () => {},
+  };
+  (window as any).__latestProbe = latestProbe;
+  async function gate(kind: 'history'|'latest'|'forward', signal?: AbortSignal|null): Promise<void> {
+    const waiting = `${kind}Waiting` as const;
+    latestProbe[waiting] += 1;
+    await new Promise<void>((resolve, reject) => {
+      const finish = () => {signal?.removeEventListener('abort', abort); resolve();};
+      const abort = () => {signal?.removeEventListener('abort', abort); reject(new DOMException('Aborted', 'AbortError'));};
+      latestProbe[kind === 'history' ? 'releaseHistory' : kind === 'latest' ? 'releaseLatest' : 'releaseForward'] = finish;
+      if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, {once:true});
+    });
+  }
   const originalFetch=window.fetch;
   window.fetch=async(input,init)=>{
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,location.origin);
+    if(url.pathname==='/api/conversation/backends')return Response.json({backends:[]});
     if(ownerWidth&&url.pathname.endsWith('/view/body/content'))return ownerWidth==='immediate'?new Response(widthBody):await new Promise<Response>(resolve=>{releaseOwnerBody=()=>resolve(new Response(widthBody));});
     if(expiry&&url.pathname.endsWith('/view/body/content')&&deferredExpired)return Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410});
     if(expiry&&url.pathname.endsWith('/view/body/content'))return await new Promise<Response>(resolve=>{completeBody=()=>resolve(new Response(delayedBody));});
     if(expiry&&url.pathname.endsWith('/events/2/detail'))return expired?Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410}):Response.json({detail:'Cached whole diagnostic'});
     if(folds&&url.pathname.endsWith('/view/body/content'))return new Response(deferredOwner);
     if(visual&&url.pathname.endsWith('/view/body/content'))return new Response(JSON.parse(url.searchParams.get('reference')!).body_id==='completed:13'?deferredEndingText:liveText);
-    if(url.pathname.endsWith('/view/pages'))return Response.json(page(url));
+    if(url.pathname.endsWith('/view/pages')) {
+      const cursored=url.searchParams.has('cursor');
+      if(cursored && url.searchParams.get('direction')==='newer' && latestProbe.blockForward)
+        await gate('forward', init?.signal);
+      else if(cursored && latestProbe.holdHistory) await gate('history', init?.signal);
+      else if(!cursored && latestProbe.holdLatest) await gate('latest', init?.signal);
+      if(!cursored) latestProbe.latestResponses += 1;
+      return Response.json(page(url));
+    }
     if(url.pathname.endsWith('/view/receipts'))return Response.json({conversation_id:id,coverage:{through_sequence:sequence},receipts:[]});
     if(url.pathname.endsWith('/owner-read'))return Response.json({owner_read_through_sequence:JSON.parse(String(init?.body)).through_sequence});
     return Response.json({conversation_id:id,backend_key:'codex',supports_steer:true,model:null,reasoning_effort:null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:sequence,is_running:false,held_prompts:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});

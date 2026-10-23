@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { conversationOverlay } from "../lib/conversation/layout/overlay";
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
   import { isPrimaryPressOutsideConversation } from "../lib/conversation/dismissal";
@@ -26,7 +27,7 @@
 
 </script>
 
-<div class={`manager-page ${className}`} {...attributes}>
+<div use:conversationOverlay class={`manager-page ${className}`} {...attributes}>
   <div class="manager-reading">
     <!-- Links keep their keyboard behavior. The host only redirects plain file clicks. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -43,5 +44,5 @@
 
 <style>
   .manager-doc { scrollbar-gutter:auto; }
-  .manager-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }
+  .manager-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; }
 </style>

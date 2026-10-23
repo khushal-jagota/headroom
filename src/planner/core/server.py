@@ -22,6 +22,7 @@ from planner.conversation.api import router as conversation_router
 from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import ConversationBackendKey, ConversationSystem
+from planner.conversation.deploy_interruptions.api import router as deploy_interruptions_router
 from planner.conversation.history.api import router as conversation_history_router
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
@@ -319,6 +320,7 @@ def create_app(
 
     for domain_router in (
         tickets_router,
+        deploy_interruptions_router,
         ticket_workspace_router,
         resource_versions_router,
         artifact_catalog_router,

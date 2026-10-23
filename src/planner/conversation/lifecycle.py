@@ -41,6 +41,7 @@ class LifecycleStatus(StrEnum):
     injected = "injected"
     accepted = "accepted"
     refused = "refused"
+    suppressed = "suppressed"
     unknown = "unknown"
     completed = "completed"
     failed = "failed"

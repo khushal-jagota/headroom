@@ -92,6 +92,7 @@ def classify_conversation(
             LifecycleStatus.injected,
             LifecycleStatus.accepted,
             LifecycleStatus.refused,
+            LifecycleStatus.suppressed,
         },
     }
     for fact in source.lifecycle_facts:

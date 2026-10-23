@@ -9,6 +9,7 @@ from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
     PromptDeliveryRefused,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
@@ -153,6 +154,13 @@ async def _deliver(
                 mode=PromptDeliveryMode.queue,
                 reply_requested=False,
             )
+    if isinstance(delivered.fate, PromptDeliverySuppressed):
+        _LOG.info(
+            "review transfer notice suppressed (ticket=%s reason=%s)",
+            ticket_id,
+            delivered.fate.reason,
+        )
+        return
     if isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliveryUncertain)):
         _LOG.warning(
             "review transfer notice did not reach its holder (ticket=%s, fate=%s)",

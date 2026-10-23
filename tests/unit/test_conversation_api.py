@@ -15,6 +15,7 @@ import base64
 import json
 import zlib
 from collections.abc import Callable, Coroutine, Iterator, MutableMapping
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,11 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.runtime_composition import (
+    SignalRuntimeComposition,
+    bind_admission,
+    transaction_control,
+)
 from planner.conversation.snapshot import (
     BackendSnapshotService,
     CommandOutcome,
@@ -296,9 +302,25 @@ async def _no_codex_to_ask(codex_executable: str) -> CodexModelCatalog:
 class _Harness:
     """The real router over the real system, with a fake backend and a fake machine."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        signal_composition: SignalRuntimeComposition | None = None,
+        cleanup: AsyncExitStack | None = None,
+    ) -> None:
         self.db_path = db_path
-        self.store = ConversationStore(str(db_path))
+        self.store = ConversationStore(
+            str(db_path),
+            signal_coordinator=(
+                None if signal_composition is None else signal_composition.coordinator
+            ),
+            bind_signal_admission=None if signal_composition is None else bind_admission,
+            runtime_reconciliation_admission=(
+                None if signal_composition is None else signal_composition.initialization
+            ),
+            transaction_control_guard=None if signal_composition is None else transaction_control,
+        )
         self.live_tail = ConversationLiveTail()
         self.backends: dict[str, _FakeBackend] = {}
         self.machine = _FakeMachine()
@@ -310,7 +332,20 @@ class _Harness:
                 backend_key: self._make_child for backend_key in ConversationBackendKey
             },
             live_tail=self.live_tail,
+            runtime_ownership=None if signal_composition is None else signal_composition.ownership,
         )
+        if cleanup is not None:
+
+            async def shutdown_constructed_runtime() -> None:
+                runtime = getattr(self, "runtime", None)
+                if runtime is None:
+                    await self.system.shutdown()
+                else:
+                    await runtime.shutdown()
+
+            cleanup.push_async_callback(shutdown_constructed_runtime)
+        if signal_composition is not None:
+            signal_composition.transfer_ownership()
         self.runtime = ConversationRuntime(
             store=self.store,
             system=self.system,
@@ -1374,3 +1409,12 @@ def test_legacy_sparse_events_report_real_edges_and_expired_details(harness: _Ha
                 assert name == COMMITTED_EVENT_STREAM_NAME and event["sequence"] == 3
 
     _run(exercise)
+
+
+def test_suppressed_fate_keeps_its_reason_at_the_http_boundary() -> None:
+    from planner.conversation.api import delivery_fate_json
+    from planner.conversation.contracts import PromptDeliverySuppressed
+
+    assert delivery_fate_json(PromptDeliverySuppressed("proposal_revision_changed")) == {
+        "fate": "suppressed", "reason": "proposal_revision_changed"
+    }

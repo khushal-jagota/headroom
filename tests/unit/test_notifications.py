@@ -11,7 +11,20 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation import storage as conversation_storage
-from planner.conversation.events import MessageToOwnerEventPayload
+from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.events import (
+    ConversationEventPayload,
+    ConversationTurnEnding,
+    MessageToOwnerEventPayload,
+    PermissionAnsweredEventPayload,
+    PermissionAskedEventPayload,
+    PromptEventPayload,
+    TurnEndedEventPayload,
+    UserInputAnsweredEventPayload,
+    UserInputFailedEventPayload,
+    UserInputRequestedEventPayload,
+    conversation_event_payload_to_canonical_json,
+)
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core.clock import TestClock as MutableClock
@@ -186,6 +199,7 @@ def test_conversation_event_and_attention_edge_roll_back_together(
     def fail_before_commit(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("forced rollback")
 
+    original_commit = conversation_storage._commit_appended_rows
     monkeypatch.setattr(conversation_storage, "_commit_appended_rows", fail_before_commit)
 
     async def exercise() -> None:
@@ -213,6 +227,44 @@ def test_conversation_event_and_attention_edge_roll_back_together(
             is None
         )
 
+    async def exercise_ending() -> None:
+        monkeypatch.setattr(conversation_storage, "_commit_appended_rows", original_commit)
+        await store.append_event("c_split", _request_payload(True, "active"))
+        monkeypatch.setattr(conversation_storage, "_commit_appended_rows", fail_before_commit)
+        ending = (TurnEndedEventPayload(ending=ConversationTurnEnding.interrupted),)
+        with pytest.raises(RuntimeError, match="forced rollback"):
+            await store.append_turn_ending(
+                "c_split", ending, agent_activity=False,
+                automatic_compaction_confirmed=False, automatic_compaction_result=None,
+            )
+        with closing(connect(str(db_path))) as verify:
+            assert [row[0] for row in verify.execute(
+                "SELECT kind FROM conversation_events ORDER BY sequence"
+            )] == ["permission_asked"]
+            row = verify.execute(
+                "SELECT active,generation FROM notification_attention_state "
+                "WHERE subject_id=? AND notification_type='awaiting_answer'", (ticket.id,),
+            ).fetchone()
+            assert tuple(row) == (1, 1)
+
+        monkeypatch.setattr(conversation_storage, "_commit_appended_rows", original_commit)
+        await store.append_turn_ending(
+            "c_split", ending, agent_activity=False,
+            automatic_compaction_confirmed=False, automatic_compaction_result=None,
+        )
+        with closing(connect(str(db_path))) as verify:
+            assert [row[0] for row in verify.execute(
+                "SELECT kind FROM conversation_events ORDER BY sequence"
+            )] == ["permission_asked", "turn_ended"]
+            row = verify.execute(
+                "SELECT active,generation FROM notification_attention_state "
+                "WHERE subject_id=? AND notification_type='awaiting_answer'", (ticket.id,),
+            ).fetchone()
+            assert tuple(row) == (0, 1)
+            assert _edges(verify, ticket.id) == [("awaiting_answer", 1)]
+
+    asyncio.run(exercise_ending())
+
 
 def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
     tmp_path: Path,
@@ -236,54 +288,168 @@ def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
     conn.close()
 
 
-def test_attention_snapshot_preserves_messages_asks_answers_reads_and_failures(
-    tmp_path: Path,
+def _request_payload(
+    permission: bool, request_id: str
+) -> PermissionAskedEventPayload | UserInputRequestedEventPayload:
+    if permission:
+        return PermissionAskedEventPayload(
+            ask_id=request_id, title="Allow?", detail=None, options=()
+        )
+    return UserInputRequestedEventPayload(request_id=request_id, questions=())
+
+
+def _prompt() -> PromptEventPayload:
+    return PromptEventPayload(
+        content=text_message_content("continue"),
+        sender_label="owner",
+        mode=PromptDeliveryMode.queue,
+    )
+
+
+@pytest.mark.parametrize("ending", list(ConversationTurnEnding))
+def test_attention_request_lifetime_matches_all_projections(
+    tmp_path: Path, ending: ConversationTurnEnding
 ) -> None:
-    conn = connect(str(tmp_path / "snapshot.db"))
-    create_schema(conn)
-    ticket = _ticket(conn, 1)
-    _conversation_on_a_ticket(conn, ticket.id)
-    events: tuple[tuple[str, dict[str, str]], ...] = (
-        ("permission_asked", {"ask_id": "ask-1"}),
-        ("permission_asked", {"ask_id": "ask-2"}),
-        ("permission_answered", {"ask_id": "ask-1"}),
-        ("user_input_requested", {"request_id": "question-1"}),
-        ("user_input_answered", {"request_id": "unrelated"}),
-        ("message_to_owner", {}),
-        ("prompt", {}),
-        ("turn_ended", {"ending": "failed"}),
-    )
-    for sequence, (kind, payload) in enumerate(events, start=1):
-        _conversation_event(conn, sequence, kind, json.dumps(payload))
-    conn.execute(
-        "UPDATE conversations SET owner_read_through_sequence=5 WHERE conversation_id='c_split'"
-    )
+    with closing(connect(str(tmp_path / "snapshot.db"))) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+        # Historical unrelated kinds remain readable without full payload decoding.
+        _conversation_event(conn, 1, "historical_unrelated_kind", "{}")
+        conn.execute(
+            "UPDATE conversations SET owner_read_through_sequence=1 "
+            "WHERE conversation_id='c_split'"
+        )
+        events: tuple[tuple[ConversationEventPayload, tuple[str, ...], tuple[str, ...]], ...] = (
+            (_request_payload(True, "ask-1"), ("ask-1",), ()),
+            (_request_payload(True, "ask-2"), ("ask-1", "ask-2"), ()),
+            (_request_payload(False, "input-1"), ("ask-1", "ask-2"), ("input-1",)),
+            (_request_payload(False, "input-2"), ("ask-1", "ask-2"), ("input-1", "input-2")),
+            (PermissionAnsweredEventPayload("unrelated", "yes"),
+             ("ask-1", "ask-2"), ("input-1", "input-2")),
+            (UserInputAnsweredEventPayload("unrelated", ()),
+             ("ask-1", "ask-2"), ("input-1", "input-2")),
+            (PermissionAnsweredEventPayload("ask-1", "yes"),
+             ("ask-2",), ("input-1", "input-2")),
+            (UserInputAnsweredEventPayload("input-2", ()), ("ask-2",), ("input-1",)),
+            (_request_payload(False, "input-3"), ("ask-2",), ("input-1", "input-3")),
+            (UserInputFailedEventPayload("input-3", "cannot present"), ("ask-2",), ("input-1",)),
+            (MessageToOwnerEventPayload(
+                content=text_message_content("status"),
+                sender=Principal(PrincipalKind.ticket, ticket.id),
+                recipient=OWNER_PRINCIPAL,
+                sender_label=ticket.title,
+            ), ("ask-2",), ("input-1",)),
+            (_prompt(), ("ask-2",), ("input-1",)),
+            (TurnEndedEventPayload(ending=ending), (), ()),
+        )
+        sequence = 1
+        for payload, permission_ids, input_ids in events:
+            sequence += 1
+            before = attention.conversation_attention_snapshot(conn, "c_split")
+            assert before is not None
+            incremental = attention.advance_conversation_attention(
+                before, (payload,), owner_read_through_sequence=1, occurred_at=sequence
+            )
+            _conversation_event(
+                conn, sequence, payload.kind, conversation_event_payload_to_canonical_json(payload)
+            )
+            snapshot = attention.conversation_attention_snapshot(conn, "c_split")
+            assert snapshot is not None
+            assert snapshot.pending_permission_ask_ids == frozenset(permission_ids)
+            assert snapshot.pending_user_input_request_ids == frozenset(input_ids)
+            assert incremental == snapshot.attention()
+            assert incremental == attention.conversation_attention(conn, "c_split")["c_split"]
+            if isinstance(payload, PromptEventPayload):
+                sequence += 1
+                _conversation_event(conn, sequence, "historical_unrelated_kind", "{}")
+                preserved = attention.conversation_attention_snapshot(conn, "c_split")
+                assert preserved is not None
+                assert preserved.pending_permission_ask_ids == frozenset(permission_ids)
+                assert preserved.pending_user_input_request_ids == frozenset(input_ids)
+                assert preserved.attention() == attention.conversation_attention(conn)["c_split"]
 
-    snapshot = attention.conversation_attention_snapshot(conn, "c_split")
-    assert snapshot is not None
-    assert snapshot.pending_permission_ask_ids == frozenset({"ask-2"})
-    assert snapshot.pending_user_input_request_ids == frozenset({"question-1"})
-    assert snapshot.attention() == attention.conversation_attention(conn, "c_split")["c_split"]
-    assert snapshot.attention() == attention.ConversationAttention(
-        unread_message=True,
-        pending_ask=True,
-        errored=True,
-        latest_sequence=8,
-        occurred_at=8,
-    )
-    conn.close()
+        assert incremental == attention.ConversationAttention(
+            unread_message=True,
+            pending_ask=False,
+            errored=ending is ConversationTurnEnding.failed,
+            latest_sequence=sequence,
+            occurred_at=sequence,
+        )
 
 
+@pytest.mark.parametrize("permission", [True, False], ids=["permission", "user-input"])
+def test_interrupted_request_allows_the_next_request_to_raise_one_edge(
+    tmp_path: Path, permission: bool
+) -> None:
+    db_path = tmp_path / "request-edges.db"
+    with closing(connect(str(db_path))) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+    store = ConversationStore(str(db_path), integer_now=lambda: 2)
+
+    async def exercise() -> None:
+        counts: list[int] = []
+
+        def capture_count() -> None:
+            with closing(connect(str(db_path))) as conn:
+                counts.append(len(_edges(conn, ticket.id)))
+
+        await store.append_delivered_prompt("c_split", prompt=_prompt(), model_change=None)
+        capture_count()
+        await store.append_event("c_split", _request_payload(permission, "first"))
+        capture_count()
+        await store.append_turn_ending(
+            "c_split", (TurnEndedEventPayload(ending=ConversationTurnEnding.interrupted),),
+            agent_activity=False, automatic_compaction_confirmed=False,
+            automatic_compaction_result=None,
+        )
+        capture_count()
+        await store.append_delivered_prompt("c_split", prompt=_prompt(), model_change=None)
+        capture_count()
+        await store.append_event("c_split", _request_payload(permission, "next"))
+        capture_count()
+        assert counts == [0, 1, 1, 1, 2]
+        with closing(connect(str(db_path))) as conn:
+            attention.capture_ticket_attention(conn, ticket.id, 3)
+            attention.capture_ticket_attention(conn, ticket.id, 4)
+            assert _edges(conn, ticket.id) == [("awaiting_answer", 1), ("awaiting_answer", 2)]
+
+    asyncio.run(exercise())
 
 
+def test_reconciliation_clears_stale_request_without_replaying_its_edge(tmp_path: Path) -> None:
+    db_path = tmp_path / "stale-attention.db"
+    with closing(connect(str(db_path))) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+        _conversation_event(conn, 1, "permission_asked", '{"ask_id":"old"}')
+        attention.capture_ticket_attention(conn, ticket.id, 1)
+        # An old writer recorded the ending but retained its active attention state.
+        _conversation_event(conn, 2, "turn_ended", '{"ending":"interrupted"}')
+        for _ in range(2):
+            notifications_data.reconcile_attention(conn)
+            row = conn.execute(
+                "SELECT active,generation FROM notification_attention_state "
+                "WHERE subject_kind='ticket' AND subject_id=? "
+                "AND notification_type='awaiting_answer'",
+                (ticket.id,),
+            ).fetchone()
+            assert tuple(row) == (0, 1)
+            assert _edges(conn, ticket.id) == [("awaiting_answer", 1)]
 
-
-
-
-
-
-
-
+    store = ConversationStore(str(db_path), integer_now=lambda: 3)
+    asyncio.run(store.append_event("c_split", _request_payload(True, "new")))
+    with closing(connect(str(db_path))) as conn:
+        notifications_data.reconcile_attention(conn)
+        row = conn.execute(
+            "SELECT active,generation FROM notification_attention_state "
+            "WHERE subject_id=? AND notification_type='awaiting_answer'", (ticket.id,),
+        ).fetchone()
+        assert tuple(row) == (1, 2)
+        assert _edges(conn, ticket.id) == [("awaiting_answer", 1), ("awaiting_answer", 2)]
 
 
 def test_conversation_binding_and_unbinding_capture_existing_attention(tmp_path: Path) -> None:

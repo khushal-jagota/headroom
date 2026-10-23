@@ -9,6 +9,12 @@ const timeline: ViewHistoryScope = { kind: 'timeline', key: null };
 const encoder = new TextEncoder();
 const byteSizes = new WeakMap<ConversationViewItem, number>();
 function scopeKey(scope: ViewHistoryScope): string { return `${scope.kind}:${scope.key ?? ''}`; }
+function sameScope(a: ViewHistoryScope, b: ViewHistoryScope): boolean { return a.kind === b.kind && a.key === b.key; }
+function sameCursor(a: ViewPageCursor | null, b: ViewPageCursor | null): boolean {
+    return a === null || b === null ? a === b : a.projection_version === b.projection_version
+        && a.lens === b.lens && sameScope(a.scope, b.scope)
+        && a.order.sequence === b.order.sequence && a.order.slot === b.order.slot;
+}
 export function compareItems(a: ConversationViewItem, b: ConversationViewItem): number { return a.order.sequence - b.order.sequence || a.order.slot - b.order.slot; }
 function itemBytes(item: ConversationViewItem): number { const cached = byteSizes.get(item); if (cached !== undefined)
     return cached; const count = item.kind === 'row' && item.body.kind === 'inline' ? encoder.encode(JSON.stringify(item.body.value)).byteLength : 0; byteSizes.set(item, count); return count; }
@@ -69,7 +75,7 @@ export class ConversationViewReader {
     private retry: ReturnType<typeof setTimeout> | null = null;
     private disposed = false;
     private reconnecting: Promise<void> | null = null;
-    private requests = new Map<string, { operation: Promise<void>; abort: AbortController }>();
+    private requests = new Map<string, { operation: Promise<boolean>; abort: AbortController; scope: ViewHistoryScope; cursor: ViewPageCursor | null; direction: 'older' | 'newer'; replace: boolean }>();
     private pageQueue: Promise<void> = Promise.resolve();
     /** Close the live stream so a history read is not racing a writer.
      *
@@ -334,30 +340,39 @@ export class ConversationViewReader {
             this.releaseSource = () => { this.abort.signal.removeEventListener('abort', abort); abort(); };
         });
     }
-    async load(scope: ViewHistoryScope = timeline, cursor: ViewPageCursor | null = null, direction: 'older' | 'newer' = 'older', replace = false): Promise<void> {
-        if (this.disposed) return;
+    async load(scope: ViewHistoryScope = timeline, cursor: ViewPageCursor | null = null, direction: 'older' | 'newer' = 'older', replace = false): Promise<boolean> {
+        if (this.disposed) return false;
         const key = scopeKey(scope);
         const pending = this.requests.get(key);
-        if (pending) return pending.operation;
+        if (pending) {
+            if (sameScope(pending.scope, scope) && sameCursor(pending.cursor, cursor) && pending.direction === direction && pending.replace === replace)
+                return pending.operation;
+            if (!replace) return false;
+            pending.abort.abort();
+        }
+        // Replacement reserves the existing scope slot synchronously, even at capacity.
         // The same bound applies to held scopes and queued demand. No response bodies queue.
-        if (this.requests.size >= 20) return;
+        if (!pending && this.requests.size >= 20) return false;
         const controller = new AbortController();
-        const request = { operation: Promise.resolve(), abort: controller };
+        const request = { operation: Promise.resolve(false), abort: controller, scope, cursor, direction, replace };
         const active = () => !this.disposed && !controller.signal.aborted && this.requests.get(key) === request;
         const operation = this.pageQueue.then(async () => {
-            if (!active()) return;
+            if (!active()) return false;
             // Stop source admission before reading a page. Coverage stays unchanged. The
             // reconnect replays writes during this read for every retained scope, including
             // the newly admitted page. A live writer therefore cannot starve history reads.
             this.pauseTail();
             try {
                 const page = await this.get<ConversationViewPage>('/pages', { scope: JSON.stringify(scope), ...(cursor ? { cursor: JSON.stringify(cursor) } : {}), direction }, controller.signal);
-                if (!active()) return;
+                if (!active()) return false;
+                if (!sameScope(page.scope, scope)) throw new Error('Conversation view scope changed');
                 this.accept(page, replace || cursor === null, direction);
                 this.changed();
+                return true;
             }
             catch {
                 if (active()) this.trouble = true;
+                return false;
             }
             finally {
                 if (this.requests.get(key) === request) this.requests.delete(key);
@@ -369,7 +384,7 @@ export class ConversationViewReader {
         });
         request.operation = operation;
         this.requests.set(key, request);
-        this.pageQueue = operation.catch(() => undefined);
+        this.pageQueue = operation.then(() => undefined, () => undefined);
         return operation;
     }
     async expand(scope: ViewHistoryScope, open: boolean): Promise<void> {

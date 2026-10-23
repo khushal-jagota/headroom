@@ -20,6 +20,7 @@
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
+  import { conversationOverlay } from "../lib/conversation/layout/overlay";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import { isPrimaryPressOutsideConversation } from "../lib/conversation/dismissal";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -505,7 +506,7 @@
       </div>
     {:else if ticket.data && masthead}
       {@const detail = ticket.data}
-      <div class="ticket-page">
+      <div class="ticket-page" use:conversationOverlay>
       <div class="ticket-reading">
       <main class="ticket-doc" onpointerdowncapture={dismissConversationOnPointerDown}>
         <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
@@ -676,7 +677,6 @@
 </section>
 
 <style>
-  .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; }
   .ticket-head { padding-top:48px; }

@@ -9,7 +9,7 @@ import {authority,continuity,conversation} from './support/navigation/fixtures';
 
 function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapshot {
   const source=conversation('c');
-  return {event:'snapshot',wire_version:3,projection_version:3,view_id:`view-${request.scope_generation}`,
+  return {event:'snapshot',wire_version:3,projection_version:4,view_id:`view-${request.scope_generation}`,
     scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:{...continuity,revision},
     content_version:name,mode:'current',authority:authority(),proof:null,
     content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
@@ -84,25 +84,26 @@ describe('bounded navigation owner',()=>{
       expect((await pending).status).toBe('included');
     }finally{owner.dispose();}
   });
-  it('accepts only projection 3 and replaces lean/full records under one key',async()=>{
+  it('accepts only projection 4 and replaces lean/full records under one key',async()=>{
     const {owner,connections}=fixture();
     const presentationFor=createNavigationPresentationCache();
     try {
-      expect(defaultViewRequest().projection_version).toBe(3);
+      expect(defaultViewRequest().projection_version).toBe(4);
       const started=owner.start();
       const initial=snapshot(connections[0].request);
-      const lean={kind:'manager' as const,id:'settled',value:{title:'Settled',created_at:1,settled:true as const,conversation_id:'c'}};
+      const lean={kind:'manager' as const,id:'settled',value:{title:'Settled',created_at:1,updated_at:1,settled:true as const,conversation_id:'c'}};
       initial.content.records.push(lean);
-      expect(()=>parseFrame({...initial,projection_version:2})).toThrow();
-      expect(()=>applyFrame(undefined,{...initial,projection_version:2} as unknown as ViewFrame)).toThrow('projection version');
+      expect(()=>parseFrame({...initial,projection_version:3})).toThrow();
+      expect(()=>applyFrame(undefined,{...initial,projection_version:3} as unknown as ViewFrame)).toThrow('projection version');
       connections[0].send(parseFrame(initial));await started;
       const first=presentationFor(owner.getState().effective!);
       expect(first.settledManagers.map(item=>item.id)).toEqual(['settled']);
       expect(first.rawManagersById.has('settled')).toBe(false);
       expect(first.managersById.has('settled')).toBe(false);
       expect(first.settledManagers[0]).not.toHaveProperty('recap');
+      expect(first.settledManagers[0].updated_at).toBe(1);
       const full={...lean,value:{...lean.value,recap:'Retained for selection',recap_preview:'Retained',project_id:'p',recap_reference:null}};
-      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:3,view_id:initial.view_id,
+      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:4,view_id:initial.view_id,
         scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
         coverage:{...continuity,revision:'1'},previous_coverage:initial.coverage,content_version:'full',previous_content_version:initial.content_version,
         upserts:[full],evictions:[],windows:[],counts:initial.content.counts};

@@ -43,6 +43,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -362,7 +363,7 @@ async def _send_with_addressed_receipt(
     )
     return AddressedPromptDeliveryReceipt(
         fate=fate,
-        newly_accepted=not isinstance(fate, PromptDeliveryRefused),
+        newly_accepted=not isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)),
     )
 
 
