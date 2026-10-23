@@ -22,7 +22,6 @@ from planner.conversation.api import router as conversation_router
 from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import ConversationBackendKey, ConversationSystem
-from planner.conversation.deploy_interruptions.api import router as deploy_interruptions_router
 from planner.conversation.history.api import router as conversation_history_router
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
@@ -170,12 +169,19 @@ def create_app(
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         from planner.tickets import data as tickets_data
 
+        recovery_task: asyncio.Task[None] | None = None
         lifecycle_observer: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
+            if recovery_task is not None:
+                recovery_task.cancel()
+                try:
+                    await recovery_task
+                except asyncio.CancelledError:
+                    pass
             deadline = _monotonic() + float(config.shutdown_grace_seconds)
             try:
                 try:
@@ -226,6 +232,11 @@ def create_app(
             finally:
                 audit_conn.close()
 
+            from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+
+            recovery_task = asyncio.create_task(
+                run_automatic_recovery(conversation.system, conversation.store)
+            )
             app.state.conversation = conversation
             # A test that drives workers wants a conversation system it can hold still, so it
             # passes one in. Nothing else does: production always runs the real one.
@@ -320,7 +331,6 @@ def create_app(
 
     for domain_router in (
         tickets_router,
-        deploy_interruptions_router,
         ticket_workspace_router,
         resource_versions_router,
         artifact_catalog_router,

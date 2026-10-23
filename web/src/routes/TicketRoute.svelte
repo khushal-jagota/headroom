@@ -59,11 +59,13 @@
     // The artifact this screen is showing, when the host keeps that in its address, and
     // the way to write it there. The Workspace supplies both; without them, the screen
     // holds the value itself.
+    requestedConversationId = null,
     openFile = null,
     onOpenFile = null,
     navigationErrorHandledByParent = false
   }: {
     id: string;
+    requestedConversationId?: string | null;
     navigationErrorHandledByParent?: boolean;
     openFile?: ManagedFileTarget | null;
     onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
@@ -143,9 +145,11 @@
     }
   }
   let conversationId=$state<string | null>(null);
+  let selectedPastConversationId=$state<string | null>(null);
+  let shownConversationId=$derived(selectedPastConversationId ?? conversationId);
   $effect(() => navigation.owner.setDemand("ticket", {
     selected: { kind: "ticket", id: stableId },
-    selected_conversation_id: null, windows: []
+    selected_conversation_id: selectedPastConversationId, windows: []
   }));
   onDestroy(() => navigation.owner.setDemand("ticket", undefined));
   let observedPointer:string | undefined;
@@ -155,6 +159,13 @@
     if(key===observedPointer) return;
     observedPointer=key;
     conversationId=canonicalTicket.value.conversation_id;
+  });
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!canonicalTicket || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== canonicalTicket.value.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
   });
   // The one Manager this Ticket's ceiling can be handed to, named as Khushal names
   // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
@@ -194,7 +205,7 @@
     const ownership = canonicalTicket?.value.stage_ownership;
     if (ownership === undefined || seededConversationStateFromStatus) return;
     seededConversationStateFromStatus = true;
-    conversationState = initialTicketConversationState(ownership);
+    conversationState = requestedConversationId ? "opened" : initialTicketConversationState(ownership);
   });
 
   /** A primary press outside the card dismisses it without interrupting selection. */
@@ -432,15 +443,15 @@
     const root = screenElement;
     const detail = ticket.data;
     const shown = section;
-    const pointer = conversationId;
+    const pointer = shownConversationId;
     const generation = navigation.state.generation;
     if (!view?.runtimeCurrent || !source || !root || !detail || !shown
-      || pointer !== source.value.conversation_id) return;
+      || (selectedPastConversationId === null && pointer !== source.value.conversation_id)) return;
     const token = conversationObserver.observeSelectors(view.publication, generation);
     let obsolete = false;
     void tick().then(() => {
       if (obsolete || !root.isConnected || navigation.selectors.effective !== view
-        || navigation.state.generation !== generation || conversationId !== pointer) return;
+        || navigation.state.generation !== generation || shownConversationId !== pointer) return;
       const pane = root.querySelector('[data-conversation-pane]');
       if (pane?.getAttribute('data-conversation-id') === (pointer ?? '')) {
         conversationObserver.acknowledgeRender(view.publication, token);
@@ -659,7 +670,9 @@
         <div class="conversation-column">
           <LiveConversation
             bind:conversationState
-            {conversationId}
+            conversationId={shownConversationId}
+            bind:selectedPastConversationId
+            readOnly={selectedPastConversationId !== null}
             persistenceKey={`owner:ticket:${detail.id}`}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}

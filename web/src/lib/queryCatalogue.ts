@@ -53,8 +53,6 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
-  deploymentInterruptions: () =>
-    jsonQuery<import("./deploymentInterruptions").InterruptionSummary>(["deployment-interruptions"], "/api/deployment-interruptions"),
   recordedUsage: (days: UsageDays, timezone: string) =>
     jsonQuery<UsageSummary>(
       ["recorded-usage", { days, timezone }],
@@ -98,7 +96,7 @@ export const queries = {
     versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceFieldBody>(["ticket", ticketId, "workspace", "field", field], `/api/tickets/${encodeURIComponent(ticketId)}/workspace/fields/${encodeURIComponent(field)}`),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets?detail=full&id=${encodeURIComponent(ticketId)}`),
-  reviewProposal: (item: import('./types').NavigationReviewItem) =>
+  reviewProposal: (item: import('./types').NavigationReviewProposalItem) =>
     versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceTicket>(["ticket",item.ticket_id,"proposal",item.field,item.proposal_field,item.waiting_since,item.proposal_revision],
       `/api/tickets/${encodeURIComponent(item.ticket_id)}/workspace`),
   // What a conversation started right now would run on, for each owner that starts one.

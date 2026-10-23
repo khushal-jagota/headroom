@@ -64,6 +64,7 @@ struct ConversationBody: Decodable, Sendable {
     let refusalDetail: String?
     let reason: String?
     let questions: [Question]?
+    var senderLabel: String? = nil
     struct Piece: Decodable, Sendable { let piece: String; let text: String?; let fileName: String? }
     struct Question: Decodable, Sendable { let question: String }
     var text: String {
@@ -71,7 +72,7 @@ struct ConversationBody: Decodable, Sendable {
         return title ?? questions?.map(\.question).joined(separator: "\n") ?? errorSummary ?? detail ?? (kind == "deferred" ? "Long message — open on the web to read in full" : "")
     }
     var isPrompt: Bool { kind.hasPrefix("prompt") }
-    var isOwnerPrompt: Bool { isPrompt && (senderLabel == nil || senderLabel == "owner") }
+    var isOwnerPrompt: Bool { isPrompt && (senderLabel == nil || ["You", "owner"].contains(senderLabel!)) }
 }
 struct ConversationStatus: Decodable, Sendable {
     let authority: String
@@ -104,6 +105,7 @@ struct ConversationSend: Codable, Sendable {
     var reasoningEffort: String? = nil
     let senderMessageId: String
     let sentAtUnixMilliseconds: Int64
+    var ownerReadThroughSequence: Int? = nil
     struct Piece: Codable, Sendable {
         var piece = "text"
         var text: String? = nil

@@ -50,7 +50,6 @@ class InterruptionEntry(TypedDict):
     original_status: str
     recovery_state: RecoveryState
     detail: str
-    can_restart: bool
 
 
 class InterruptionAccount(TypedDict):

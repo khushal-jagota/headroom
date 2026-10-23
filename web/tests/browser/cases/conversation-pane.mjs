@@ -39,7 +39,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     swap:()=>{intentReader=makeIntentReader();},
     swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
   const readerOnly=new URLSearchParams(window.location.search).has("reader");
-  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":"opened");
+  const readerPeek=new URLSearchParams(window.location.search).has("reader-peek");
+  let readerState=$state<"opened"|"peeked"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":readerPeek?"peeked":"opened");
   if(readerOnly)installConversationViewReaderFixture();
   (window as any).__readerState=(state:typeof readerState)=>readerState=state;
 
@@ -103,10 +104,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let scrollReplacementGeneration = 0;
   let running = $state(false);
   let ownerReadThroughSequence = $state(0);
+  (window as any).__setReadWatermark=(value:number)=>{ownerReadThroughSequence=value;};
+  (window as any).__appendLabelTools=()=>{rows=[...rows,...[29,30].map(sequence=>({key:'label-tool-'+sequence,kind:'tool_call',sequence,createdAt:sequence,toolCallId:'label-tool-'+sequence,title:'Unread tool '+sequence,toolKind:'read',detail:null,startedDetail:null,status:'completed',progress:null}))];};
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let outgoingMessages = $state<any[]>([]);
   let composerDisabled = $state(false);
+  let fixturePlaceholder=$state<string|undefined>(undefined);
+  (window as any).__fixturePlaceholder=(value:string|undefined)=>fixturePlaceholder=value;
   let ask = $state<any>(null);
 
   // The connected test proves real writers and automatic SSE. This former E2E
@@ -118,9 +123,19 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     heldPromptRows = await response.json();
   }
   async function actOnQueueMatrix(heldPromptId: string, mode: "discard" | "steer" | "send_now"): Promise<void> {
+    const promoted = heldPromptRows.find(row => row.heldPromptId === heldPromptId);
     if (mode === "discard") await discardHeldPrompt("browser-fixture", heldPromptId);
     else await promoteHeldPrompt("browser-fixture", heldPromptId, mode);
     await refreshQueueMatrix();
+    if ((window as any).__recordingFlow && mode !== "discard" && promoted) {
+      // Promotion refreshes durable history; it is not a new local composer send.
+      const sequence = Math.max(0, ...rows.map(row => row.sequence)) + 1;
+      const prompt = {key:"promoted-"+heldPromptId, kind:"prompt", sequence,
+        createdAt:Date.now(), content:promoted.content, senderLabel:"owner", mode,
+        sentAtUnixMilliseconds:Date.now()};
+      rows = [...rows, prompt];
+      if (visibleRows !== null) visibleRows = [...visibleRows, prompt];
+    }
   }
   document.addEventListener("visibilitychange", () => { void refreshQueueMatrix(); });
   (window as any).__loadQueueMatrix = async () => {
@@ -156,6 +171,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
     (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
     (window as any).__sentRuns = [...((window as any).__sentRuns ?? []), picked];
+    if ((window as any).__recordingFlow) {
+      outgoingMessages = [{messageId:"recording-refused-steer",content,senderLabel:"owner",mode,
+        sentAtUnixMilliseconds:Date.now(),knownFate:"nothing_yet"}];
+      await new Promise(resolve=>setTimeout(resolve,850));
+      outgoingMessages=[];
+    }
     heldPromptRows = [{
       key: "composer-fallback",
       heldPromptId: "composer-fallback",
@@ -219,7 +240,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__sendScrollRegression = (moveLayer: boolean) => {
     outgoingMessages = [{messageId: "scroll-send", content: [{piece: "text", text: "Regression prompt"}],
-      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet"}];
+      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet", accepted: true}];
     if (moveLayer) conversationState = "opened";
   };
   (window as any).__answerScrollRegression = (paragraphCount: number) => {
@@ -300,15 +321,11 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__showUnansweredSend = () => {
     supportsSteer = true;
-    heldPromptRows = [{
-      key: "local:sent-into-the-dark",
-      heldPromptId: null,
-      senderMessageId: "sent-into-the-dark",
-      content: [{ piece: "text", text: "did this arrive" }],
-      senderLabel: "owner",
-      sentAtUnixMilliseconds: 10,
-      state: "unknown",
-      queueReason: null
+    heldPromptRows = [];
+    outgoingMessages = [{
+      messageId: "sent-into-the-dark", content: [{piece:"text",text:"did this arrive"}],
+      senderLabel: "owner", mode:"steer", sentAtUnixMilliseconds:10,
+      knownFate:"answer_never_came_back"
     }];
   };
   (window as any).__setComposerDisabled = (disabled: boolean) => {
@@ -549,6 +566,13 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     <ConversationPane conversationId="same-conversation" conversationExists conversationState="opened"
       reader={intentReader} rows={[]} lens="focus" running={false} />
   </div>
+{:else if readerOnly && readerPeek}
+  <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
+    <ManagerFrame bind:conversationState={readerState}>
+      <p>Conversation document</p>
+      {#snippet conversation()}<LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>{/snippet}
+    </ManagerFrame>
+  </div>
 {:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
@@ -631,12 +655,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         {outgoingMessages}
         ownSenderLabel="owner"
         composerDisabled={composerDisabled}
+        composerPlaceholder={fixturePlaceholder}
         {composerCatalog}
         onSend={captureSend}
         onDiscardHeldPrompt={(heldPromptId: string) => actOnQueueMatrix(heldPromptId, "discard")}
         onPromoteHeldPrompt={(heldPromptId: string, mode: "steer" | "send_now") => actOnQueueMatrix(heldPromptId, mode)}
         onStopDrawingHeldPrompt={(senderMessageId: string) => {
           (window as any).__stoppedDrawing = senderMessageId;
+          outgoingMessages=outgoingMessages.filter(message=>message.messageId!==senderMessageId);
         }}
         onSendHeldPromptAgain={(senderMessageId: string) => {
           (window as any).__sentAgain = senderMessageId;

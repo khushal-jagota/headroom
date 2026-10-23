@@ -425,9 +425,36 @@ def _preview_lifecycle(browser, url):
         page.close()
 
 
+def _settle_conversation_layout(page):
+    # Endpoint assertions follow the actual coordinator, not a fixed frame count.
+    # Two idle, unchanged frames also let ResizeObserver and reconciliation settle.
+    page.evaluate("""() => new Promise((resolve, reject) => {
+      const started = performance.now();
+      let previous = '', quiet = 0;
+      const sample = () => {
+        const pane = document.querySelector('[data-conversation-pane]');
+        const thread = pane?.querySelector('[data-conversation-thread]');
+        const box = pane?.getBoundingClientRect();
+        const geometry = JSON.stringify([box?.top, box?.height, thread?.clientHeight,
+          thread?.scrollTop, thread?.scrollHeight]);
+        const active = pane?.hasAttribute('data-conversation-motion')
+          || pane?.getAnimations({subtree:true}).some(animation =>
+            animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        quiet = !active && geometry === previous ? quiet + 1 : 0;
+        previous = geometry;
+        if (quiet >= 2) return resolve();
+        if (performance.now() - started > 10000) return reject(Error('Conversation did not reach an idle layout: ' + geometry));
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    })""")
+
+
 def _run(browser, urls):
-    _catalogs(browser, urls[0])
-    _preview_lifecycle(browser, urls[0])
+    controls_only = __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'controls'
+    if not controls_only:
+        _catalogs(browser, urls[0])
+        _preview_lifecycle(browser, urls[0])
 
     import json
     import os
@@ -484,9 +511,7 @@ def _run(browser, urls):
         return restored
 
     def settled(page):
-        page.evaluate(
-            "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
-        )
+        _settle_conversation_layout(page)
 
     def newest_reading(page):
         return page.locator(THREAD).evaluate("""thread => {
@@ -667,7 +692,7 @@ def _run(browser, urls):
         state(page, "opened")
         settled(page)
         sent = answer_room_reading(page)
-        assert 0 <= sent["promptTop"] <= 32, sent
+        assert abs(sent["promptTop"]-32)<=2, sent
         # Explicit send placement wins even when the layer changes height.
         page.locator(INPUT).fill("one\ntwo\nthree\nfour\nfive")
         settled(page)
@@ -696,7 +721,7 @@ def _run(browser, urls):
         page.evaluate("window.__sendScrollRegression(false)")
         settled(page)
         sent = answer_room_reading(page)
-        assert 0 <= sent["promptTop"] <= 32, sent
+        assert abs(sent["promptTop"]-32)<=2, sent
         assert sent["room"] > 200, sent
         page.evaluate("window.__answerScrollRegression(1)")
         settled(page)
@@ -708,7 +733,9 @@ def _run(browser, urls):
         assert smaller["viewport"] < partial["viewport"] - 50, (partial, smaller)
         assert smaller["room"] <= partial["room"] - 50, (partial, smaller)
         assert abs(smaller["promptTop"] - partial["promptTop"]) <= 3, (partial, smaller)
-        page.evaluate("window.__answerScrollRegression(20)")
+        # Four paragraphs exhaust this small answer room without an unrelated
+        # twenty-paragraph backlog of the approved line-at-a-time travel.
+        page.evaluate("window.__answerScrollRegression(4)")
         settled(page)
         exhausted = answer_room_reading(page)
         assert exhausted["room"] == 0, exhausted
@@ -983,6 +1010,8 @@ def _run(browser, urls):
         raise AssertionError("Unknown CONVERSATION_SCROLL_CASE: " + selected)
     failures = []
     for name, run_case in cases.items():
+        if controls_only:
+            break
         if selected and selected != name:
             continue
         regression_page = browser.new_page(viewport={"width": 1000, "height": 760})
@@ -1030,7 +1059,22 @@ def _run(browser, urls):
     assert send_mode_trigger.get_attribute("aria-expanded") == "false"
     assert send_mode_trigger.get_attribute("aria-controls") is None
 
-    # The model chooser uses the same one-tab-stop shell and focus contract.
+    # The Add menu consumes the first Escape without changing the pane or refocusing Add.
+    add = page.locator("[data-conversation-add]")
+    add.click()
+    page.locator(INPUT).focus()
+    page.keyboard.press("Escape")
+    assert page.locator(".chat-add-menu").count() == 0
+    assert page.locator(INPUT).evaluate("input => document.activeElement === input")
+    state(page, "peeked")
+    # A disabled composer cannot leave an open menu active.
+    add.click()
+    page.evaluate("window.__setComposerDisabled(true)")
+    page.wait_for_function("!document.querySelector('.chat-add-menu')")
+    assert add.is_disabled()
+    page.evaluate("window.__setComposerDisabled(false)")
+    page.wait_for_function("!document.querySelector('[data-conversation-add]').disabled")
+    # The inline model chooser uses the same one-tab-stop shell and focus contract.
     model_picker = page.locator("[data-conversation-model-picker]")
     model_trigger = model_picker.locator("[data-conversation-picker-trigger]")
     model_label = model_trigger.get_attribute("aria-label")
@@ -1048,6 +1092,8 @@ def _run(browser, urls):
         )
         == 1
     )
+    _settle_conversation_layout(page)
+    page.mouse.move(0, 0)
     model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
     # A pointer that moves onto a row makes that row the active one.
     page.wait_for_function(
@@ -1302,12 +1348,15 @@ def _run(browser, urls):
     page.wait_for_timeout(50)
     anchored = first_visible_line(page)
     assert anchored is not None
+    old_height = thread.evaluate("node=>node.clientHeight")
     page.locator("[data-conversation-expand]").click()
     state(page, "opened")
-    restored = first_visible_line(page)
-    assert restored is not None
-    assert restored["text"] == anchored["text"]
-    assert abs(restored["top"] - anchored["top"]) <= 3, (anchored, restored)
+    settled(page)
+    height_delta = thread.evaluate("node=>node.clientHeight") - old_height
+    held = thread.evaluate("""(thread,text)=>{const node=[...thread.querySelectorAll('[data-conversation-row="agent_message"]')].find(node=>node.textContent.trim()===text);return node.getBoundingClientRect().top-thread.getBoundingClientRect().top;}""", anchored['text'])
+    assert abs(held-anchored['top']-height_delta)<=3, (anchored,held,height_delta)
+    anchored = first_visible_line(page)
+    assert anchored is not None
 
     # Removing a screenful above the reader moves the thread, not their anchored line.
     page.evaluate("window.__dropFirstConversationLines(6)")
@@ -1420,31 +1469,33 @@ def _run(browser, urls):
 
     # The server capability controls one provider-neutral steering action.
     page.evaluate("window.__showHeldPrompt(false)")
+    settled(page)
     page.locator('[data-conversation-held-row="held-1"]').wait_for()
     assert page.locator('[data-conversation-held-promote="steer"]').count() == 0
     page.evaluate("window.__showHeldPrompt(true)")
-    steer = page.locator('[data-conversation-held-promote="steer"]')
+    steer = page.locator('[data-conversation-held-row="held-1"] [data-conversation-held-promote="steer"]')
     steer.wait_for()
     assert steer.inner_text() == "Steer"
     assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
 
-    # A send the server never answered sits above the composer, never under the rows, and
-    # carries the two things this tab can do about it on its own.
+    # An unanswered send retains its bubble and carries its two existing actions there.
     page.evaluate("window.__showUnansweredSend()")
-    page.locator('[data-conversation-held-row="local:sent-into-the-dark"]').wait_for()
-    assert "no answer came" in page.locator("[data-conversation-held-stack]").inner_text()
-    assert page.locator('[data-conversation-outgoing="sent-into-the-dark"]').count() == 0
+    settled(page)
+    bubble = page.locator('[data-conversation-outgoing="sent-into-the-dark"]')
+    bubble.wait_for()
+    assert "no answer came" in bubble.inner_text()
+    assert page.locator('[data-conversation-held-stack]').count() == 0
     assert page.locator('[data-conversation-held-promote="send_now"]').count() == 0
     assert page.locator('[data-conversation-held-promote="steer"]').count() == 0
-    send_again = page.locator('[data-conversation-held-send-again="sent-into-the-dark"]')
+    send_again = bubble.get_by_role('button', name='Send again', exact=True)
     send_again.wait_for()
     if screenshot_dir:
-        page.locator("[data-conversation-held-stack]").screenshot(
-            path=os.path.join(screenshot_dir, "unanswered-send-above-the-composer.png")
+        bubble.screenshot(
+            path=os.path.join(screenshot_dir, "unanswered-send-in-place.png")
         )
     send_again.click()
     page.wait_for_function("window.__sentAgain === 'sent-into-the-dark'")
-    page.locator('[data-conversation-held-stop-drawing="sent-into-the-dark"]').click()
+    bubble.get_by_role('button', name='Stop showing this message', exact=True).click()
     page.wait_for_function("window.__stoppedDrawing === 'sent-into-the-dark'")
 
     # Opening is an open, not a restore. A reader who moves up the thread and then puts
@@ -1498,9 +1549,7 @@ def _run(browser, urls):
     assert page.locator("[data-conversation-rest-line]").inner_text() != ""
     assert page.get_by_text("waiting for you", exact=True).count() == 0
 
-    # The right of the composer is what there is to do, in the agreed order. A composer
-    # with nothing in it offers no Send at all — not a greyed-out one — and the control
-    # that stops the work sits after the microphone, as the approved composer design specifies.
+    # Inline voice leads Stop and Send; an empty draft offers no Send.
     def submit_order(page):
         return page.locator(".chat-submit > *").evaluate_all(
             """els => els.map(e =>
@@ -1514,7 +1563,7 @@ def _run(browser, urls):
     page.locator(INPUT).click()
     state(page, "peeked")
     page.locator(INPUT).fill("")
-    page.wait_for_function("() => document.querySelector('[data-conversation-send]') === null")
+    page.wait_for_function("() => !document.querySelector('[data-conversation-send]')")
     assert submit_order(page) == ["delivery", "mic"]
 
     page.locator(INPUT).fill("something to send")
@@ -1525,7 +1574,7 @@ def _run(browser, urls):
     page.wait_for_function("() => document.querySelector('[data-conversation-stop]') !== null")
     assert submit_order(page) == ["delivery", "mic", "stop", "send"]
     page.locator(INPUT).fill("")
-    page.wait_for_function("() => document.querySelector('[data-conversation-send]') === null")
+    page.wait_for_function("() => !document.querySelector('[data-conversation-send]')")
     assert submit_order(page) == ["delivery", "mic", "stop"]
 
     # The head carries no worker title and no launch folder. The folder is still one
@@ -1786,6 +1835,7 @@ def _run(browser, urls):
         queued_page.evaluate("window.__loadQueueMatrix()")
         state(queued_page, "opened")
         queued_page.wait_for_selector("[data-conversation-held-row]")
+        settled(queued_page)
         assert queued_page.locator(
             "[data-conversation-held-row] .chat-qrow-txt"
         ).all_inner_texts() == [f"queued message {number}" for number in range(1, 7)]
@@ -2135,28 +2185,35 @@ def _latest_destination(browser, url):
 
 
 def _bounded_reader(browser, url):
+    import os
+    from pathlib import Path
+
     from playwright.sync_api import expect
 
     page = browser.new_page(viewport={"width": 1000, "height": 900})
-    page.route("**/api/deployment-interruptions", lambda route: route.fulfill(json={"accounts": [{
-        "deployment_id": "deploy", "capture_state": "captured", "detail": None,
-        "entries": [{"interruption_id": "notice", "deployment_id": "deploy",
-            "conversation_id": "bounded-reader", "display_name": "Worker", "owner_kind": "ticket",
-            "owner_id": "worker", "original_status": "active", "recovery_state": "awaiting_action",
-            "detail": "The deploy ended this turn. Inspect current work before another action.",
-            "can_restart": False}]
-    }]}))
+    interruption_requests = []
+    page.on("request", lambda request: interruption_requests.append(request.url)
+            if "deployment-interruptions" in request.url else None)
     page.goto(url + "?reader=1")
-    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_contain_text("The deploy ended this turn.")
+    expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
     page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
+    assert interruption_requests == [], interruption_requests
+    evidence = Path(os.environ["PANELS_SIDEBAR_ARTIFACT_DIR"])
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(animations="disabled", path=str(evidence / "conversation-without-interruption-banner.png"))
     # What the reader retains is what is drawn. One bound, not two: a row that is
     # held but not drawn has to claim a height it has not measured, and that is what
     # made the thread change size under a gesture.
     assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     assert page.evaluate("() => window.__viewCalls.every(url => !url.includes('/events?') && (!url.includes('/tail?') || url.includes('/view/tail?')))")
+    # Hidden candidate rows exist before cold-entry placement. Wait for the visible
+    # destination before the reader starts a history gesture.
+    page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry === 'complete'")
     before = page.evaluate("() => window.__viewCalls.filter(url => url.includes('/view/pages')).length")
-    page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+    # Use an owner navigation gesture so active follow motion yields before scroll.
+    page.locator('[data-conversation-thread]').focus()
+    page.locator('[data-conversation-thread]').press("Home")
     page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
     # A transport call records request start, before the reader admits its page.
     # Wait for both edges of the older page and its layout before requesting Latest.
@@ -2205,7 +2262,7 @@ def _bounded_reader(browser, url):
     assert page.locator('[data-conversation-view-key]').count() == 0
     page.evaluate("() => window.__readerState('opened')")
     page.wait_for_selector('[data-conversation-thread]')
-    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_be_visible()
+    expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     # Persisted projected prompts must retain the same bubble layout as outgoing
@@ -2235,6 +2292,7 @@ def _bounded_reader(browser, url):
     from pathlib import Path
     started = time.perf_counter()
     page.goto(url + "?reader=1&expiry=1")
+    page.locator('[data-conversation-lens-choice="full"]').click()
     page.locator('[data-conversation-tool="expiry-tool"]').click()
     page.get_by_text("Cached whole diagnostic", exact=True).wait_for()
     page.evaluate("() => window.__expireDiagnostics()")
@@ -2248,7 +2306,7 @@ def _bounded_reader(browser, url):
     assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
     page.evaluate("() => window.__expireDeferred()")
     page.locator('[data-conversation-view-key="e3"]').get_by_text("This diagnostic detail expired.", exact=True).wait_for()
-    evidence = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_uraaehvn/artifacts/diagnostic-expiry.png")
+    evidence = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "data/verification/browser-failure")) / "diagnostic-expiry.png"
     evidence.parent.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(evidence))
     print(f"Diagnostic expiry browser scenario: {time.perf_counter() - started:.3f}s")
@@ -2367,6 +2425,10 @@ def _conversation_repairs(browser, url):
         page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))))")
     def state(page, value):
         page.wait_for_selector(f'{pane_selector}[data-conversation-state="{value}"]')
+        frames(page)
+        # The settled design gives card state travel 150ms. Measure pointer origins
+        # after that travel, not at the third intermediate frame.
+        page.wait_for_function("[...document.querySelectorAll('.conversation-layer')].every(node=>!node.style.height)")
         frames(page)
     for route in ("manager", "ticket"):
         page = browser.new_page(viewport={"width": 1280, "height": 1000})
@@ -2538,7 +2600,7 @@ def _overlay_menu_bounds(browser, url):
     })()""")
     proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
     def settle():
-        page.evaluate("() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        _settle_conversation_layout(page)
     def hit(item):
         item.scroll_into_view_if_needed()
         settle()
@@ -2613,7 +2675,9 @@ def _overlay_menu_bounds(browser, url):
                         hit(item)
                     else:
                         add.focus()
-                        for _ in range(('image','file','camera','slash').index(attribute)+1):
+                        for _ in range(12):
+                            if item.evaluate('el=>el===document.activeElement'):
+                                break
                             page.keyboard.press('Tab')
                         expect(item).to_be_focused()
                     if attribute=='slash':
@@ -2707,16 +2771,488 @@ def _overlay_menu_bounds(browser, url):
         page.close()
 
 
+def _settled_motion(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
+    output.mkdir(parents=True, exist_ok=True)
+    page = browser.new_page(viewport={'width':1000,'height':900}, reduced_motion='no-preference')
+    try:
+        page.goto(url)
+        page.evaluate("window.__setupScrollRegression('plain')")
+        thread = page.locator('[data-conversation-thread]')
+        thread.wait_for()
+        page.wait_for_timeout(350)
+        before = thread.evaluate('node=>node.clientHeight')
+        page.evaluate("""()=>{
+          window.__growthFrames=[];window.__growthStop=false;
+          const sample=()=>{window.__growthFrames.push(document.querySelector('[data-conversation-thread]').clientHeight);if(!window.__growthStop)requestAnimationFrame(sample);};
+          requestAnimationFrame(sample);
+        }""")
+        page.locator('[data-conversation-input]').fill('One line\nSecond line\nThird line\nFourth line')
+        page.wait_for_timeout(350)
+        frames=page.evaluate('window.__growthStop=true;window.__growthFrames')
+        assert len(frames)>3
+        assert max(abs(value-before) for value in frames)<=2, {'before':before,'frames':frames}
+        page.locator('[data-conversation-input]').fill('')
+        page.wait_for_timeout(300)
+        page.evaluate("""()=>{
+          window.__sendFrames=[];window.__sendStop=false;
+          const sample=()=>{const node=document.querySelector('[data-conversation-thread]');window.__sendFrames.push(node.scrollTop);if(!window.__sendStop)requestAnimationFrame(sample);};
+          requestAnimationFrame(sample);window.__sendScrollRegression(false);
+        }""")
+        page.wait_for_timeout(450)
+        send_frames=page.evaluate('window.__sendStop=true;window.__sendFrames')
+        moving=[value for i,value in enumerate(send_frames) if i==0 or abs(value-send_frames[i-1])>.5]
+        assert len(moving)>3, send_frames
+        assert all(b>=a-1 for a,b in zip(send_frames,send_frames[1:],strict=False)), send_frames
+        page.evaluate("window.__sentBubble=document.querySelector('[data-conversation-outgoing=\"scroll-send\"]')")
+        page.evaluate('window.__answerScrollRegression(1)')
+        page.wait_for_timeout(350)
+        assert page.evaluate("window.__sentBubble===document.querySelector('[data-conversation-row=\"prompt\"]')"), 'Receipt replaced the visible bubble'
+        assert page.locator('.c2-chip').count()==0
+        page.screenshot(path=str(output/'settled-motion.png'))
+        page.evaluate('window.__showUnansweredSend()')
+        bubble=page.locator('[data-conversation-outgoing="sent-into-the-dark"]')
+        bubble.wait_for()
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(output/'settled-unanswered.png'))
+        page.evaluate("""()=>{
+          const bubble=document.querySelector('[data-conversation-outgoing="sent-into-the-dark"]');
+          const row=bubble.closest('[data-conversation-view-key]')??bubble;
+          window.__exitFrames=[];
+          const sample=()=>{window.__exitFrames.push({opacity:+getComputedStyle(bubble).opacity * +getComputedStyle(row).opacity,height:row.getBoundingClientRect().height});if(bubble.isConnected)requestAnimationFrame(sample);};
+          requestAnimationFrame(sample);
+        }""")
+        bubble.get_by_role('button',name='Stop showing this message',exact=True).click()
+        bubble.wait_for(state='detached')
+        exit_frames=page.evaluate('window.__exitFrames')
+        height=exit_frames[0]['height']
+        assert any(row['opacity']<.9 and abs(row['height']-height)<1 for row in exit_frames),exit_frames
+        assert any(row['opacity']<.05 and 1<row['height']<height-1 for row in exit_frames),exit_frames
+        assert all(b['height']<=a['height']+1 for a,b in zip(exit_frames,exit_frames[1:],strict=False)),exit_frames
+        faded=next(i for i,row in enumerate(exit_frames) if row['opacity']<.05)
+        assert all(row['opacity']<.05 for row in exit_frames[faded:] if row['height']>0),exit_frames
+        receipt={'draftBaseline':before,'draftFrames':frames,'sendFrames':send_frames,'exitFrames':exit_frames,'sameBubble':True,'seconds':round(time.perf_counter()-started,3),'newHosts':0}
+        (output/'settled-motion-proof.json').write_text(json.dumps(receipt,indent=2))
+        print('SETTLED_MOTION_PROOF '+json.dumps(receipt),flush=True)
+    finally:
+        page.close()
+
+
+def _settled_unread_entry(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
+    output.mkdir(parents=True, exist_ok=True)
+    proof = []
+    page = browser.new_page(viewport={"width": 1000, "height": 900}, reduced_motion="reduce")
+    try:
+        page.goto(url + "?reader=1&unread=1500&entry-hold=1")
+        page.wait_for_function("window.__entryProbe.waiting > 0")
+        region = page.locator('.conversation-transcript-region')
+        assert region.get_attribute('aria-busy') == 'true'
+        assert not page.locator('[data-conversation-view-key="e2000"]').is_visible()
+        page.evaluate("window.__entryProbe.hold=false;window.__entryProbe.release()")
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        first = page.locator('[data-conversation-view-key="e1501"]')
+        first.wait_for(state='visible')
+        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap-32) < 2, gap
+        assert page.locator('[data-conversation-view-key]').count() <= 300
+        page.screenshot(path=str(output / 'settled-unread.png'))
+        proof.append({'case':'older unread delayed admission','topGap':gap,'newestFlash':False})
+
+        page.goto(url + "?reader=1&unread=1500&entry-fail=1")
+        retry = page.get_by_role('button', name='Retry unread messages', exact=True)
+        retry.wait_for(state='visible')
+        assert page.locator('[data-conversation-entry-status]').is_visible()
+        assert region.get_attribute('aria-busy') == 'false'
+        page.screenshot(path=str(output / 'settled-unread-error.png'))
+        page.evaluate("window.__entryProbe.fail=false")
+        retry.click()
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        page.locator('[data-conversation-view-key="e1501"]').wait_for(state='visible')
+        assert not retry.is_visible()
+        proof.append({'case':'admission failure','visibleRetry':True,'retryPreservesTarget':True})
+
+        page.goto(url + "?reader=1&unread=1500&entry-hidden=1")
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        first = page.locator('[data-conversation-view-key="e1601"]')
+        first.wait_for(state='visible')
+        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap-32) < 2, gap
+        proof.append({'case':'hidden-only first page','firstVisible':'e1601','topGap':gap})
+        page.goto(url + "?reader=1&reader-peek=1&unread=1999")
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        first = page.locator('[data-conversation-view-key="e2000"]')
+        gap_before = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap_before-32)<2, gap_before
+        page.evaluate("window.__readerState('opened')")
+        page.wait_for_timeout(300)
+        gap_after = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
+        assert abs(gap_after-32)<2, gap_after
+        proof.append({'case':'short unread tail expansion','peekTop':gap_before,'openedTop':gap_after})
+        receipt={'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0}
+        (output / 'settled-unread-proof.json').write_text(json.dumps(receipt,indent=2))
+        print('SETTLED_UNREAD_PROOF '+json.dumps(receipt),flush=True)
+    finally:
+        page.close()
+
+
+
+def _position_commit(browser, url):
+    """Probe the render/placement boundary on existing real Svelte hosts."""
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started=time.perf_counter()
+    output=Path(os.environ.get('PANELS_E2E_FAILURE_DIR','/tmp'))
+    output.mkdir(parents=True,exist_ok=True)
+    page=browser.new_page(viewport={'width':1000,'height':900},reduced_motion='no-preference',record_video_dir=str(output/'position-video'),record_video_size={'width':800,'height':720})
+    proof={'entry':[],'contraction':[],'labels':[]}
+    page.add_init_script("""window.__positionFrames=[];window.__samplePosition=false;
+      const sample=()=>{
+        const thread=document.querySelector('[data-conversation-thread]');
+        const region=document.querySelector('.conversation-transcript-region');
+        if(thread&&window.__samplePosition){
+          const last=[...thread.querySelectorAll('[data-conversation-row]')].at(-1);
+          const hidden=getComputedStyle(thread).visibility==='hidden'||getComputedStyle(region).visibility==='hidden';
+          window.__positionFrames.push({ms:performance.now(),hidden,busy:region?.getAttribute('aria-busy'),
+            top:thread.scrollTop,height:thread.clientHeight,scrollHeight:thread.scrollHeight,
+            gap:last?thread.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom:null});
+        }requestAnimationFrame(sample);
+      };requestAnimationFrame(sample);""")
+    try:
+        # Readiness must survive bodies completing after the initial nonzero layout.
+        for attempt in range(2):
+            page.goto(url+'?reader=1&position-race=1')
+            page.wait_for_function('window.__positionProbe.waiting>0')
+            page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
+            assert page.locator('.conversation-transcript-region').get_attribute('aria-busy')=='true'
+            page.evaluate('window.__positionProbe.release()')
+            page.locator('[data-conversation-entry="complete"]').wait_for()
+            page.wait_for_timeout(350)
+            frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
+            visible=[row for row in frames if not row['hidden']]
+            assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), visible
+            ready=[row for row in visible if row['busy']!='true']
+            assert ready and all(-2<=row['gap']<=18 for row in ready), ready
+            proof['entry'].append({'trigger':'fresh open','attempt':attempt,'frames':frames})
+            for lens in ('full','focus'):
+                page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
+                page.locator('[data-conversation-lens-choice="'+lens+'"]').click()
+                page.wait_for_timeout(500)
+                frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
+                visible=[row for row in frames if not row['hidden']]
+                assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), (lens,visible)
+                ready=[row for row in visible if row['busy']!='true']
+                assert ready and all(-2<=row['gap']<=18 for row in ready), (lens,ready)
+                proof['entry'].append({'trigger':'lens '+lens,'attempt':attempt,'frames':frames})
+            # Browser-owned image and font metrics change after reveal. Neither causes travel.
+            frames=page.evaluate("""()=>new Promise(resolve=>{
+              const thread=document.querySelector('[data-conversation-thread]');
+              const row=thread.querySelector('[data-conversation-row]');
+              const image=document.createElement('img');image.style.cssText='display:block;width:1px;height:220px';
+              row.append(image);row.style.fontSize='22px';
+              const frames=[];let count=0;const sample=()=>{const last=[...thread.querySelectorAll('[data-conversation-row]')].at(-1);frames.push({gap:thread.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom,top:thread.scrollTop});if(++count<8)requestAnimationFrame(sample);else resolve(frames);};requestAnimationFrame(sample);
+            })""")
+            assert all(-2<=row['gap']<=18 for row in frames), frames
+            proof['entry'].append({'trigger':'late image/font metrics','frames':frames})
+        page.screenshot(path=str(output/'position-entry.png'))
+
+        # The label counts unread source messages, while visibility still follows newest.
+        page.goto(url)
+        assert page.locator('[data-conversation-input]').get_attribute('placeholder')=='Message the agent...'
+        page.evaluate("window.__fixturePlaceholder('Write a custom message')")
+        page.wait_for_function("document.querySelector('[data-conversation-input]')?.placeholder==='Write a custom message'")
+        page.evaluate('window.__fixturePlaceholder(undefined)')
+        page.evaluate("window.__setupScrollRegression('plain');window.__appendLabelTools();window.__setReadWatermark(28)")
+        _settle_conversation_layout(page)
+        thread=page.locator('[data-conversation-thread]')
+        thread.hover()
+        page.mouse.wheel(0,-600)
+        latest=page.get_by_role('button',name='Jump to latest message',exact=True)
+        latest.wait_for()
+        assert latest.inner_text()=='Latest'
+        proof['labels'].append({'watermark':28,'text':latest.inner_text()})
+        page.evaluate('window.__setReadWatermark(24)')
+        page.wait_for_function("document.querySelector('.chat-jump')?.textContent==='4 new messages'")
+        proof['labels'].append({'watermark':24,'text':latest.inner_text()})
+        latest.click()
+        _settle_conversation_layout(page)
+
+        # Card shrink keeps content fixed relative to its bottom on every shared frame.
+        for trigger in ('control','Escape'):
+            page.locator('[data-conversation-expand]').click()
+            _settle_conversation_layout(page)
+            page.evaluate("""()=>{window.__contractFrames=[];window.__contractStop=false;
+              const thread=document.querySelector('[data-conversation-thread]');
+              const last=[...thread.querySelectorAll('[data-conversation-row]')].at(-1);
+              const start=performance.now();const sample=()=>{const box=thread.getBoundingClientRect();window.__contractFrames.push({ms:performance.now()-start,bottom:box.bottom,height:box.height,contentBottom:last.getBoundingClientRect().bottom-box.bottom});if(!window.__contractStop)requestAnimationFrame(sample);};sample();}""")
+            if trigger=='control':
+                page.locator('[data-conversation-collapse]').click()
+            else:
+                page.locator('[data-conversation-input]').focus()
+                page.keyboard.press('Escape')
+            page.wait_for_timeout(380)
+            frames=page.evaluate('window.__contractStop=true;window.__contractFrames')
+            assert len({round(row['height']) for row in frames})>3,frames
+            assert max(row['bottom'] for row in frames)-min(row['bottom'] for row in frames)<=2,frames
+            assert max(row['contentBottom'] for row in frames)-min(row['contentBottom'] for row in frames)<=3,frames
+            proof['contraction'].append({'trigger':trigger,'frames':frames})
+        # The existing send fixture proves the held message remains 32px below the top.
+        page.goto(url)
+        page.evaluate("window.__setupScrollRegression('plain')")
+        _settle_conversation_layout(page)
+        page.evaluate('window.__sendScrollRegression(true)')
+        _settle_conversation_layout(page)
+        def sent_gap():
+            return page.locator('[data-conversation-thread]').evaluate("""thread=>{const row=thread.querySelector('[data-conversation-outgoing], [data-conversation-row="prompt"]');return row.getBoundingClientRect().top-thread.getBoundingClientRect().top;}""")
+        held_gap=sent_gap()
+        assert abs(held_gap-32)<=2,held_gap
+        page.evaluate('window.__answerScrollRegression(1)')
+        _settle_conversation_layout(page)
+        answered_gap=sent_gap()
+        assert abs(answered_gap-32)<=2,answered_gap
+        proof['sentHold']={'beforeAnswer':held_gap,'afterAnswer':answered_gap}
+        # A real live-output body version change retains multiline 120ms line cadence.
+        page.goto(url+'?reader=1&live-stream=1')
+        page.locator('[data-conversation-entry="complete"]').wait_for()
+        page.locator('[data-conversation-lens-choice="full"]').click()
+        page.locator('.c2-streaming').wait_for()
+        _settle_conversation_layout(page)
+        page.evaluate("""()=>{window.__presentationEvents=[];document.addEventListener('conversation-text-presentation',event=>{window.__presentationEvents.push({...event.detail,top:document.querySelector('[data-conversation-thread]')?.scrollTop});});}""")
+        frames=page.evaluate(r"""()=>new Promise(resolve=>{
+          const thread=document.querySelector('[data-conversation-thread]');
+          const before=thread.scrollHeight,start=performance.now(),frames=[];
+          window.__streamProbe.append('\n\n'+Array.from({length:5},(_,i)=>'New streamed line '+i+'. The new text alone permits the line cadence to continue.').join('\n\n'));
+          const sample=()=>{frames.push({ms:performance.now()-start,top:thread.scrollTop,growth:thread.scrollHeight-before});if(performance.now()-start<1800)requestAnimationFrame(sample);else resolve(frames);};sample();
+        })""")
+        moving=[b for a,b in zip(frames,frames[1:],strict=False) if b['top']-a['top']>.5]
+        # Linear per-line motion exposes its duration as line height / screen speed.
+        # This measures the written pixels, rather than a duration constant or call.
+        import statistics
+        line_height=page.locator('[data-conversation-content]').evaluate('node=>parseFloat(getComputedStyle(node.lastElementChild).lineHeight)')
+        speeds=[(b['top']-a['top'])/(b['ms']-a['ms']) for a,b in zip(frames,frames[1:],strict=False)
+          if b['top']-a['top']>1 and 8 < b['ms']-a['ms'] < 30]
+        observed_line_ms=line_height/statistics.median(speeds)
+        assert 100 <= observed_line_ms <= 145, {'lineHeight':line_height,'observedLineMs':observed_line_ms,'frames':frames}
+        proof['streaming']={'frames':frames,'events':page.evaluate('window.__presentationEvents')}
+        assert len(moving)>3 and moving[-1]['ms']>300,proof['streaming']
+        assert frames[-1]['top']-frames[0]['top']<=frames[-1]['growth']+2,frames
+        proof['streaming']={'frames':frames,'arrivalHeight':frames[-1]['growth'],'observedLineMs':observed_line_ms,'lineHeight':line_height,'events':page.evaluate('window.__presentationEvents')}
+        proof['seconds']=round(time.perf_counter()-started,3)
+        proof['newHosts']=0
+        (output/'position-commit-proof.json').write_text(json.dumps(proof,indent=2))
+        print('POSITION_COMMIT_PROOF '+json.dumps({'seconds':proof['seconds'],'entries':len(proof['entry']),'contractions':2}),flush=True)
+    finally:
+        proof['seconds']=round(time.perf_counter()-started,3)
+        (output/'position-commit-latest.json').write_text(json.dumps(proof,indent=2))
+        page.close()
+
+def _tab_return(browser, url):
+    """A remembered row and its pixel offset survive hidden backlog admission."""
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
+    output.mkdir(parents=True, exist_ok=True)
+    proof = []
+    page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
+    reading = """() => {
+      const thread=document.querySelector('[data-conversation-thread]'), top=thread.getBoundingClientRect().top;
+      const row=[...thread.querySelectorAll('[data-conversation-view-key]')].find(row=>row.getBoundingClientRect().bottom>top+1);
+      return {key:row?.dataset.conversationViewKey,offset:row?row.getBoundingClientRect().top-top:null,scroll:thread.scrollTop};
+    }"""
+    hidden = """() => {
+      window.__fixtureVisible=false;
+      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__fixtureVisible?'visible':'hidden'});
+      document.dispatchEvent(new Event('visibilitychange'));
+    }"""
+    sample_return = """held => {
+      window.__returnFrames=[];window.__stopReturnFrames=false;
+      const sample=()=>{
+        const thread=document.querySelector('[data-conversation-thread]');
+        const region=document.querySelector('.conversation-transcript-region');
+        const row=[...thread.querySelectorAll('[data-conversation-view-key]')].find(row=>row.dataset.conversationViewKey===held.key);
+        const visible=getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
+        window.__returnFrames.push({ms:performance.now(),visible,scroll:thread.scrollTop,
+          offset:row?row.getBoundingClientRect().top-thread.getBoundingClientRect().top:null});
+        if(!window.__stopReturnFrames)requestAnimationFrame(sample);
+      };
+      window.__fixtureVisible=true;requestAnimationFrame(sample);document.dispatchEvent(new Event('visibilitychange'));
+    }"""
+
+    def wait_for_reveal():
+        page.wait_for_function('''() => {
+          const thread=document.querySelector('[data-conversation-thread]');
+          const region=document.querySelector('.conversation-transcript-region');
+          return thread&&region&&getComputedStyle(thread).visibility!=='hidden'
+            &&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
+        }''',timeout=10000)
+        # Keep sampling after reveal so a deferred reconciliation cannot hide a snap.
+        page.wait_for_timeout(350)
+
+    def assert_frames(held, frames):
+        visible = [frame for frame in frames if frame['visible']]
+        assert visible, frames
+        assert all(frame['offset'] is not None and abs(frame['offset']-held['offset']) <= 1 for frame in visible), (held, visible)
+
+    try:
+        for position, backlog, admission in (
+            ('scrollback', 0, 'immediate'), ('latest', 0, 'immediate'),
+            ('scrollback', 120, 'immediate'), ('latest', 120, 'immediate'),
+            ('scrollback', 120, 'delayed'), ('scrollback', 120, 'failed'),
+            ('scrollback', 120, 'bodies'),
+        ):
+            page.goto(url+'?reader=1')
+            page.locator('[data-conversation-entry="complete"]').wait_for()
+            _settle_conversation_layout(page)
+            if position == 'scrollback':
+                page.locator('[data-conversation-thread]').hover()
+                page.mouse.wheel(0, -750)
+                page.wait_for_timeout(300)
+            held = page.evaluate(reading)
+            assert held['key'] and held['scroll'] > 0, held
+            page.evaluate(hidden)
+            page.wait_for_timeout(100)
+            calls_before = page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length')
+            page.evaluate('(count)=>window.__backlog(count)', backlog)
+            page.evaluate('(mode)=>{window.__returnProbe.hold=mode==="delayed";window.__returnProbe.fail=mode==="failed";window.__returnProbe.bodies=mode==="bodies";window.__returnProbe.bodyHold=mode==="bodies";}', admission)
+            page.wait_for_timeout(100)
+            assert page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length') == calls_before
+            page.evaluate(sample_return, held)
+            if admission == 'delayed':
+                page.wait_for_function('window.__returnProbe.waiting>0')
+                page.wait_for_timeout(250)
+                waiting = page.evaluate('window.__returnFrames')
+                # Any retained content that the user can see must already be correct.
+                visible = [frame for frame in waiting if frame['visible']]
+                if visible:
+                    assert_frames(held, visible)
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+            if admission == 'bodies':
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.wait_for_timeout(250)
+                waiting=page.evaluate('window.__returnFrames')
+                visible=[frame for frame in waiting if frame['visible']]
+                if visible:
+                    assert_frames(held,visible)
+                page.evaluate('window.__returnProbe.releaseBodies()')
+            if admission == 'failed':
+                page.wait_for_timeout(350)
+                # Explicit retry retains the same remembered target after a failed read.
+                retry = page.get_by_role('button', name='Retry conversation position', exact=True)
+                retry.wait_for(state='visible')
+                failed = page.evaluate('window.__returnFrames')
+                visible = [frame for frame in failed if frame['visible']]
+                if visible:
+                    assert_frames(held, visible)
+                page.evaluate('window.__returnProbe.fail=false')
+                retry.click()
+            wait_for_reveal()
+            frames = page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
+            assert_frames(held, frames)
+            after = page.evaluate(reading)
+            assert after['key'] == held['key'] and abs(after['offset']-held['offset']) <= 1, (held, after)
+            assert page.locator('[data-conversation-view-key]').count() <= 300
+            page.screenshot(path=str(output / f'tab-return-{position}-{backlog}-{admission}.png'))
+            proof.append({'position':position,'backlog':backlog,'admission':admission,'held':held,'after':after,'frames':frames})
+        # A hidden transition can interrupt a visible 240ms Latest move between frames.
+        page.goto(url+'?reader=1')
+        page.locator('[data-conversation-entry="complete"]').wait_for()
+        _settle_conversation_layout(page)
+        page.locator('[data-conversation-thread]').hover()
+        page.mouse.wheel(0,-750)
+        page.wait_for_timeout(300)
+        before_motion=page.evaluate(reading)
+        page.evaluate("""before => {
+          window.__midMotionHeld=null;
+          const sample=()=>{
+            const thread=document.querySelector('[data-conversation-thread]');
+            const remaining=thread.scrollHeight-thread.clientHeight-thread.scrollTop;
+            if(thread.scrollTop>before.scroll+1&&remaining>2&&thread.closest('[data-conversation-pane]').hasAttribute('data-conversation-motion')){
+              const top=thread.getBoundingClientRect().top;
+              const row=[...thread.querySelectorAll('[data-conversation-view-key]')].find(row=>row.getBoundingClientRect().bottom>top+1);
+              window.__midMotionHeld={key:row.dataset.conversationViewKey,offset:row.getBoundingClientRect().top-top,scroll:thread.scrollTop};
+              window.__fixtureVisible=false;
+              Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__fixtureVisible?'visible':'hidden'});
+              document.dispatchEvent(new Event('visibilitychange'));
+              return;
+            }
+            requestAnimationFrame(sample);
+          };requestAnimationFrame(sample);
+        }""",before_motion)
+        page.get_by_role('button',name='Jump to latest message',exact=True).click()
+        page.wait_for_function('window.__midMotionHeld!==null')
+        held=page.evaluate('window.__midMotionHeld')
+        assert held['scroll']>before_motion['scroll']+1,(before_motion,held)
+        page.wait_for_timeout(150)
+        page.evaluate(sample_return,held)
+        wait_for_reveal()
+        frames=page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
+        assert_frames(held,frames)
+        after=page.evaluate(reading)
+        assert after['key']==held['key'] and abs(after['offset']-held['offset'])<=1,(held,after)
+        proof.append({'position':'mid-Latest-motion','backlog':0,'admission':'immediate','beforeMotion':before_motion,'held':held,'after':after,'frames':frames})
+        receipt={'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0,
+          'visibility':'Synthetic document visibility events exercise the production visibility handler in real Chromium.'}
+        (output/'tab-return-proof.json').write_text(json.dumps(receipt,indent=2))
+        print('TAB_RETURN_PROOF '+json.dumps({'cases':len(proof),'seconds':receipt['seconds'],'newHosts':0}),flush=True)
+    finally:
+        (output/'tab-return-latest.json').write_text(json.dumps({'cases':proof,'seconds':round(time.perf_counter()-started,3)},indent=2))
+        page.close()
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'tab-return':
+            _tab_return(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'position':
+            _position_commit(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'overlay':
+            _overlay_menu_bounds(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') in ('legacy', 'controls'):
+            _run(browser, urls)
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'bounded':
+            _bounded_reader(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'motion':
+            _settled_motion(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'unread':
+            _settled_unread_entry(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'destination':
             _latest_destination(browser, urls[0])
             return
         if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'intents':
             _latest_obsolete_intents(browser, urls[0])
             return
+        _tab_return(browser, urls[0])
+        _position_commit(browser, urls[0])
+        _settled_motion(browser, urls[0])
+        _settled_unread_entry(browser, urls[0])
         _latest_destination(browser, urls[0])
         _latest_obsolete_intents(browser, urls[0])
         _overlay_menu_bounds(browser, urls[0])

@@ -86,20 +86,25 @@ It creates no provider ending, answer, or missing-reply marker. Historical noteb
 rows remain unchanged. Old databases have no recoverable live identities, so migration
 adds no invented lifecycle facts. An absent fact does not establish capability.
 
-Restart restores no queue content or callbacks. It sends no prompt or answer and resumes
-no interrupted work. Queue persistence, replay, and automatic continuation remain separate
-product decisions. The source contract lives in `conversation/lifecycle.py` and its
-transaction and terminal-transition rules live beside the conversation store.
+Lifecycle reconciliation restores no queue content or callbacks. It sends no prompt or answer.
+Deployment recovery runs separately after runtime admission, as described below.
+The source contract lives in `conversation/lifecycle.py`. Its transaction and terminal-transition rules live beside the conversation store.
 
 ## Sessions that a deploy ends
 
 A deploy leaves a durable account of the sessions that it interrupts. The account stays outside the application backup and restore set. A rollback therefore keeps evidence from both the old application and its replacement. Missing evidence means that the account is unavailable. It never means that no sessions were interrupted.
 
-The shell keeps an expandable session list after the deployment status expires. Each entry names the agent, explains the interruption, and states the recovery status. The shared conversation pane shows the same notice. Removed conversations remain historical entries with no broken conversation link.
+After runtime admission, Panels resumes each eligible interrupted conversation through the ordinary send path. This includes Worker, Manager, Chief, and unowned conversations. Both interruption displays and their read API are removed.
 
-Recovery stays manual. An authorized supervisor or Khushal can restart an eligible Worker through the existing action. Other conversations use their existing composer. Backlogged and completed Tickets receive no restart action. A conversation that changed since capture cannot authorize a restart of its replacement.
+Recovery checks current ownership before dispatch. Worker recovery also checks the current claim, stage, ceiling, backlog, blockers, and pending proposal. A changed link or claim cannot authorize recovery of its replacement. Recovery never raises a ceiling or accepts a proposal.
 
-The next authorized prompt tells the agent that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. A queued receipt does not count as resumption. Only a new turn with the notice in its actual prompt counts. Refusal or uncertain delivery remains explicit and receives no automatic retry.
+The recovery prompt explains that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. Panels never replays an unknown prompt or permission answer.
+
+A durable delivery intent prevents another restart from sending the same uncertain recovery again. A queued receipt does not count as resumption. Only a started turn with the notice in its actual prompt counts. Refusal or uncertain delivery receives no automatic retry.
+
+A genuine Worker delivery failure leaves its exact claim errored. The existing Errored group and Ticket attention carry that failure. Other conversations use their existing transcript rows: “not delivered” or “delivery uncertain · do not resend.” In the Chief conversation, Khushal sees that existing one-line row in his chat with Chief. Recovery adds no other owner-facing surface.
+
+An authorized supervisor or Khushal can still use Restart Worker or the existing composer. Those actions retain their ordinary admission rules.
 
 ## Exercising permission requests
 
@@ -684,13 +689,14 @@ gets. Showing them is not choosing them: a picker nobody touched still sends
 nothing, and the message that makes the conversation is created on those values
 because they are what the server resolves again when it arrives.
 
-Nobody waits for the network to see what they typed or attached. The browser gives a message
-its own name and stamps the moment the person pressed send, draws it in the
-composer stack there and then, and empties the box. Those two stamps travel with
-the message and are kept on its row, so the shared held snapshot and the eventual
-notebook row can recognize the same message. If the message turns out to have got
-nowhere, the copy goes and its exact words, pictures and pending run choices come
-back to the box, unless something else has been composed there since.
+The browser gives each send its own identity and timestamp before the network answers.
+Messages drawn in the conversation retain one display slot through record admission.
+A receipt can release persistence before the matching row body arrives. The visible
+copy remains until that body replaces its contents. Explicit composer-stack and
+server-held messages still belong above the input.
+
+A durable refusal or uncertain outcome stays on the same bubble. A transport
+rejection without a recorded outcome returns the draft through the existing recovery path.
 
 Queue changes also travel on the conversation's live connection as a contentless
 wake. Every open binder then reads the shared snapshot again. The wake carries no
@@ -714,15 +720,14 @@ have disappears from the screen as soon as the record is read again. Waiting too
 little would put a frightening sentence on a message that was about to turn out
 fine.
 
-A message nobody answered for does not stay in the thread. The thread draws these
-copies after every row the conversation has, so one left there would sit under
-every later turn for as long as the tab stayed open, looking like the newest thing
-said. It moves up to the composer, with the other messages that have not landed,
-and it says that no answer came. Two things can be done with it there, and both
-belong to the browser rather than the record: stop showing it, or send the same
-words again. Sending again is a new message with a new name, so if the first one
-did arrive after all there are two — that is the person's call to make, and
-nothing guesses it for them.
+An unanswered send stays where it first appeared and says “no answer came”.
+Its bubble offers Stop showing this message and Send again at opposite ends.
+A resend uses a new transport identity but retains the display slot. If the resend
+fails before a durable outcome, the old copy returns. A recorded refusal or uncertain
+outcome replaces it in place. Historical rows still follow server chronology after reload.
+
+A dismissed local bubble fades for 160ms, then its space closes over 240ms.
+History eviction does not use this exit effect.
 
 None of that is a guess about whether the message arrived, and the question stays
 open until the record answers it. Most of the time the record already has the
@@ -730,14 +735,25 @@ answer and this browser simply missed it, so a conversation holding a send nobod
 answered for reads the record again the moment the server is reachable. If the row
 is there, the copy goes, the ordinary way.
 
-Sending also decides where the thread sits. The message that was just sent
-settles near the top of the view with the rest of it kept for the answer, and
+Acceptance also decides where the thread sits. The accepted message
+settles 32px below the top of the view with the rest of it kept for the answer, and
 then nothing moves for as long as the answer fits in that space. Once the turn
-outgrows the view the thread follows, by the least it can while keeping the
-newest line in sight, and never backwards. Scrolling away is read from the
+outgrows the view, new streaming text advances one line per 120ms step when the
+reader already follows newest. A multi-line chunk can take several steps, bounded
+by the height of the arriving text. Layout changes and entry do not use this path. An accepted
+send uses one precomputed destination over 240ms with linear timing. Fresh opens
+and lens switches establish their position before reveal. Later layout changes
+retain the bottom or held message without animated catch-up. Scrolling away is read from the
 person — a wheel, a finger, a hand on the scrollbar — so nothing the thread does
 to itself is mistaken for them; while they are reading elsewhere nothing moves
 them, and the jump button is the way back.
+
+Returning to a browser tab restores the line the person left and its offset in the
+view, even if they were at the newest message. The existing logical anchor carries
+that position. Content that arrived while the tab was hidden stays below it and
+does not start live follow. The reader restores a bounded neighborhood around the
+anchor before the viewport places it. If that read fails, the position stays pending
+and the person can retry. Visible live text keeps its normal line-by-line follow.
 
 ## Reading a turn
 

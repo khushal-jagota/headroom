@@ -52,7 +52,7 @@ def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
     }
     return request(
         {
-            "projection_version": 4,
+            "projection_version": 5,
             "scope_generation": 1,
             "locale": "en-US",
             "selected": None if selected is None else {"kind": "ticket", "id": selected},
@@ -513,7 +513,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         assert footprint == {"globals": False, "keys": [], "sections": []}
         common = {
             "wire_version": 3,
-            "projection_version": 4,
+            "projection_version": 5,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -590,6 +590,69 @@ def test_hidden_historical_unread_counts_distinct_conversations(tmp_path: Path) 
         assert read_content(conn, query, current=True)[1]["counts"]["unread"] == 1
 
 
+def test_global_working_count_deduplicates_current_pointers_and_excludes_history(
+    prepared: Host,
+) -> None:
+    host = prepared
+    host.attach()
+    conn = host.connect()
+    activate(conn)
+    query = descriptor(limit=0)
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 0
+
+    writer = host.mutation(Turn(), "global-count-start")
+    writer.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    # An unread owner message does not cancel a working turn.
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO conversation_events VALUES('c',1,'message_to_owner','{}',0)")
+    conn.commit()
+    _, content = read_content(conn, query, current=True)
+    assert content["counts"]["unread"] == 1
+    assert content["counts"]["running_conversations"] == 1
+    assert content["windows"][0]["members"] == []
+
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO agents VALUES('chief_of_staff','c')")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    add_parent(conn, "manager")
+    conn.execute("INSERT INTO agents VALUES('manager_manager','c')")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO ticket_conversations VALUES('c','t')")
+    conn.execute("UPDATE tickets SET conversation_id=NULL WHERE id='t'")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    conn.execute("DELETE FROM agents WHERE agent_key='chief_of_staff'")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    conn.execute("BEGIN")
+    conn.execute("DELETE FROM agents WHERE agent_key='manager_manager'")
+    conn.commit()
+    _, historical = read_content(conn, query, current=True)
+    assert historical["counts"]["running_conversations"] == 0
+    assert historical["counts"]["unread"] == 1
+    assert host.runtime.running_turn is not None
+
+    conn.execute("BEGIN")
+    conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='t'")
+    conn.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+
+    writer = host.mutation(None, "global-count-stop")
+    writer.commit()
+    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 0
+
+
 def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _ActualBinding) -> None:
     from planner.navigation.delivery_authority import DeliveryUnavailable
     from planner.navigation.views.delivery import ScopedDeliveryRuntime
@@ -607,7 +670,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         runtime = ScopedDeliveryRuntime(host.delivery)
         query = descriptor(selected="t")
         current, access = asyncio.run(runtime.snapshot(query))
-        assert current["projection_version"] == 4
+        assert current["projection_version"] == 5
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
@@ -618,7 +681,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
             asyncio.run(runtime.snapshot(query, captured=captured))
         degraded, _ = asyncio.run(runtime.snapshot(query))
         assert degraded["mode"] == "degraded"
-        assert degraded["projection_version"] == 4
+        assert degraded["projection_version"] == 5
         assert degraded["authority"]["permit"] is None
         assert degraded["content"]["counts"]["running_conversations"] is None
         assert degraded["content"]["counts"]["unread"] == 1
@@ -899,3 +962,120 @@ def test_cursor_domain_rebase_empty_edge_and_all_count_scopes(tmp_path: Path) ->
         _, counts = read_content(conn, checked, current=True)
         assert len(counts["windows"]) == 138
         assert len(counts["records"]) == 1
+
+
+def test_mixed_review_window_preserves_order_count_and_unread_boundary(tmp_path: Path) -> None:
+    """A bounded page must not put messages behind proposals or consume a later run."""
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        add_conversation(conn, "unread")
+        conn.execute("BEGIN")
+        for index in range(32):
+            identity = f"decision-{index:02}"
+            add_ticket(conn, identity)
+            proposal = json.dumps(
+                {
+                    "field": "implementation",
+                    "body": "Review me",
+                    "proposed_by": "worker",
+                    "created_at": index + 10,
+                }
+            )
+            conn.execute("UPDATE tickets SET pending_proposal=? WHERE id=?", (proposal, identity))
+        conn.execute("UPDATE tickets SET conversation_id='unread' WHERE id='decision-00'")
+        conn.execute("INSERT INTO conversation_events VALUES('unread',1,'message_to_owner','{}',5)")
+        conn.execute(
+            "INSERT INTO conversation_events VALUES('unread',2,'message_to_owner','{}',25)"
+        )
+        conn.commit()
+        query = descriptor()
+        query["windows"] = [
+            {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+        ]
+        listed = _review_items(conn)
+        assert len(listed) == 33
+        assert listed[0]["conversation_id"] == "unread"
+        assert listed[0]["waiting_since"] == 5
+        for current in (True, False):
+            _, content = read_content(conn, query, current=current)
+            window = content["windows"][0]
+            assert window["total"] == content["counts"]["review"] == 33
+            assert len(window["members"]) == 30
+            assert window["members"][0] == {"kind": "address", "id": listed[0]["address_id"]}
+            query["windows"][0]["anchor"] = window["next"]
+            _, tail = read_content(conn, query, current=current)
+            assert [key["id"] for key in tail["windows"][0]["members"]] == [
+                "decision-29",
+                "decision-30",
+                "decision-31",
+            ]
+            query["windows"][0]["anchor"] = None
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE conversations SET owner_read_through_sequence=1 WHERE conversation_id='unread'"
+        )
+        conn.commit()
+        listed = _review_items(conn)
+        message = next(item for item in listed if item["review_item_type"] == "message")
+        assert message["waiting_since"] == 25
+        # Equal timestamps use item kind, so the message precedes decision-15.
+        assert listed[15] == message
+        assert listed[16]["ticket_id"] == "decision-15"
+        _, partial = read_content(conn, query, current=True)
+        assert partial["counts"]["review"] == 33
+        assert partial["windows"][0]["members"][15]["kind"] == "address"
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE conversations SET owner_read_through_sequence=2 WHERE conversation_id='unread'"
+        )
+        conn.commit()
+        _, finished = read_content(conn, query, current=True)
+        assert finished["counts"]["review"] == 32
+        assert finished["counts"]["unread"] == 0
+
+
+def test_review_canonical_address_transfers_and_retains_historical_conversation(
+    tmp_path: Path,
+) -> None:
+    """Address replacement must preserve a single message item and its full owner context."""
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        add_conversation(conn, "old")
+        add_conversation(conn, "new")
+        conn.execute("BEGIN")
+        add_ticket(conn, "a")
+        add_ticket(conn, "b")
+        conn.execute("UPDATE tickets SET conversation_id='old',recap='Owner recap'")
+        conn.execute("INSERT INTO ticket_conversations VALUES('old','a')")
+        conn.execute("INSERT INTO conversation_events VALUES('old',1,'message_to_owner','{}',1)")
+        conn.commit()
+        query = descriptor()
+        query["windows"] = [
+            {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+        ]
+
+        def check(owner: str) -> None:
+            items = _review_items(conn)
+            assert len(items) == 1
+            assert items[0]["owner_id"] == owner
+            assert items[0]["recap"] == "Owner recap"
+            for current in (True, False):
+                _, content = read_content(conn, query, current=current)
+                assert content["counts"]["review"] == content["counts"]["unread"] == 1
+                assert content["windows"][0]["total"] == 1
+                assert content["windows"][0]["members"] == [
+                    {"kind": "address", "id": items[0]["address_id"]}
+                ]
+                assert any(
+                    row["kind"] == "ticket" and row["id"] == owner for row in content["records"]
+                )
+
+        check("a")
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET conversation_id='new' WHERE id='a'")
+        conn.commit()
+        check("b")
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET conversation_id='new' WHERE id='b'")
+        conn.commit()
+        check("a")

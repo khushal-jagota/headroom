@@ -178,34 +178,19 @@ def run(browser, urls):
     expect(status).to_have_text("Reconnecting")
     page.evaluate("window.__connection('connected')")
     expect(status).to_have_text("Deployed")
-    # Notices coexist with success, and an older bundle still sees the ready
+    # An older bundle still sees the ready
     # update above Deployed. Neither event restarts the recorded success window.
-    page.evaluate("window.__interruptions()")
-    interruption = page.locator('.rail-foot [data-deployment-interruptions]')
-    expect(interruption).to_contain_text("2 interrupted sessions")
     page.evaluate("window.__release('shipped')")
     expect(status).to_contain_text("New version ready")
     page.evaluate("window.__release('booted')")
     expect(status).to_have_text("Deployed")
     page.clock.fast_forward(300_001)
     expect(status).to_have_count(0)
-    # Durable notices survive status expiry. A queued or requested action alone
-    # does not supply the displayed recovery state: the summary does.
-    expect(interruption).to_contain_text("2 interrupted sessions")
-    interruption.locator("summary").click()
-    expect(interruption).to_contain_text("Interruption account unavailable. Capture timed out.")
-    expect(interruption).to_contain_text("Draft release notes")
-    expect(interruption).to_contain_text("Awaiting action")
-    expect(interruption).to_contain_text("Historical")
-    assert interruption.get_by_role("link").count() == 1
-    assert interruption.get_by_role("link").get_attribute("href") == "#/workspace/worker"
-    interruption.get_by_role("button", name="Restart Worker", exact=True).click()
-    expect(interruption).to_contain_text("Resumed")
-    expect(interruption.get_by_role("button", name="Restart Worker", exact=True)).to_have_count(0)
-    restart = [request for request in page.evaluate("window.__requests()")
-               if request["path"] == "/api/tickets/worker/restart-worker"]
-    assert len(restart) == 1 and restart[0]["method"] == "POST" and restart[0]["body"] == {}
-    page.screenshot(animations="disabled", path=str(evidence / "deployment-interruptions-desktop.png"))
+    # The board no longer mounts the recovery display or reads its removed API.
+    expect(page.locator('[data-deployment-interruptions]')).to_have_count(0)
+    assert not any("deployment-interruptions" in request["path"]
+                   for request in page.evaluate("window.__requests()"))
+    page.screenshot(animations="disabled", path=str(evidence / "shell-without-interruption-panel.png"))
     pass  # Shared runner owns the browser lifecycle.
 
     # The update prompt is now an occupant of this same slot, so only the rendered

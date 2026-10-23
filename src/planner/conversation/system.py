@@ -63,6 +63,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationTurnReference,
+    DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -284,6 +285,7 @@ class _AdmittedSenderMessage:
     sender: Principal | None = None
     recipient: Principal | None = None
     reply_requested: bool = True
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     settled: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -312,6 +314,8 @@ class _HeldPrompt:
     reply_requested: bool
     queue_reason: PromptQueueReason
     owner_read_through_sequence: int | None
+    acknowledge_owner_on_failure: bool = True
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,11 +478,13 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         receipt = await self.send_with_receipt(
             conversation_id,
@@ -487,11 +493,13 @@ class SqliteProcessConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
         )
         return receipt.fate
 
@@ -504,11 +512,13 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
@@ -534,11 +544,13 @@ class SqliteProcessConversationSystem:
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
+                owner_read_through_sequence=owner_read_through_sequence,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
                 record_refusal=record_refusal,
             ),
         )
@@ -552,11 +564,13 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
@@ -580,12 +594,19 @@ class SqliteProcessConversationSystem:
         # A prompt from the owner acknowledges only the record that existed when the
         # send entered the conversation's ordering lock. Every later delivery outcome
         # carries this one admission point instead of sampling the record again.
+        acknowledge_owner_on_failure = owner_read_through_sequence is None
         async with state.lock:
-            owner_read_through_sequence = (
-                state.record.latest_sequence
-                if sender is not None and sender.kind is PrincipalKind.owner
-                else None
-            )
+            if owner_read_through_sequence is not None:
+                if sender is None or sender.kind is not PrincipalKind.owner:
+                    raise ValueError("only the owner can acknowledge messages with a reply")
+                if not 0 <= owner_read_through_sequence <= state.record.latest_sequence:
+                    raise ValueError("owner read boundary is outside this conversation")
+            else:
+                owner_read_through_sequence = (
+                    state.record.latest_sequence
+                    if sender is not None and sender.kind is PrincipalKind.owner
+                    else None
+                )
 
         if sender_message_id is not None:
             while True:
@@ -601,7 +622,8 @@ class SqliteProcessConversationSystem:
                             admitted.sender_label,
                             admitted.sender,
                             admitted.recipient,
-                        ) != (content, sender_label, sender, recipient):
+                            admitted.recovery_references,
+                        ) != (content, sender_label, sender, recipient, recovery_references):
                             raise ValueError("sender_message_id already names a different message")
                         settled = admitted.settled
                     else:
@@ -613,6 +635,7 @@ class SqliteProcessConversationSystem:
                                 or held.sender_label != sender_label
                                 or held.sender != sender
                                 or held.recipient != recipient
+                                or held.recovery_references != recovery_references
                             ):
                                 raise ValueError(
                                     "sender_message_id already names a different message"
@@ -638,6 +661,7 @@ class SqliteProcessConversationSystem:
                         or getattr(payload, "sender_label", None) != sender_label
                         or getattr(payload, "sender", None) != sender
                         or getattr(payload, "recipient", None) != recipient
+                        or getattr(payload, "recovery_references", ()) != recovery_references
                     ):
                         raise ValueError("sender_message_id already names a different message")
                     if isinstance(payload, PromptEventPayload):
@@ -686,6 +710,7 @@ class SqliteProcessConversationSystem:
                         sender=sender,
                         recipient=recipient,
                         reply_requested=reply_requested,
+                        recovery_references=recovery_references,
                     )
                 break
 
@@ -702,7 +727,9 @@ class SqliteProcessConversationSystem:
                     sender,
                     recipient,
                     reply_requested,
+                    recovery_references,
                     owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
             elif mode is PromptDeliveryMode.send_now:
                 fate = await self._send_now(
@@ -716,7 +743,9 @@ class SqliteProcessConversationSystem:
                     sender,
                     recipient,
                     reply_requested,
+                    recovery_references,
                     owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
             else:
                 fate = await self._queue(
@@ -730,7 +759,9 @@ class SqliteProcessConversationSystem:
                     sender,
                     recipient,
                     reply_requested,
+                    recovery_references,
                     owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
             if (
                 record_refusal
@@ -745,6 +776,7 @@ class SqliteProcessConversationSystem:
                     await self._append_event(
                         state,
                         PromptDeliveryRefusedEventPayload(
+                            recovery_references=recovery_references,
                             content=content,
                             sender_label=sender_label,
                             mode=mode,
@@ -754,8 +786,34 @@ class SqliteProcessConversationSystem:
                             sender=sender,
                             recipient=recipient,
                         ),
-                        owner_read_through_sequence=owner_read_through_sequence,
+                        owner_read_through_sequence=(
+                            owner_read_through_sequence if acknowledge_owner_on_failure else None
+                        ),
                     )
+            if (
+                not acknowledge_owner_on_failure
+                and owner_read_through_sequence is not None
+                and isinstance(fate, PromptDeliveryQueued)
+            ):
+                # Queue admission accepts the reply now. Its eventual delivery keeps
+                # the same boundary, so later agent messages remain unread.
+                async with state.lock:
+                    record = await self._persist(
+                        state,
+                        partial(
+                            self._store.advance_owner_read_through_sequence,
+                            conversation_id,
+                            owner_read_through_sequence,
+                        ),
+                    )
+                    if record is not None:
+                        state.record = replace(
+                            state.record,
+                            owner_read_through_sequence=max(
+                                state.record.owner_read_through_sequence,
+                                record.owner_read_through_sequence,
+                            ),
+                        )
             return AddressedPromptDeliveryReceipt(
                 fate=fate,
                 newly_accepted=not isinstance(fate, PromptDeliveryRefused),
@@ -1127,7 +1185,9 @@ class SqliteProcessConversationSystem:
                         sender=held.sender,
                         recipient=held.recipient,
                         reply_requested=held.reply_requested,
+                        recovery_references=held.recovery_references,
                         owner_read_through_sequence=held.owner_read_through_sequence,
+                        acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
                     )
                     self._settle_held_deliveries(state, (held,))
         finally:
@@ -1192,6 +1252,7 @@ class SqliteProcessConversationSystem:
                     sender=held.sender,
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
+                    recovery_references=held.recovery_references,
                     model_resolution=delivery.model_resolution,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
@@ -1202,6 +1263,7 @@ class SqliteProcessConversationSystem:
                         if held.sender is not None and held.sender.kind is PrincipalKind.owner
                         else None
                     ),
+                    acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
                 )
                 async with state.lock:
                     self._settle_held_deliveries(state, (held,))
@@ -1297,8 +1359,10 @@ class SqliteProcessConversationSystem:
                 held.sender,
                 held.recipient,
                 held.reply_requested,
+                held.recovery_references,
                 held.owner_read_through_sequence,
                 queue_reason=PromptQueueReason.command_needs_its_own_turn,
+                acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
             )
 
         async with state.lock:
@@ -1314,8 +1378,10 @@ class SqliteProcessConversationSystem:
                 sender=held.sender,
                 recipient=held.recipient,
                 reply_requested=held.reply_requested,
+                recovery_references=held.recovery_references,
                 owner_read_through_sequence=held.owner_read_through_sequence,
                 automatic_notice=automatic_notice,
+                acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
             )
             self._settle_held_deliveries(state, (held,))
             state.steer_settlements.discard(barrier)
@@ -1356,6 +1422,7 @@ class SqliteProcessConversationSystem:
                 await self._append_event(
                     state,
                     PromptDiscardedEventPayload(
+                        recovery_references=held.recovery_references,
                         content=held.content,
                         sender_label=held.sender_label,
                         sender_message_id=held.sender_message_id,
@@ -1731,7 +1798,9 @@ class SqliteProcessConversationSystem:
         sender: Principal | None,
         recipient: Principal | None,
         reply_requested: bool,
+        recovery_references: tuple[DeploymentRecoveryReference, ...],
         owner_read_through_sequence: int | None,
+        acknowledge_owner_on_failure: bool = True,
         *,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
     ) -> PromptDeliveryFate:
@@ -1748,6 +1817,7 @@ class SqliteProcessConversationSystem:
                         or held.reasoning_effort_change != reasoning_effort_change
                         or held.sender != sender
                         or held.recipient != recipient
+                        or held.recovery_references != recovery_references
                     ):
                         raise ValueError("sender_message_id already names a different message")
                     return PromptDeliveryQueued(queue_position=position)
@@ -1769,8 +1839,10 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                     queue_reason=queue_reason,
                     owner_read_through_sequence=owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
             if self._automatic_compaction_is_due(state):
                 held_fate = self._hold_prompt(
@@ -1784,8 +1856,10 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                     queue_reason=queue_reason,
                     owner_read_through_sequence=owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
                 automatic_reservation = await self._reserve_turn(state, automatic_compaction=True)
             else:
@@ -1808,7 +1882,9 @@ class SqliteProcessConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
             owner_read_through_sequence=owner_read_through_sequence,
+            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
         )
 
     def _hold_prompt(
@@ -1824,7 +1900,9 @@ class SqliteProcessConversationSystem:
         sender: Principal | None,
         recipient: Principal | None,
         reply_requested: bool,
+        recovery_references: tuple[DeploymentRecoveryReference, ...],
         owner_read_through_sequence: int | None,
+        acknowledge_owner_on_failure: bool = True,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
@@ -1845,8 +1923,10 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
                 queue_reason=queue_reason,
                 owner_read_through_sequence=owner_read_through_sequence,
+                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
             )
         )
         self._publish_held_prompts_changed(state)
@@ -1909,7 +1989,9 @@ class SqliteProcessConversationSystem:
         sender: Principal | None,
         recipient: Principal | None,
         reply_requested: bool,
+        recovery_references: tuple[DeploymentRecoveryReference, ...],
         owner_read_through_sequence: int | None,
+        acknowledge_owner_on_failure: bool = True,
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
         held_fate: PromptDeliveryQueued | None = None
@@ -1929,7 +2011,9 @@ class SqliteProcessConversationSystem:
                         sender=sender,
                         recipient=recipient,
                         reply_requested=reply_requested,
+                        recovery_references=recovery_references,
                         owner_read_through_sequence=owner_read_through_sequence,
+                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                     )
                 if running is not None and running.automatic_compaction:
                     return self._hold_prompt(
@@ -1943,7 +2027,9 @@ class SqliteProcessConversationSystem:
                         sender=sender,
                         recipient=recipient,
                         reply_requested=reply_requested,
+                        recovery_references=recovery_references,
                         owner_read_through_sequence=owner_read_through_sequence,
+                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                     )
                 if running is not None:
                     try:
@@ -1966,7 +2052,9 @@ class SqliteProcessConversationSystem:
                         sender=sender,
                         recipient=recipient,
                         reply_requested=reply_requested,
+                        recovery_references=recovery_references,
                         owner_read_through_sequence=owner_read_through_sequence,
+                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                     )
                     automatic_reservation = await self._reserve_turn(
                         state, automatic_compaction=True
@@ -2002,7 +2090,9 @@ class SqliteProcessConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
             owner_read_through_sequence=owner_read_through_sequence,
+            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
         )
 
     async def _steer(
@@ -2017,7 +2107,9 @@ class SqliteProcessConversationSystem:
         sender: Principal | None,
         recipient: Principal | None,
         reply_requested: bool,
+        recovery_references: tuple[DeploymentRecoveryReference, ...],
         owner_read_through_sequence: int | None,
+        acknowledge_owner_on_failure: bool = True,
     ) -> PromptDeliveryFate:
         """Steer active work, or apply the shared idle and fallback rules."""
         reservation: _ReservedTurn | None = None
@@ -2046,8 +2138,10 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                     queue_reason=PromptQueueReason.attachment,
                     owner_read_through_sequence=owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
             elif model_change is not None or reasoning_effort_change is not None:
                 queued = self._hold_prompt(
@@ -2061,8 +2155,10 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                     queue_reason=PromptQueueReason.run_change,
                     owner_read_through_sequence=owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
             elif (
                 state.child_is_quarantined
@@ -2081,8 +2177,10 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                     queue_reason=PromptQueueReason.steer_refused,
                     owner_read_through_sequence=owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
             barrier: asyncio.Event | None = None
             automatic_notice = False
@@ -2116,7 +2214,9 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
                 owner_read_through_sequence=owner_read_through_sequence,
+                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
             )
         if queued is not None:
             return queued
@@ -2138,8 +2238,10 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                     queue_reason=PromptQueueReason.steer_refused,
                     owner_read_through_sequence=owner_read_through_sequence,
+                    acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 ),
             ),
             lifecycle_if_all_suppressed=(replace(attempt, status=LifecycleStatus.suppressed),),
@@ -2206,8 +2308,10 @@ class SqliteProcessConversationSystem:
                 sender,
                 recipient,
                 reply_requested,
+                recovery_references,
                 owner_read_through_sequence,
                 queue_reason=_queue_reason_for_refused_steer(steer_outcome.refusal_reason),
+                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
             )
 
         async with state.lock:
@@ -2223,8 +2327,10 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
                 owner_read_through_sequence=owner_read_through_sequence,
                 automatic_notice=automatic_notice,
+                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
             )
 
             assert barrier is not None
@@ -2252,6 +2358,7 @@ class SqliteProcessConversationSystem:
                 sender_message_id=None,
                 sent_at_unix_milliseconds=None,
                 drain_after_delivery_exception=False,
+                acknowledge_owner_on_failure=True,
             )
         except asyncio.CancelledError:
             raise
@@ -2303,8 +2410,10 @@ class SqliteProcessConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         drain_after_delivery_exception: bool = True,
         owner_read_through_sequence: int | None = None,
+        acknowledge_owner_on_failure: bool = True,
     ) -> PromptDeliveryFate:
         try:
             reservation.automatic_notice = await self._persist(
@@ -2338,8 +2447,10 @@ class SqliteProcessConversationSystem:
                         sender=sender,
                         recipient=recipient,
                         reply_requested=reply_requested,
+                        recovery_references=recovery_references,
                         queue_reason=PromptQueueReason.steer_refused,
                         owner_read_through_sequence=owner_read_through_sequence,
+                        acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                     ),
                 ),
                 reply_senders=(
@@ -2379,12 +2490,14 @@ class SqliteProcessConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
             model_resolution=delivery.model_resolution,
             refusal_detail=delivery.refusal_detail,
             composed_content_delivered=delivery.composed_content_delivered,
             record_refusal=delivery.record_refusal,
             phase_when_not_started=_ConversationPhase.idle,
             owner_read_through_sequence=owner_read_through_sequence,
+            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
         )
         if started:
             return PromptDeliveryStarted()
@@ -2423,6 +2536,7 @@ class SqliteProcessConversationSystem:
                     state.record.conversation_id,
                     tuple(
                         PromptDiscardedEventPayload(
+                            recovery_references=m.recovery_references,
                             content=m.content,
                             sender_label=m.sender_label,
                             sender_message_id=m.sender_message_id,
@@ -2449,6 +2563,52 @@ class SqliteProcessConversationSystem:
         return survivors, reason, automatic_notice
 
     async def _deliver_prompt(
+        self, state: _ConversationState, turn_token: TurnToken, **kwargs: Any
+    ) -> _PromptDeliveryAttempt:
+        try:
+            return await self._deliver_prompt_unsettled(state, turn_token, **kwargs)
+        except BaseException:
+
+            async def settle_recovery_exception() -> None:
+                messages = tuple(
+                    message for message in kwargs.get("messages", ()) if message.recovery_references
+                )
+                if not messages:
+                    await self._persist(
+                        state,
+                        partial(
+                            self._store.fail_recovery_claims,
+                            state.record.conversation_id,
+                            turn_token.turn_number,
+                        ),
+                    )
+                    return
+                async with state.lock:
+                    for index, message in enumerate(messages):
+                        await self._append_event(
+                            state,
+                            PromptDeliveryUncertainEventPayload(
+                                content=message.content,
+                                sender_label=message.sender_label,
+                                mode=kwargs["mode"],
+                                sender_message_id=message.sender_message_id,
+                                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                                sender=message.sender,
+                                recipient=message.recipient,
+                                recovery_references=message.recovery_references,
+                            ),
+                            lifecycle=(
+                                _turn_fact(turn_token, LifecycleStatus.unavailable),
+                                _prompt_fact(turn_token, LifecycleStatus.unknown),
+                            )
+                            if index == 0
+                            else (),
+                        )
+
+            await asyncio.shield(settle_recovery_exception())
+            raise
+
+    async def _deliver_prompt_unsettled(
         self,
         state: _ConversationState,
         turn_token: TurnToken,
@@ -2474,6 +2634,14 @@ class SqliteProcessConversationSystem:
                 self._store.bind_interruption_delivery,
                 state.record.conversation_id,
                 turn_token.turn_number,
+                tuple(ref for m in messages for ref in m.recovery_references) or None,
+                {
+                    ref.interruption_id: m.sender_message_id
+                    for m in messages
+                    if m.sender_message_id is not None
+                    for ref in m.recovery_references
+                }
+                or None,
             ),
         )
         resolution: ModelResolution | None = None
@@ -2687,6 +2855,7 @@ class SqliteProcessConversationSystem:
         sender: Principal | None,
         recipient: Principal | None,
         reply_requested: bool,
+        recovery_references: tuple[DeploymentRecoveryReference, ...],
         composed_content_delivered: bool,
         model_resolution: ModelResolution | None = None,
         refusal_detail: str | None = None,
@@ -2694,6 +2863,7 @@ class SqliteProcessConversationSystem:
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_HeldPrompt, ...] = (),
         owner_read_through_sequence: int | None = None,
+        acknowledge_owner_on_failure: bool = True,
     ) -> bool:
         """Turn a delivery that has happened, or failed to, into the record and the state.
 
@@ -2730,6 +2900,7 @@ class SqliteProcessConversationSystem:
                         await self._append_event(
                             state,
                             PromptDeliveryRefusedEventPayload(
+                                recovery_references=recovery_references,
                                 content=content,
                                 sender_label=sender_label,
                                 mode=mode,
@@ -2741,7 +2912,11 @@ class SqliteProcessConversationSystem:
                                 recipient=recipient,
                             ),
                             lifecycle=refused_facts,
-                            owner_read_through_sequence=owner_read_through_sequence,
+                            owner_read_through_sequence=(
+                                owner_read_through_sequence
+                                if acknowledge_owner_on_failure
+                                else None
+                            ),
                         )
                         for message in also_delivered:
                             # The others went to the same refused delivery, so each is
@@ -2749,6 +2924,7 @@ class SqliteProcessConversationSystem:
                             await self._append_event(
                                 state,
                                 PromptDeliveryRefusedEventPayload(
+                                    recovery_references=message.recovery_references,
                                     content=message.content,
                                     sender_label=message.sender_label,
                                     mode=mode,
@@ -2807,6 +2983,7 @@ class SqliteProcessConversationSystem:
                         self._store.append_delivered_prompt,
                         state.record.conversation_id,
                         prompt=PromptEventPayload(
+                            recovery_references=recovery_references,
                             content=content,
                             sender_label=sender_label,
                             mode=mode,
@@ -2823,6 +3000,7 @@ class SqliteProcessConversationSystem:
                         model_change=carried_change,
                         extra_prompts=tuple(
                             PromptEventPayload(
+                                recovery_references=message.recovery_references,
                                 content=message.content,
                                 sender_label=message.sender_label,
                                 mode=mode,
@@ -3045,6 +3223,7 @@ class SqliteProcessConversationSystem:
                         await self._append_event(
                             state,
                             PromptDiscardedEventPayload(
+                                recovery_references=message.recovery_references,
                                 content=message.content,
                                 sender_label=message.sender_label,
                                 sender_message_id=message.sender_message_id,
@@ -3080,6 +3259,7 @@ class SqliteProcessConversationSystem:
                     sender=held.sender,
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
+                    recovery_references=held.recovery_references,
                     model_resolution=delivery.model_resolution,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
@@ -3096,6 +3276,7 @@ class SqliteProcessConversationSystem:
                         ),
                         default=None,
                     ),
+                    acknowledge_owner_on_failure=True,
                 )
                 async with state.lock:
                     self._settle_held_deliveries(state, batch)
@@ -3142,7 +3323,9 @@ class SqliteProcessConversationSystem:
         sender: Principal | None,
         recipient: Principal | None,
         reply_requested: bool,
+        recovery_references: tuple[DeploymentRecoveryReference, ...],
         owner_read_through_sequence: int | None,
+        acknowledge_owner_on_failure: bool = True,
         automatic_notice: bool = False,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
         """Record and map one steering outcome while the conversation lock is held."""
@@ -3150,6 +3333,7 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptEventPayload(
+                    recovery_references=recovery_references,
                     content=content,
                     sender_label=sender_label,
                     mode=PromptDeliveryMode.steer,
@@ -3182,6 +3366,7 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptDeliveryRefusedEventPayload(
+                    recovery_references=recovery_references,
                     content=content,
                     sender_label=sender_label,
                     mode=PromptDeliveryMode.steer,
@@ -3196,7 +3381,9 @@ class SqliteProcessConversationSystem:
                 ),
                 owner_read_through_sequence=(
                     owner_read_through_sequence
-                    if sender is not None and sender.kind is PrincipalKind.owner
+                    if acknowledge_owner_on_failure
+                    and sender is not None
+                    and sender.kind is PrincipalKind.owner
                     else None
                 ),
             )
@@ -3205,6 +3392,7 @@ class SqliteProcessConversationSystem:
         await self._append_event(
             state,
             PromptDeliveryUncertainEventPayload(
+                recovery_references=recovery_references,
                 content=content,
                 sender_label=sender_label,
                 mode=PromptDeliveryMode.steer,
@@ -3218,7 +3406,9 @@ class SqliteProcessConversationSystem:
             ),
             owner_read_through_sequence=(
                 owner_read_through_sequence
-                if sender is not None and sender.kind is PrincipalKind.owner
+                if acknowledge_owner_on_failure
+                and sender is not None
+                and sender.kind is PrincipalKind.owner
                 else None
             ),
         )
@@ -4046,6 +4236,23 @@ class SqliteProcessConversationSystem:
         lifecycle: tuple[LifecycleFact, ...] = (),
         runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> StoredConversationEvent:
+        if (
+            isinstance(payload, PromptDeliveryRefusedEventPayload)
+            and payload.recovery_references
+            and payload.refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
+        ):
+            # Unknown recovery admission uses the existing factual uncertainty row.
+            # The public delivery fate retains its established refusal mapping.
+            payload = PromptDeliveryUncertainEventPayload(
+                content=payload.content,
+                sender_label=payload.sender_label,
+                mode=payload.mode,
+                sender_message_id=payload.sender_message_id,
+                sent_at_unix_milliseconds=payload.sent_at_unix_milliseconds,
+                sender=payload.sender,
+                recipient=payload.recipient,
+                recovery_references=payload.recovery_references,
+            )
         stored = await self._persist(
             state,
             partial(

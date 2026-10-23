@@ -28,6 +28,7 @@ from enum import StrEnum
 from typing import Any, ClassVar, Final, assert_never
 
 from planner.conversation.contracts import (
+    DeploymentRecoveryReference,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
 )
@@ -219,6 +220,7 @@ class PromptEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     # Reviewed receipt settlement can identify an earlier unminted uncertainty row.
     reconciles_sequence: int | None = None
 
@@ -249,6 +251,7 @@ class PromptDeliveryRefusedEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +272,7 @@ class PromptDeliveryUncertainEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +295,7 @@ class PromptDiscardedEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     suppression_reason: str | None = None
 
 
@@ -597,6 +602,19 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_entry_if_minted("reconciles_sequence", payload.reconciles_sequence),
                 **_principal_entries(payload.sender, payload.recipient),
@@ -609,6 +627,19 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "refusal_reason": str(payload.refusal_reason),
                 "refusal_detail": payload.refusal_detail,
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
             }
@@ -618,6 +649,19 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
             }
@@ -627,6 +671,19 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 **_entry_if_minted("suppression_reason", payload.suppression_reason),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
             }
@@ -752,6 +809,9 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
@@ -767,6 +827,9 @@ def _payload_from_json_object(
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
                 refusal_detail=_optional_text(stored, "refusal_detail"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
@@ -779,6 +842,9 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
@@ -791,6 +857,9 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 suppression_reason=_optional_text(stored, "suppression_reason"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),

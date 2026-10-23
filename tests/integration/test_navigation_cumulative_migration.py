@@ -283,7 +283,7 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
     renamed = (
         conn.execute("SELECT 1 FROM sqlite_master WHERE name='managers'").fetchone() is not None
     )
-    assert current["schema_version"] == (8 if activated else 7 if renamed else 5)
+    assert current["schema_version"] == (9 if activated else 7 if renamed else 5)
     parent_kind = "manager" if renamed else "orchestrator"
     assignment_column = "manager_kind" if renamed else "orchestrator_kind"
     parent_column = "manager_id" if renamed else "sprint_item_id"
@@ -358,6 +358,8 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
                 "attempt_status_counts": {"intent": 0, "unknown": 0},
             },
         }
+        if renamed:
+            expected["first_unread_owner_message_at"] = 22 if unread else None
         if activated:
             expected["attention"] = {
                 "current": {
@@ -458,7 +460,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
             _assert_canonical(conn)
             records = _assert_projection(conn, activated=True)
             installed = snapshot(conn)
-            assert installed["semantics"] == "attention-knowledge-v8-manager-updated-at"
+            assert installed["semantics"] == "attention-knowledge-v9-review-messages"
             assert installed["epoch"] != physical["epoch"]
             assert installed["scope"] == physical["scope"]
             assert installed["revision"] == "0"

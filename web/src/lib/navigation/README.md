@@ -4,7 +4,7 @@ This module supplies the shared browser replica. `App.svelte` calls `provideNavi
 
 `navigationApplication()` reads that context. An isolated component host without the provider receives `undefined`. It never creates another owner. Every successful existing `advanceOwnerRead` response triggers shared-owner recovery before the unread-message optimization or current-conversation check. Failed reads retain their existing behavior.
 
-The workspace sidebar, ordinary Manager headers and child lists, Chief child pagination, Review queue, shell work count, Ticket masthead and current-stage section, and Chief conversation pointer use the shared view. Ordinary Manager body, artifacts, and conversation history use a separate content-only read. Proposal bodies use a detail query keyed by the exact published proposal identity. These consumer changes do not by themselves establish complete application recovery, UI parity, or a speed improvement.
+The workspace sidebar, ordinary Manager headers and child lists, Chief child pagination, Review queue, Ticket masthead and current-stage section, and Chief conversation pointer use the shared view. Ordinary Manager body, artifacts, and conversation history use a separate content-only read. Proposal bodies use a detail query keyed by the exact published proposal identity. These consumer changes do not by themselves establish complete application recovery, UI parity, or a speed improvement.
 
 The provider shares one presentation result per effective view identity. One pass indexes parent membership, identity joins, addresses, and Review facts. A knowledge-only change creates a new effective view and invalidates that result even when the publication stays the same.
 
@@ -14,7 +14,11 @@ The Ticket current-stage section admits private detail only when its public iden
 
 The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. A retained header after deletion cannot acknowledge a current publication. A composed workspace shows its shared request error once. Independent detail or content errors keep their own existing error lines.
 
-Review and shell work counts preserve the canonical distinct union of current Ticket, Chief, and existing Manager conversation pointers. The exact unfiltered Worker out-claim sum remains separate. Unknown runtime count is null and omits the runtime indicator. Known zero preserves the existing presentation. A pending collection handoff retains the last coherent display without dropping local proposal edits. Explicit authority loss still suppresses runtime knowledge.
+`navigationWorkingAgentCount(view)` in `presentation.ts` supplies the shared workspace-wide count as a number or `null`. It accepts an effective view, `null`, or `undefined`. An absent view or lost runtime authority returns `null`. A scoped view returns `counts.running_conversations` directly, including zero or `null`, without a resident-record scan. Filters and pagination do not reduce this global total.
+
+For a complete publication, the API deduplicates current Ticket, Chief, and Manager conversation pointers. It counts only fresh `working: true` facts. A missing, unknown, or retained working fact makes the total `null`. Historical-only and unlinked conversations do not contribute. `message_for_owner` does not affect the count.
+
+The existing Review field `runningConversationCount` delegates to this API. The exact unfiltered Worker out-claim sum remains separate. The API adds no display or placement. A pending collection handoff retains the last coherent display without dropping local proposal edits. Explicit authority loss still suppresses runtime knowledge.
 
 Snapshots have current or degraded mode. A current response contains complete attention, an exact authority profile, and a replay cursor. A degraded response contains coherent durable attention only, with a null cursor and proof. Every batch carries the same complete authority profile as its accepted current snapshot. Producer permit scope and navigation cursor scope are independent namespaces. Authority checks precede duplicate suppression.
 

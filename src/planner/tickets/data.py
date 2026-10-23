@@ -1292,6 +1292,27 @@ def mark_worker_step_claim_errored(
         return True
 
 
+def restore_interrupted_worker_step_claim(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    conversation_id: str,
+    expected_claim_revision: int,
+    now: int,
+) -> int | None:
+    """Rearm only the exact errored claim reconciled from an interrupted occurrence."""
+    with _txn(conn):
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        if (
+            ticket.conversation_id != conversation_id
+            or ticket.worker_step_claim is not WorkerStepClaim.errored
+            or ticket.worker_step_claim_revision != expected_claim_revision
+        ):
+            return None
+        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.out, now)
+        return expected_claim_revision + 1
+
+
 def mark_ticket_errored(
     conn: sqlite3.Connection,
     ticket_id: str,

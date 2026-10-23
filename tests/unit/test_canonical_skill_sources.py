@@ -439,4 +439,8 @@ def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
     primary = next(line for line in source.splitlines() if line.startswith("You supervise"))
     assert "PLAN_MANAGER_ID" in primary
     assert "PLAN_SPRINT_ITEM_ID" not in primary and "PLAN\\_SPRINT" not in primary
-    assert "If `PLAN_MANAGER_ID` is absent" in source
+    plain_source = source.replace("`", "").replace("\\_", "_")
+    assert (
+        "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID "
+        "for the same Manager."
+    ) in plain_source

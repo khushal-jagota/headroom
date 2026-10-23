@@ -1,5 +1,4 @@
 <script lang="ts">
-  import DeploymentInterruptions from "../DeploymentInterruptions.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
@@ -18,7 +17,7 @@
    * a person has to get themselves out of before they can type.
    */
   import {SvelteSet} from "svelte/reactivity";
-  import { onMount, untrack, type Snippet } from "svelte";
+  import { onMount, tick, untrack, type Snippet } from "svelte";
   import ConversationPane from "./ConversationPane.svelte";
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
@@ -43,6 +42,8 @@
     moveRememberedOutgoingMessages,
     outgoingPersistenceConversationId,
     outgoingMessagesByPlace,
+    outgoingReceiptBatches,
+    retainOutgoingPresentations,
     recallOutgoingMessages,
     releaseOutgoingMessageFiles,
     releaseOutgoingMessageImages,
@@ -145,16 +146,19 @@
 
   let view = $state<ConversationView | null>(null);
   let reader = $state<ConversationViewReader | null>(null);
+  let entryWatermark: number | null = null;
+  let entryPending = true;
   let viewAnchor=$state<ViewReaderAnchor|null>(null);
   let viewFolds=new Set<string>();
   let openTools=new SvelteSet<string>();
+  let acknowledgedMessageIds = $state(new SvelteSet<string>());
   /** How many frames have said the conversation is alive. Only its movement is read, and
    *  it is held apart from the feed so that saying "still working" costs the thread
    *  nothing: a frame with no words in it moves this and touches no row. */
   let livenessPulse = $state(0);
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
-  /** Local sends aimed at the queue before the server snapshot can name them. */
+  /** Sends whose confirmed queue fate precedes the next server snapshot. */
   let composerStackMessageIds = $state<readonly string[]>([]);
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
@@ -205,7 +209,7 @@
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
     void attentionPulse;
-    if (view !== null) {
+    if (view !== null && !(reader && ['loading', 'placing', 'error'].includes(reader.entryPhase))) {
       const eligibleSequence = eligibleOwnerReadSequence({
         conversationState,
         documentIsVisible,
@@ -262,6 +266,11 @@
   });
 
   onMount(() => watchOwnerReadAttention(document, window, (attention) => {
+    // Returning to this tab restores its last visible line, even if it was latest.
+    // Freeze the existing anchor before the visibility effects replace its reader.
+    if (documentIsVisible && !attention.documentIsVisible && viewAnchor !== null) {
+      viewAnchor = { ...viewAnchor, following: false };
+    }
     documentIsVisible = attention.documentIsVisible;
     windowIsFocused = attention.windowIsFocused;
     attentionPulse += 1;
@@ -286,14 +295,22 @@
       held.sender_message_id == null ? [] : [held.sender_message_id]
     ))
   );
+  const admittedMessageIds = $derived(new Set(reader?.pages.flatMap(page => page.items)
+    .filter(item => item.kind === "row" && ["prompt", "prompt_refused", "prompt_uncertain", "prompt_discarded"].includes(item.row_kind))
+    .flatMap(item => item.kind === "row" && item.sender_message_id ? [item.sender_message_id] : []) ?? []));
+  const committedMessageIds = $derived(new Set([...acknowledgedMessageIds, ...admittedMessageIds]));
   let placedOutgoingMessages = $derived(outgoingMessagesByPlace(sentMessages, {
     composerStackMessageIds,
-    serverHeldSenderMessageIds: serverHeldSenderIds
+    serverHeldSenderMessageIds: serverHeldSenderIds,
+    recordedSenderMessageIds: committedMessageIds
   }));
   let stackOutgoingMessages = $derived(placedOutgoingMessages.composerStack);
   let transcriptOutgoingMessages = $derived(placedOutgoingMessages.thread);
+  const withdrawnDisplayIds = $derived(new Set(stackOutgoingMessages.map(message => message.displayMessageId ?? message.messageId)));
   let visibleHeldRows = $derived(heldPromptRows(
-    (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)),
+    (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)
+      && (held.sender_message_id == null || !committedMessageIds.has(held.sender_message_id)
+        && !sentMessages.some(message => message.messageId === held.sender_message_id && message.accepted))),
     stackOutgoingMessages
   ));
 
@@ -366,9 +383,12 @@
     closeStream();
     openedId = id;
     refreshedReadThrough.clear();
+    entryWatermark=null;
+    entryPending=true;
     viewAnchor=null;
     viewFolds=new Set();
     openTools=new SvelteSet();
+    acknowledgedMessageIds=new SvelteSet();
     view = null;
     reader = null;
     // A reload can happen after the first request reached the server but before its
@@ -407,11 +427,26 @@
   function closeStream(): void {reader?.close();reader=null;}
 
   async function reconcileReceipts(local:ConversationViewReader):Promise<void>{
-    if(sentMessages.length===0)return;
-    const receipts=await local.receipts(sentMessages.map(message=>message.messageId));
-    if(reader!==local)return;
-    const recorded=new Set(receipts.receipts.map(receipt=>receipt.sender_message_id));
-    if(recorded.size>0)await holdOnTo(sentMessages.filter(message=>!recorded.has(message.messageId)));
+    // Mounted receipt-backed content is not another receipt candidate.
+    for (const ids of outgoingReceiptBatches(sentMessages, acknowledgedMessageIds)) {
+      const receipts = await local.receipts(ids);
+      if (reader !== local) return;
+      const recorded = new Set(receipts.receipts.map(receipt => receipt.sender_message_id));
+      if (recorded.size === 0) continue;
+      for (const id of recorded) acknowledgedMessageIds.add(id);
+      const accepted = new Set(receipts.receipts.filter(receipt => receipt.fate === "prompt").map(receipt => receipt.sender_message_id));
+      await holdOnTo(sentMessages.map(message => recorded.has(message.messageId) ? {...message, accepted: accepted.has(message.messageId)} : message));
+      await tick();
+      if (reader !== local) return;
+    }
+    await holdOnTo(retainOutgoingPresentations(sentMessages, acknowledgedMessageIds, admittedMessageIds, local.transcript));
+    // Prune presentation while all receipt identities still exist, before bounding the
+    // mounted ledger. Otherwise an evicted acknowledged copy becomes durable again.
+    const retainedIds = new Set(sentMessages.map(message => message.messageId));
+    for (const id of acknowledgedMessageIds) {
+      if (acknowledgedMessageIds.size <= 300) break;
+      if (!retainedIds.has(id)) acknowledgedMessageIds.delete(id);
+    }
   }
   /** One cancellable reader per selected lens and visible transcript demand. */
   function attachReader(id:string):ConversationViewReader{
@@ -419,6 +454,7 @@
     let lastCoverage=-1;
     const local=new ConversationViewReader(id,lens,documentIsVisible&&conversationState!=="rest",()=>{
       if(reader!==local)return;
+      if(local.entryPhase==='complete')entryPending=false;
       connectionTrouble=local.trouble;
       livenessPulse++;
       if(local.coverage!==lastCoverage){
@@ -426,7 +462,7 @@
         void refreshView(id);
         void reconcileReceipts(local).catch(()=>undefined);
       }
-    },viewAnchor,viewFolds,openTools);
+    },viewAnchor,viewFolds,openTools,entryPending ? entryWatermark : null);
     reader=local;
     return local;
   }
@@ -444,6 +480,7 @@
     try{
       const snapshot=await readConversation(id);
       if(openedId!==id)return;
+      if(entryWatermark===null)entryWatermark=snapshot.owner_read_through_sequence;
       view=snapshot;
       void refreshComposerCatalog(id);
       const local=attachReader(id);
@@ -518,21 +555,20 @@
   async function send(
     content: SentMessagePiece[],
     mode: PromptDeliveryMode,
-    picked: RunValues
+    picked: RunValues,
+    displayMessageId?: string
   ): Promise<boolean> {
     if (readOnly) return false;
     errorNote = null;
     fateNote = null;
-    // Drawn before anything is asked of the network, including the start: the person has
-    // written it and pressed Enter, so it is in the thread from that moment.
-    const message = mintOutgoingMessage({
+    // Save the words before transport, but draw them only after their destination is known.
+    const message = { ...mintOutgoingMessage({
       content,
       senderLabel,
       mode,
       pickedModel: picked.model,
       pickedReasoningEffort: picked.reasoningEffort
-    });
-    if (running) composerStackMessageIds = [...composerStackMessageIds, message.messageId];
+    }), ...(displayMessageId ? {displayMessageId} : {}) };
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
@@ -585,17 +621,26 @@
         await openConversation(delivered.conversation_id);
       }
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
-      fateNote = terminalFate ? fateSentence(fate) : null;
+      // A durable refusal/uncertainty speaks on its bubble, not a second receipt.
+      fateNote = terminalFate && delivered.conversation_id === null ? fateSentence(fate) : null;
       fateNoteIsTerminal = terminalFate;
       fateNoteMessageId = terminalFate ? message.messageId : null;
       if (terminalFate) {
-        await stopDrawing(message.messageId);
+        // A durable outcome replaces this same display slot. It is not a failed
+        // transport retry: restoring the old message would create a second copy.
+        const recordedOutcome = delivered.conversation_id !== null;
+        if (recordedOutcome) acknowledgedMessageIds.add(message.messageId);
+        await stopDrawing(message.messageId, recordedOutcome);
         await refreshView();
-        return false;
+        return recordedOutcome;
+      }
+      if (fate.fate === "started" || fate.fate === "injected") {
+        await holdOnTo(sentMessages.map(candidate => candidate.messageId === message.messageId ? {...candidate, accepted:true} : candidate));
       }
       // Held for a busy agent: it has reached nothing yet, and it says so rather than
       // sitting there looking like a message something is answering.
-      if (fate.fate === "queued") {
+      if (fate.fate === "queued" && !committedMessageIds.has(message.messageId)) {
+        if (message.displayMessageId) acknowledgedMessageIds.delete(message.displayMessageId);
         await whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
         if (!composerStackMessageIds.includes(message.messageId)) {
           composerStackMessageIds = [...composerStackMessageIds, message.messageId];
@@ -604,12 +649,16 @@
       await refreshView();
       return true;
     } catch (error) {
+      // The correlated record already settled this send. A later transport failure
+      // cannot return its words to the composer or undo that committed destination.
+      if (committedMessageIds.has(message.messageId)) return true;
       errorNote = sentenceFor(error);
       if (theServerTurnedItAway(error)) {
         await stopDrawing(message.messageId);
         return false;
       }
       await whatIsKnownAbout(message.messageId, "answer_never_came_back");
+      errorNote = null; // The retained bubble now states this unanswered transport outcome.
       return true;
     }
   }
@@ -640,7 +689,7 @@
     sentMessages = messages;
     composerStackMessageIds = composerStackMessageIds.filter((messageId) => stillHeld.has(messageId));
     if (persistenceConversationId !== null) {
-      return rememberOutgoingMessages(persistenceConversationId, messages);
+      return rememberOutgoingMessages(persistenceConversationId, messages.filter(message => !acknowledgedMessageIds.has(message.messageId)));
     }
     return true;
   }
@@ -667,11 +716,12 @@
   async function sendTheseWordsAgain(senderMessageId: string): Promise<void> {
     const uncertain = sentMessages.find((message) => message.messageId === senderMessageId);
     if (uncertain === undefined) return;
-    await stopDrawing(senderMessageId);
+    acknowledgedMessageIds.add(senderMessageId);
+    await stopDrawing(senderMessageId, true);
     const away = await send(uncertain.content, uncertain.mode, {
       model: uncertain.pickedModel ?? null,
       reasoningEffort: uncertain.pickedReasoningEffort ?? null
-    });
+    }, uncertain.displayMessageId ?? uncertain.messageId);
     if (away) return;
     // The server turned it away, so the words are nowhere. Put the copy back rather than
     // let a person lose what they wrote to a button they pressed.
@@ -683,7 +733,8 @@
     await holdOnTo([...sentMessages, uncertain]);
   }
 
-  function stopDrawing(messageId: string): Promise<boolean> {
+  function stopDrawing(messageId: string, retainPresentation = false): Promise<boolean> {
+    if (!retainPresentation) acknowledgedMessageIds.delete(messageId);
     return holdOnTo(sentMessages.filter((message) => message.messageId !== messageId));
   }
 
@@ -734,6 +785,9 @@
         (held) => held.held_prompt_id === heldPromptId
       )?.sender_message_id ?? null;
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
+      if (result.promoted && (result.fate === "started" || result.fate === "injected") && promotedMessageId !== null) {
+        await holdOnTo(sentMessages.map(message => message.messageId === promotedMessageId ? {...message, accepted: true} : message));
+      }
       if (result.promoted && (result.fate === "refused" || result.fate === "uncertain")) {
         fateNote = fateSentence(result);
         fateNoteIsTerminal = true;
@@ -872,18 +926,15 @@
   });
 </script>
 
-{#snippet deploymentInterruptionNotice()}
-  {#if openedId}<DeploymentInterruptions conversationId={openedId} />{/if}
-{/snippet}
-
 <ConversationPane
-  systemNotice={deploymentInterruptionNotice}
+  {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
   {backendKey}
   conversationExists={started}
   bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
   {reader}
+  {acknowledgedMessageIds}
   transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
   bind:viewAnchor
   draftKey={persistenceKey}

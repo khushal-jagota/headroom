@@ -7,16 +7,20 @@ import Observation
     private var persistenceAPI: APIClient?
     private var persistenceOwner: ConversationOwner?
     private var restoring = false
-    private var draftKey: String { "conversation:" + (persistenceOwner?.path ?? "") }
+    private var customDraftID: String?
+    private var draftKey: String { customDraftID ?? "conversation:" + (persistenceOwner?.path ?? "") }
     private func saveDraft() {
         guard !restoring, let api = persistenceAPI else { return }
         LocalStore.shared.saveDraft(draft, server: LocalStore.server(api.baseURL), id: draftKey)
     }
-    func restore(owner: ConversationOwner, api: APIClient) {
-        guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner else { syncOutbox(); return }
-        persistenceAPI = api; persistenceOwner = owner; restoring = true
+    func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil) {
+        guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(); return }
+        persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
         draft = LocalStore.shared.draft(server: LocalStore.server(api.baseURL), id: draftKey) ?? ""
+        if let data = try? LocalStore.shared.record(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey)?.payload {
+            attachments = (try? JSONDecoder().decode([ConversationSend.Piece].self, from: data)) ?? []
+        }
         if let id = conversationID,
            let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
             status = snapshot.status; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
@@ -59,7 +63,13 @@ import Observation
         var retryable = false
     }
     var deliveryMode = "steer"
-    var attachments: [ConversationSend.Piece] = []
+    var attachments: [ConversationSend.Piece] = [] {
+        didSet {
+            guard !restoring, let api = persistenceAPI else { return }
+            do { try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments)) }
+            catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
+        }
+    }
     private var outgoingText: [String: String] = [:]
     private var outgoingAttachments: [String: [ConversationSend.Piece]] = [:]
     var backendKey: String?

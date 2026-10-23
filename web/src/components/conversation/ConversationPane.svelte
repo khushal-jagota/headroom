@@ -47,6 +47,7 @@
     rows = [],
     visibleRows = null,
     outgoingMessages = [],
+    withdrawnDisplayIds = new Set<string>(),
     running = false,
     ask = null,
     userInput = null,
@@ -77,8 +78,8 @@
     lens = $bindable("focus"),
     conversationState = $bindable(null),
     emptyState,
-    systemNotice,
     reader = null,
+    acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
     transcriptVisible = true,
     draftKey,
@@ -97,6 +98,7 @@
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     reader?: ConversationViewReader | null;
+    acknowledgedMessageIds?: ReadonlySet<string>;
     viewAnchor?: ViewReaderAnchor | null;
     transcriptVisible?: boolean;
     draftKey: string;
@@ -112,6 +114,7 @@
     visibleRows?: readonly TranscriptRow[] | null;
     /** Messages this browser has sent that the record does not have yet, oldest first. */
     outgoingMessages?: readonly OutgoingMessage[];
+    withdrawnDisplayIds?: ReadonlySet<string>;
     running?: boolean;
     ask?: {
       askId: string;
@@ -167,7 +170,6 @@
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
     emptyState?: Snippet;
-    systemNotice?: Snippet;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -188,6 +190,8 @@
     onNewConversation?: () => void;
   } = $props();
 
+  let placementReady = $state(false);
+  let entryPresentationPending = $state(true);
   let paneElement = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false);
   let confirmArmed = $state(false);
@@ -466,19 +470,37 @@
   </div>
 
   {#if conversationState !== "rest" && transcriptVisible}
-  {@render systemNotice?.()}
+  {#if reader?.restorationFailed}
+    <div class="chat-receipt" role="status" data-conversation-restoration-status="error">Your conversation position did not load.
+      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>
+    </div>
+  {/if}
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
-  <div class="conversation-transcript-region" aria-busy={transcriptLoading}>
+  {#if reader?.entryPhase === 'error'}
+    <div class="chat-receipt" role="status" data-conversation-entry-status="error">Unread messages did not load.
+      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryEntry()}>Retry unread messages</button>
+    </div>
+  {/if}
+  <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
+    style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
+    aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
+    bind:placementReady
+    bind:entryPresentationPending
+    {ownerReadThroughSequence}
     bind:viewAnchor
     {reader}
+    {acknowledgedMessageIds}
+    onStopDrawingMessage={onStopDrawingHeldPrompt}
+    onSendAgain={onSendHeldPromptAgain}
     {conversationId}
     {rows}
     visibleRows={rowsForLens}
     {lens}
     {outgoingMessages}
+    {withdrawnDisplayIds}
     {models}
     {ownSenderLabel}
     {livenessPulse}

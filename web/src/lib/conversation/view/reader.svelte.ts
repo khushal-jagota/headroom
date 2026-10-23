@@ -40,6 +40,22 @@ export class ConversationViewReader {
     trouble = $state(false);
     loading = $state(false);
     restoring = $state(false);
+    restorationFailed = $state(false);
+    entryPhase = $state<'idle' | 'loading' | 'placing' | 'error' | 'complete'>('idle');
+    entryTarget = $state.raw<ViewReaderAnchor | null>(null);
+    entryTargetReady = $state(false);
+    entryHeld = $state(false);
+    private entryOperation = 0;
+    private entryStarted = false;
+    private receivedSnapshot = false;
+    private initialLiveOutput: string | null = null;
+    private initialLiveOutputTurn: string | null = null;
+    /** An existing snapshot body is layout restoration, not newly arriving text. */
+    liveOutputIsArrival(reference: ViewBodyReference, replacingBody: boolean): boolean {
+        const output = this.status?.live_output;
+        const turn = output ? JSON.stringify([output.runtime_epoch, output.turn_key]) : null;
+        return this.initialLiveOutput === null || turn !== this.initialLiveOutputTurn || replacingBody && this.initialLiveOutput !== JSON.stringify(reference);
+    }
     private rangeTimer: ReturnType<typeof setTimeout> | null = null;
     revision = $state(0);
     private source: EventSource | null = null;
@@ -107,7 +123,111 @@ export class ConversationViewReader {
         for (const request of this.requests.values()) request.abort.abort();
         this.requests.clear();
     }
-    constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>()) { this.restoring = initialAnchor !== null && !initialAnchor.following; }
+    constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>(), private entryReadThroughSequence: number | null = null) {
+        this.restoring = transcript && initialAnchor !== null && !initialAnchor.following;
+        if (transcript && entryReadThroughSequence !== null && initialAnchor === null) this.entryPhase = 'loading';
+    }
+    /** Restore a bounded neighborhood, not a page that ends at the held line.
+     * The newest snapshot already suffices when it still contains that line.
+     * Otherwise one older page and one newer page supply both sides of it. */
+    private async restoreAnchor(): Promise<void> {
+        if (!this.restoring || !this.initialAnchor || this.disposed) return;
+        const anchor = this.initialAnchor;
+        let page = this.pages.find(page => page.scope.kind === 'timeline');
+        if (!page?.items.some(item => item.key === anchor.key)) {
+            const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline,
+                order: { ...anchor.order, slot: anchor.order.slot + 1 } };
+            if (!await this.load(timeline, cursor, 'older', true)) {
+                this.failRestoration();
+                return;
+            }
+            page = this.pages.find(page => page.scope.kind === 'timeline');
+        }
+        if (this.disposed) return;
+        if (page?.newer && !await this.load(timeline, page.newer, 'newer')) {
+            this.failRestoration();
+            return;
+        }
+        if (this.disposed) return;
+        this.restoring = false;
+        this.restorationFailed = false;
+        this.changed();
+        if (this.source === null) void this.connect().catch(() => undefined);
+    }
+    private failRestoration(): void {
+        if (this.disposed) return;
+        this.restorationFailed = true;
+        this.loading = false;
+        this.trouble = true;
+        this.changed();
+    }
+    retryRestoration(): void {
+        if (!this.restorationFailed) return;
+        this.restorationFailed = false;
+        void this.restoreAnchor();
+    }
+    /** Entry is an operation, not a moving copy of the durable read watermark. */
+    private async prepareEntry(): Promise<void> {
+        const operation = ++this.entryOperation;
+        const active = () => !this.disposed && operation === this.entryOperation;
+        this.entryStarted = true;
+        this.entryPhase = 'loading';
+        this.entryTarget = null;
+        this.entryTargetReady = false;
+        let cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline,
+            order: { sequence: this.entryReadThroughSequence ?? 0, slot: Number.MAX_SAFE_INTEGER } };
+        while (active()) {
+            const admitted = await this.load(timeline, cursor, 'newer', true);
+            if (!active()) return;
+            if (!admitted) { this.failEntry(); return; }
+            const page = this.pages.find(page => page.scope.kind === 'timeline');
+            const target = page?.items.find(item => item.kind === 'row' && [
+                'prompt', 'agent_message', 'prompt_refused', 'prompt_uncertain', 'prompt_discarded', 'permission_ask', 'user_input'
+            ].includes(item.row_kind));
+            if (target) {
+                this.entryTarget = { key: target.key, order: target.order, offset: 32, following: false };
+                this.entryTargetReady = target.kind === 'row' && target.body.kind === 'inline';
+                this.entryPhase = 'placing';
+                this.changed();
+                return;
+            }
+            const next = page?.newer;
+            if (!next) {
+                const latest = await this.load(timeline, null, 'older', true);
+                if (!active()) return;
+                if (!latest) { this.failEntry(); return; }
+                this.entryTargetReady = true;
+                this.entryPhase = 'placing';
+                this.changed();
+                return;
+            }
+            if (next.order.sequence < cursor.order.sequence || (next.order.sequence === cursor.order.sequence && next.order.slot <= cursor.order.slot)) {
+                this.failEntry(); return;
+            }
+            cursor = next;
+        }
+    }
+    entryBodyReady(key: string): void {
+        if (this.entryPhase === 'placing' && this.entryTarget?.key === key) this.entryTargetReady = true;
+    }
+    failEntry(): void {
+        if (this.disposed || this.entryPhase === 'complete' || this.entryPhase === 'idle') return;
+        this.entryOperation++;
+        this.entryPhase = 'error';
+        this.loading = false;
+        this.changed();
+    }
+    retryEntry(): void {
+        if (this.entryPhase === 'error') void this.prepareEntry();
+    }
+    finishEntry(): void {
+        if (this.entryPhase !== 'placing' || !this.entryTargetReady) return;
+        this.entryHeld = this.entryTarget !== null;
+        this.entryPhase = 'complete';
+        this.changed();
+        if (this.source === null) void this.connect().catch(() => undefined);
+    }
+    releaseEntry(): void { this.entryHeld = false; }
     private url(suffix: string, query: Record<string, string> = {}): string {
         const search = new URLSearchParams({ lens: this.lens, ...query });
         return `/api/conversation/conversations/${encodeURIComponent(this.id)}/view${suffix}?${search}`;
@@ -175,10 +295,12 @@ export class ConversationViewReader {
         let count = pages.reduce((sum, p) => sum + p.items.length, 0);
         let bytes = pages.reduce((sum, p) => sum + p.items.reduce((n, item) => n + itemBytes(item), 0), 0);
         while (count > READER_ITEMS || bytes > READER_BODY_BYTES) {
-            const page = pages.find(p => scopeKey(p.scope) !== preferred && p.items.length > 0) ?? pages.find(p => p.items.length > 0);
+            const removable = pages.filter(p => p.items.length > 0 && !(this.entryHeld && p.items.length === 1 && p.items[0].key === this.entryTarget?.key));
+            const page = removable.find(p => scopeKey(p.scope) !== preferred) ?? removable[0];
             if (!page)
                 break;
-            const removeEnd = scopeKey(page.scope) === preferred && direction === 'older';
+            const targetIndex = this.entryHeld ? page.items.findIndex(item => item.key === this.entryTarget?.key) : -1;
+            const removeEnd = targetIndex >= 0 ? targetIndex < page.items.length / 2 : scopeKey(page.scope) === preferred && direction === 'older';
             const removed = removeEnd ? page.items.pop() : page.items.shift();
             if (!removed)
                 break;
@@ -196,7 +318,7 @@ export class ConversationViewReader {
         this.pages = pages.filter(p => p.items.length > 0 || scopeKey(p.scope) === preferred);
     }
     async connect(): Promise<void> {
-        if (this.disposed || this.requests.size > 0)
+        if (this.disposed || this.requests.size > 0 || this.restoring && this.receivedSnapshot || this.entryStarted && ['loading', 'placing', 'error'].includes(this.entryPhase))
             return;
         if (this.reconnecting !== null)
             return this.reconnecting;
@@ -229,12 +351,13 @@ export class ConversationViewReader {
             const source = new EventSource(this.url('/tail', query));
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
-            const ready = () => { this.loading = false; this.trouble = false; this.changed(); if (!settled) {
+            const ready = () => { this.loading = false; this.trouble = this.restorationFailed; this.changed(); if (!settled) {
                 settled = true;
                 resolve();
             } };
             const fail = (error: unknown) => { if (!active())
                 return; source.close(); this.source = null; this.loading = false; this.trouble = true;
+                if (this.entryPhase === 'loading' && !this.entryStarted) this.failEntry();
                 if (this.status) this.status = { ...this.status, authority: 'unknown', turn_running: null, pending_permission: null, pending_user_input: null, live_output: null, live_tool_key: null, live_tool_progress: null };
                 this.changed();
                 if (!settled) {
@@ -254,12 +377,22 @@ export class ConversationViewReader {
                         this.pages = [];
                     }
                     this.admitSnapshot(value.page);
+                    if (!this.receivedSnapshot) {
+                        this.receivedSnapshot = true;
+                        this.initialLiveOutput = value.status.live_output ? JSON.stringify(value.status.live_output.reference) : null;
+                        this.initialLiveOutputTurn = value.status.live_output ? JSON.stringify([value.status.live_output.runtime_epoch, value.status.live_output.turn_key]) : null;
+                    }
                     this.noteStatus(value.status);
                     this.coverage = value.coverage.through_sequence;
-                    if (this.restoring && this.initialAnchor) {
-                        const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline, order: { ...this.initialAnchor.order, slot: this.initialAnchor.order.slot + 1 } };
-                        await this.load(timeline, cursor, 'older', true);
-                        this.restoring = false;
+                    if (this.restoring) await this.restoreAnchor();
+                    if (this.entryPhase === 'loading' && !this.entryStarted) {
+                        if (value.coverage.through_sequence <= (this.entryReadThroughSequence ?? 0)) {
+                            // The admitted snapshot proves that there is no unread range.
+                            this.entryStarted = true;
+                            this.entryTarget = null;
+                            this.entryTargetReady = true;
+                            this.entryPhase = 'placing';
+                        } else void this.prepareEntry();
                     }
                     ready();
                 }
@@ -436,7 +569,7 @@ export class ConversationViewReader {
         }
     }
     async receipts(ids: readonly string[]): Promise<ViewMessageReceipts> { return this.get('/receipts', { message_ids: JSON.stringify(ids.slice(0, 64)) }); }
-    close(): void { this.disposed = true; this.generation++; this.releaseSource(); this.source = null; this.abort.abort(); this.cancelPages(); if (this.retry !== null)
+    close(): void { this.entryOperation++; this.disposed = true; this.generation++; this.releaseSource(); this.source = null; this.abort.abort(); this.cancelPages(); if (this.retry !== null)
         clearTimeout(this.retry); this.retry = null; this.pages = []; this.status = null; this.requests.clear(); if (this.rangeTimer !== null)
         clearTimeout(this.rangeTimer); this.rangeTimer = null; }
 }
