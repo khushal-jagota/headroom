@@ -692,7 +692,7 @@ def _run(browser, urls):
         state(page, "opened")
         settled(page)
         sent = answer_room_reading(page)
-        assert 0 <= sent["promptTop"] <= 32, sent
+        assert abs(sent["promptTop"]-32)<=2, sent
         # Explicit send placement wins even when the layer changes height.
         page.locator(INPUT).fill("one\ntwo\nthree\nfour\nfive")
         settled(page)
@@ -721,7 +721,7 @@ def _run(browser, urls):
         page.evaluate("window.__sendScrollRegression(false)")
         settled(page)
         sent = answer_room_reading(page)
-        assert 0 <= sent["promptTop"] <= 32, sent
+        assert abs(sent["promptTop"]-32)<=2, sent
         assert sent["room"] > 200, sent
         page.evaluate("window.__answerScrollRegression(1)")
         settled(page)
@@ -1348,12 +1348,15 @@ def _run(browser, urls):
     page.wait_for_timeout(50)
     anchored = first_visible_line(page)
     assert anchored is not None
+    old_height = thread.evaluate("node=>node.clientHeight")
     page.locator("[data-conversation-expand]").click()
     state(page, "opened")
-    restored = first_visible_line(page)
-    assert restored is not None
-    assert restored["text"] == anchored["text"]
-    assert abs(restored["top"] - anchored["top"]) <= 3, (anchored, restored)
+    settled(page)
+    height_delta = thread.evaluate("node=>node.clientHeight") - old_height
+    held = thread.evaluate("""(thread,text)=>{const node=[...thread.querySelectorAll('[data-conversation-row="agent_message"]')].find(node=>node.textContent.trim()===text);return node.getBoundingClientRect().top-thread.getBoundingClientRect().top;}""", anchored['text'])
+    assert abs(held-anchored['top']-height_delta)<=3, (anchored,held,height_delta)
+    anchored = first_visible_line(page)
+    assert anchored is not None
 
     # Removing a screenful above the reader moves the thread, not their anchored line.
     page.evaluate("window.__dropFirstConversationLines(6)")
@@ -2905,10 +2908,139 @@ def _settled_unread_entry(browser, url):
         page.close()
 
 
+
+def _position_commit(browser, url):
+    """Probe the render/placement boundary on existing real Svelte hosts."""
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started=time.perf_counter()
+    output=Path(os.environ.get('PANELS_E2E_FAILURE_DIR','/tmp'))
+    output.mkdir(parents=True,exist_ok=True)
+    page=browser.new_page(viewport={'width':1000,'height':900},reduced_motion='no-preference',record_video_dir=str(output/'position-video'),record_video_size={'width':800,'height':720})
+    proof={'entry':[],'contraction':[],'labels':[]}
+    page.add_init_script("""window.__positionFrames=[];window.__samplePosition=false;
+      const sample=()=>{
+        const thread=document.querySelector('[data-conversation-thread]');
+        const region=document.querySelector('.conversation-transcript-region');
+        if(thread&&window.__samplePosition){
+          const last=[...thread.querySelectorAll('[data-conversation-row]')].at(-1);
+          const hidden=getComputedStyle(thread).visibility==='hidden'||getComputedStyle(region).visibility==='hidden';
+          window.__positionFrames.push({ms:performance.now(),hidden,busy:region?.getAttribute('aria-busy'),
+            top:thread.scrollTop,height:thread.clientHeight,scrollHeight:thread.scrollHeight,
+            gap:last?thread.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom:null});
+        }requestAnimationFrame(sample);
+      };requestAnimationFrame(sample);""")
+    try:
+        # Readiness must survive bodies completing after the initial nonzero layout.
+        for attempt in range(2):
+            page.goto(url+'?reader=1&position-race=1')
+            page.wait_for_function('window.__positionProbe.waiting>0')
+            page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
+            assert page.locator('.conversation-transcript-region').get_attribute('aria-busy')=='true'
+            page.evaluate('window.__positionProbe.release()')
+            page.locator('[data-conversation-entry="complete"]').wait_for()
+            page.wait_for_timeout(350)
+            frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
+            visible=[row for row in frames if not row['hidden'] and row['busy']!='true']
+            assert visible and all(-2<=row['gap']<=18 for row in visible), visible
+            proof['entry'].append({'trigger':'fresh open','attempt':attempt,'frames':frames})
+            for lens in ('full','focus'):
+                page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
+                page.locator('[data-conversation-lens-choice="'+lens+'"]').click()
+                page.wait_for_timeout(500)
+                frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
+                visible=[row for row in frames if not row['hidden'] and row['busy']!='true']
+                assert visible and all(-2<=row['gap']<=18 for row in visible), (lens,visible)
+                proof['entry'].append({'trigger':'lens '+lens,'attempt':attempt,'frames':frames})
+            # Browser-owned image and font metrics change after reveal. Neither causes travel.
+            frames=page.evaluate("""()=>new Promise(resolve=>{
+              const thread=document.querySelector('[data-conversation-thread]');
+              const row=thread.querySelector('[data-conversation-row]');
+              const image=document.createElement('img');image.style.cssText='display:block;width:1px;height:220px';
+              row.append(image);row.style.fontSize='22px';
+              const frames=[];let count=0;const sample=()=>{const last=[...thread.querySelectorAll('[data-conversation-row]')].at(-1);frames.push({gap:thread.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom,top:thread.scrollTop});if(++count<8)requestAnimationFrame(sample);else resolve(frames);};requestAnimationFrame(sample);
+            })""")
+            assert all(-2<=row['gap']<=18 for row in frames), frames
+            proof['entry'].append({'trigger':'late image/font metrics','frames':frames})
+        page.screenshot(path=str(output/'position-entry.png'))
+
+        # The label counts unread source messages, while visibility still follows newest.
+        page.goto(url)
+        assert page.locator('[data-conversation-input]').get_attribute('placeholder')=='Message the agent...'
+        page.evaluate("window.__fixturePlaceholder('Write a custom message')")
+        page.wait_for_function("document.querySelector('[data-conversation-input]')?.placeholder==='Write a custom message'")
+        page.evaluate('window.__fixturePlaceholder(undefined)')
+        page.evaluate("window.__setupScrollRegression('plain');window.__appendLabelTools();window.__setReadWatermark(28)")
+        _settle_conversation_layout(page)
+        thread=page.locator('[data-conversation-thread]')
+        thread.hover()
+        page.mouse.wheel(0,-600)
+        latest=page.get_by_role('button',name='Jump to latest message',exact=True)
+        latest.wait_for()
+        assert latest.inner_text()=='Latest'
+        proof['labels'].append({'watermark':28,'text':latest.inner_text()})
+        page.evaluate('window.__setReadWatermark(24)')
+        page.wait_for_function("document.querySelector('.chat-jump')?.textContent==='4 new messages'")
+        proof['labels'].append({'watermark':24,'text':latest.inner_text()})
+        latest.click()
+        _settle_conversation_layout(page)
+
+        # Card shrink keeps content fixed relative to its bottom on every shared frame.
+        for trigger in ('control','Escape'):
+            page.locator('[data-conversation-expand]').click()
+            _settle_conversation_layout(page)
+            page.evaluate("""()=>{window.__contractFrames=[];window.__contractStop=false;
+              const thread=document.querySelector('[data-conversation-thread]');
+              const last=[...thread.querySelectorAll('[data-conversation-row]')].at(-1);
+              const start=performance.now();const sample=()=>{const box=thread.getBoundingClientRect();window.__contractFrames.push({ms:performance.now()-start,bottom:box.bottom,height:box.height,contentBottom:last.getBoundingClientRect().bottom-box.bottom});if(!window.__contractStop)requestAnimationFrame(sample);};sample();}""")
+            if trigger=='control':
+                page.locator('[data-conversation-collapse]').click()
+            else:
+                page.locator('[data-conversation-input]').focus()
+                page.keyboard.press('Escape')
+            page.wait_for_timeout(380)
+            frames=page.evaluate('window.__contractStop=true;window.__contractFrames')
+            assert len({round(row['height']) for row in frames})>3,frames
+            assert max(row['bottom'] for row in frames)-min(row['bottom'] for row in frames)<=2,frames
+            assert max(row['contentBottom'] for row in frames)-min(row['contentBottom'] for row in frames)<=3,frames
+            proof['contraction'].append({'trigger':trigger,'frames':frames})
+        # A real live-output body version change retains multiline 120ms line cadence.
+        page.goto(url+'?reader=1&live-stream=1')
+        page.locator('[data-conversation-entry="complete"]').wait_for()
+        page.locator('[data-conversation-lens-choice="full"]').click()
+        page.locator('.c2-streaming').wait_for()
+        _settle_conversation_layout(page)
+        page.evaluate("""()=>{window.__presentationEvents=[];document.addEventListener('conversation-text-presentation',event=>{window.__presentationEvents.push({...event.detail,top:document.querySelector('[data-conversation-thread]')?.scrollTop});});}""")
+        frames=page.evaluate(r"""()=>new Promise(resolve=>{
+          const thread=document.querySelector('[data-conversation-thread]');
+          const before=thread.scrollHeight,start=performance.now(),frames=[];
+          window.__streamProbe.append('\n\n'+Array.from({length:5},(_,i)=>'New streamed line '+i+'. The new text alone permits the line cadence to continue.').join('\n\n'));
+          const sample=()=>{frames.push({ms:performance.now()-start,top:thread.scrollTop,growth:thread.scrollHeight-before});if(performance.now()-start<1800)requestAnimationFrame(sample);else resolve(frames);};sample();
+        })""")
+        moving=[b for a,b in zip(frames,frames[1:],strict=False) if b['top']-a['top']>.5]
+        proof['streaming']={'frames':frames,'events':page.evaluate('window.__presentationEvents')}
+        assert len(moving)>3 and moving[-1]['ms']>300,proof['streaming']
+        assert frames[-1]['top']-frames[0]['top']<=frames[-1]['growth']+2,frames
+        proof['streaming']={'frames':frames,'arrivalHeight':frames[-1]['growth'],'events':page.evaluate('window.__presentationEvents')}
+        proof['seconds']=round(time.perf_counter()-started,3)
+        proof['newHosts']=0
+        (output/'position-commit-proof.json').write_text(json.dumps(proof,indent=2))
+        print('POSITION_COMMIT_PROOF '+json.dumps({'seconds':proof['seconds'],'entries':len(proof['entry']),'contractions':2}),flush=True)
+    finally:
+        proof['seconds']=round(time.perf_counter()-started,3)
+        (output/'position-commit-latest.json').write_text(json.dumps(proof,indent=2))
+        page.close()
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'position':
+            _position_commit(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'overlay':
             _overlay_menu_bounds(browser, urls[0])
             return
@@ -2930,6 +3062,7 @@ def run(browser, urls):
         if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'intents':
             _latest_obsolete_intents(browser, urls[0])
             return
+        _position_commit(browser, urls[0])
         _settled_motion(browser, urls[0])
         _settled_unread_entry(browser, urls[0])
         _latest_destination(browser, urls[0])

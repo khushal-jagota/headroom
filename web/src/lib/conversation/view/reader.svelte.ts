@@ -46,6 +46,15 @@ export class ConversationViewReader {
     entryHeld = $state(false);
     private entryOperation = 0;
     private entryStarted = false;
+    private receivedSnapshot = false;
+    private initialLiveOutput: string | null = null;
+    private initialLiveOutputTurn: string | null = null;
+    /** An existing snapshot body is layout restoration, not newly arriving text. */
+    liveOutputIsArrival(reference: ViewBodyReference, replacingBody: boolean): boolean {
+        const output = this.status?.live_output;
+        const turn = output ? JSON.stringify([output.runtime_epoch, output.turn_key]) : null;
+        return this.initialLiveOutput === null || turn !== this.initialLiveOutputTurn || replacingBody && this.initialLiveOutput !== JSON.stringify(reference);
+    }
     private rangeTimer: ReturnType<typeof setTimeout> | null = null;
     revision = $state(0);
     private source: EventSource | null = null;
@@ -328,6 +337,11 @@ export class ConversationViewReader {
                         this.pages = [];
                     }
                     this.admitSnapshot(value.page);
+                    if (!this.receivedSnapshot) {
+                        this.receivedSnapshot = true;
+                        this.initialLiveOutput = value.status.live_output ? JSON.stringify(value.status.live_output.reference) : null;
+                        this.initialLiveOutputTurn = value.status.live_output ? JSON.stringify([value.status.live_output.runtime_epoch, value.status.live_output.turn_key]) : null;
+                    }
                     this.noteStatus(value.status);
                     this.coverage = value.coverage.through_sequence;
                     if (this.restoring && this.initialAnchor) {

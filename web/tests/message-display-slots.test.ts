@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { reconcileDisplaySlots } from '../src/lib/conversation/displaySlots';
-import { outgoingMessagesByPlace, type OutgoingMessage } from '../src/lib/conversation/outgoing';
+import { outgoingMessagesByPlace, outgoingReceiptBatches, retainOutgoingPresentations, type OutgoingMessage } from '../src/lib/conversation/outgoing';
 import type { ConversationViewRow } from '../src/lib/conversation/view/contracts';
-const local: OutgoingMessage = {messageId:'send',content:[{piece:'text',text:'words'}],senderLabel:'owner',mode:'steer',sentAtUnixMilliseconds:1,knownFate:'nothing_yet'};
+const local: OutgoingMessage = {messageId:'send',content:[{piece:'text',text:'words'}],senderLabel:'owner',mode:'steer',sentAtUnixMilliseconds:1,knownFate:'nothing_yet',accepted:true};
 const row = (key: string, sequence: number, sender: string|null = null): ConversationViewRow => ({kind:'row',key,row_kind:sender?'prompt':'agent_message',sender_message_id:sender,source_sequence:sequence,order:{sequence,slot:0},changed_through_sequence:sequence,created_at:1,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',content:[{piece:'text',text:key}],to_owner:true}}});
 describe('mounted message presentation',()=>{
  it('retains the original slot through a receipt, later messages, and a recorded replacement, then releases it at eviction',()=>{
@@ -26,9 +26,65 @@ describe('mounted message presentation',()=>{
    expect(slots[1]?.local?.messageId).toBe('send');
    expect(reconcileDisplaySlots(slots,[row('before',1)],[],new Set()).map(s=>s.key)).toEqual(['record:before']);
  });
- it('keeps unanswered and waiting messages in the thread unless queue membership requires the tray',()=>{
-   const messages=[{...local,knownFate:'answer_never_came_back' as const},{...local,messageId:'waiting',knownFate:'waiting_for_the_agent' as const}];
-   expect(outgoingMessagesByPlace(messages,{composerStackMessageIds:[],serverHeldSenderMessageIds:new Set()}).thread).toEqual(messages);
-   expect(outgoingMessagesByPlace(messages,{composerStackMessageIds:['send'],serverHeldSenderMessageIds:new Set(['waiting'])}).composerStack).toEqual(messages);
+ it('waits for a confirmed destination and ignores stale queue membership after acceptance or record admission',()=>{
+   const unresolved={...local,accepted:false};
+   const where={composerStackMessageIds:[] as string[],serverHeldSenderMessageIds:new Set<string>()};
+   expect(outgoingMessagesByPlace([unresolved],where)).toEqual({thread:[],composerStack:[]});
+   const queued={...unresolved,knownFate:'waiting_for_the_agent' as const};
+   expect(outgoingMessagesByPlace([queued],where)).toEqual({thread:[],composerStack:[queued]});
+   const stale={composerStackMessageIds:['send'],serverHeldSenderMessageIds:new Set(['send'])};
+   expect(outgoingMessagesByPlace([local],stale)).toEqual({thread:[local],composerStack:[]});
+   expect(outgoingMessagesByPlace([queued],{...stale,recordedSenderMessageIds:new Set(['send'])})).toEqual({thread:[queued],composerStack:[]});
+   const unknown={...unresolved,knownFate:'answer_never_came_back' as const};
+   expect(outgoingMessagesByPlace([unknown],where)).toEqual({thread:[unknown],composerStack:[]});
  });
+ it('commits one slot in either transport/record order and retains record chronology on record-first admission',()=>{
+   const before=row('before',1), received=row('received',2,'send'), after=row('after',3);
+   const where={composerStackMessageIds:[],serverHeldSenderMessageIds:new Set<string>()};
+   const unresolved={...local,accepted:false};
+   let slots=reconcileDisplaySlots([], [before], outgoingMessagesByPlace([unresolved],where).thread,new Set());
+   expect(slots.map(slot=>slot.key)).toEqual(['record:before']);
+   slots=reconcileDisplaySlots(slots,[before],outgoingMessagesByPlace([local],where).thread,new Set());
+   const placed=slots.find(slot=>slot.local)!;
+   slots=reconcileDisplaySlots(slots,[before,received,after],[],new Set(['send']));
+   expect(slots.filter(slot=>slot.item?.kind==='row' && slot.item.sender_message_id==='send')).toHaveLength(1);
+   expect(slots.find(slot=>slot.local)?.key).toBe(placed.key);
+   expect(slots.find(slot=>slot.local)?.order).toEqual(placed.order);
+   slots=reconcileDisplaySlots([], [before,received,after],outgoingMessagesByPlace([unresolved],{...where,recordedSenderMessageIds:new Set(['send'])}).thread,new Set());
+   expect(slots.map(slot=>slot.item?.key)).toEqual(['before','received','after']);
+   const recordedSlot=slots.find(slot=>slot.local)!;
+   slots=reconcileDisplaySlots(slots,[before,received,after],[local],new Set(['send']));
+   expect(slots.find(slot=>slot.local)?.key).toBe(recordedSlot.key);
+   expect(slots.filter(slot=>slot.item?.kind==='row' && slot.item.sender_message_id==='send')).toHaveLength(1);
+ });
+ it('does not let mounted receipt copies starve newer lookups and bounds their retention',()=>{
+   const messages=Array.from({length:401},(_,i)=>({...local,messageId:'send-'+i}));
+   const acknowledged=new Set(messages.slice(0,350).map(message=>message.messageId));
+   expect(outgoingReceiptBatches(messages,acknowledged)).toEqual([messages.slice(350).map(message=>message.messageId)]);
+   const retained=retainOutgoingPresentations(messages,acknowledged,new Set(),true);
+   expect(retained.filter(message=>acknowledged.has(message.messageId))).toHaveLength(300);
+   expect(retained.filter(message=>!acknowledged.has(message.messageId))).toEqual(messages.slice(350));
+   expect(retainOutgoingPresentations(messages,acknowledged,new Set(),false)).toEqual(messages.slice(350));
+   expect(retainOutgoingPresentations(messages,acknowledged,new Set(messages.map(message=>message.messageId)),true)).toEqual(messages.slice(350));
+   const batches=outgoingReceiptBatches(messages,new Set());
+   expect(batches.every(batch=>batch.length<=64)).toBe(true);
+   expect(batches.flat()).toEqual(messages.map(message=>message.messageId));
+ });
+ it('transfers a queued retry out of its old transcript slot while accepted retry keeps that slot',()=>{
+   const original={...local,knownFate:'answer_never_came_back' as const};
+   const slots=reconcileDisplaySlots([],[],[original],new Set());
+   const retry={...local,messageId:'retry',displayMessageId:'send',accepted:false};
+   const acknowledged=new Set(['send']);
+   expect(reconcileDisplaySlots(slots,[],[],acknowledged)[0]?.key).toBe('send');
+   const queued={...retry,knownFate:'waiting_for_the_agent' as const};
+   const destinations=outgoingMessagesByPlace([queued],{composerStackMessageIds:['retry'],serverHeldSenderMessageIds:new Set()});
+   expect(destinations.composerStack).toEqual([queued]);
+   expect(reconcileDisplaySlots(slots,[],destinations.thread,acknowledged,new Set(['send']))).toEqual([]);
+   const accepted=reconcileDisplaySlots(slots,[],[{...retry,accepted:true}],acknowledged);
+   expect(accepted).toHaveLength(1);
+   expect(accepted[0]?.key).toBe(slots[0]?.key);
+   expect(accepted[0]?.order).toEqual(slots[0]?.order);
+   expect(accepted[0]?.local?.messageId).toBe('retry');
+ });
+
 });

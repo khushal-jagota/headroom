@@ -47,6 +47,7 @@
     rows = [],
     visibleRows = null,
     outgoingMessages = [],
+    withdrawnDisplayIds = new Set<string>(),
     running = false,
     ask = null,
     userInput = null,
@@ -65,7 +66,7 @@
     fateNote = null,
     errorNote = null,
     connectionTrouble = false,
-    composerPlaceholder = "Steer the work",
+    composerPlaceholder = "Message the agent...",
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,
@@ -113,6 +114,7 @@
     visibleRows?: readonly TranscriptRow[] | null;
     /** Messages this browser has sent that the record does not have yet, oldest first. */
     outgoingMessages?: readonly OutgoingMessage[];
+    withdrawnDisplayIds?: ReadonlySet<string>;
     running?: boolean;
     ask?: {
       askId: string;
@@ -188,6 +190,7 @@
     onNewConversation?: () => void;
   } = $props();
 
+  let placementReady = $state(false);
   let paneElement = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false);
   let confirmArmed = $state(false);
@@ -475,9 +478,11 @@
     </div>
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
-    style:visibility={reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
-    aria-busy={transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing'}>
+    style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
+    aria-busy={!placementReady || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing'}>
   <ConversationViewport
+    bind:placementReady
+    {ownerReadThroughSequence}
     bind:viewAnchor
     {reader}
     {acknowledgedMessageIds}
@@ -488,6 +493,7 @@
     visibleRows={rowsForLens}
     {lens}
     {outgoingMessages}
+    {withdrawnDisplayIds}
     {models}
     {ownSenderLabel}
     {livenessPulse}

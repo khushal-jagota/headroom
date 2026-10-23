@@ -31,10 +31,10 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
     (window as any).__sends = [...((window as any).__sends ?? []), body];
     const delivery = (window as any).__delivery;
     if (delivery) {
-      await new Promise(resolve => setTimeout(resolve, 850));
+      await new Promise<void>(resolve => {(window as any).__resolveDelivery = resolve;});
       if (delivery === 'unanswered') throw new Error('the connection went away');
-      if (!['accepted','restored','cancelled'].includes(delivery)) (window as any).__publishOutcome(body, delivery);
-      return {conversation_id:'conversation-one',fate:['prompt','accepted','restored','cancelled'].includes(delivery)?'started':delivery,refusal_reason:'running_turn_changed_before_steer'};
+      if (!['accepted','restored','cancelled','record-first','http-first','queued'].includes(delivery)) (window as any).__publishOutcome(body, delivery);
+      return {conversation_id:'conversation-one',fate:['prompt','accepted','restored','cancelled','record-first','http-first'].includes(delivery)?'started':delivery,refusal_reason:'running_turn_changed_before_steer'};
     }
     if (theSendHangs) return new Promise(() => undefined);
     if (!theServerAnswers) throw new Error("the connection went away");
@@ -44,7 +44,8 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
 
 <div style="height:650px;width:760px;margin:20px auto;display:flex;flex-direction:column">
 <LiveConversation
-  conversationId="conversation-one"
+  conversationId={new URLSearchParams(location.search).has('unstarted')?null:'conversation-one'}
+  composerPlaceholder={new URLSearchParams(location.search).get('placeholder')??undefined}
   persistenceKey="unanswered-send-fixture"
   label="Worker"
   conversationState="opened"
@@ -70,7 +71,7 @@ const snapshot = {
   identity_environment_variable_names: [],
   latest_sequence: 0,
   owner_read_through_sequence: 0,
-  is_running: false,
+  is_running: new URLSearchParams(location.search).has('running'),
   held_prompts: [],
   pending_permission_ask: null,
   pending_user_input: null,
@@ -82,12 +83,15 @@ const history = lifecycle ? Array.from({length:8},(_,i)=>({conversation_id:'conv
 if (lifecycle) {snapshot.latest_sequence=history.length; snapshot.owner_read_through_sequence=history.length;}
 let recorded:any[]=[];
 let coverage=history.length;
+let streamingText='';
+let streamingVersion=0;
 const sources:any[]=[];
 function currentSnapshot(lens:ConversationViewLens, transcript=true) {
   const current=viewSnapshot('conversation-one',lens,history,transcript);
   current.page.items.push(...recorded);
   current.coverage.through_sequence=coverage;
   current.status.revision=coverage;
+  if(streamingText)current.status.live_output={runtime_epoch:'lifecycle',turn_key:'turn:lifecycle',version:streamingVersion,byte_count:streamingText.length,reference:{body_id:'live:lifecycle',version:String(streamingVersion),byte_count:streamingText.length,media_type:'text/markdown'}};
   return current;
 }
 (window as any).__publishOutcome=(sent:any,delivery:string)=>{
@@ -106,6 +110,7 @@ function currentSnapshot(lens:ConversationViewLens, transcript=true) {
   if(previous)recorded[recorded.indexOf(previous)]=answer;else recorded.push(answer);
   for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens));
 };
+(window as any).__publishStream=(addition:string)=>{streamingText+=addition;streamingVersion++;coverage++;for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens));};
 (globalThis as any).__recordReads = 0;
 let theServerIsDown = window.sessionStorage.getItem("server-is-down") === "yes";
 (globalThis as any).__theServerIsDown = (down: boolean) => {
@@ -115,6 +120,7 @@ let theServerIsDown = window.sessionStorage.getItem("server-is-down") === "yes";
 (globalThis as any).fetch = async (input: RequestInfo | URL) => {
   const url = String(input);
   if (theServerIsDown) throw new TypeError("Failed to fetch");
+  if (/conversations\/conversation-one\/view\/body\/content/.test(url))return new Response(streamingText);
   if (/conversations\/conversation-one\/view\/receipts\?/.test(url)) {
     (globalThis as any).__recordReads += 1;
     return Response.json({conversation_id:'conversation-one',coverage:{through_sequence:coverage},receipts:recorded.map(row=>({sender_message_id:row.sender_message_id,source_sequence:row.source_sequence,fate:row.row_kind}))});

@@ -17,7 +17,7 @@
    * a person has to get themselves out of before they can type.
    */
   import {SvelteSet} from "svelte/reactivity";
-  import { onMount, untrack, type Snippet } from "svelte";
+  import { onMount, tick, untrack, type Snippet } from "svelte";
   import ConversationPane from "./ConversationPane.svelte";
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
@@ -42,6 +42,8 @@
     moveRememberedOutgoingMessages,
     outgoingPersistenceConversationId,
     outgoingMessagesByPlace,
+    outgoingReceiptBatches,
+    retainOutgoingPresentations,
     recallOutgoingMessages,
     releaseOutgoingMessageFiles,
     releaseOutgoingMessageImages,
@@ -156,7 +158,7 @@
   let livenessPulse = $state(0);
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
-  /** Local sends aimed at the queue before the server snapshot can name them. */
+  /** Sends whose confirmed queue fate precedes the next server snapshot. */
   let composerStackMessageIds = $state<readonly string[]>([]);
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
@@ -288,14 +290,22 @@
       held.sender_message_id == null ? [] : [held.sender_message_id]
     ))
   );
+  const admittedMessageIds = $derived(new Set(reader?.pages.flatMap(page => page.items)
+    .filter(item => item.kind === "row" && ["prompt", "prompt_refused", "prompt_uncertain", "prompt_discarded"].includes(item.row_kind))
+    .flatMap(item => item.kind === "row" && item.sender_message_id ? [item.sender_message_id] : []) ?? []));
+  const committedMessageIds = $derived(new Set([...acknowledgedMessageIds, ...admittedMessageIds]));
   let placedOutgoingMessages = $derived(outgoingMessagesByPlace(sentMessages, {
     composerStackMessageIds,
-    serverHeldSenderMessageIds: serverHeldSenderIds
+    serverHeldSenderMessageIds: serverHeldSenderIds,
+    recordedSenderMessageIds: committedMessageIds
   }));
   let stackOutgoingMessages = $derived(placedOutgoingMessages.composerStack);
   let transcriptOutgoingMessages = $derived(placedOutgoingMessages.thread);
+  const withdrawnDisplayIds = $derived(new Set(stackOutgoingMessages.map(message => message.displayMessageId ?? message.messageId)));
   let visibleHeldRows = $derived(heldPromptRows(
-    (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)),
+    (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)
+      && (held.sender_message_id == null || !committedMessageIds.has(held.sender_message_id)
+        && !sentMessages.some(message => message.messageId === held.sender_message_id && message.accepted))),
     stackOutgoingMessages
   ));
 
@@ -412,14 +422,25 @@
   function closeStream(): void {reader?.close();reader=null;}
 
   async function reconcileReceipts(local:ConversationViewReader):Promise<void>{
-    if(sentMessages.length===0)return;
-    const receipts=await local.receipts(sentMessages.map(message=>message.messageId));
-    if(reader!==local)return;
-    const recorded=new Set(receipts.receipts.map(receipt=>receipt.sender_message_id));
-    if(recorded.size>0){
-      for(const id of recorded)acknowledgedMessageIds.add(id);
-      while(acknowledgedMessageIds.size>300)acknowledgedMessageIds.delete(acknowledgedMessageIds.values().next().value!);
-      await holdOnTo(sentMessages.filter(message=>!recorded.has(message.messageId)));
+    // Mounted receipt-backed content is not another receipt candidate.
+    for (const ids of outgoingReceiptBatches(sentMessages, acknowledgedMessageIds)) {
+      const receipts = await local.receipts(ids);
+      if (reader !== local) return;
+      const recorded = new Set(receipts.receipts.map(receipt => receipt.sender_message_id));
+      if (recorded.size === 0) continue;
+      for (const id of recorded) acknowledgedMessageIds.add(id);
+      const accepted = new Set(receipts.receipts.filter(receipt => receipt.fate === "prompt").map(receipt => receipt.sender_message_id));
+      await holdOnTo(sentMessages.map(message => recorded.has(message.messageId) ? {...message, accepted: accepted.has(message.messageId)} : message));
+      await tick();
+      if (reader !== local) return;
+    }
+    await holdOnTo(retainOutgoingPresentations(sentMessages, acknowledgedMessageIds, admittedMessageIds, local.transcript));
+    // Prune presentation while all receipt identities still exist, before bounding the
+    // mounted ledger. Otherwise an evicted acknowledged copy becomes durable again.
+    const retainedIds = new Set(sentMessages.map(message => message.messageId));
+    for (const id of acknowledgedMessageIds) {
+      if (acknowledgedMessageIds.size <= 300) break;
+      if (!retainedIds.has(id)) acknowledgedMessageIds.delete(id);
     }
   }
   /** One cancellable reader per selected lens and visible transcript demand. */
@@ -535,8 +556,7 @@
     if (readOnly) return false;
     errorNote = null;
     fateNote = null;
-    // Drawn before anything is asked of the network, including the start: the person has
-    // written it and pressed Enter, so it is in the thread from that moment.
+    // Save the words before transport, but draw them only after their destination is known.
     const message = { ...mintOutgoingMessage({
       content,
       senderLabel,
@@ -544,7 +564,6 @@
       pickedModel: picked.model,
       pickedReasoningEffort: picked.reasoningEffort
     }), ...(displayMessageId ? {displayMessageId} : {}) };
-    if (running) composerStackMessageIds = [...composerStackMessageIds, message.messageId];
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
@@ -615,7 +634,8 @@
       }
       // Held for a busy agent: it has reached nothing yet, and it says so rather than
       // sitting there looking like a message something is answering.
-      if (fate.fate === "queued") {
+      if (fate.fate === "queued" && !committedMessageIds.has(message.messageId)) {
+        if (message.displayMessageId) acknowledgedMessageIds.delete(message.displayMessageId);
         await whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
         if (!composerStackMessageIds.includes(message.messageId)) {
           composerStackMessageIds = [...composerStackMessageIds, message.messageId];
@@ -624,6 +644,9 @@
       await refreshView();
       return true;
     } catch (error) {
+      // The correlated record already settled this send. A later transport failure
+      // cannot return its words to the composer or undo that committed destination.
+      if (committedMessageIds.has(message.messageId)) return true;
       errorNote = sentenceFor(error);
       if (theServerTurnedItAway(error)) {
         await stopDrawing(message.messageId);
@@ -661,7 +684,7 @@
     sentMessages = messages;
     composerStackMessageIds = composerStackMessageIds.filter((messageId) => stillHeld.has(messageId));
     if (persistenceConversationId !== null) {
-      return rememberOutgoingMessages(persistenceConversationId, messages);
+      return rememberOutgoingMessages(persistenceConversationId, messages.filter(message => !acknowledgedMessageIds.has(message.messageId)));
     }
     return true;
   }
@@ -757,6 +780,9 @@
         (held) => held.held_prompt_id === heldPromptId
       )?.sender_message_id ?? null;
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
+      if (result.promoted && (result.fate === "started" || result.fate === "injected") && promotedMessageId !== null) {
+        await holdOnTo(sentMessages.map(message => message.messageId === promotedMessageId ? {...message, accepted: true} : message));
+      }
       if (result.promoted && (result.fate === "refused" || result.fate === "uncertain")) {
         fateNote = fateSentence(result);
         fateNoteIsTerminal = true;
@@ -896,6 +922,7 @@
 </script>
 
 <ConversationPane
+  {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
   {backendKey}
   conversationExists={started}
@@ -936,7 +963,7 @@
   ownerReadThroughSequence={view?.owner_read_through_sequence ?? 0}
   bind:lens
   composerPlaceholder={composerPlaceholder
-    ?? (started ? "Steer the work" : "Send the first message to start it...")}
+    ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
   composerDisabled={busy || opening}
   onSend={send}
   onStop={() => void stop()}
