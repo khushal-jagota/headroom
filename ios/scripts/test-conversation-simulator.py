@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +23,10 @@ LANE = os.environ.get("PANELS_CONVERSATION_LANE", "PanelsLaneA")
 BUNDLE = os.environ.get("PANELS_CONVERSATION_BUNDLE", "app.panels.ios.pios-convo-build")
 
 
-def row(key, text, own=False, sender=None, kind=None):
+def row(
+    key: str, text: str, own: bool = False, sender: str | None = None,
+    kind: str | None = None,
+) -> dict[str, Any]:
     return {
         "kind": "row",
         "key": key,
@@ -39,13 +43,13 @@ def row(key, text, own=False, sender=None, kind=None):
 
 
 class Stub:
-    def __init__(self, output):
+    def __init__(self, output: Path) -> None:
         self.output = output
         self.lock = threading.Lock()
-        self.recording = None
+        self.recording: subprocess.Popen[bytes] | None = None
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
         self.items = [
             row(
                 f"history-{i}",
@@ -58,12 +62,13 @@ class Stub:
             for i in range(18)
         ]
         self.items.append(row("welcome", "The plan is ready. What should I work on next?"))
-        self.pending = []
-        self.live = None
+        self.pending: list[dict[str, Any]] = []
+        self.live: dict[str, Any] | None = None
+        self.offline = False
         self.refused = False
         self.running_until = 0
 
-    def tick(self):
+    def tick(self) -> None:
         now = time.monotonic()
         self.live = None
         for sent in list(self.pending):
@@ -95,7 +100,7 @@ class Stub:
                         "version": "stub:turn-" + sent["id"] + ":0",
                     }
 
-    def start_clip(self, name):
+    def start_clip(self, name: str) -> None:
         self.stop_clip()
         self.recording = subprocess.Popen(
             [
@@ -111,19 +116,20 @@ class Stub:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        assert self.recording.stderr is not None
         while True:
             line = self.recording.stderr.readline()
             if b"Recording started" in line or not line:
                 break
 
-    def stop_clip(self):
+    def stop_clip(self) -> None:
         if self.recording:
             self.recording.send_signal(signal.SIGINT)
             self.recording.communicate(timeout=15)
             self.recording = None
 
 
-def main():
+def main() -> int:
     if "--locked" not in sys.argv:
         return subprocess.call(
             [
@@ -148,11 +154,11 @@ def main():
     stub = Stub(output)
 
     class Handler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, fmt, *args):
+        def log_message(self, fmt: str, *args: object) -> None:
             with (output / "stub-requests.log").open("a") as log:
                 log.write(fmt % args + "\n")
 
-        def respond(self, value, status=200):
+        def respond(self, value: object, status: int = 200) -> None:
             body = json.dumps(value).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -160,7 +166,7 @@ def main():
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             path = urlparse(self.path).path
             if path.startswith("/proof/start/"):
                 stub.start_clip(path.rsplit("/", 1)[-1])
@@ -168,6 +174,17 @@ def main():
                 return
             if path == "/proof/stop":
                 stub.stop_clip()
+                self.respond({})
+                return
+            if path == "/proof/recovery":
+                with stub.lock:
+                    recovery = row(
+                        "recovery",
+                        "Inspect the interrupted work and continue the current authorized step.",
+                        kind="prompt",
+                    )
+                    recovery["body"]["value"]["sender_label"] = "Panels deployment recovery"
+                    stub.items.append(recovery)
                 self.respond({})
                 return
             if path == "/proof/stream":
@@ -194,6 +211,15 @@ def main():
                 with stub.lock:
                     stub.reset()
                 self.respond({})
+                return
+            if path in {"/proof/offline", "/proof/online"}:
+                stub.offline = path.endswith("/offline")
+                self.respond({})
+                return
+            if stub.offline:
+                self.respond(
+                    {"error": {"message": "Connection unavailable. Your words are saved."}}, 503
+                )
                 return
             if path.endswith("/view/tail"):
                 self.send_response(200)
@@ -313,7 +339,7 @@ def main():
                 else:
                     self.respond({"error": {"message": "Unexpected stub route: " + path}}, 404)
 
-        def do_DELETE(self):
+        def do_DELETE(self) -> None:
             path = urlparse(self.path).path
             if "/held-prompts/" not in path:
                 self.respond({}, 404)
@@ -328,7 +354,7 @@ def main():
                     )
                 self.respond({"discarded": held is not None})
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             path = urlparse(self.path).path
             if path.endswith("/interrupt"):
                 with stub.lock:
@@ -377,7 +403,7 @@ def main():
                         "id": sender,
                         "text": text,
                         "at": time.monotonic(),
-                        "delay": 5 if queued else 0.4,
+                        "delay": (120 if "Remove" in text else 5) if queued else 0.4,
                         "delivered": False,
                     }
                 )
@@ -417,7 +443,7 @@ def main():
                 "never",
                 "-maximum-concurrent-test-simulator-destinations",
                 "1",
-                "PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE,
+                "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
                 "-only-testing:PanelsNotificationUITests/"
                 + os.environ.get("PANELS_CONVERSATION_TEST", "ConversationOperationTests"),

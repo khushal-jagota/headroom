@@ -15,14 +15,52 @@ struct ConversationOverlay: ViewModifier {
     let owner: ConversationOwner
     let conversationID: String?
     var title = "Conversation"
+    var refreshError: String?
+    var retry: (() async -> Void)?
+    @Environment(AppStore.self) private var store
+    @State private var opened = false
+    @State private var restingHeight: CGFloat = 105
+    @State private var visible = false
+    @State private var model = ConversationModel()
+    @State private var speech = ConversationSpeech()
+
+    func body(content: Content) -> some View {
+        content
+            .toolbar(.hidden, for: .tabBar)
+            .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: restingHeight) }
+            .accessibilityHidden(opened)
+            .preference(key: ConversationPresentationPreference.self, value: visible ?
+                ConversationPresentation(owner: owner.path, content: AnyView(
+                    ConversationSurface(owner: owner, conversationID: conversationID, title: title,
+                                        opened: $opened, restingHeight: $restingHeight,
+                                        model: model, speech: speech, refreshError: refreshError, retry: retry)
+                        .environment(store)
+                )) : nil)
+            .onAppear { visible = true }
+            .onDisappear { visible = false; opened = false; speech.cancel() }
+            .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
+    }
+}
+
+/// The page owns its conversation data; this persistent app-root surface owns
+/// input focus. Expanding never replaces the input or its layout parent.
+private struct ConversationSurface: View {
+    let owner: ConversationOwner
+    let conversationID: String?
+    let title: String
+    @Binding var opened: Bool
+    @Binding var restingHeight: CGFloat
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var model = ConversationModel()
-    @State private var speech = ConversationSpeech()
-    @State private var opened = false
-    @State private var openingDistance: CGFloat = 0
+    @Bindable var model: ConversationModel
+    let speech: ConversationSpeech
+    var refreshError: String?
+    var retry: (() async -> Void)?
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var iconSize = 18.0
     @State private var closingDistance: CGFloat = 0
+    @State private var composerHeight: CGFloat = 105
     @State private var modelSheet = false
     @State private var importFile = false
     @State private var pickPicture = false
@@ -30,32 +68,12 @@ struct ConversationOverlay: ViewModifier {
     @State private var camera = false
     @State private var changingQueue = false
     @FocusState private var focused: Bool
-
     private var stopsTurn: Bool { model.status?.turnRunning == true && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
     private var card: Bool { (!model.draft.isEmpty || !model.attachments.isEmpty) && !speech.recording && !speech.transcribing }
     private var capturingSpeech: Bool { speech.recording || speech.transcribing || speech.starting }
 
-    func body(content: Content) -> some View {
-        GeometryReader { geometry in
-            ZStack {
-                content.brightness(opened ? -0.4 : -0.4 * min(1, openingDistance / max(1, geometry.size.height)))
-                    .allowsHitTesting(!opened && openingDistance == 0).accessibilityHidden(opened)
-                VStack(spacing: 0) {
-                    header
-                    ConversationThread(model: model, owner: owner, opened: opened)
-                }
-                .background(PanelsTheme.surface)
-                .offset(y: reduceMotion ? 0 : opened ? closingDistance : geometry.size.height - openingDistance)
-                .opacity(opened || openingDistance > 0 ? 1 : 0)
-                .allowsHitTesting(opened).accessibilityHidden(!opened)
-                .zIndex(1)
-            }.clipped()
-        }
-        .toolbar(opened ? .hidden : .automatic, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { bottom }
-        .sheet(isPresented: $modelSheet) { ConversationModelSheet(model: model) }
-        .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
+    var body: some View {
+        conversation
         .onChange(of: picture) { _, selected in
             guard let selected else { return }
             Task {
@@ -66,22 +84,6 @@ struct ConversationOverlay: ViewModifier {
                     picture = nil
                 } catch { model.error = error.localizedDescription }
             }
-        }
-        .sheet(isPresented: $camera) {
-            ConversationCamera { data in
-                if let data { model.attachments.append(.init(piece: "image", data: data.base64EncodedString(), mediaType: "image/jpeg", fileName: "Photo.jpg")) }
-                camera = false
-            }.ignoresSafeArea()
-        }
-        .fileImporter(isPresented: $importFile, allowedContentTypes: [.data]) { result in
-            do {
-                let url = try result.get()
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                let data = try Data(contentsOf: url)
-                guard data.count <= 20_000_000 else { model.error = "Choose a file smaller than 20 MB."; return }
-                model.attachments.append(.init(piece: "file", text: nil, data: data.base64EncodedString(), mediaType: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent))
-            } catch { model.error = error.localizedDescription }
         }
         .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
@@ -115,71 +117,145 @@ struct ConversationOverlay: ViewModifier {
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onChange(of: capturingSpeech) { _, capturing in if capturing { focused = false } }
         .onDisappear { speech.cancel() }
-        .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
+        .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
 
-    private func show(_ value: Bool) {
-        focused = false
-        withAnimation(reduceMotion ? .easeOut(duration: PanelsTheme.Motion.base) : ConversationLayout.pageMotion) { opened = value; openingDistance = 0; closingDistance = 0 }
+    // One host and one composer stay mounted for the whole page lifetime. Only
+    // the space above the input grows; the page's inset remains unchanged.
+    private var conversation: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    header
+                    if opened { ConversationThread(model: model, owner: owner, opened: opened) }
+                }
+                .frame(height: opened ? max(0, geometry.size.height - composerHeight - closingDistance) : 0, alignment: .top)
+                .clipped()
+                .background(PanelsTheme.surface)
+                .padding(.bottom, composerHeight)
+                .accessibilityHidden(!opened)
+                .allowsHitTesting(opened)
+                .animation(reduceMotion ? nil : ConversationLayout.pageMotion, value: opened)
+
+                // The composer has its own bottom anchor. Expanding the thread
+                // never changes its parent frame, alignment, or identity.
+                bottom
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        composerHeight = height
+                        if !opened { restingHeight = height }
+                    }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .background(alignment: .top) {
+                if opened && closingDistance == 0 {
+                    PanelsTheme.surface.frame(height: geometry.safeAreaInsets.top)
+                        .offset(y: -geometry.safeAreaInsets.top)
+                }
+            }
+        }
+        .foregroundStyle(PanelsTheme.text)
+        .tint(PanelsTheme.accent)
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $modelSheet) { ConversationModelSheet(model: model) }
+        .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
+        .sheet(isPresented: $camera) {
+            ConversationCamera { data in
+                if let data { model.attachments.append(.init(piece: "image", data: data.base64EncodedString(), mediaType: "image/jpeg", fileName: "Photo.jpg")) }
+                camera = false
+            }.ignoresSafeArea()
+        }
+        .fileImporter(isPresented: $importFile, allowedContentTypes: [.data]) { result in
+            do {
+                let url = try result.get()
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                let data = try Data(contentsOf: url)
+                guard data.count <= 20_000_000 else { model.error = "Choose a file smaller than 20 MB."; return }
+                model.attachments.append(.init(piece: "file", text: nil, data: data.base64EncodedString(), mediaType: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent))
+            } catch { model.error = error.localizedDescription }
+        }
+    }
+
+    private func show() {
+        closingDistance = 0
+        opened = true
+    }
+
+    private func close() {
+        closingDistance = 0
+        opened = false
     }
     private var header: some View {
         HStack {
-            Button { show(false) } label: { Image(systemName: "chevron.down").frame(width: 44, height: 44) }.accessibilityLabel("Close conversation")
+            Button { close() } label: { Image(systemName: "chevron.down").font(.system(size: min(iconSize, 28))).frame(width: 44, height: 44) }.accessibilityLabel("Close conversation")
             Spacer(minLength: 0)
-            Text(title).font(.system(size: 16, weight: .semibold)).lineLimit(1)
+            Text(title).font(.headline).lineLimit(2)
             Spacer(minLength: 0)
             Button(model.lens.rawValue.capitalized) { model.lens = model.lens == .focus ? .full : .focus; Haptics.selection() }
-                .font(.system(size: 17)).frame(minWidth: 44, minHeight: 44).accessibilityLabel("Conversation lens")
-        }.padding(.horizontal, 12).frame(height: 52).foregroundStyle(PanelsTheme.text)
+                .font(.body).frame(minWidth: 44, minHeight: 44).accessibilityLabel("Conversation lens")
+        }.padding(.horizontal, 12).frame(minHeight: 52).foregroundStyle(PanelsTheme.text)
+            .accessibilityIdentifier("conversation-header")
             .contentShape(Rectangle()).gesture(DragGesture()
                 .onChanged { closingDistance = max(0, $0.translation.height) }
                 .onEnded { value in
-                    if value.translation.height > 110 || value.predictedEndTranslation.height > 220 { show(false) }
+                    if value.translation.height > 110 || value.predictedEndTranslation.height > 220 { close() }
                     else { withAnimation(reduceMotion ? nil : ConversationLayout.pageMotion) { closingDistance = 0 } }
                 })
     }
 
     private var bottom: some View {
         VStack(spacing: 8) {
-            Button { show(true) } label: {
-                HStack(spacing: 8) {
-                    Group {
-                        if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil { ProgressView().controlSize(.mini) }
-                        else { Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0) }
-                    }.frame(width: 12)
-                    let latest = model.latestMessage
-                    Text(.init((latest?.own == true ? "You: " : "") + (latest?.text ?? "Conversation"))).font(PanelsTheme.TypeScale.small).lineLimit(1)
-                    if latest?.own == true, let note = latest?.note, note != "Sent" {
-                        Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
-                    }
-                    Image(systemName: "chevron.up").font(.system(size: 11)).foregroundStyle(PanelsTheme.faint)
-                }.foregroundStyle(PanelsTheme.faint).padding(.leading, 20).padding(.trailing, 14).frame(height: 44)
-            }.buttonStyle(.plain)
-                .accessibilityIdentifier("conversation-line")
-                .simultaneousGesture(DragGesture()
-                    .onChanged { if !opened { openingDistance = max(0, -$0.translation.height) } }
-                    .onEnded { value in
-                        if -value.translation.height > 110 || -value.predictedEndTranslation.height > 220 { show(true) }
-                        else { withAnimation(reduceMotion ? nil : ConversationLayout.pageMotion) { openingDistance = 0 } }
-                    })
-            if model.outgoing.contains(where: { $0.note == "Queued" }) {
+            if !opened {
+                Button { show() } label: {
+                    HStack(spacing: 8) {
+                        Group {
+                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil { ProgressView().controlSize(.mini) }
+                            else { Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0) }
+                        }.frame(width: 12)
+                        let latest = model.latestMessage
+                        Text(.init(latest?.previewText ?? "Conversation")).font(PanelsTheme.TypeScale.small).lineLimit(1)
+                        if latest?.own == true, let note = latest?.note, note != "Sent" {
+                            Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
+                        }
+                        Image(systemName: "chevron.up").font(.system(size: 11)).foregroundStyle(PanelsTheme.faint)
+                    }.foregroundStyle(PanelsTheme.faint).padding(.leading, 20).padding(.trailing, 14).frame(minHeight: 44)
+                }.buttonStyle(.plain)
+                    .accessibilityIdentifier("conversation-line")
+                    .simultaneousGesture(DragGesture()
+                        .onEnded { value in
+                            if -value.translation.height > 110 || -value.predictedEndTranslation.height > 220 { show() }
+                        })
+            }
+            if !model.heldPrompts.isEmpty {
                 VStack(spacing: 4) {
-                    ForEach(model.outgoing.filter { $0.note == "Queued" }) { message in
-                        HStack(spacing: 8) {
-                            Text("Queued").foregroundStyle(PanelsTheme.faint)
-                            Text(message.text).lineLimit(1)
-                            Spacer(minLength: 0)
-                            if let held = model.heldPrompts.first(where: { ($0.senderMessageId ?? $0.heldPromptId) == message.id }) {
+                    ForEach(model.heldPrompts, id: \.heldPromptId) { held in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(held.text).lineLimit(2)
+                            HStack {
+                                Text("Queued").foregroundStyle(PanelsTheme.faint)
+                                Spacer(minLength: 8)
                                 Button("Steer in") { changeQueue(held, discard: false) }
-                                Button { changeQueue(held, discard: true) } label: { Image(systemName: "xmark").frame(width: 30, height: 36) }.accessibilityLabel("Remove queued message")
+                                Button { changeQueue(held, discard: true) } label: {
+                                    Image(systemName: "xmark").font(.system(size: 18)).frame(width: 44, height: 44)
+                                }.accessibilityLabel("Remove queued message")
                             }
-                        }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 12).frame(minHeight: 36)
+                        }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 12)
                             .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 12))
                     }
                 }.disabled(changingQueue).padding(.horizontal, 12)
             }
-            if let error = model.error ?? speech.error {
-                Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error).padding(.horizontal, 20)
+            if let error = speech.error ?? model.error ?? refreshError {
+                HStack(alignment: .center) {
+                    Text(error).frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Try again") {
+                        Task {
+                            await retry?()
+                            await model.refresh(using: store.client, transcript: true)
+                        }
+                    }.frame(minHeight: 44)
+                }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                    .padding(.horizontal, 20).accessibilityIdentifier("conversation-error")
             }
             if !model.attachments.isEmpty {
                 HStack {
@@ -190,24 +266,38 @@ struct ConversationOverlay: ViewModifier {
             composer
         }
         .padding(.top, 8).padding(.bottom, 1)
-        .background(PanelsTheme.raised)
-        .overlay(alignment: .top) { Rectangle().fill(PanelsTheme.border).frame(height: 1) }
+        .background((opened ? PanelsTheme.surface : PanelsTheme.raised).ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { if !opened { Rectangle().fill(PanelsTheme.border).frame(height: 1) } }
     }
 
     private var composer: some View {
         ZStack(alignment: .bottom) {
-            // Rest and typed layouts share one field, preserving keyboard focus.
-            // Speech owns input exclusively; its draft stays in the model while
-            // the field leaves both the hit-test and accessibility hierarchies.
             if capturingSpeech {
                 Color.clear.frame(height: ConversationLayout.restingHeight)
             } else {
                 VStack(spacing: 0) {
                     field.padding(.horizontal, card ? 16 : 46)
                         .padding(.top, card ? 14 : 12).padding(.bottom, card ? 7 : 12)
-                    Color.clear.frame(height: card ? 45 : 0)
+                    if card {
+                        if typeSize.isAccessibilitySize {
+                            VStack(alignment: .leading, spacing: 4) { configurationControls }
+                                .padding(.horizontal, 12)
+                        }
+                        controls
+                    }
                 }
             }
+            if !card || capturingSpeech { controls }
+
+        }
+        .frame(minHeight: card ? ConversationLayout.cardHeight : ConversationLayout.restingHeight)
+        .background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: card ? 22 : 24))
+        .overlay(RoundedRectangle(cornerRadius: card ? 22 : 24).stroke(PanelsTheme.border))
+        .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
+        .animation(reduceMotion ? nil : ConversationLayout.shapeMotion, value: card)
+        .foregroundStyle(PanelsTheme.text)
+    }
+    private var controls: some View {
             HStack(spacing: 0) {
                 if speech.recording || speech.transcribing || speech.starting {
                     Button { speech.cancel() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel recording")
@@ -231,44 +321,41 @@ struct ConversationOverlay: ViewModifier {
                         Button("Picture", systemImage: "photo") { pickPicture = true }
                         Button("Photo", systemImage: "camera") { camera = true }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
                         Button("Command", systemImage: "slash.circle") { model.draft = "/"; focused = true }
-                    } label: { Image(systemName: "plus").frame(width: 30, height: 30).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
-                        .simultaneousGesture(TapGesture().onEnded { focused = false })
-                    if card {
-                        Button { focused = false; modelSheet = true } label: {
-                            HStack(spacing: 4) {
-                                ConversationBackendMark(backend: model.backendKey ?? "codex")
-                                Text(model.selectedModel?.components(separatedBy: "/").last ?? "Model").lineLimit(1)
-                            }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).frame(height: 30)
-                                .overlay(Capsule().stroke(PanelsTheme.border))
-                        }.accessibilityLabel("Choose model")
-                        Menu {
-                            Button("Steer") { model.deliveryMode = "steer"; Haptics.selection() }
-                            Button("Queue") { model.deliveryMode = "queue"; Haptics.selection() }
-                            Button("Send now") { model.deliveryMode = "send_now"; Haptics.selection() }
-                        } label: { Text(model.deliveryMode == "send_now" ? "Send now" : model.deliveryMode.capitalized).font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).frame(height: 44) }
-                            .simultaneousGesture(TapGesture().onEnded { focused = false })
-                        Spacer(minLength: 0)
-                    } else { Spacer(minLength: 0) }
+                    } label: { Image(systemName: "plus").font(.system(size: min(iconSize, 28))).frame(width: 36, height: 36).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
+                    if card && !typeSize.isAccessibilitySize { configurationControls }
+                    Spacer(minLength: 0)
                 }
                 if !speech.recording && !speech.starting && !speech.transcribing && (card || stopsTurn) {
-                    Button { startVoice() } label: { Image(systemName: "mic").frame(width: 36, height: 44) }.accessibilityLabel("Record voice input")
+                    Button { startVoice() } label: { Image(systemName: "mic").font(.system(size: min(iconSize, 28))).frame(width: 44, height: 44) }.accessibilityLabel("Record voice input")
                 }
                 Button { primaryAction() } label: {
                     Image(systemName: speech.recording || stopsTurn ? "stop.fill" : card || !model.attachments.isEmpty ? "arrow.up" : "mic")
-                        .font(.system(size: 15, weight: .medium)).foregroundStyle(PanelsTheme.ink)
-                        .frame(width: 30, height: 30).background(PanelsTheme.strong, in: Circle())
+                        .font(.system(size: min(iconSize, 28), weight: .medium)).foregroundStyle(PanelsTheme.ink)
+                        .frame(width: typeSize.isAccessibilitySize ? 40 : 30, height: typeSize.isAccessibilitySize ? 40 : 30).background(PanelsTheme.strong, in: Circle())
                         .frame(width: 44, height: 44)
                 }.disabled(speech.starting || speech.transcribing || model.sending)
                     .accessibilityLabel(speech.recording ? "Stop recording" : stopsTurn ? "Stop turn" : card || !model.attachments.isEmpty ? "Send message" : "Record voice input")
             }.padding(.horizontal, card ? 1 : 2).padding(.bottom, card ? 1 : 0)
-        }
-        .frame(minHeight: card ? ConversationLayout.cardHeight : ConversationLayout.restingHeight)
-        .background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: card ? 22 : 24))
-        .overlay(RoundedRectangle(cornerRadius: card ? 22 : 24).stroke(PanelsTheme.border))
-        .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
-        .animation(reduceMotion ? nil : ConversationLayout.shapeMotion, value: card)
-        .foregroundStyle(PanelsTheme.text)
     }
+
+    @ViewBuilder private var configurationControls: some View {
+        Button { focused = false; modelSheet = true } label: {
+            HStack(spacing: 4) {
+                ConversationBackendMark(backend: model.backendKey ?? "codex")
+                Text(model.selectedModel?.components(separatedBy: "/").last ?? "Model").lineLimit(1)
+            }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).padding(.vertical, 4)
+                .frame(minHeight: 30).overlay(Capsule().stroke(PanelsTheme.border))
+        }.accessibilityLabel("Choose model")
+        Menu {
+            Button("Steer") { model.deliveryMode = "steer"; Haptics.selection() }
+            Button("Queue") { model.deliveryMode = "queue"; Haptics.selection() }
+            Button("Send now") { model.deliveryMode = "send_now"; Haptics.selection() }
+        } label: {
+            Text(model.deliveryMode == "send_now" ? "Send now" : model.deliveryMode.capitalized)
+                .font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).frame(minHeight: 44)
+        }
+    }
+
     private var field: some View {
         TextField("Message", text: $model.draft, axis: .vertical)
             .font(PanelsTheme.TypeScale.body).lineLimit(1...5).focused($focused)
@@ -330,6 +417,9 @@ private struct ConversationThread: View {
                         HStack {
                             if row.own { Spacer(minLength: 28) }
                             VStack(alignment: .leading, spacing: 6) {
+                                if let sender = row.senderLabel {
+                                    Text(sender).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                                }
                                 if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
                                     Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
                                 } else { Text(.init(row.text)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
@@ -353,6 +443,7 @@ private struct ConversationThread: View {
                 }
                 }.padding(.horizontal, 20).padding(.bottom, 12)
             }
+            .accessibilityIdentifier("conversation-thread")
             .contentMargins(.top, 12, for: .scrollContent)
             .task(id: opened) {
                 guard opened else { return }
@@ -497,13 +588,15 @@ private struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationOverlay(owner: ConversationOwner, conversationID: String?, title: String = "Conversation") -> some View {
-        modifier(ConversationOverlay(owner: owner, conversationID: conversationID, title: title))
+    func conversationOverlay(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
+        modifier(ConversationOverlay(owner: owner, conversationID: conversationID, title: title, refreshError: refreshError, retry: retry))
     }
 }
 
 #if DEBUG
 struct ConversationSmokeView: View {
+    @Environment(AppStore.self) private var store
+    @State private var refreshError: String?
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -511,9 +604,24 @@ struct ConversationSmokeView: View {
                     Text("Chief of Staff").font(.title.weight(.semibold))
                     Text("Keep the whole operation in view.").foregroundStyle(PanelsTheme.faint)
                     ForEach(0..<12) { Text("Worker \($0 + 1)").frame(maxWidth: .infinity, minHeight: 50, alignment: .leading); Divider() }
+                    NavigationLink("Worker details") {
+                        Text("Worker details").frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .panelsScreen().navigationTitle("Worker details")
+                    }
                 }.padding(.horizontal, 20)
-            }.panelsScreen().conversationOverlay(owner: .chief, conversationID: "stub", title: "Chief of Staff")
+            }.accessibilityIdentifier("conversation-page").panelsScreen().conversationOverlay(owner: .chief, conversationID: "stub", title: "Chief of Staff", refreshError: refreshError, retry: refresh)
+                .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, showsRefreshError: false, retry: refresh)
+                .task {
+                    while !Task.isCancelled {
+                        await refresh()
+                        do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+                    }
+                }
         }
+    }
+    private func refresh() async {
+        do { _ = try await store.client.chiefConversation(); refreshError = nil }
+        catch { if !Task.isCancelled { refreshError = error.localizedDescription } }
     }
 }
 #endif

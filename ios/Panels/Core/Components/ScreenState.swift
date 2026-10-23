@@ -61,6 +61,7 @@ private struct ScreenLoadState: ViewModifier {
     let hasContent: Bool
     let error: String?
     let retry: () async -> Void
+    let showsRefreshError: Bool
 
     func body(content: Content) -> some View {
         content
@@ -78,7 +79,7 @@ private struct ScreenLoadState: ViewModifier {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if hasContent, let error {
+                if showsRefreshError, hasContent, let error {
                     LoadErrorView(message: "Couldn’t refresh. Showing the last loaded content. \(error)", retry: retry)
                         .padding(.horizontal, PanelsTheme.Space.lg)
                         .background(PanelsTheme.surface)
@@ -88,8 +89,8 @@ private struct ScreenLoadState: ViewModifier {
 }
 
 extension View {
-    func screenLoadState(_ title: String, hasContent: Bool, error: String?, retry: @escaping () async -> Void) -> some View {
-        modifier(ScreenLoadState(title: title, hasContent: hasContent, error: error, retry: retry))
+    func screenLoadState(_ title: String, hasContent: Bool, error: String?, showsRefreshError: Bool = true, retry: @escaping () async -> Void) -> some View {
+        modifier(ScreenLoadState(title: title, hasContent: hasContent, error: error, retry: retry, showsRefreshError: showsRefreshError))
     }
 }
 
