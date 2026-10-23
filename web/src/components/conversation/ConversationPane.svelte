@@ -191,6 +191,7 @@
   } = $props();
 
   let placementReady = $state(false);
+  let entryPresentationPending = $state(true);
   let paneElement = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false);
   let confirmArmed = $state(false);
@@ -479,9 +480,10 @@
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
     style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
-    aria-busy={reader?.entryPhase !== 'error' && (!placementReady || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
+    aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
     bind:placementReady
+    bind:entryPresentationPending
     {ownerReadThroughSequence}
     bind:viewAnchor
     {reader}

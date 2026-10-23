@@ -26,6 +26,7 @@
     conversationId,
     ownerReadThroughSequence = 0,
     placementReady = $bindable(false),
+    entryPresentationPending = $bindable(true),
     rows,
     visibleRows,
     lens,
@@ -47,6 +48,7 @@
     conversationId: string;
     ownerReadThroughSequence?: number;
     placementReady?: boolean;
+    entryPresentationPending?: boolean;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
     lens: ConversationLens;
@@ -92,6 +94,7 @@
   let disposed = false;
   let generation = 0;
   let placement: ThreadPlacement | null = null;
+  let pendingPresentationTarget: Element | null = null;
   let heldSent: { messageId: string; displayKey: string | null; rowKey: string | null } | null = null;
   let liveArrivalPixels = 0;
   const streamWrites = new Map<object, { following: boolean; generation: number; messageKey: string | null; streaming: boolean; top: number; motionPixels: number }>();
@@ -490,7 +493,8 @@
               return bounds.height > 0 && bounds.bottom > viewport.top && bounds.top < viewport.bottom;
             });
             if (!provisionalNewest) return;
-          }
+            pendingPresentationTarget = target;
+          } else pendingPresentationTarget = null;
           // Position while hidden, then let active lazy blocks finish their own presentation.
           await tick();
           if (startedIn !== generation || !canMeasure() || thread !== threadElement || !provisionalNewest && !presentationReady(target)) return;
@@ -577,6 +581,8 @@
         settledOnOpening = !provisionalNewest;
         pendingOpen = provisionalNewest;
         placementReady = true;
+        entryPresentationPending = provisionalNewest || pendingPresentationTarget !== null && thread.contains(pendingPresentationTarget) && !presentationReady(pendingPresentationTarget);
+        if (!entryPresentationPending) pendingPresentationTarget = null;
         if (!provisionalNewest && placement?.destination === 'entry') placement = null;
         if (sentMessageToPlace !== null && settledMessageIds.has(sentMessageToPlace)) sentMessageToPlace = null;
         else if (sentMessageToPlace !== null) dirty = true;
@@ -617,6 +623,8 @@
       settledOnOpening = false;
       pendingOpen = true;
       placementReady = false;
+      entryPresentationPending = true;
+      pendingPresentationTarget = null;
       liveArrivalPixels = 0;
       streamWrites.clear();
       arrivingMessages.clear();

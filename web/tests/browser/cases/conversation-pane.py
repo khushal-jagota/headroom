@@ -2944,16 +2944,20 @@ def _position_commit(browser, url):
             page.locator('[data-conversation-entry="complete"]').wait_for()
             page.wait_for_timeout(350)
             frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
-            visible=[row for row in frames if not row['hidden'] and row['busy']!='true']
-            assert visible and all(-2<=row['gap']<=18 for row in visible), visible
+            visible=[row for row in frames if not row['hidden']]
+            assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), visible
+            ready=[row for row in visible if row['busy']!='true']
+            assert ready and all(-2<=row['gap']<=18 for row in ready), ready
             proof['entry'].append({'trigger':'fresh open','attempt':attempt,'frames':frames})
             for lens in ('full','focus'):
                 page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
                 page.locator('[data-conversation-lens-choice="'+lens+'"]').click()
                 page.wait_for_timeout(500)
                 frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
-                visible=[row for row in frames if not row['hidden'] and row['busy']!='true']
-                assert visible and all(-2<=row['gap']<=18 for row in visible), (lens,visible)
+                visible=[row for row in frames if not row['hidden']]
+                assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), (lens,visible)
+                ready=[row for row in visible if row['busy']!='true']
+                assert ready and all(-2<=row['gap']<=18 for row in ready), (lens,ready)
                 proof['entry'].append({'trigger':'lens '+lens,'attempt':attempt,'frames':frames})
             # Browser-owned image and font metrics change after reveal. Neither causes travel.
             frames=page.evaluate("""()=>new Promise(resolve=>{
