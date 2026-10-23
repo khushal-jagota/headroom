@@ -113,7 +113,7 @@ def read_page(
                 "scope": scope,
                 "schema_version": schema,
                 "semantics": cast(
-                    Literal["attention-knowledge-v8-manager-updated-at"], SUPPORTED_SEMANTICS
+                    Literal["attention-knowledge-v9-review-messages"], SUPPORTED_SEMANTICS
                 ),
                 "epoch": epoch,
                 "revision": str(current),

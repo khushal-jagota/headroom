@@ -125,7 +125,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const messages: WorkspaceMessageConversation[]=[];
   const seen=new Set<string>();
   // Preserve exact address membership before deduplication. Current addresses win within an owner.
-  const addresses=[...addressesByConversation.values()].flat().sort((a,b)=>Number(b.value.current)-Number(a.value.current) || a.id.localeCompare(b.id));
+  const addresses=[...addressesByConversation.values()].flat().sort((a,b)=>Number(b.value.current)-Number(a.value.current) || compareIdentity(a.id,b.id));
   for(const record of addresses) {
     const address=record.value;
     const knowledge=view.conversations.get(address.conversation_id);
@@ -142,6 +142,23 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       id:address.owner_id,title,conversationId:address.conversation_id,conversationSignal:signal(knowledge),
       parentId,parentTitle:parentId==='chief' ? chief?.label ?? null : parent?.title ?? null,
       settled:address.owner_kind==='manager' ? item?.settled === true : parent?.settled === true});
+  }
+  const conversationsById=new Map(records.flatMap(record=>record.kind==='conversation' ? [[record.id,record.value] as const] : []));
+  const reviewConversations=new Set<string>();
+  for(const record of addresses) {
+    const address=record.value;
+    if(reviewConversations.has(address.conversation_id))continue;
+    if(value(view.conversations.get(address.conversation_id)?.message_for_owner)!==true)continue;
+    const conversation=conversationsById.get(address.conversation_id);
+    if(conversation?.first_unread_owner_message_at == null)continue;
+    const owner=address.owner_kind==='ticket' ? rawTicketsById.get(address.owner_id)?.value
+      : address.owner_kind==='manager' ? rawManagersById.get(address.owner_id)?.value : chiefRecord?.value;
+    if(!owner)continue;
+    reviewConversations.add(address.conversation_id);
+    reviewItems.push({review_item_type:'message',conversation_id:address.conversation_id,address_id:record.id,
+      owner_kind:address.owner_kind,owner_id:address.owner_id,title:'title' in owner ? owner.title : owner.label,
+      waiting_since:conversation.first_unread_owner_message_at,recap:'recap' in owner ? owner.recap : '',
+      recap_reference:'recap_reference' in owner ? owner.recap_reference as ViewContentReference|null : null});
   }
   const addressesById=new Map([...addressesByConversation.values()].flat().map(record=>[record.id,record]));
   const unreadConversationIdsByWindow=new Map<string,ReadonlySet<string>>();
@@ -162,6 +179,8 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     viewWindows:view.publication.view?.windows ?? [],globalCounts:view.publication.view?.counts ?? null};
 }
 
+function compareIdentity(a:string,b:string):number { return a<b ? -1 : a>b ? 1 : 0; }
+
 /** Review follows the canonical complete queue, independently of sidebar filters. */
 export function navigationReviewPresentation(view: EffectiveNavigationView): NavigationReviewPresentation {
   return navigationWorkspacePresentation(view).review;
@@ -173,7 +192,10 @@ type NavigationReviewPresentation = {
   currentConversationIds:ReadonlySet<string>;
 };
 function finishReviewPresentation(view:EffectiveNavigationView,items:import('../types').NavigationReviewItem[],pointers:Set<string>,exactOutClaimCount:number):NavigationReviewPresentation {
-  items.sort((a,b) => a.waiting_since-b.waiting_since || (a.ticket_id < b.ticket_id ? -1 : a.ticket_id > b.ticket_id ? 1 : 0));
+  items.sort((a,b) => a.waiting_since-b.waiting_since
+    || compareIdentity(a.review_item_type,b.review_item_type)
+    || compareIdentity(a.review_item_type==='message' ? a.conversation_id : a.ticket_id,
+      b.review_item_type==='message' ? b.conversation_id : b.ticket_id));
   const counts=view.publication.view?.counts;
   if(counts)exactOutClaimCount=counts.out_claims;
   return {items,runningConversationCount:navigationWorkingAgentCount(view),exactOutClaimCount,currentConversationIds:pointers};
@@ -199,12 +221,12 @@ export function navigationWorkingAgentCount(view:EffectiveNavigationView | null 
   return count;
 }
 
-export function reviewProposalIdentity(item: import('../types').NavigationReviewItem): string {
+export function reviewProposalIdentity(item: import('../types').NavigationReviewProposalItem): string {
   return JSON.stringify([item.ticket_id,item.field,item.proposal_field,item.waiting_since,item.proposal_revision]);
 }
 
 /** Summary identity admits the body; detail and manifest cannot rewrite the queue. */
-export function reviewProposalDetailMatches(item: import('../types').NavigationReviewItem, detail: Pick<import('../types').TicketDetail,'id' | 'pending_proposal'>): boolean {
+export function reviewProposalDetailMatches(item: import('../types').NavigationReviewProposalItem, detail: Pick<import('../types').TicketDetail,'id' | 'pending_proposal'>): boolean {
   const proposal = detail.pending_proposal;
   return detail.id === item.ticket_id && proposal !== null && proposal.field === item.proposal_field
     && proposal.created_at === item.waiting_since && proposal.revision === item.proposal_revision;

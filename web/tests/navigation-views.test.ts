@@ -9,10 +9,10 @@ import {authority,continuity,conversation} from './support/navigation/fixtures';
 
 function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapshot {
   const source=conversation('c');
-  return {event:'snapshot',wire_version:3,projection_version:4,view_id:`view-${request.scope_generation}`,
+  return {event:'snapshot',wire_version:3,projection_version:5,view_id:`view-${request.scope_generation}`,
     scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:{...continuity,revision},
     content_version:name,mode:'current',authority:authority(),proof:null,
-    content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
+    content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{first_unread_owner_message_at:source.value.first_unread_owner_message_at,attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
 }
 function fixture() {
   const connections:{request:ViewRequest;send:(frame:ViewFrame)=>void;error:()=>void;signal:AbortSignal;closed:boolean}[]=[];
@@ -40,7 +40,7 @@ describe('bounded navigation owner',()=>{
       let revision=0;
       for(const total of [9,0,null,6]) {
         const previous=owner.getState().publication!;
-        source.send({event:'patch',wire_version:3,projection_version:4,view_id:initial.view_id,
+        source.send({event:'patch',wire_version:3,projection_version:5,view_id:initial.view_id,
           scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
           coverage:{...continuity,revision:String(++revision)},previous_coverage:previous.continuity,
           content_version:`count-${revision}`,previous_content_version:previous.view!.contentVersion,
@@ -119,11 +119,11 @@ describe('bounded navigation owner',()=>{
       expect((await pending).status).toBe('included');
     }finally{owner.dispose();}
   });
-  it('accepts only projection 4 and replaces lean/full records under one key',async()=>{
+  it('accepts only projection 5 and replaces lean/full records under one key',async()=>{
     const {owner,connections}=fixture();
     const presentationFor=createNavigationPresentationCache();
     try {
-      expect(defaultViewRequest().projection_version).toBe(4);
+      expect(defaultViewRequest().projection_version).toBe(5);
       const started=owner.start();
       const initial=snapshot(connections[0].request);
       const lean={kind:'manager' as const,id:'settled',value:{title:'Settled',created_at:1,updated_at:1,settled:true as const,conversation_id:'c'}};
@@ -138,7 +138,7 @@ describe('bounded navigation owner',()=>{
       expect(first.settledManagers[0]).not.toHaveProperty('recap');
       expect(first.settledManagers[0].updated_at).toBe(1);
       const full={...lean,value:{...lean.value,recap:'Retained for selection',recap_preview:'Retained',project_id:'p',recap_reference:null}};
-      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:4,view_id:initial.view_id,
+      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:5,view_id:initial.view_id,
         scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
         coverage:{...continuity,revision:'1'},previous_coverage:initial.coverage,content_version:'full',previous_content_version:initial.content_version,
         upserts:[full],evictions:[],windows:[],counts:initial.content.counts};

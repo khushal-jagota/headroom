@@ -59,6 +59,7 @@ def project(
             name: value[name]
             for name in (
                 "owner_read_through_sequence",
+                "first_unread_owner_message_at",
                 "error_acknowledged_through_sequence",
                 "attention",
             )
