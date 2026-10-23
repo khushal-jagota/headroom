@@ -2,9 +2,28 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class IdeasModel {
-    var title = ""
-    var detail = ""
-    var projectID: String?
+    var title = "" { didSet { persist() } }
+    var detail = "" { didSet { persist() } }
+    var projectID: String? { didSet { persist() } }
+    private var draftServer: String?
+    private var restoring = false
+    private func persist() {
+        guard !restoring, let server = draftServer else { return }
+        LocalStore.shared.saveDraft(title, server: server, id: "ideas:title")
+        LocalStore.shared.saveDraft(detail, server: server, id: "ideas:detail")
+        LocalStore.shared.saveDraft(projectID ?? "", server: server, id: "ideas:project")
+    }
+    private func restore(_ service: any IdeasServing) {
+        guard let api = service as? APIClient else { return }
+        let server = LocalStore.server(api.baseURL)
+        guard draftServer != server else { return }
+        restoring = true; draftServer = server
+        title = LocalStore.shared.draft(server: server, id: "ideas:title") ?? ""
+        detail = LocalStore.shared.draft(server: server, id: "ideas:detail") ?? ""
+        let project = LocalStore.shared.draft(server: server, id: "ideas:project") ?? ""
+        projectID = project.isEmpty ? nil : project
+        restoring = false
+    }
     private(set) var ideas: [Idea] = []
     private(set) var projects: [IdeaProject] = []
     private(set) var hasLoaded = false
@@ -16,6 +35,7 @@ import Observation
     var canCapture: Bool { !isCapturing && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     func refresh(using service: any IdeasServing) async {
+        restore(service)
         readGeneration += 1
         let generation = readGeneration
         do {

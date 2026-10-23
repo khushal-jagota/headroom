@@ -16,7 +16,7 @@ struct ReviewWorkerManifest: Decodable, Sendable {
     }
 }
 
-struct ReviewApproval: Encodable, Sendable {
+struct ReviewApproval: Codable, Sendable {
     let expectedProposalRevision: Int
     let editedBody: String?
     let nextCeiling: String

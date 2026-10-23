@@ -8,8 +8,6 @@ struct OrchestratorView: View {
     @State private var error: String?
     @State private var headerCollapsed = false
     @State private var actions = AgentPageActions()
-    @State private var scrolling = false
-    @State private var refreshAfterScroll = false
 
     private var summary: ManagerSummary? { store.managers.first { $0.id == managerID } }
 
@@ -43,13 +41,6 @@ struct OrchestratorView: View {
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
-        .onScrollPhaseChange { _, phase in
-            scrolling = phase != .idle
-            if !scrolling && refreshAfterScroll {
-                refreshAfterScroll = false
-                Task { await load() }
-            }
-        }
         .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 100 } action: { _, collapsed in
             withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
         }
@@ -67,11 +58,11 @@ struct OrchestratorView: View {
 
     private func load() async {
         let api = store.client
+        if detail == nil { detail = api.cached("/api/managers/\(managerID)/workspace") }
         do {
             let result = try await api.manager(managerID)
             try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
-            if scrolling { refreshAfterScroll = true; return }
             detail = result; error = nil
         } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
     }

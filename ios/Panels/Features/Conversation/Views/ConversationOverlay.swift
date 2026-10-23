@@ -86,6 +86,11 @@ struct ConversationOverlay: ViewModifier {
         .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
             model.conversationID = conversationID ?? model.conversationID
+            if owner == .chief, model.conversationID == nil {
+                let saved: ConversationReference? = store.client.cached("/api/chief/conversation")
+                model.conversationID = saved?.conversationId
+            }
+            model.restore(owner: owner, api: store.client)
             if owner == .chief, model.conversationID == nil { model.conversationID = try? await store.client.chiefConversation().conversationId }
             while !Task.isCancelled {
                 await model.refresh(using: store.client, transcript: true)
@@ -105,6 +110,7 @@ struct ConversationOverlay: ViewModifier {
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
             }
         }
+        .onChange(of: LocalStore.shared.revision) { _, _ in model.syncOutbox() }
         .onChange(of: model.lens) { _, _ in Task { await model.refresh(using: store.client, transcript: true) } }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onChange(of: capturingSpeech) { _, capturing in if capturing { focused = false } }
@@ -329,7 +335,8 @@ private struct ConversationThread: View {
                                 } else { Text(.init(row.text)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
                                 if let note = row.note {
                                     HStack {
-                                        Text(note).foregroundStyle(PanelsTheme.faint)
+                                        if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
+                                        Text(note).foregroundStyle(note.hasPrefix("Not sent") ? PanelsTheme.error : PanelsTheme.faint)
                                         if let id = row.retryID {
                                             Button { Task { await model.retry(id, to: owner, using: store.client) } } label: {
                                                 Text("Retry").padding(.horizontal, 8).padding(.vertical, 4)

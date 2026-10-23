@@ -35,13 +35,24 @@ private struct ScreenRetryButton: View {
     }
 }
 
+/// Still blocks follow the content layout; quick reads never flash a placeholder.
 struct ScreenLoadingView: View {
     let title: String
+    @State private var visible = false
     var body: some View {
-        ProgressView("Loading \(title)…")
-            .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: 24) {
+            RoundedRectangle(cornerRadius: 4).frame(width: 160, height: 26)
+            ForEach(0..<(title == "review" ? 2 : 4), id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 12) {
+                    RoundedRectangle(cornerRadius: 4).frame(height: 18)
+                    RoundedRectangle(cornerRadius: 4).frame(maxWidth: 240).frame(height: title == "review" ? 88 : 14)
+                }
+            }
+            Spacer()
+        }.foregroundStyle(PanelsTheme.raised).padding(24)
+            .opacity(visible ? 1 : 0).allowsHitTesting(false)
+            .accessibilityElement(children: .ignore).accessibilityLabel("Loading \(title)")
+            .task { do { try await Task.sleep(for: .milliseconds(300)); visible = true } catch {} }
     }
 }
 

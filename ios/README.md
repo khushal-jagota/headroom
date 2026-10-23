@@ -385,10 +385,16 @@ expose their text to VoiceOver. No new tests were added for these
 view-only edits: the existing host tests cover model contracts, while actual text
 layout and assistive interaction require the deferred runtime check.
 
+## Saved work and offline recovery
+
+[Saved data and interrupted connections](Offline.md) describes the on-phone cache,
+persisted drafts, message and decision outbox, Review audio recovery and the exact
+server guarantees. The foreground app drains saved work after reconnect or relaunch.
+
 ## Loading and retry states
 
 Review, Workspace, Chief, Orchestrator, Ticket and artifact lists share a labeled
-initial loading state and a native retry screen when nothing has loaded. Failed
+delayed block skeleton on the first load and a native retry screen when nothing has loaded. Failed
 refreshes keep the last content visible, including an empty result, with a small
 retry notice below the content. The notice does not insert a row above existing
 content. Retry buttons remain disabled until their request finishes. Artifact

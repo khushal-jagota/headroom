@@ -24,7 +24,7 @@ struct AppShell: View {
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
                 .tabItem { Label("Review", systemImage: "checkmark.circle") }
-                .badge(store.review?.items.count ?? 0).tag(AppTab.review)
+                .badge(max(0, (store.review?.items.count ?? 0) - pendingDecisionCount)).tag(AppTab.review)
             NavigationStack(path: $workspacePath) {
                 WorkspaceView()
                     .navigationDestination(for: AppRoute.self) { detail($0) }
@@ -55,9 +55,22 @@ struct AppShell: View {
         .onChange(of: workspacePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: morePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let error = LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
+        }
+        .onChange(of: Outbox.shared.networkAvailable) { _, available in
+            if available, scenePhase == .active { Task { await store.refresh() } }
+        }
+        .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
+            if scenePhase == .active { await Outbox.shared.run(api: store.client) }
+        }
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
             if scenePhase == .active { await store.run() }
         }
+    }
+
+    private var pendingDecisionCount: Int {
+        Outbox.shared.entries(LocalStore.server(store.baseURL)).filter { ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state) }.count
     }
 
     private var moreTabImage: UIImage {

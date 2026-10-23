@@ -8,71 +8,79 @@ import Observation
     var startedAt = Date()
     var error: String?
     private var recorder: AVAudioRecorder?
-    private var file: URL?
-    private var audio: Data?
-    private var generation = UUID()
-    private var transcriptionTask: Task<String, Error>?
+    private var work: PendingWork?
+    private var api: APIClient?
 
-    func start() async {
-        guard phase == .idle else { return }
-        let request = UUID(); generation = request
-        guard await AVAudioApplication.requestRecordPermission(), generation == request else {
+    func restore(api: APIClient, draftID: String?) {
+        guard recorder == nil, let draftID else { return }
+        self.api = api
+        work = Outbox.shared.entries(LocalStore.server(api.baseURL)).last { $0.kind == .voice && $0.draftID == draftID && $0.state != .sent }
+        guard var saved = work else { phase = .idle; return }
+        if saved.state == .recording {
+            saved.state = .waiting; saved.note = "Recording recovered · waiting for connection"
+            do { try Outbox.shared.save(saved, server: LocalStore.server(api.baseURL)); work = saved }
+            catch { self.error = error.localizedDescription }
+        }
+        phase = .failed
+        error = saved.note
+    }
+    func start(api: APIClient, draftID: String?) async {
+        guard phase == .idle, let draftID else { return }
+        guard await AVAudioApplication.requestRecordPermission() else {
             error = "Microphone access is needed to record a revision."; return
         }
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .default)
-            try session.setActive(true)
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("review-\(UUID()).m4a")
-            file = url
+            try session.setCategory(.record, mode: .default); try session.setActive(true)
+            let id = UUID().uuidString
+            let file = "review-\(id).m4a"
+            let url = LocalStore.directory.appendingPathComponent(file)
+            try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+            var saved = PendingWork(id: id, created: .now, kind: .voice, audioFile: file, draftID: draftID)
+            saved.state = .recording; saved.note = "Recording saved on this phone"
+            try Outbox.shared.save(saved, server: LocalStore.server(api.baseURL))
+            self.work = saved; self.api = api
             let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000])
             guard recorder.record() else { throw APIError(status: 0, message: "Recording could not start.") }
             self.recorder = recorder; startedAt = Date(); phase = .recording; error = nil
             Haptics.light()
-        } catch { self.error = error.localizedDescription; cancel() }
+        } catch { self.error = error.localizedDescription; phase = .failed }
     }
-
+    func preserve() {
+        guard recorder != nil else { return }
+        recorder?.stop(); recorder = nil
+        try? AVAudioSession.sharedInstance().setActive(false)
+        guard var work, let api else { return }
+        work.state = .waiting; work.note = "Recording saved · waiting for connection"
+        do { try Outbox.shared.save(work, server: LocalStore.server(api.baseURL)); self.work = work }
+        catch { self.error = error.localizedDescription }
+        phase = .failed
+    }
     func stop(api: APIClient) async -> String? {
-        guard phase == .recording else { return nil }
-        recorder?.stop(); recorder = nil
-        try? AVAudioSession.sharedInstance().setActive(false)
-        Haptics.selection()
-        do {
-            guard let file else { return nil }
-            audio = try Data(contentsOf: file)
-            try? FileManager.default.removeItem(at: file); self.file = nil
-            return await transcribe(api: api)
-        } catch { self.error = error.localizedDescription; phase = .failed; return nil }
+        preserve()
+        return await transcribe(api: api)
     }
-
     func transcribe(api: APIClient) async -> String? {
-        guard let audio else { return nil }
-        let request = generation
-        phase = .transcribing; error = nil
-        do {
-            let task = Task { try await api.transcribeReviewAudio(audio) }
-            transcriptionTask = task
-            let text = try await task.value
-            guard generation == request else { return nil }
-            transcriptionTask = nil
-            self.audio = nil; phase = .idle
-            return text
-        } catch {
-            guard generation == request else { return nil }
-            transcriptionTask = nil
-            self.error = error.localizedDescription; phase = .failed; ReviewStyle.warning()
-            return nil
-        }
+        guard let work else { return nil }
+        phase = .transcribing
+        if work.state == .failed { Outbox.shared.retry(work.id, api: api) }
+        await Outbox.shared.drain(api: api)
+        let current = Outbox.shared.entries(LocalStore.server(api.baseURL)).first { $0.id == work.id }
+        if current?.state == .sent { phase = .idle; self.work = nil; error = nil; return "" }
+        phase = .failed; error = current?.note ?? "Recording saved on this phone"
+        return nil
     }
-
+    /// Only an explicit discard removes audio. Leaving the composer always preserves it.
     func cancel() {
-        generation = UUID(); transcriptionTask?.cancel(); transcriptionTask = nil
         recorder?.stop(); recorder = nil
-        if let file { try? FileManager.default.removeItem(at: file) }
-        file = nil; audio = nil; phase = .idle
         try? AVAudioSession.sharedInstance().setActive(false)
+        guard let work, let api else { phase = .idle; return }
+        do {
+            try LocalStore.shared.remove(server: LocalStore.server(api.baseURL), kind: "outbox", id: work.id)
+            if let file = work.audioFile { try? FileManager.default.removeItem(at: LocalStore.directory.appendingPathComponent(file)) }
+            self.work = nil; phase = .idle; error = nil
+        } catch { self.error = error.localizedDescription }
     }
-
     static func append(_ transcript: String, to draft: String) -> String {
         guard !transcript.isEmpty else { return draft }
         let existing = draft.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -3,7 +3,43 @@ import Observation
 
 @MainActor @Observable final class ConversationModel {
     var conversationID: String?
-    var draft = ""
+    var draft = "" { didSet { saveDraft() } }
+    private var persistenceAPI: APIClient?
+    private var persistenceOwner: ConversationOwner?
+    private var restoring = false
+    private var draftKey: String { "conversation:" + (persistenceOwner?.path ?? "") }
+    private func saveDraft() {
+        guard !restoring, let api = persistenceAPI else { return }
+        LocalStore.shared.saveDraft(draft, server: LocalStore.server(api.baseURL), id: draftKey)
+    }
+    func restore(owner: ConversationOwner, api: APIClient) {
+        guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner else { syncOutbox(); return }
+        persistenceAPI = api; persistenceOwner = owner; restoring = true
+        defer { restoring = false }
+        draft = LocalStore.shared.draft(server: LocalStore.server(api.baseURL), id: draftKey) ?? ""
+        if let id = conversationID,
+           let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
+            status = snapshot.status; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
+            rememberRows(items.map(\.id))
+        }
+        syncOutbox()
+    }
+    func syncOutbox() {
+        guard let api = persistenceAPI, let owner = persistenceOwner else { return }
+        let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).filter { $0.kind == .message && $0.owner == owner }
+        for work in saved {
+            if let previous = work.priorMessageIDs, let first = previous.first {
+                supersededIDs.formUnion(previous)
+                retryAliases[work.id] = first
+            }
+        }
+        if conversationID == nil { conversationID = saved.last?.message?.conversationId }
+        let received = Set(items.compactMap(\.senderMessageId))
+        outgoing = saved.filter { !supersededIDs.contains($0.id) && (!received.contains($0.id) || $0.state != .sent) }.map {
+            Outgoing(id: $0.id, text: $0.displayText, note: $0.note, retryable: $0.state == .failed)
+        }
+        rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
+    }
     var lens: ConversationLens = .focus
     var items: [ConversationItem] = []
     var expandedBodies: [String: ConversationBody] = [:]
@@ -208,6 +244,20 @@ import Observation
     @discardableResult func send(to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sending, !text.isEmpty || !attachments.isEmpty else { return false }
+        if let api = persistenceAPI {
+            let id = UUID().uuidString
+            var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + attachments,
+                senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
+            message.mode = deliveryMode; message.backendKey = backendKey; message.model = selectedModel; message.reasoningEffort = reasoningEffort
+            let work = PendingWork(id: id, created: .now, kind: .message, owner: owner, message: message)
+            do {
+                try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "outbox", id: id,
+                    data: JSONEncoder().encode(work), draft: (draftKey, ""))
+                draft = ""; attachments = []; syncOutbox()
+                Task { await Outbox.shared.drain(api: api); syncOutbox() }
+                return true
+            } catch { self.error = "Message is still in the composer: \(error.localizedDescription)"; return false }
+        }
         let id = UUID().uuidString
         let displayText = ([text] + attachments.compactMap(\.fileName)).filter { !$0.isEmpty }.joined(separator: "\n")
         outgoing.append(Outgoing(id: id, text: displayText, note: "Sending…"))
@@ -221,6 +271,7 @@ import Observation
     }
 
     func retry(_ id: String, to owner: ConversationOwner, using service: any ConversationServing) async {
+        if let api = persistenceAPI { Outbox.shared.retry(id, api: api); syncOutbox(); return }
         guard !sending, let at = outgoing.firstIndex(where: { $0.id == id && $0.retryable }) else { return }
         let old = outgoing[at]
         // An explicitly refused attempt has a terminal server identity. A new attempt

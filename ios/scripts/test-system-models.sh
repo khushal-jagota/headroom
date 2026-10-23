@@ -5,7 +5,7 @@ cd "$(dirname "$0")/../.."
 build=$(mktemp -d "${TMPDIR:-/tmp}/panels-system-tests.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/Sources/Panels" "$build/Tests/PanelsTests"
-cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Models/*.swift \
+cp ios/Panels/Core/Persistence/LocalStore.swift ios/Panels/Core/Networking/APIClient.swift ios/Panels/Models/*.swift \
   ios/Panels/Features/More/Usage/UsageModels.swift \
   ios/Panels/Features/More/VPS/VPSModels.swift \
   ios/Panels/Features/More/Settings/SettingsModels.swift "$build/Sources/Panels/"
@@ -20,4 +20,4 @@ let package = Package(
     targets: [.target(name: "Panels"), .testTarget(name: "PanelsTests", dependencies: ["Panels"])]
 )
 SWIFT
-swift test --package-path "$build" --scratch-path "$build/.build" --jobs 4
+PANELS_STORE_DIRECTORY="$build/store" swift test --package-path "$build" --scratch-path "$build/.build" --jobs 4
