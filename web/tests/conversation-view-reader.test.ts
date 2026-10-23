@@ -17,12 +17,27 @@ const rows: FixtureEvent[] = [{ conversation_id: 'c', sequence: 1, kind: 'messag
 const snapshot = () => viewSnapshot('c', 'focus', rows);
 const readers: ConversationViewReader[] = [];
 afterEach(() => { for (const reader of readers) reader.close(); readers.length = 0; Source.all = []; vi.useRealTimers(); });
-async function start() {
+async function start(initial = snapshot()) {
   vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
   const reader = new ConversationViewReader('c', 'focus', true); readers.push(reader);
-  const ready = reader.connect(); Source.all[0].send('snapshot', snapshot()); await ready;
+  const ready = reader.connect(); Source.all.at(-1)!.send('snapshot', initial); await ready;
   return reader;
 }
+
+it('does not replay existing live output when its first body read races a newer version', async () => {
+  const initial = snapshot();
+  const reference = { body_id: 'live:turn', version: '1', byte_count: 100, media_type: 'text/markdown' };
+  initial.status.live_output = { runtime_epoch: 'epoch', turn_key: 'turn:1', version: 1, byte_count: 100, reference };
+  const reader = await start(initial);
+  expect(reader.liveOutputIsArrival(reference, false)).toBe(false);
+  const next = { ...reference, version: '2', byte_count: 200 };
+  // A version that overtakes the initial body read is still restoration until
+  // some text actually appears. Replacing painted text is a genuine arrival.
+  expect(reader.liveOutputIsArrival(next, false)).toBe(false);
+  expect(reader.liveOutputIsArrival(next, true)).toBe(true);
+  reader.status = { ...initial.status, live_output: { ...initial.status.live_output!, turn_key: 'turn:2', reference: next } };
+  expect(reader.liveOutputIsArrival(next, false)).toBe(true);
+});
 
 it('replays the unchanged coverage after a deferred history read and ignores the closed stream', async () => {
   const reader = await start();
