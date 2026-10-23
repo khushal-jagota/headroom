@@ -83,6 +83,7 @@
 		9543F7F44D02038703F8DC57 /* SystemScreenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E5637000DA621E2A9B9D641 /* SystemScreenTests.swift */; };
 		97601D8C3EF558BB9D2755ED /* TicketStepRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0485F7682F6F961D6F2780E8 /* TicketStepRow.swift */; };
 		9D6C4A47DC492CA6FF240BBC /* OfflineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F91E277BA0DEEBBD385565 /* OfflineTests.swift */; };
+		9EFF013E9665182B1478CEDA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ADB16781051FA8EBC43B1CBB /* Assets.xcassets */; };
 		9F3946CF3C0EB157000F818D /* LocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EF91EC755B620A43025D183 /* LocalStore.swift */; };
 		A024AC45EA335509FC4BEADA /* ConversationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B55EEFE0425BF866B43462C /* ConversationModel.swift */; };
 		A29A4D112F11C5E9FC2FB65C /* ManagerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7687EE6822ECA78D49FE1A64 /* ManagerModels.swift */; };
@@ -229,6 +230,7 @@
 		A5B65B958CE406314A52A4AB /* TicketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketTests.swift; sourceTree = "<group>"; };
 		AABFC6D2D67B4C2799E37EA3 /* WorkerSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerSections.swift; sourceTree = "<group>"; };
 		AD8BD0258E05C85BEB58764E /* OrchestratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrchestratorView.swift; sourceTree = "<group>"; };
+		ADB16781051FA8EBC43B1CBB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ADB52188776E5136E566E076 /* WorkspacePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePresentationTests.swift; sourceTree = "<group>"; };
 		B0434C98350BF77AD359C7B6 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		BA3C5CFBD0D7EA7E6423717B /* ArtifactFileRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactFileRow.swift; sourceTree = "<group>"; };
@@ -653,6 +655,7 @@
 		A817EF536CD1DAB07CF655EC /* Panels */ = {
 			isa = PBXGroup;
 			children = (
+				ADB16781051FA8EBC43B1CBB /* Assets.xcassets */,
 				4D6C6E7A7EE07C36594DC600 /* Info.plist */,
 				59AC64E1F238FFAD1F16D604 /* Panels.entitlements */,
 				792D5946EBDA22DE99DEA35A /* App */,
@@ -930,6 +933,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9EFF013E9665182B1478CEDA /* Assets.xcassets in Resources */,
 				4B20503737B38E254E1A2633 /* Newsreader-OFL.txt in Resources */,
 				350D1EB409D7F44E0BC0D488 /* Newsreader.ttf in Resources */,
 				7679A5698181C3F46C149829 /* README.md in Resources */,
