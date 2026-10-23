@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
+import os
+import re
 from collections.abc import Callable
 from pathlib import Path
 
 from playwright.sync_api import (
     BrowserContext,
     Page,
+    expect,
 )
-from tests.e2e.harness import JsonObject, ServerHandle
+from tests.e2e.harness import REPO_ROOT, JsonObject, ServerHandle
 from tests.support.connected_rows import _post, _propose
 
 WAIT_MS = 10_000
@@ -86,7 +91,8 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     """The real sandbox resolves managed assets and refreshes over its Ticket.
 
     Mock DOM preparation and API bytes cannot prove browser sandbox execution,
-    sibling URL resolution, or that changed managed content reaches the open frame.
+    sibling URL resolution, child navigation, or changed content in the open frame.
+    The same browser and server exercise both hosts against the shipped bundle.
     """
     ticket_id = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "HTML artifact"
@@ -98,12 +104,35 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     (preview_directory / "style.css").write_text(
         "h1 { color: rgb(13, 71, 161); }", encoding="utf-8"
     )
+    nested = preview_directory / "nested"
+    nested.mkdir()
+    child = nested / "child.html"
+    child.write_text(
+        '<h1>Child artifact</h1><a href="#detail">Jump to detail</a>'
+        '<a href="../../page.html">Outside directory</a>'
+        '<a href="../escape.html">Symlink escape</a>'
+        '<div style="height: 1400px"></div><h2 id="detail">Child detail</h2>'
+        '<script>try { window.parent.__artifactCompromised = true; '
+        'document.body.dataset.parentAccess = "allowed"; } '
+        'catch { document.body.dataset.parentAccess = "denied"; }</script>',
+        encoding="utf-8",
+    )
+    outside = root / "outside.html"
+    outside.write_text("<h1>Secret symlink bytes</h1>", encoding="utf-8")
+    (preview_directory / "escape.html").symlink_to(outside)
     document = preview_directory / "index.html"
     document.write_text(
         '<!doctype html><html><head><link rel="stylesheet" href="style.css"></head>'
         '<body><h1>Initial artifact</h1><img src="../images/pic.png" alt="Sibling image">'
         "<button onclick=\"this.textContent='Clicked'\">Try interaction</button>"
-        "</body></html>",
+        '<a href="nested/child.html">Open child</a>'
+        '<a data-artifact-action="empty" href="" onclick="localAction(event)">Empty action</a>'
+        '<a data-artifact-action="hash" href="#" onclick="localAction(event)">Hash action</a>'
+        '<a data-artifact-action="none" onclick="localAction(event)">No href action</a>'
+        '<output data-artifact-action-count>0</output>'
+        '<script>let actionCount = 0; function localAction(event) { event.preventDefault(); '
+        'document.querySelector("[data-artifact-action-count]").textContent = ++actionCount; }'
+        '</script></body></html>',
         encoding="utf-8",
     )
     _settle_success(
@@ -112,9 +141,51 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         f"[HTML](/files/tickets/{ticket_id}/previews/index.html)",
     )
     ticket_selector = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
-    page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ticket_selector)
+    context = context_factory()
+    page = open_page(context, server, f"#/workspace/{ticket_id}", ticket_selector)
+    # Prove this browser executed the module named by the committed production index.
+    dist = REPO_ROOT / "web" / "dist"
+    module = re.search(
+        r'<script\s+type="module"[^>]*\ssrc="([^"]+)"',
+        (dist / "index.html").read_text(encoding="utf-8"),
+    )
+    assert module is not None
+    module_src = module.group(1)
+    assert page.locator('script[type="module"]').get_attribute("src") == module_src
+    module_url = server.base + module_src
+    assert page.evaluate(
+        "url => performance.getEntriesByType('resource').some(entry => entry.name === url)",
+        module_url,
+    )
+    module_response = context.request.get(module_url)
+    assert module_response.status == 200
+    module_bytes = module_response.body()
+    assert b"Message the agent" in module_bytes
+    for retired_literal in (b"Steer the work", b"Everything", b"Newsreader"):
+        assert retired_literal not in module_bytes
+    served_sha256 = hashlib.sha256(module_bytes).hexdigest()
+    assert served_sha256 == hashlib.sha256(
+        (dist / module_src.removeprefix("/_app/")).read_bytes()
+    ).hexdigest()
+    evidence = os.environ.get("PANELS_TICKET_EVIDENCE_DIR")
+    if evidence:
+        Path(evidence).mkdir(parents=True, exist_ok=True)
+        (Path(evidence) / "production-browser-asset.json").write_text(
+            json.dumps({"module_url": module_url, "sha256": served_sha256}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    # Check the combined staging UI through rendered controls, never source strings.
+    for retired_text in ("Steer the work", "Everything", "Newsreader"):
+        expect(page.get_by_text(retired_text, exact=True)).to_have_count(0)
     _open_ticket_field(page, "success_condition")
     page.evaluate("window.__artifactInPlaceMarker = 'kept'")
+    html_requests: list[str] = []
+    page.on(
+        "request",
+        lambda request: html_requests.append(request.url)
+        if f"/files/tickets/{ticket_id}/" in request.url and request.url.endswith(".html")
+        else None,
+    )
     page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
     artifact_address = (
         f"{server.base}/#/workspace/{ticket_id}"
@@ -142,6 +213,77 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     frame.get_by_role("button", name="Try interaction").click(timeout=WAIT_MS)
     frame.get_by_role("button", name="Clicked").wait_for(timeout=WAIT_MS)
 
+    # Authored action anchors keep their handlers and never enter viewer navigation.
+    original_frame_src = iframe.get_attribute("src")
+    requests_before_actions = list(html_requests)
+    for action_count, action in enumerate(("empty", "hash", "none"), start=1):
+        frame.locator(f'[data-artifact-action="{action}"]').click(timeout=WAIT_MS)
+        expect(frame.locator("[data-artifact-action-count]")).to_have_text(str(action_count))
+        assert iframe.get_attribute("src") == original_frame_src
+        assert artifact.locator("[data-html-back]").count() == 0
+        assert artifact.locator("[data-html-navigation-notice]").count() == 0
+        assert page.url == artifact_address
+    assert html_requests == requests_before_actions
+
+    # These headers still force raw HTML to download, including navigable children.
+    child_response = context.request.get(
+        f"{server.base}/files/tickets/{ticket_id}/previews/nested/child.html"
+    )
+    assert child_response.status == 200
+    assert child_response.headers["content-disposition"].startswith("attachment;")
+    assert child_response.headers["x-content-type-options"] == "nosniff"
+
+    frame.get_by_role("link", name="Open child").click(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="Child artifact", exact=True).wait_for(timeout=WAIT_MS)
+    expect(frame.locator("body")).to_have_attribute("data-parent-access", "denied", timeout=WAIT_MS)
+    assert page.evaluate("window.__artifactCompromised") is None
+    assert iframe.get_attribute("sandbox") == "allow-scripts"
+    assert page.url == artifact_address
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / "artifact-child.png"), full_page=True)
+
+    frame.get_by_role("link", name="Jump to detail").click(timeout=WAIT_MS)
+    expect(frame.locator("#detail")).to_be_in_viewport(timeout=WAIT_MS)
+    artifact.locator("[data-html-back]").click(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="Child artifact", exact=True).wait_for(timeout=WAIT_MS)
+    artifact.locator("[data-html-back]").click(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="Initial artifact").wait_for(timeout=WAIT_MS)
+    frame.get_by_role("link", name="Open child").click(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="Child artifact", exact=True).wait_for(timeout=WAIT_MS)
+
+    for link in ("Outside directory", "Symlink escape"):
+        frame.get_by_role("link", name=link).click(timeout=WAIT_MS)
+        notice = artifact.locator("[data-html-navigation-notice]")
+        notice.wait_for(state="visible", timeout=WAIT_MS)
+        assert notice.inner_text() == "This link cannot be opened in the artifact viewer."
+        assert frame.locator("[data-html-navigation-notice]").count() == 0
+        assert frame.get_by_role("heading", name="Child artifact", exact=True).is_visible()
+        assert frame.get_by_role("heading", name="Secret symlink bytes").count() == 0
+        assert page.url == artifact_address
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / "artifact-parent-rejection.png"), full_page=True)
+
+    confined_headers = {
+        "X-Panels-Artifact-Root": f"/files/tickets/{ticket_id}/previews/index.html"
+    }
+    rejected = context.request.get(
+        f"{server.base}/files/tickets/{ticket_id}/previews/escape.html", headers=confined_headers
+    )
+    missing = context.request.get(
+        f"{server.base}/files/tickets/{ticket_id}/previews/missing.html", headers=confined_headers
+    )
+    assert rejected.status == missing.status == 404
+    assert rejected.body() == missing.body()
+    assert b"Secret symlink bytes" not in rejected.body()
+    assert str(outside).encode() not in rejected.body()
+
+    child.write_text("<h1>Refreshed child</h1>", encoding="utf-8")
+    artifact.locator("[data-ticket-artifact-refresh]").click(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="Refreshed child").wait_for(timeout=WAIT_MS)
+    assert page.url == artifact_address
+    artifact.locator("[data-html-back]").click(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="Initial artifact").wait_for(timeout=WAIT_MS)
+
     document.write_text("<h1>Refreshed artifact</h1>", encoding="utf-8")
     artifact.locator("[data-ticket-artifact-refresh]").click(timeout=WAIT_MS)
     frame.get_by_role("heading", name="Refreshed artifact").wait_for(timeout=WAIT_MS)
@@ -149,6 +291,42 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     assert page.evaluate("window.__artifactInPlaceMarker") == "kept"
     assert page.locator(ticket_selector).count() == 1
     assert artifact.is_visible()
+
+    # A shared preview address uses the same navigation in the same browser context.
+    document.write_text(
+        '<h1>Standalone index</h1><a href="nested/child.html">Open child</a>', encoding="utf-8"
+    )
+    page.goto(
+        f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
+    )
+    standalone = page.locator("[data-file-preview-route]")
+    standalone_frame = standalone.frame_locator("iframe[data-file-preview-html]")
+    standalone_frame.get_by_role("heading", name="Standalone index").wait_for(timeout=WAIT_MS)
+    standalone_frame.get_by_role("link", name="Open child").click(timeout=WAIT_MS)
+    standalone_frame.get_by_role("heading", name="Refreshed child").wait_for(timeout=WAIT_MS)
+    standalone.locator("[data-html-back]").click(timeout=WAIT_MS)
+    standalone_frame.get_by_role("heading", name="Standalone index").wait_for(timeout=WAIT_MS)
+    assert standalone.locator("iframe").get_attribute("sandbox") == "allow-scripts"
+
+    page.goto(f"{server.base}/#/review")
+    page.locator('[data-screen="review"] [data-review-empty]').wait_for(timeout=WAIT_MS)
+    for retired_text in ("Everything", "Newsreader"):
+        expect(page.get_by_text(retired_text, exact=True)).to_have_count(0)
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / "combined-review-ui.png"), full_page=True)
+
+    # An empty Chief thread uses its first-message prompt. The lower-level default
+    # agent placeholder is checked in the executed production module above.
+    page.goto(f"{server.base}/#/workspace/chief-of-staff")
+    expect(page.get_by_placeholder(
+        "Send the first message to start it...", exact=True
+    )).to_be_visible(
+        timeout=WAIT_MS
+    )
+    for retired_text in ("Steer the work", "Everything", "Newsreader"):
+        expect(page.get_by_text(retired_text, exact=True)).to_have_count(0)
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / "combined-chief-ui.png"), full_page=True)
 
 
 def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
