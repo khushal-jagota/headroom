@@ -323,7 +323,15 @@ says why the message was not delivered. Held messages are recovered from the
 conversation detail. The queue offers Steer in and removal; receipts settle delivery
 even when the corresponding row falls outside the loaded window.
 A new reply follows the bottom only while the reader is already there; scrolling
-up keeps the reader's position and exposes Latest.
+up keeps the reader's position. Latest appears once the reader is more than 120
+points from the bottom, and fades away within 32 points. Touching the thread or
+making a small scroll does not make it flash. The 44-point button sits at the
+lower right, 16 points above the conversation area boundary, clear of the line
+and composer. A small dot means output arrived while the reader was away; it is
+not an unread-message count. Tapping returns to the scroll view's bottom edge,
+keeps the keyboard and draft, and resumes following through streamed completion.
+The return uses the shared entrance motion; Reduce Motion makes it immediate.
+See [the Latest review](ConversationLatest.md) for the diagnosis and focused proof.
 
 The foreground surface subscribes to the existing Focus/Full tail and reads a
 coherent projection when it changes, with a 700ms refresh fallback. Full subscribes
@@ -341,7 +349,11 @@ a page fade.
 one UI scenario for the keyboard, scroll position, delivery transitions, model
 sheet, voice-draft flow and page opening/closing. It locks PanelsLaneA, uses the
 separate task bundle, and does not boot, shut down or erase a simulator. Set
-`PANELS_CONVERSATION_OUTPUT` to an external evidence directory. Debug smoke mode
+`PANELS_CONVERSATION_OUTPUT` to an external evidence directory. The optional
+`PANELS_CONVERSATION_LANE`, `PANELS_CONVERSATION_DEVICE`, and
+`PANELS_CONVERSATION_BUNDLE` select another assigned, already-booted lane and
+separate task bundle. `PANELS_CONVERSATION_TEST=ConversationLatestTests` selects
+the focused Latest scenario in the same host. Debug smoke mode
 is restricted to loopback; without a valid stub URL it uses a closed loopback port.
 The voice scenario injects recognition output: it does not prove microphone capture
 or speech recognition. Physical-device haptics, VoiceOver, audio transcription,

@@ -2,6 +2,76 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testLatestRequiresDistanceAndDoesNotFlickerAtThreshold() {
+        var policy = ConversationScrollPolicy()
+        policy.beginGesture()
+        policy.measure(distance: 0)
+        XCTAssertFalse(policy.showLatest, "Touch-down is not distance")
+        policy.measure(distance: 24)
+        XCTAssertFalse(policy.showLatest)
+        policy.measure(distance: 121)
+        XCTAssertTrue(policy.showLatest)
+        policy.measure(distance: 119)
+        XCTAssertTrue(policy.showLatest, "A small reversal must not flicker")
+        policy.measure(distance: 32)
+        XCTAssertFalse(policy.showLatest)
+        policy.endGesture(distance: 24)
+        XCTAssertTrue(policy.shouldFollowContent)
+    }
+
+    func testLatestPreservesReturnThroughGrowthAndResumesFollowing() {
+        var policy = ConversationScrollPolicy()
+        policy.beginGesture()
+        policy.endGesture(distance: 600)
+        policy.receiveOutput()
+        XCTAssertTrue(policy.hasNewOutput)
+        XCTAssertFalse(policy.shouldFollowContent)
+        policy.returnToLatest()
+        XCTAssertTrue(policy.showLatest, "A tap has not landed yet")
+        policy.measure(distance: 900)
+        policy.receiveOutput()
+        XCTAssertTrue(policy.returningToLatest)
+        XCTAssertFalse(policy.shouldFollowContent, "Do not restart an in-flight animation")
+        policy.finishReturn()
+        XCTAssertTrue(policy.shouldFollowContent)
+        XCTAssertFalse(policy.showLatest)
+        XCTAssertFalse(policy.hasNewOutput)
+        policy.measure(distance: 500)
+        XCTAssertFalse(policy.showLatest, "A pre-alignment layout measurement must not detach following")
+    }
+
+    func testLatestGestureInterruptsReturnAndKeepsReadingPosition() {
+        var policy = ConversationScrollPolicy()
+        policy.beginGesture()
+        policy.endGesture(distance: 500)
+        policy.returnToLatest()
+        policy.beginGesture()
+        policy.finishReturn()
+        policy.endGesture(distance: 300)
+        XCTAssertFalse(policy.returningToLatest)
+        XCTAssertFalse(policy.shouldFollowContent)
+        XCTAssertTrue(policy.showLatest)
+        policy.receiveOutput()
+        XCTAssertTrue(policy.hasNewOutput)
+        policy.beginGesture()
+        policy.endGesture(distance: -20)
+        XCTAssertTrue(policy.shouldFollowContent)
+        XCTAssertFalse(policy.hasNewOutput)
+    }
+
+    func testOpeningUnreadDoesNotFollowUntilReaderReturns() {
+        var policy = ConversationScrollPolicy()
+        policy.open(atUnread: true)
+        policy.measure(distance: 500)
+        XCTAssertTrue(policy.showLatest)
+        XCTAssertFalse(policy.shouldFollowContent)
+        policy.receiveOutput()
+        policy.open(atUnread: false)
+        XCTAssertTrue(policy.shouldFollowContent)
+        XCTAssertFalse(policy.showLatest)
+        XCTAssertFalse(policy.hasNewOutput)
+    }
+
     func testSpeechOnlyReleasesFinishedCaptureAndRejectsLateCallbacks() {
         var capture = ConversationSpeechDraft()
         let cancelled = capture.begin()

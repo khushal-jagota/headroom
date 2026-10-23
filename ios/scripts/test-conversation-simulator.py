@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local-only conversation operations proof on the already-booted PanelsLaneA.
+"""Local-only conversation operations proof on an already-booted assigned lane.
 
 Uses one HTTP stub and one existing UI-test host. No live server or simulator
 lifecycle changes. Capture files and build output belong in the supplied directory.
@@ -17,8 +17,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
-DEVICE = "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6"
-BUNDLE = "app.panels.ios.pios-convo-build"
+DEVICE = os.environ.get("PANELS_CONVERSATION_DEVICE", "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6")
+LANE = os.environ.get("PANELS_CONVERSATION_LANE", "PanelsLaneA")
+BUNDLE = os.environ.get("PANELS_CONVERSATION_BUNDLE", "app.panels.ios.pios-convo-build")
 
 
 def row(key, text, own=False, sender=None, kind=None):
@@ -77,6 +78,11 @@ class Stub:
                     "and the reply grows in place. You can scroll up to read earlier work "
                     "and return with Latest whenever you’re ready."
                 )
+                if sent["id"] == "latest-proof":
+                    reply = (
+                        "\n\n".join(f"Streaming paragraph {i}: " + reply for i in range(1, 8))
+                        + "\n\nEnd of streamed reply."
+                    )
                 length = max(0, min(len(reply), int((age - sent["delay"]) * 30)))
                 key = "reply-" + sent["id"]
                 if length == len(reply):
@@ -122,21 +128,23 @@ def main():
         return subprocess.call(
             [
                 "lockf",
-                "/tmp/panels-PanelsLaneA.lock",
+                f"/tmp/panels-{LANE}.lock",
                 sys.executable,
                 __file__,
                 *sys.argv[1:],
                 "--locked",
             ]
         )
+    assert LANE in {"PanelsLaneA", "PanelsLaneB", "PanelsLaneC"}, "Use an assigned Panels lane"
+    assert BUNDLE.startswith("app.panels.ios.pios-"), "Use a separate task bundle"
     output = Path(os.environ["PANELS_CONVERSATION_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
     assert any(
-        d["udid"] == DEVICE and d["state"] == "Booted"
+        d["udid"] == DEVICE and d["name"] == LANE and d["state"] == "Booted"
         for group in devices["devices"].values()
         for d in group
-    ), "PanelsLaneA must already be booted"
+    ), f"{LANE} must already be booted"
     stub = Stub(output)
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -160,6 +168,26 @@ def main():
                 return
             if path == "/proof/stop":
                 stub.stop_clip()
+                self.respond({})
+                return
+            if path == "/proof/stream":
+                with stub.lock:
+                    stub.pending.append(
+                        {
+                            "id": "latest-proof",
+                            "text": "",
+                            "at": time.monotonic(),
+                            "delay": 0,
+                            "delivered": True,
+                        }
+                    )
+                self.respond({})
+                return
+            if path == "/proof/finish":
+                with stub.lock:
+                    for pending in stub.pending:
+                        pending["at"] -= 200
+                    stub.tick()
                 self.respond({})
                 return
             if path == "/proof/reset":
@@ -362,6 +390,9 @@ def main():
     (output / "stub-url.txt").write_text(url)
     environment = os.environ.copy()
     environment["TEST_RUNNER_PANELS_CONVERSATION_STUB_URL"] = url
+    environment["TEST_RUNNER_PANELS_LATEST_BASELINE"] = os.environ.get(
+        "PANELS_LATEST_BASELINE", "0"
+    )
     try:
         return subprocess.call(
             [
@@ -388,7 +419,8 @@ def main():
                 "1",
                 "PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                "-only-testing:PanelsNotificationUITests/ConversationOperationTests",
+                "-only-testing:PanelsNotificationUITests/"
+                + os.environ.get("PANELS_CONVERSATION_TEST", "ConversationOperationTests"),
                 "test",
             ],
             env=environment,

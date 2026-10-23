@@ -315,8 +315,8 @@ private struct ConversationThread: View {
     let opened: Bool
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var followsLatest = true
-    @State private var scrolling = false
+    @State private var scrollPolicy = ConversationScrollPolicy()
+    @State private var position = ScrollPosition(edge: .bottom)
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -351,7 +351,6 @@ private struct ConversationThread: View {
                         }.id(row.id)
                     }
                 }
-                Color.clear.frame(height: 0).id("latest")
                 }.padding(.horizontal, 20).padding(.bottom, 12)
             }
             .contentMargins(.top, 12, for: .scrollContent)
@@ -359,41 +358,81 @@ private struct ConversationThread: View {
                 guard opened else { return }
                 await model.prepareOpening(using: store.client)
                 guard !Task.isCancelled else { return }
-                if let id = model.firstUnreadID { followsLatest = false; proxy.scrollTo(id, anchor: .top) }
-                else { followsLatest = true; proxy.scrollTo("latest", anchor: .bottom) }
+                scrollPolicy.open(atUnread: model.firstUnreadID != nil)
+                if let id = model.firstUnreadID { proxy.scrollTo(id, anchor: .top) }
+                else { position.scrollTo(edge: .bottom) }
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .sizeChanges)
             .scrollDismissesKeyboard(.interactively)
-            .onScrollPhaseChange { _, phase, context in
-                scrolling = phase != .idle
-                // Stop following at touch-down, before a live update can race the
-                // first geometry callback. Rejoin only once the reader stops at bottom.
-                if phase == .tracking || phase == .interacting { followsLatest = false }
+            .scrollPosition($position)
+            .onScrollPhaseChange { old, phase, context in
+                if phase == .tracking || phase == .interacting { scrollPolicy.beginGesture() }
                 if phase == .idle {
-                    followsLatest = context.geometry.contentSize.height - context.geometry.visibleRect.maxY < 60
+                    if scrollPolicy.returningToLatest {
+                        scrollPolicy.finishReturn()
+                        position.scrollTo(edge: .bottom)
+                    } else if old != .animating && scrollPolicy.userScrolling {
+                        scrollPolicy.endGesture(distance: distanceFromLatest(context.geometry))
+                    }
                 }
             }
-            .onScrollGeometryChange(for: CGSize.self) { CGSize(width: $0.containerSize.height, height: $0.contentSize.height) } action: { _, _ in
-                if followsLatest && !scrolling { proxy.scrollTo("latest", anchor: .bottom) }
+            .onScrollGeometryChange(for: CGSize.self) {
+                CGSize(width: $0.containerSize.height, height: $0.contentSize.height)
+            } action: { _, _ in
+                if scrollPolicy.shouldFollowContent { position.scrollTo(edge: .bottom) }
             }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentSize.height - geometry.visibleRect.maxY < 60
-            } action: { _, atBottom in
-                if scrolling && !atBottom { followsLatest = false }
+            .onScrollGeometryChange(for: Double.self) { distanceFromLatest($0) } action: { _, distance in
+                scrollPolicy.measure(distance: distance)
             }
-            .onChange(of: model.rows.map { $0.id + $0.text + ($0.note ?? "") }) { _, _ in
-                if followsLatest && !scrolling { proxy.scrollTo("latest", anchor: .bottom) }
+            .onChange(of: model.rows.last.map { [$0.id, $0.text, $0.note ?? ""] }) { old, _ in
+                if old != nil { scrollPolicy.receiveOutput() }
+                // Layout, not the pre-layout text update, owns bottom alignment.
             }
-            .overlay(alignment: .bottom) {
-                if !followsLatest {
-                    Button { followsLatest = true; withAnimation(reduceMotion ? nil : PanelsTheme.Motion.entrance) { proxy.scrollTo("latest", anchor: .bottom) } } label: {
-                        Label("Latest", systemImage: "arrow.down").font(PanelsTheme.TypeScale.small).padding(.horizontal, 16).frame(height: 44)
-                            .background(PanelsTheme.raised, in: Capsule()).overlay(Capsule().stroke(PanelsTheme.border))
-                    }.padding(.bottom, 10)
+            .overlay(alignment: .bottomTrailing) {
+                ZStack {
+                    if scrollPolicy.showLatest {
+                        Button {
+                            scrollPolicy.returnToLatest()
+                            withAnimation(reduceMotion ? nil : PanelsTheme.Motion.entrance, completionCriteria: .removed) {
+                                position.scrollTo(edge: .bottom)
+                            } completion: {
+                                // Also handles Reduce Motion / a no-op scroll, which
+                                // need not enter the native animating phase.
+                                if scrollPolicy.returningToLatest {
+                                    scrollPolicy.finishReturn()
+                                    position.scrollTo(edge: .bottom)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if scrollPolicy.hasNewOutput {
+                                    Circle().fill(PanelsTheme.accent).frame(width: 6, height: 6)
+                                }
+                                Text("Latest")
+                                Image(systemName: "arrow.down")
+                            }
+                            .font(PanelsTheme.TypeScale.small.weight(.medium))
+                            .foregroundStyle(PanelsTheme.text)
+                            .padding(.horizontal, 14).frame(height: 44)
+                            .background(PanelsTheme.raised, in: Capsule())
+                            .overlay(Capsule().stroke(PanelsTheme.border))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Latest")
+                        .accessibilityValue(scrollPolicy.hasNewOutput ? "New output" : "")
+                        .accessibilityHint("Scroll to the latest message")
+                        .padding(.trailing, 16).padding(.bottom, 16)
+                        .transition(.opacity)
+                    }
                 }
+                .animation(reduceMotion ? nil : PanelsTheme.Motion.fade, value: scrollPolicy.showLatest)
             }
         }
+    }
+
+    private func distanceFromLatest(_ geometry: ScrollGeometry) -> Double {
+        max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
     }
 }
 
