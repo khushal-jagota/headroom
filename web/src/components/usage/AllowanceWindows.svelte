@@ -38,7 +38,7 @@
   .window-copy { grid-row:span 2; min-width:0; }
   h3 { margin:0 0 var(--space-1); font:500 var(--type-sm) var(--font-ui); color:var(--text-default); overflow-wrap:anywhere; }
   .window-total { display:flex; align-items:baseline; gap:var(--space-2); }
-  strong { font-size:var(--type-xl); font-weight:600; line-height:1.2; color:var(--text-strong); font-variant-numeric:tabular-nums; }
+  strong { font-size:var(--type-display); font-weight:600; line-height:1.2; color:var(--text-strong); font-variant-numeric:tabular-nums; }
   .window-total>span { font-size:var(--type-sm); color:var(--text-faint); }
   .window-details { min-width:0; }
   summary { position:relative; display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); min-height:var(--space-6); padding:var(--space-1) var(--space-2); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-sm); background:var(--surface-recessed); list-style:none; cursor:pointer; font-size:var(--type-xs); font-variant-numeric:tabular-nums; }

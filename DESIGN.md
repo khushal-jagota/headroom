@@ -3,7 +3,7 @@
 The *values* live in `assets/tokens.css` (the only place a colour, radius, spacing step,
 duration, or type size is written — never hardcode one). This file is the *how*: the
 principles those tokens serve. Warm near-black surfaces, one amber accent that means
-"needs the human", a closed five-size type scale. Restraint over decoration.
+"needs the human", a shared sans type scale. Restraint over decoration.
 
 Distilled from `tokens.css`, `PRINCIPLES.md`, and the Vylo conversation reference (no-divider fades,
 bubble-less assistant, recessed composer).
@@ -51,15 +51,17 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **The scales are closed.** The shared type scale is 11, 13, 15, 20, and 24px;
-   the radius and spacing scales are fixed too. Snap new work to them. Existing sans
-   size exceptions remain until a separate design decision changes those surfaces.
+8. **Use the shared scales.** Typography uses 11, 13, 15, 18, 20, 28, and 30px.
+   The owner asked to preserve sizes while removing serif, so the 18px prose,
+   28px display, and 30px hero sizes are an explicit exception to the five-size
+   limit. Existing sans size exceptions remain unchanged. The radius and spacing
+   scales stay fixed; new sizes need an explicit design decision.
 
 9. **One sans voice.** Content and controls use the same system sans stack
    (`--font-ui`). Hierarchy comes from size, weight, spacing, and emphasis. Former
-   serif body text uses 15px, section titles use 20px, and display titles and large
-   usage figures use 24px. Code, diffs, tool output, and `code`, `pre`, `kbd`, and
-   `samp` retain monospace because alignment carries meaning. No italics except
+   serif text keeps its larger 18px prose, 28px display, and 30px hero sizes.
+   Smaller body text uses 15px and section titles use 20px. Code, diffs, tool output,
+   and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. No italics except
    input placeholders.
 
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
