@@ -116,7 +116,7 @@ children without inventing a second active card for a settled parent.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
-`ConversationOverlay` supplies the shared composer and conversation page on Chief,
+`ConversationNavigation` supplies the shared composer and conversation page on Chief,
 Orchestrator and Ticket, described below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
 context links and Dismiss/Reopen actions through its API adapter. It follows
@@ -258,7 +258,7 @@ orchestrator. These use existing endpoints. Failed or uncertain actions show an
 error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle gives
 selection feedback, and pull refresh/context menus use system feedback. Every shared route
 destination hides the tab bar; returning to a tab root restores it. Physical haptic feel
-still needs a device. Conversation contents use the shared native overlay described below.
+still needs a device. Conversation contents use the shared native conversation page described below.
 
 Four focused Workspace tests reuse the existing ticket fixture and an in-process
 URLProtocol stub. They cover attention precedence, hidden-ticket exclusion, stable
@@ -289,7 +289,7 @@ the HTML/markdown preview remain available to Quick Look or sharing. Copy link
 copies the web preview address. Artifact pushes and zooms are silent; Copy link
 uses success feedback and reload errors use error feedback. The shared shell
 retains ownership of global navigation feedback and deployment chrome. The
-viewer uses the same native conversation overlay as Ticket and Orchestrator,
+viewer uses the same native conversation page as Ticket and Orchestrator,
 including image previews. Files opened from an inline catalog keep that catalog's
 conversation owner while managed links retain their actual file owner. Further
 artifact links preserve the conversation context. The viewer resolves the current
@@ -306,17 +306,13 @@ pass, and do not establish physical-device haptics or frame-rate performance.
 ## Native conversation
 
 Chief, Orchestrator and Ticket share a latest-message line and a composer. Tapping
-or swiping up on the line extends that bar upward into a full-screen conversation.
-The same input stays in place, keeping its draft and keyboard focus. The line,
-thread and composer share one persistent raised surface. Its height grows with a
-bounce-free spring, and its top corners become square as it fills the page. The
-leading edge travels upward and shows the conversation name when open, with
-Focus/Full beside it. Tapping the name closes the conversation and restores the
-latest-message line; the expanded header does not repeat that status line. The
-thread is revealed inside the growing container. There is no second background or cross-fade. Pulling down the line
-shrinks the same surface with the finger; a short pull returns it to full height. The
-close control collapses it too. The page underneath stays still and retains its
-scroll position. At rest the line remains visible while typing and recording,
+the line pushes a conversation page from the right using the native navigation
+stack. The standard Back button or edge swipe returns to the same page and scroll
+position. Both composers share the same draft and conversation model. The chat
+keeps the raised background, conversation name and Focus/Full header, thread and
+input; it does not repeat the latest-message line. The page's bottom bar remains
+available for sending without opening the chat. At rest the line remains visible
+while typing and recording,
 with the latest message from either side and “You:” for outgoing messages.
 Working uses the server's current running state.
 
@@ -364,8 +360,8 @@ pages and deferred bodies load on demand. Opening finds the first unread owner
 message, loading earlier pages if necessary, or returns to the latest line.
 Speech starts on an explicit tap after permission. Words are held until recording
 ends, then appear as an editable draft. Cancel discards recognition results. Nothing
-sends automatically. Reduce Motion removes the composer shape and open/close
-animations. The header still follows an interactive pull.
+sends automatically. Reduce Motion removes the composer shape animation. Navigation transitions follow
+the system accessibility setting.
 
 `ios/scripts/test-conversation.sh` runs the Foundation host checks.
 `ios/scripts/test-conversation-simulator.py` provides an opt-in loopback stub and
@@ -373,11 +369,10 @@ UI scenarios in the same host for the keyboard, scroll position, delivery transi
 sheet, voice-draft flow, page opening/closing, queue controls after relaunch,
 offline status geometry, largest-text controls and system sender attribution. The layout/attribution case can run independently of delivery waits.
 The detail-page scenario reuses that host and the existing Ticket/Orchestrator
-fixtures to check the real navigation stack, scrolling controls, and input
-position through expansion. It records open/close and scroll clips for frame
-review. This native layout boundary is absent from host model tests and the
-synthetic conversation page. The added case takes about 38 seconds, with no
-additional server or browser host.
+fixtures to check native push, edge swipe and Back, retained drafts and restored
+page scroll positions. It records push/back clips for frame review. This native
+navigation boundary is absent from host model tests. It uses no additional server
+or browser host.
 
 It locks PanelsLaneA, uses the
 separate task bundle, and does not boot, shut down or erase a simulator. Set
@@ -521,7 +516,7 @@ Speech updates trim leading and trailing whitespace from the recognized text and
 the existing draft before joining them. Internal line breaks remain. The multiline
 input uses its intrinsic height, within the five-line limit. The conversation
 card relies on the system bottom safe area rather than adding another 12-point gap;
-the latest line shares the growing conversation surface above it.
+the latest line sits above it on the owning page.
 
 Verification for this change: generic iOS Simulator build with four jobs, six
 conversation host tests and six system/synchronization host tests. The added speech

@@ -175,7 +175,7 @@ private struct ArtifactConversationSurface: ViewModifier {
     let conversationID: String?
     let enabled: Bool
     @ViewBuilder func body(content: Content) -> some View {
-        if enabled { content.conversationOverlay(owner: owner, conversationID: conversationID) }
+        if enabled { content.conversationNavigation(owner: owner, conversationID: conversationID) }
         else { content }
     }
 }

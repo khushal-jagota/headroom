@@ -43,7 +43,7 @@ struct TicketView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
-        .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", refreshError: error, retry: { await load() })
         .refreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
