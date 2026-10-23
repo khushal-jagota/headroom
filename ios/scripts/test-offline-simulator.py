@@ -17,7 +17,8 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 DEVICE = "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6"
-BUNDLE = "app.panels.ios.pios-offline"
+BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
+REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1"
 
 
 def main() -> int:
@@ -71,6 +72,11 @@ def main() -> int:
         "messages": [],
         "recording": None,
     }
+    state.update(read_through=1, historical_read=False, new_message=False, refused=False)
+    if REVIEW_MESSAGES:
+        state["slow"] = False
+        tickets = {"offline-1": tickets["offline-1"]}
+        tickets["offline-1"]["pending_proposal"]["created_at"] = 2
     lock = threading.RLock()
 
     def stop_clip() -> None:
@@ -120,7 +126,9 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
-                if name == "offline":
+                if name == "new-message":
+                    state["new_message"] = True
+                elif name == "offline":
                     state["offline"] = True
                 elif name == "online":
                     state["offline"] = False
@@ -177,6 +185,36 @@ def main() -> int:
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
                 value = tickets[query["id"][0]] if "id" in query else {"tickets": [], "page": page}
+            elif path == "/files/tickets/offline-1/proof.html" and REVIEW_MESSAGES:
+                content = b"<!doctype html><html><body><h1>Inline artifact proof</h1></body></html>"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            elif path.endswith("/events") and REVIEW_MESSAGES:
+                history = "/conversations/history/" in path
+                entries = (
+                    [(8, "Historical message")]
+                    if history
+                    else [
+                        (2, "First unread message"),
+                        (
+                            3,
+                            "Last unread message\n\n"
+                            "[proof.html](/files/tickets/offline-1/proof.html)",
+                        ),
+                    ]
+                )
+                if state["new_message"] and not history:
+                    entries.append((4, "Arrived after display"))
+                value = {
+                    "events": [
+                        {"kind": "message_to_owner", "sequence": seq, "payload": {"text": text}}
+                        for seq, text in entries
+                    ]
+                }
             elif path == "/api/review":
                 value = {
                     "items": [
@@ -192,6 +230,33 @@ def main() -> int:
                     ],
                     "running_worker_count": 0,
                 }
+                if REVIEW_MESSAGES:
+                    unread = state["read_through"] < (4 if state["new_message"] else 3)
+                    if unread:
+                        value["items"].append(
+                            {
+                                "review_item_type": "message",
+                                "conversation_id": "stub",
+                                "address_id": "chief",
+                                "owner_kind": "chief",
+                                "owner_id": "chief",
+                                "title": "Unread conversation",
+                                "waiting_since": 1 if state["read_through"] < 3 else 3,
+                            }
+                        )
+                    if not state["historical_read"]:
+                        value["items"].append(
+                            {
+                                "review_item_type": "message",
+                                "conversation_id": "history",
+                                "address_id": "chief-history",
+                                "owner_kind": "chief",
+                                "owner_id": "chief",
+                                "title": "Earlier conversation",
+                                "waiting_since": 5,
+                            }
+                        )
+                    value["items"].sort(key=lambda item: item["waiting_since"])
             elif path == "/api/workers/chief-of-staff/settings":
                 value = {
                     "employee_id": "chief",
@@ -232,8 +297,33 @@ def main() -> int:
                         "rest": {"plan_progress": {}},
                     },
                 }
-            elif path.endswith("/conversations/stub") or path.endswith("/start-values"):
-                value = {"backend_key": "codex", "model": "sol", "held_prompts": []}
+                if REVIEW_MESSAGES and "/conversations/history/" in path:
+                    value["page"]["items"] = [
+                        {
+                            "kind": "row",
+                            "key": "history",
+                            "body": {
+                                "kind": "inline",
+                                "value": {
+                                    "kind": "agent_message",
+                                    "content": [{"piece": "text", "text": "Historical transcript"}],
+                                },
+                            },
+                        }
+                    ]
+            elif (
+                path.endswith("/conversations/stub")
+                or path.endswith("/conversations/history")
+                or path.endswith("/start-values")
+            ):
+                value = {
+                    "backend_key": "codex",
+                    "model": "sol",
+                    "held_prompts": [],
+                    "owner_read_through_sequence": 0
+                    if path.endswith("history")
+                    else state["read_through"],
+                }
             elif path == "/api/native-push/device-registration":
                 value = {}
             else:
@@ -248,7 +338,23 @@ def main() -> int:
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
             with lock:
-                if path.endswith("/send"):
+                if REVIEW_MESSAGES and path.endswith("/owner-read"):
+                    state["writes"].append(body)
+                    if "/history/" in path:
+                        state["historical_read"] = True
+                    else:
+                        state["read_through"] = body["through_sequence"]
+                    value = {"owner_read_through_sequence": body["through_sequence"]}
+                elif REVIEW_MESSAGES and path.endswith("/send"):
+                    state["writes"].append(body)
+                    if not state["refused"]:
+                        state["refused"] = True
+                        value = {"conversation_id": "stub", "fate": "refused"}
+                    else:
+                        state["read_through"] = body["owner_read_through_sequence"]
+                        state["messages"].append(body)
+                        value = {"conversation_id": "stub", "fate": "queued"}
+                elif path.endswith("/send"):
                     identity = body["sender_message_id"]
                     if not any(m["sender_message_id"] == identity for m in state["messages"]):
                         state["messages"].append(body)
@@ -310,7 +416,8 @@ def main() -> int:
                 "never",
                 "PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                "-only-testing:PanelsNotificationUITests/OfflineOperationTests",
+                "-only-testing:PanelsNotificationUITests/"
+                + ("ReviewMessagesTests" if REVIEW_MESSAGES else "OfflineOperationTests"),
                 "test",
             ],
             env=env,

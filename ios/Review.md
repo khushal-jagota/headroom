@@ -1,7 +1,8 @@
 # Review on iOS
 
-Review shows one waiting proposal at a time. The queue and badge follow the
-shared change stream. Skip keeps a proposal out of this visit's queue without
+Review shows proposals and unread conversations in one queue, ordered by waiting
+time. Each conversation has one card containing its complete unread message run.
+The queue and badge follow the shared change stream. Skip keeps an item out of this visit's queue without
 changing it on the server. When every remaining item was skipped, Revisit skipped
 items brings them back. A new proposal on the same ticket appears again.
 
@@ -48,10 +49,23 @@ the proposal is still current. Both send the displayed revision to the server,
 which checks it in the same transaction as the decision. If it changed after the
 last read, the pending row says “This changed, review again” and keeps the saved words.
 
-This screen does not implement the pending conversation redesign. The title opens
-its ticket in Workspace. Cross-tab navigation sets the destination without an
+A proposal title opens its ticket in Workspace. Cross-tab navigation sets the destination without an
 intermediate Workspace-root animation. Every pushed route hides the tab bar;
-returning to a tab root restores it. The conversation surface is unchanged.
+returning to a tab root restores it. A message card shows markdown, attached images and files, and inline previews for
+linked artifacts. Reply uses the same composer, attachments and voice controls as
+Conversation. Its draft is separate from the full conversation's draft and survives
+Skip and relaunch. A reply is saved in the outbox with its conversation ID, message
+identity and the last displayed message sequence. Accepted and server-queued replies
+acknowledge only that sequence. A later message stays unread and returns to Review.
+A refused or uncertain reply keeps its words and attachments. Receipt reconciliation
+and held-prompt checks avoid sending an accepted reply twice. An explicit retry after
+a terminal refusal receives a new identity while retaining the original read boundary.
+
+Mark read acknowledges only the displayed run and does not send a reply. Open
+conversation opens the exact conversation named by the card. An older conversation
+whose owner has moved on is read-only. Message cards use the existing Review fade,
+swipe threshold and feedback. Mark read uses the filled action styling; Open
+conversation uses the raised action styling.
 
 Deployment status lives in More's main list, in a Panels server row that opens
 VPS. There is no floating deployment capsule. A small dot on More appears while
@@ -104,3 +118,14 @@ Saved approval and send-back operations retain the ticket title and proposal ste
 label alongside delivery state and saved words. These names are saved with the
 operation, so advancing the queue or relaunching does not lose its identity. Older
 saved operations fall back to the loaded ticket title or ticket ID and field name.
+
+Unread-message verification uses `ReviewMessageTests` with the existing URLProtocol
+host: mixed queue decoding, a complete 65-message unread run, bounded Mark read,
+refusal/relaunch/retry with attachments, historical send prevention, and recovery
+sender attribution. The existing offline simulator host also supports
+`PANELS_REVIEW_MESSAGES=1`. Its one connected test exercises SwiftUI card controls,
+reply refusal and relaunch, queued acceptance, a message arriving after display,
+Mark read, exact historical navigation, Skip and revisit. Run it on an already
+booted PanelsLaneA under its lock; `PANELS_OFFLINE_BUNDLE` selects the task bundle.
+This proof uses loopback writes. The optional live test requires
+`TEST_RUNNER_PANELS_LIVE_READ_ONLY=1` and only reads Workspace, Review and Conversation.

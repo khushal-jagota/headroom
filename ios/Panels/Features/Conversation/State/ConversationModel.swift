@@ -30,7 +30,7 @@ import Observation
     }
     func syncOutbox() {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
-        let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).filter { $0.kind == .message && $0.owner == owner }
+        let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).filter { $0.kind == .message && $0.owner == owner && (conversationID == nil || $0.message?.conversationId == conversationID) }
         for work in saved {
             if let previous = work.priorMessageIDs, let first = previous.first {
                 supersededIDs.formUnion(previous)

@@ -1,4 +1,5 @@
 import SwiftUI
+import QuickLook
 
 struct ReviewMessageView: View {
     let item: ReviewItem
@@ -6,12 +7,14 @@ struct ReviewMessageView: View {
     let onResolved: () -> Void
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var decision = ReviewMessageDecision()
     @State private var visible = false
     @State private var leaving = false
     @State private var drag: CGFloat = 0
     @State private var crossed = false
     @State private var recapExpanded = false
+    @State private var capturing = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -34,7 +37,7 @@ struct ReviewMessageView: View {
                             if decision.historical {
                                 Text("Historical conversation · read only").font(.footnote).foregroundStyle(PanelsTheme.faint)
                             } else if let owner = item.owner, !decision.events.isEmpty {
-                                ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: { await decision.send() })
+                                ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: { await decision.send() }, onCaptureChanged: { capturing = $0 })
                                     .disabled(decision.busy || decision.attempt != nil)
                                 if let attempt = decision.attempt {
                                     Text(attempt.note).font(.footnote).foregroundStyle(PanelsTheme.faint)
@@ -48,10 +51,10 @@ struct ReviewMessageView: View {
                         .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
                         .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(Color.white.opacity(0.05)))
                         .shadow(color: .black.opacity(0.12), radius: 20, y: 8)
-                        HStack(spacing: PanelsTheme.Space.sm) {
+                        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
                             Button("Mark read") { Haptics.light(); Task { if await decision.markRead() { leave(resolved: true) } else { ReviewStyle.error() } } }
                                 .buttonStyle(ReviewActionStyle(approval: true)).accessibilityIdentifier("review.markRead")
-                                .disabled(decision.through == 0 || decision.busy || decision.pending || leaving)
+                                .disabled(decision.through == 0 || decision.busy || decision.pending || capturing || leaving)
                             if let owner = item.owner, let id = item.conversationId {
                                 NavigationLink(value: AppRoute.conversation(owner: owner, id: id, title: item.title)) { Text("Open conversation") }
                                     .buttonStyle(ReviewActionStyle()).accessibilityIdentifier("review.openConversation")
@@ -66,7 +69,7 @@ struct ReviewMessageView: View {
                 .padding(ReviewStyle.gutter)
                 .opacity(visible && !leaving ? 1 : 0).offset(x: drag)
                 .simultaneousGesture(DragGesture(minimumDistance: 24).onChanged { value in
-                    guard !decision.pending, !decision.busy, !leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                    guard !decision.pending, !decision.busy, !capturing, !leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
                     drag = min(0, value.translation.width)
                     let next = -drag > geometry.size.width * ReviewStyle.swipeFraction
                     if next && !crossed { Haptics.light() }; crossed = next
@@ -77,15 +80,28 @@ struct ReviewMessageView: View {
                 })
             }.scrollDismissesKeyboard(.interactively)
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Skip") { Haptics.selection(); leave(resolved: false) }.foregroundStyle(PanelsTheme.muted)
-                    .disabled(decision.busy || decision.pending || leaving).accessibilityIdentifier("review.skip")
-            }
+        .toolbar { skipToolbar }
+        .task {
+            await decision.load(item: item, api: store.client)
+            if decision.accepted { finishReply() }
+            else if decision.loaded, decision.events.isEmpty, decision.composer.draft.isEmpty, decision.composer.attachments.isEmpty, decision.attempt == nil { leave(resolved: true) }
         }
-        .task { await decision.load(item: item, api: store.client); if decision.accepted { finishReply() } }
         .onAppear { withAnimation(.easeOut(duration: ReviewStyle.fadeIn)) { visible = true } }
+        .onChange(of: decision.attempt?.state) { _, state in if state == .failed || state == .changed { ReviewStyle.error() } }
         .onChange(of: decision.accepted) { _, accepted in if accepted { finishReply() } }
+    }
+    @ToolbarContentBuilder private var skipToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarTrailing) { skipButton }.sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarTrailing) { skipButton }
+        }
+    }
+    private var skipButton: some View {
+        Button("Skip") { Haptics.selection(); leave(resolved: false) }
+            .buttonStyle(.plain).foregroundStyle(PanelsTheme.muted)
+            .disabled(decision.busy || decision.pending || capturing || leaving)
+            .accessibilityIdentifier("review.skip")
     }
     private func finishReply() {
         guard !leaving else { return }
@@ -110,12 +126,14 @@ private struct ReviewMessageContent: View {
     let pieces: [ReviewMessageEvent.Piece]
     let conversationID: String
     @Environment(AppStore.self) private var store
+    @Environment(\.openURL) private var openURL
+    @State private var selectedArtifact: ArtifactTarget?
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
             ForEach(Array(pieces.enumerated()), id: \.offset) { _, piece in
                 if let text = piece.text {
                     ArtifactMarkdownContent(source: text, baseURL: store.baseURL)
-                    ForEach(artifacts(text)) { target in ReviewInlineArtifact(target: target) }
+                    ForEach(artifacts(text)) { target in ReviewInlineArtifact(target: target, openLink: follow) }
                 } else if let id = piece.storedFileId,
                           let url = try? store.client.url("/api/conversation/conversations/\(conversationID)/files/\(id)") {
                     if piece.piece == "image" {
@@ -125,6 +143,14 @@ private struct ReviewMessageContent: View {
                 }
             }
         }
+        .environment(\.openURL, OpenURLAction { url in follow(url); return .handled })
+        .navigationDestination(item: $selectedArtifact) { target in
+            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: false)
+        }
+    }
+    private func follow(_ url: URL) {
+        if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target }
+        else { openURL(url) }
     }
     private func artifacts(_ text: String) -> [ArtifactTarget] {
         guard let rich = try? AttributedString(markdown: text, baseURL: store.baseURL) else { return [] }
@@ -138,6 +164,7 @@ private struct ReviewMessageContent: View {
 
 private struct ReviewInlineArtifact: View {
     let target: ArtifactTarget
+    let openLink: (URL) -> Void
     @Environment(AppStore.self) private var store
     @State private var document: ArtifactDocument?
     @State private var error: String?
@@ -146,11 +173,14 @@ private struct ReviewInlineArtifact: View {
         DisclosureGroup(isExpanded: $expanded) {
             if let document {
                 if target.kind == .html, let text = document.text {
-                    ArtifactWebView(source: text, url: document.remoteURL, openLink: { _ in }, failed: { error = $0 }, ready: {}, reload: { Task { await load() } }).frame(height: 320)
+                    ArtifactWebView(source: text, url: document.remoteURL, openLink: openLink, failed: { error = $0 }, ready: {}, reload: { Task { await load() } }).frame(height: 320)
                 } else if target.kind == .markdown, let text = document.text {
                     ArtifactMarkdownContent(source: text, baseURL: document.remoteURL)
                 } else if let text = document.text { Text(text).font(.system(.footnote, design: .monospaced)).textSelection(.enabled) }
-                else if let image = UIImage(contentsOfFile: document.localURL.path) { Image(uiImage: image).resizable().scaledToFit() }
+                else if let image = UIImage(contentsOfFile: document.localURL.path) { ArtifactImageView(image: image).frame(height: 320) }
+                else if target.path.lowercased().hasSuffix(".pdf") { ArtifactPDFView(url: document.localURL).frame(height: 320) }
+                else if ["mp4", "mov", "m4v", "mp3", "m4a", "wav"].contains((target.path as NSString).pathExtension.lowercased()) { ArtifactMediaView(url: document.localURL).frame(height: 320) }
+                else if QLPreviewController.canPreview(document.localURL as NSURL) { ArtifactSystemPreview(document: document).frame(height: 320) }
                 NavigationLink(value: AppRoute.artifact(owner: target.owner, path: target.path, title: target.title)) { Text("Open artifact") }
             } else if let error { Text(error).foregroundStyle(PanelsTheme.error); Button("Retry") { Task { await load() } } }
             else { ProgressView() }
@@ -172,7 +202,7 @@ struct ReviewConversationView: View {
     @State private var model = ConversationModel()
     @State private var historical = true
     var body: some View {
-        ConversationThread(model: model, owner: owner, opened: true)
+        ConversationThread(model: model, owner: owner, opened: true, readOnly: historical)
             .safeAreaInset(edge: .bottom) {
                 if historical { Text("Historical conversation · read only").font(.footnote).padding().frame(maxWidth: .infinity).background(PanelsTheme.raised) }
                 else { ConversationComposer(model: model, owner: owner).padding(.vertical, 8).background(PanelsTheme.raised) }

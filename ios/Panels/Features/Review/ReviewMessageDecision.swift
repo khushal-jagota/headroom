@@ -77,7 +77,7 @@ extension APIClient {
             composer.applyConfiguration(configuration)
             let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).last {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
-                ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max)
+                (![.sent, .serverQueued, .changed].contains($0.state) || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
             }
             attemptID = saved?.id
             if saved == nil, let delivered = Outbox.shared.entries(LocalStore.server(api.baseURL)).last(where: {

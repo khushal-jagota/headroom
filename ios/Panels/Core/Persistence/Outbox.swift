@@ -111,6 +111,13 @@ struct PendingWork: Codable, Identifiable, Sendable {
                             try save(work, server: server); continue
                         }
                         if work.state == .serverQueued { continue }
+                        if message.ownerReadThroughSequence != nil {
+                            let current = try await api.conversationConfiguration(owner, id: id)
+                            if current.heldPrompts.contains(where: { $0.senderMessageId == work.id }) {
+                                work.state = .serverQueued; work.note = "Queued on server"
+                                try save(work, server: server); continue
+                            }
+                        }
                     } else if work.state != .waiting {
                         work.state = .uncertain; work.note = "Delivery uncertain · check conversation"
                         try save(work, server: server); continue

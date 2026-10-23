@@ -155,7 +155,7 @@ struct ArtifactViewerView: View {
     }
 }
 
-private struct ArtifactPDFView: UIViewRepresentable {
+struct ArtifactPDFView: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView(); view.autoScales = true; view.displayMode = .singlePageContinuous
@@ -164,7 +164,7 @@ private struct ArtifactPDFView: UIViewRepresentable {
     }
     func updateUIView(_ view: PDFView, context: Context) {}
 }
-private struct ArtifactMediaView: View {
+struct ArtifactMediaView: View {
     @State private var player: AVPlayer
     init(url: URL) { _player = State(initialValue: AVPlayer(url: url)) }
     var body: some View { VideoPlayer(player: player).background(.black).onDisappear { player.pause() } }

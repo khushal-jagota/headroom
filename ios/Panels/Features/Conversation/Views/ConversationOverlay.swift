@@ -233,6 +233,7 @@ struct ConversationThread: View {
     @Bindable var model: ConversationModel
     let owner: ConversationOwner
     let opened: Bool
+    var readOnly = false
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
@@ -260,7 +261,7 @@ struct ConversationThread: View {
                                     HStack {
                                         if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
                                         Text(note).foregroundStyle(note.hasPrefix("Not sent") ? PanelsTheme.error : PanelsTheme.faint)
-                                        if let id = row.retryID {
+                                        if let id = row.retryID, !readOnly {
                                             Button { Task { await model.retry(id, to: owner, using: store.client) } } label: {
                                                 Text("Retry").padding(.horizontal, 8).padding(.vertical, 4)
                                                     .background(PanelsTheme.accentSurface, in: Capsule())

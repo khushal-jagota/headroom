@@ -574,14 +574,23 @@ class _Harness:
 
 
 @pytest.fixture
-def harness(tmp_path: Path) -> Iterator[_Harness]:
+def harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Harness]:
     db_path = tmp_path / "conversations.db"
     conn = connect(str(db_path))
     create_schema(conn)
     conn.close()
     built = _Harness(db_path)
-    yield built
-    asyncio.run(built.system.shutdown())
+    # Runtime tasks and shutdown belong to the same loop, including on assertion failure.
+    with asyncio.Runner() as runner:
+
+        def run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
+            runner.run(asyncio.wait_for(exercise(), 20.0))
+
+        monkeypatch.setitem(globals(), "_run", run)
+        try:
+            yield built
+        finally:
+            runner.run(built.system.shutdown())
 
 
 def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:

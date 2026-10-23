@@ -7,10 +7,11 @@ struct ConversationComposer: View {
     let owner: ConversationOwner
     var reviewReply = false
     var sendReply: (() async -> Bool)? = nil
+    var onCaptureChanged: ((Bool) -> Void)? = nil
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var speech = ConversationSpeech()
+    @State var speech = ConversationSpeech()
     var refreshError: String?
     var retry: (() async -> Void)?
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -76,7 +77,10 @@ struct ConversationComposer: View {
                 model.attachments.append(.init(piece: "file", text: nil, data: data.base64EncodedString(), mediaType: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent))
             } catch { model.error = error.localizedDescription }
         }
-        .onChange(of: capturingSpeech) { _, capturing in if capturing { focused = false } }
+        .onChange(of: capturingSpeech) { _, capturing in
+            if capturing { focused = false }
+            onCaptureChanged?(capturing)
+        }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onDisappear { speech.cancel() }
     }
@@ -179,7 +183,7 @@ struct ConversationComposer: View {
             Haptics.light()
             Task {
                 let accepted: Bool
-                if let sendReply { accepted = await sendReply() }
+                if let sendReply { _ = await sendReply(); return }
                 else { accepted = await model.send(to: owner, using: store.client) }
                 if accepted { Haptics.success() } else { Haptics.error() }
             }

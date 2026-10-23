@@ -63,6 +63,7 @@
 		6CF356BD131634EA2076AA4D /* VPSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EE2215ABFD67C78FC02907A /* VPSView.swift */; };
 		6DB083EBE093F04D4A91F281 /* ArtifactTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D1EBF4975FAC19F5132CE4 /* ArtifactTarget.swift */; };
 		701B0B2A9B89BAC975737D3E /* TicketModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A70D70AFB6D9EF5EF29D49 /* TicketModels.swift */; };
+		702B5D2BCFA84AC1EEAD65EB /* ReviewMessagesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41F61D5A18AABD2209437861 /* ReviewMessagesTests.swift */; };
 		70F1AC4BB8C4AFA6E14162D5 /* ConversationOperationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB2A271E0F8A166B22956BE /* ConversationOperationTests.swift */; };
 		736550B721555579BC7085A5 /* IdeasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39606234AB8F948E15D6F5A2 /* IdeasView.swift */; };
 		73E52E7BAAFF0DC03B775860 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D79CCF7EB676CEF0E8B6306 /* SettingsView.swift */; };
@@ -182,6 +183,7 @@
 		404E62C440C538359AC66882 /* ReviewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewAPI.swift; sourceTree = "<group>"; };
 		40E65F80512869115D52E477 /* SettingsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModels.swift; sourceTree = "<group>"; };
 		4197329B95D68CD0B1960BFC /* ConversationAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationAPI.swift; sourceTree = "<group>"; };
+		41F61D5A18AABD2209437861 /* ReviewMessagesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewMessagesTests.swift; sourceTree = "<group>"; };
 		443B7885AC12C0E4D6E1481B /* AgentRecap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRecap.swift; sourceTree = "<group>"; };
 		4487AB260C602EA0A8298901 /* TicketArtifactRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketArtifactRoute.swift; sourceTree = "<group>"; };
 		4488500ABF45F1CC637CB36A /* ReviewMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewMessageTests.swift; sourceTree = "<group>"; };
@@ -529,6 +531,7 @@
 				3CB2A271E0F8A166B22956BE /* ConversationOperationTests.swift */,
 				4EB15638EE9ABE98DDC6877D /* NotificationDeliveryTests.swift */,
 				CC1F9D9C0E32D764BD0CD642 /* OfflineOperationTests.swift */,
+				41F61D5A18AABD2209437861 /* ReviewMessagesTests.swift */,
 			);
 			path = PanelsNotificationUITests;
 			sourceTree = "<group>";
@@ -998,6 +1001,7 @@
 				70F1AC4BB8C4AFA6E14162D5 /* ConversationOperationTests.swift in Sources */,
 				E8F08B99070CBB0970264947 /* NotificationDeliveryTests.swift in Sources */,
 				84CBD48D3F44E1018A4AEAD4 /* OfflineOperationTests.swift in Sources */,
+				702B5D2BCFA84AC1EEAD65EB /* ReviewMessagesTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
