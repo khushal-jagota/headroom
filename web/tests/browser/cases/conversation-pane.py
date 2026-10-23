@@ -3097,6 +3097,16 @@ def _tab_return(browser, url):
       window.__fixtureVisible=true;requestAnimationFrame(sample);document.dispatchEvent(new Event('visibilitychange'));
     }"""
 
+    def wait_for_reveal():
+        page.wait_for_function('''() => {
+          const thread=document.querySelector('[data-conversation-thread]');
+          const region=document.querySelector('.conversation-transcript-region');
+          return thread&&region&&getComputedStyle(thread).visibility!=='hidden'
+            &&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
+        }''',timeout=10000)
+        # Keep sampling after reveal so a deferred reconciliation cannot hide a snap.
+        page.wait_for_timeout(350)
+
     def assert_frames(held, frames):
         visible = [frame for frame in frames if frame['visible']]
         assert visible, frames
@@ -3154,7 +3164,7 @@ def _tab_return(browser, url):
                     assert_frames(held, visible)
                 page.evaluate('window.__returnProbe.fail=false')
                 retry.click()
-            page.wait_for_timeout(1000)
+            wait_for_reveal()
             frames = page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
             assert_frames(held, frames)
             after = page.evaluate(reading)
@@ -3193,7 +3203,7 @@ def _tab_return(browser, url):
         assert held['scroll']>before_motion['scroll']+1,(before_motion,held)
         page.wait_for_timeout(150)
         page.evaluate(sample_return,held)
-        page.wait_for_timeout(1000)
+        wait_for_reveal()
         frames=page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
         assert_frames(held,frames)
         after=page.evaluate(reading)
