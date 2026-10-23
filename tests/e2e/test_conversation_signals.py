@@ -295,7 +295,9 @@ def test_review_reply_preserves_later_unread_and_updates_live_count(
     submitted: list[dict[str, object]] = []
 
     def newer_message_before_send(route: Route) -> None:
-        submitted.append(route.request.post_data_json)
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        submitted.append(body)
         _message(server, conversation, sender, "This newer message stays unread.")
         route.continue_()
 
