@@ -76,7 +76,7 @@ struct WorkerRows<T: GroupedWorker>: View {
                 NavigationLink(value: AppRoute.ticket(ticket.id)) {
                     HStack(alignment: .center, spacing: PanelsTheme.Space.md) {
                         Text(ticket.title).font(PanelsTheme.TypeScale.body)
-                            .foregroundStyle((ticket.awaitingApproval || ticket.awaitingAnswer || ticket.agentState == "errored" || ticket.conversationSignal?.messageForOwner == true) ? PanelsTheme.strong : PanelsTheme.faint)
+                            .foregroundStyle((ticket.awaitingApproval || ticket.awaitingAnswer || ticket.assigned || ticket.agentState == "errored" || ticket.conversationSignal?.messageForOwner == true) ? PanelsTheme.strong : PanelsTheme.faint)
                             .lineLimit(typeSize.isAccessibilitySize ? nil : 2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                         ConversationSignalMark(signal: ticket.conversationSignal)
                     }.padding(.horizontal, AgentPageLayout.rowInset).padding(.vertical, PanelsTheme.Space.sm)

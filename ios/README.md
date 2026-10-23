@@ -435,9 +435,9 @@ this lane did not run a simulator or write to a live server.
 
 Rows and page titles share one activity mark: an unread dot takes precedence over
 the fixed-size working spinner, matching the web. They never appear together. Reduce Motion substitutes a static
-working mark. Orchestrator activity stays beside the page title. Workspace card
-headers align at the bottom of their minimum touch area so Chief and orchestrator
-titles have the same spacing before their first group header.
+working mark. Detail-page activity sits with the context in the native navigation
+bar. The Chief Workspace heading aligns at the top of its minimum touch area,
+matching the first-content inset on orchestrator cards.
 
 Verification: the four-job iOS Simulator build and four existing conversation host
 tests passed. A stub-only, locked PanelsLaneB pass captured Workspace and the
@@ -498,3 +498,9 @@ test covers the previously untested trailing-newline draft path using the existi
 host model, without a connected host. Locked PanelsLaneA fixture captures compare
 the bottom spacing and show collapsed Steps. They do not exercise microphone
 recognition, keyboard transitions, or live-server behavior.
+
+Detail pages keep their native navigation bar material visible so Back and page
+actions share one continuous bar above the scrolling header. Yours marks stage
+ownership, separately from a conversation waiting for an answer. Its current field
+is shown for reading rather than as a required answer form. Workspace and worker
+rows give Yours the same attention emphasis as desktop.

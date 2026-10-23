@@ -18,7 +18,6 @@ struct TicketView: View {
     @State private var configurationOpen = false
     @State private var renaming = false
     @State private var titleDraft = ""
-    @State private var completionDraft = ""
     @State private var titleVisible = true
     @State private var loadGeneration = 0
     @State private var linkedArtifact: AppRoute?
@@ -45,16 +44,22 @@ struct TicketView: View {
         }
         .navigationTitle(detail != nil && titleVisible ? "" : detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .primaryAction) { ticketMenu } }
+        .toolbarBackground(.bar, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                AgentNavigationHeader(title: detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket",
+                                      eyebrow: detail.map { "\($0.project ?? "No project") · \(manifest?.label ?? $0.workerType.replacingOccurrences(of: "_", with: " ").capitalized)" } ?? "",
+                                      collapsed: !titleVisible, signal: detail?.conversationSignal)
+            }
+            ToolbarItem(placement: .topBarTrailing) { ticketMenu }
+        }
         .panelsScreen()
         .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket")
         .refreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error) { await load() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
-        .task(id: detail?.stage) {
-            if let presentation, let field = presentation.currentField { completionDraft = detail?.fieldValues[field] ?? "" }
-        }
         .sheet(isPresented: $scopeOpen) {
             if let presentation {
                 TicketApprovalLimitSheet(presentation: presentation) { ceiling, holder in
@@ -97,12 +102,6 @@ struct TicketView: View {
 
     private func masthead(_ detail: TicketDetail) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-            HStack(spacing: PanelsTheme.Space.sm) {
-                Text("\(detail.project ?? "No project")  ·  \(manifest?.label ?? detail.workerType.replacingOccurrences(of: "_", with: " ").capitalized)")
-                    .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                Spacer(minLength: PanelsTheme.Space.sm)
-                ConversationSignalMark(signal: detail.conversationSignal)
-            }
             if renaming {
                 TextField("Title", text: $titleDraft, axis: .vertical).font(.title.weight(.semibold))
                 Button("Save title") {
@@ -163,15 +162,7 @@ struct TicketView: View {
                 Text(presentation.heading).font(PanelsTheme.TypeScale.heading)
                     .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.error : PanelsTheme.strong)
                     .accessibilityAddTraits(.isHeader)
-                if presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField {
-                    TextEditor(text: $completionDraft).frame(minHeight: 120).scrollContentBackground(.hidden)
-                        .padding(PanelsTheme.Space.sm).background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
-                        .accessibilityLabel("Value")
-                    Button("Complete") {
-                        Haptics.light()
-                        Task { await perform { try await store.client.completeTicketField(ticketID, field: field, body: completionDraft); return nil } }
-                    }.buttonStyle(.borderedProminent).buttonBorderShape(.roundedRectangle(radius: PanelsTheme.Radius.md)).disabled(busy || completionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                } else if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
+                if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
                     Button { scopeOpen = true } label: {
                         HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
                             Text("Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")
@@ -180,6 +171,10 @@ struct TicketView: View {
                         }.font(PanelsTheme.TypeScale.small).frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("ticket-approval-limit")
                 }
+            }
+            if presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField,
+               presentation.ticket.pendingProposal?.field != field {
+                TicketExpandableText(text: presentation.ticket.fieldValues[field] ?? "", emptyText: "Not written yet.")
             }
             if presentation.ticket.employeeConfigurationEditable {
                 Button { configurationOpen = true } label: {

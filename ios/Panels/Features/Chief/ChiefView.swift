@@ -2,21 +2,18 @@ import SwiftUI
 
 struct ChiefView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var chief: ChiefRosterEntry?
     @State private var active: TicketsResponse?
     @State private var backlogged: TicketsResponse?
     @State private var done: TicketsResponse?
     @State private var error: String?
     @State private var loadingMore = false
-    @State private var headerCollapsed = false
     @State private var actions = AgentPageActions()
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                    AgentEyebrow(title: "", signal: chief?.conversationSignal)
                     AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff")
                     AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
                 }
@@ -42,15 +39,20 @@ struct ChiefView: View {
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
-        .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 80 } action: { _, collapsed in
-            withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
-        }
-        .navigationTitle(headerCollapsed ? chief?.label ?? "Chief of Staff" : "")
-        .navigationBarTitleDisplayMode(.inline).panelsScreen()
+        .navigationTitle(chief?.label ?? store.chief?.label ?? "Chief of Staff")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.bar, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .panelsScreen()
         .conversationOverlay(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff")
-        .toolbar { ToolbarItem(placement: .topBarTrailing) {
-            AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
-        } }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                AgentNavigationHeader(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: chief?.conversationSignal)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
+            }
+        }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error) { await load() }
