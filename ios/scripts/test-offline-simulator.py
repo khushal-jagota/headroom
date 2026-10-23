@@ -414,7 +414,7 @@ def main() -> int:
                 "NO",
                 "-collect-test-diagnostics",
                 "never",
-                "PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE,
+                "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
                 "-only-testing:PanelsNotificationUITests/"
                 + ("ReviewMessagesTests" if REVIEW_MESSAGES else "OfflineOperationTests"),

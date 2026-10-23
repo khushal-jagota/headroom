@@ -54,7 +54,6 @@ struct ConversationBodyChunk: Decodable, Sendable {
 }
 struct ConversationBody: Decodable, Sendable {
     let kind: String
-    let senderLabel: String?
     let content: [Piece]?
     let title: String?
     let detail: String?
