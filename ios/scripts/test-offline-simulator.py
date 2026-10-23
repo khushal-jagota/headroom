@@ -16,16 +16,20 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
-DEVICE = "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6"
+REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
+DEVICE = (
+    "566D051B-B6BB-4046-9038-66C05CCC2B96"
+    if REVIEW_COMPLETION
+    else "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6"
+)
+LANE_LOCK = "/tmp/panels-PanelsLaneB.lock" if REVIEW_COMPLETION else "/tmp/panels-PanelsLaneA.lock"
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
 REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1"
 
 
 def main() -> int:
     if "--locked" not in sys.argv:
-        return subprocess.call(
-            ["lockf", "/tmp/panels-PanelsLaneA.lock", sys.executable, __file__, "--locked"]
-        )
+        return subprocess.call(["lockf", LANE_LOCK, sys.executable, __file__, "--locked"])
     output = Path(os.environ["PANELS_OFFLINE_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
@@ -67,7 +71,7 @@ def main() -> int:
     }
     state: dict[str, Any] = {
         "offline": False,
-        "slow": True,
+        "slow": not REVIEW_COMPLETION,
         "writes": [],
         "messages": [],
         "recording": None,
@@ -228,7 +232,7 @@ def main() -> int:
                         for t in tickets.values()
                         if t["pending_proposal"]
                     ],
-                    "running_worker_count": 0,
+                    "running_worker_count": 7 if REVIEW_COMPLETION else 0,
                 }
                 if REVIEW_MESSAGES:
                     unread = state["read_through"] < (4 if state["new_message"] else 3)
@@ -392,6 +396,7 @@ def main() -> int:
     (output / "stub-url.txt").write_text(url)
     env = os.environ.copy()
     env["TEST_RUNNER_PANELS_OFFLINE_STUB_URL"] = url
+    env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
     try:
         return subprocess.call(
             [
@@ -417,7 +422,20 @@ def main() -> int:
                 "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
                 "-only-testing:PanelsNotificationUITests/"
-                + ("ReviewMessagesTests" if REVIEW_MESSAGES else "OfflineOperationTests"),
+                + (
+                    "ReviewMessagesTests/testCompletionAndRevisit"
+                    if REVIEW_COMPLETION
+                    else "ReviewMessagesTests"
+                    if REVIEW_MESSAGES
+                    else "OfflineOperationTests"
+                ),
+                *(
+                    [
+                        "-only-testing:PanelsTests/ReviewDecisionTests/testSkipIsLocalAndNewProposalIdentityReturns"
+                    ]
+                    if REVIEW_COMPLETION
+                    else []
+                ),
                 "test",
             ],
             env=env,

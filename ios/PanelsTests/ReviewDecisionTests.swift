@@ -208,9 +208,15 @@ import XCTest
         var queue = ReviewQueue()
         queue.skip(old)
         XCTAssertNil(queue.current(in: [old]))
+        XCTAssertEqual(queue.skippedCount(in: [old]), 1)
+        XCTAssertEqual(queue.skippedCount(in: [new]), 0, "A removed or replaced ask cannot be revisited")
         XCTAssertEqual(queue.current(in: [new])?.id, new.id)
         queue.revisit()
         XCTAssertEqual(queue.current(in: [old])?.id, old.id)
+        XCTAssertEqual(queue.skippedCount(in: [old]), 0)
+        queue.skip(old)
+        queue.resolve(old)
+        XCTAssertEqual(queue.skippedCount(in: [old]), 0, "An ask resolved during refresh cannot be revisited")
     }
 }
 
