@@ -13,6 +13,7 @@
   let frame = $state<HTMLIFrameElement>();
   let frameHref = $state<string | null>(null);
   let notice = $state("");
+  let fetchFailed = $state(false);
   let history = $state<string[]>([]);
   let currentHref = "";
   let rootHref = "";
@@ -49,6 +50,7 @@
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = null;
     frameHref = null;
+    fetchFailed = false;
     generation = "";
   }
   function artifactFrame(element: HTMLIFrameElement) {
@@ -63,6 +65,7 @@
     const abort = new AbortController();
     controller = abort;
     notice = "";
+    fetchFailed = false;
     try {
       const body = await readManagedFile(candidate.pathname, abort.signal, {artifactRootHref: rootHref, fresh});
       if (abort.signal.aborted || sequence !== request || !active || (requireVisible && !visible())) return;
@@ -75,8 +78,11 @@
       generation = nextGeneration;
       frameHref = objectUrl;
       if (previous) void tick().then(() => URL.revokeObjectURL(previous));
-    } catch {
-      if (!abort.signal.aborted && sequence === request && (!requireVisible || visible())) notice = 'This link cannot be opened in the artifact viewer.';
+    } catch (error) {
+      if (!abort.signal.aborted && sequence === request && (!requireVisible || visible())) {
+        notice = error instanceof Error ? error.message : String(error);
+        fetchFailed = true;
+      }
     }
   }
   function navigate(raw: string, back = false) {
@@ -116,7 +122,7 @@
 </script>
 
 <svelte:window onmessage={receive} />
-<div class:full class="managed-html-document" bind:this={host}>
+<div class:full class="managed-html-document" bind:this={host} data-visible-content-failed={fetchFailed && !frameHref || undefined}>
   {#if history.length > 0 || notice}
     <div class="managed-html-controls">
       {#if history.length > 0}<button type="button" data-html-back onclick={() => navigate(history[history.length - 1], true)}>Back</button>{/if}

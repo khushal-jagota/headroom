@@ -643,6 +643,7 @@ class _UncertainConversationSystem:
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        owner_read_through_sequence: int | None = None,
     ) -> PromptDeliveryFate:
         return PromptDeliveryUncertain()
 
@@ -777,6 +778,7 @@ class _QueueingConversationSystem:
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        owner_read_through_sequence: int | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
             await self._system.send(
@@ -793,6 +795,7 @@ class _QueueingConversationSystem:
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            owner_read_through_sequence=owner_read_through_sequence,
         )
 
     async def interrupt(self, conversation_id: str) -> None:
