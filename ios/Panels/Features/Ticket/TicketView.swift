@@ -4,7 +4,6 @@ import UIKit
 struct TicketView: View {
     let ticketID: String
     @Environment(AppStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var detail: TicketDetail?
     @State private var manifest: TicketWorkerType?
     @State private var artifacts: ArtifactPage?
@@ -18,7 +17,6 @@ struct TicketView: View {
     @State private var configurationOpen = false
     @State private var renaming = false
     @State private var titleDraft = ""
-    @State private var titleVisible = true
     @State private var loadGeneration = 0
     @State private var linkedArtifact: AppRoute?
     private var owner: ArtifactOwner { ArtifactOwner(kind: .ticket, id: ticketID) }
@@ -30,6 +28,7 @@ struct TicketView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
+                AgentPageControls { ticketMenu }
                 if let detail {
                     masthead(detail)
                     if let presentation {
@@ -39,21 +38,10 @@ struct TicketView: View {
                     }
                 }
             }.frame(maxWidth: 720, alignment: .leading)
-                .padding(.horizontal, 20).padding(.vertical, PanelsTheme.Space.lg)
+                .padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.lg)
                 .frame(maxWidth: .infinity)
         }
-        .navigationTitle(detail != nil && titleVisible ? "" : detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.bar, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                AgentNavigationHeader(title: detail?.title ?? store.tickets.first { $0.id == ticketID }?.title ?? "Ticket",
-                                      eyebrow: detail.map { "\($0.project ?? "No project") · \(manifest?.label ?? $0.workerType.replacingOccurrences(of: "_", with: " ").capitalized)" } ?? "",
-                                      collapsed: !titleVisible, signal: detail?.conversationSignal)
-            }
-            ToolbarItem(placement: .topBarTrailing) { ticketMenu }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", refreshError: error, retry: { await load() })
         .refreshable { await load(); await loadArtifacts() }
@@ -109,11 +97,7 @@ struct TicketView: View {
                 }.disabled(busy || titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel") { renaming = false }
             } else {
-                Text(detail.title).font(.title.weight(.semibold)).foregroundStyle(PanelsTheme.strong)
-                    .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
-                    .onScrollVisibilityChange(threshold: 0.1) { visible in
-                        withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { titleVisible = visible }
-                    }
+                AgentPageTitle(title: detail.title, signal: detail.conversationSignal)
                     .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = detail.title; renaming = true } }
             }
             Group {
