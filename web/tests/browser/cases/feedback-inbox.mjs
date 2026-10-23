@@ -39,16 +39,6 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
       success_display_until:state === "back_up" ? new Date(Date.now()+300000).toISOString() : null};
     await queryClient.invalidateQueries({queryKey:["deployment-status"]});
   };
-  let interruptions = {accounts: [] as any[]};
-  (window as any).__interruptions = async () => {
-    const entry = {interruption_id:"notice",deployment_id:"deploy",conversation_id:"conv",display_name:"Draft release notes",owner_kind:"ticket",owner_id:"worker",original_status:"active",recovery_state:"awaiting_action",detail:"A deploy ended the turn. Check current work before another action.",can_restart:true};
-    interruptions = {accounts: [
-      {deployment_id:"deploy",capture_state:"captured",detail:null,entries:[entry,
-        {...entry,interruption_id:"historical",display_name:"Earlier conversation",conversation_id:null,recovery_state:"historical",can_restart:false}]},
-      {deployment_id:"gap",capture_state:"unavailable",detail:"Capture timed out.",entries:[]}
-    ]};
-    await queryClient.invalidateQueries({queryKey:["deployment-interruptions"]});
-  };
   class QuietEventSource { constructor() { setTimeout(() => (this.onopen as any)?.({}), 0); } onopen = null; onmessage = null; onerror = null; addEventListener() {} removeEventListener() {} close() {} }
   (globalThis as any).EventSource = QuietEventSource;
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
@@ -71,12 +61,6 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
       if (key === "/api/feedback/count") return json({ key, epoch: "fixture", revision: String(response().open_count), body: { open_count: response().open_count } });
     }
     if (path.startsWith("/api/meta")) return json({ app_sha: servedSha });
-    if (path === "/api/deployment-interruptions") return json(interruptions);
-    if (path === "/api/tickets/worker/restart-worker" && method === "POST") {
-      interruptions.accounts[0].entries[0].recovery_state = "resumed";
-      interruptions.accounts[0].entries[0].can_restart = false;
-      return json({started:true,delivery_fate:"started",not_started_because:null});
-    }
     if (path === "/api/review") return json({ items: [], running_worker_count: 0 });
     if (path === "/api/feedback/count" && method === "GET") return json({ open_count: response().open_count });
     if (path === "/api/feedback" && method === "GET") return json(response());

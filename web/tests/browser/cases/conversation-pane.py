@@ -2135,21 +2135,23 @@ def _latest_destination(browser, url):
 
 
 def _bounded_reader(browser, url):
+    import os
+    from pathlib import Path
+
     from playwright.sync_api import expect
 
     page = browser.new_page(viewport={"width": 1000, "height": 900})
-    page.route("**/api/deployment-interruptions", lambda route: route.fulfill(json={"accounts": [{
-        "deployment_id": "deploy", "capture_state": "captured", "detail": None,
-        "entries": [{"interruption_id": "notice", "deployment_id": "deploy",
-            "conversation_id": "bounded-reader", "display_name": "Worker", "owner_kind": "ticket",
-            "owner_id": "worker", "original_status": "active", "recovery_state": "awaiting_action",
-            "detail": "The deploy ended this turn. Inspect current work before another action.",
-            "can_restart": False}]
-    }]}))
+    interruption_requests = []
+    page.on("request", lambda request: interruption_requests.append(request.url)
+            if "deployment-interruptions" in request.url else None)
     page.goto(url + "?reader=1")
-    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_contain_text("The deploy ended this turn.")
+    expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
     page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
+    assert interruption_requests == [], interruption_requests
+    evidence = Path(os.environ["PANELS_SIDEBAR_ARTIFACT_DIR"])
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(animations="disabled", path=str(evidence / "conversation-without-interruption-banner.png"))
     # What the reader retains is what is drawn. One bound, not two: a row that is
     # held but not drawn has to claim a height it has not measured, and that is what
     # made the thread change size under a gesture.
@@ -2205,7 +2207,7 @@ def _bounded_reader(browser, url):
     assert page.locator('[data-conversation-view-key]').count() == 0
     page.evaluate("() => window.__readerState('opened')")
     page.wait_for_selector('[data-conversation-thread]')
-    expect(page.locator(".chat-panel [data-conversation-interruption]")).to_be_visible()
+    expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     # Persisted projected prompts must retain the same bubble layout as outgoing

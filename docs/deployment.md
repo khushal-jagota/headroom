@@ -514,11 +514,13 @@ Capture failure does not veto deployment. The existing backup, exact-SHA health,
 
 Evidence lives in `data/deploy-interruptions`, outside the application replacement tree and the database-and-files restore set. Each stop receives a distinct capture identity under the deployment identity. A partial rollback account remains unavailable even if another capture for that deployment succeeds.
 
-At boot, admitted conversation reconciliation imports exact occurrences and marks matching outstanding Worker claims errored. It does not send prompts, replay uncertain actions, or wake a Manager for automatic recovery. Completed turns and changed claims remain intact.
+At boot, conversation reconciliation imports exact occurrences and marks matching outstanding Worker claims errored. This database-only step sends no prompts. Completed turns and changed claims remain intact.
 
-The shell retains an interrupted-session list after the brief deployment indicator expires. Khushal can use the existing Restart Worker action or send an authorized message. Panels includes the interruption explanation in the actual backend prompt. A queued receipt does not count as resumption.
+After runtime admission, a recovery task resumes eligible interrupted conversations through the ordinary send path. It checks current ownership and Worker gates before dispatch. Durable delivery intents prevent another restart from sending an uncertain recovery again. No automatic retry follows a refusal or uncertain delivery.
 
-An older deployment tool cannot supply missing capture evidence. A crash between service stop and capture leaves the cause unknown. After rollback removes a candidate conversation, its named historical entry explains that the conversation is unavailable.
+Recovery uses the existing Ticket attention and conversation transcript for failures. It adds no interruption panel or banner. [The conversation system](conversation-system.md#sessions-that-a-deploy-ends) defines the prompt warning, admission rules, and visible failure rows.
+
+An older deployment tool cannot supply missing capture evidence. A crash between service stop and capture leaves the cause unknown. Removed conversations retain diagnostic evidence but cannot resume.
 
 ## Existing-host precondition
 

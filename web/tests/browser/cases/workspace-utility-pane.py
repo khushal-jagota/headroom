@@ -105,8 +105,6 @@ def run(browser, urls):
             result = {"skills": [skill]}
         elif path == "/api/worker-types":
             result = {"worker_types": manifests}
-        elif path == "/api/deployment-interruptions":
-            result = {"accounts": []}
         elif path == "/api/feedback/count":
             result = {"open_count": 0}
         elif path == "/api/meta":

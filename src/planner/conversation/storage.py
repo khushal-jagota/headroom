@@ -37,6 +37,8 @@ from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationRoleMaterials,
+    DeploymentRecoveryReference,
+    PromptDeliveryMode,
     PromptDispatchDecision,
     ResolvedConversationStart,
 )
@@ -302,7 +304,7 @@ class ConversationStore:
                 )
             )
             apply_facts(conn, conversation_id, facts)
-            interruption_data.settle_delivery(conn, conversation_id, facts)
+            interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
                 conn,
                 self._transaction_participant,
@@ -312,22 +314,113 @@ class ConversationStore:
         commit_without_change_signal(conn)
 
     async def bind_interruption_delivery(
-        self, conversation_id: str, turn_number: int
+        self,
+        conversation_id: str,
+        turn_number: int,
+        references: tuple[DeploymentRecoveryReference, ...] | None = None,
+        recovery_sender_message_ids: dict[str, str] | None = None,
     ) -> str | None:
         return await self._write(
-            self._bind_interruption_delivery_sync, conversation_id, turn_number
+            self._bind_interruption_delivery_sync,
+            conversation_id,
+            turn_number,
+            references,
+            recovery_sender_message_ids,
         )
 
     def _bind_interruption_delivery_sync(
-        self, conversation_id: str, turn_number: int
+        self,
+        conversation_id: str,
+        turn_number: int,
+        references: tuple[DeploymentRecoveryReference, ...] | None = None,
+        recovery_sender_message_ids: dict[str, str] | None = None,
     ) -> str | None:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
-            notice = interruption_data.bind_delivery(conn, conversation_id, turn_number)
+            notice = interruption_data.bind_delivery(
+                conn, conversation_id, turn_number, references, recovery_sender_message_ids
+            )
             self._record_signal_result(conn, notice)
             self._commit_rows(conn, ())
             return notice
+
+    async def record_unknown_recovery_deliveries(self) -> None:
+        """Use the existing transcript uncertainty row for a lost recovery receipt."""
+        from planner.conversation.message_content import text_message_content
+
+        groups = await asyncio.to_thread(self._unknown_recovery_deliveries_sync)
+        for conversation_id, identity, references in groups:
+            if await self.sender_message_outcome(conversation_id, identity) is not None:
+                continue
+            await self.append_event(
+                conversation_id,
+                PromptDeliveryUncertainEventPayload(
+                    content=text_message_content(
+                        "Inspect the interrupted work and continue the current authorized step."
+                    ),
+                    sender_label="Panels deployment recovery",
+                    mode=PromptDeliveryMode.queue,
+                    sender_message_id=identity,
+                    recovery_references=references,
+                ),
+            )
+
+    def _unknown_recovery_deliveries_sync(
+        self,
+    ) -> tuple[tuple[str, str, tuple[DeploymentRecoveryReference, ...]], ...]:
+        conn = self._connect()
+        try:
+            groups: dict[tuple[str, int, str], list[DeploymentRecoveryReference]] = {}
+            for row in conn.execute(
+                "SELECT x.conversation_id,x.turn_number,x.interruption_id,t.stage,"
+                "x.recovery_sender_message_id "
+                "FROM deploy_interruption_deliveries x JOIN deploy_interruptions d "
+                "USING(interruption_id) LEFT JOIN tickets t ON d.owner_kind='ticket' "
+                "AND t.id=d.owner_id JOIN conversations c ON c.conversation_id="
+                "x.conversation_id WHERE x.status='unknown' "
+                "AND x.recovery_sender_message_id IS NOT NULL ORDER BY x.interruption_id"
+            ):
+                groups.setdefault((str(row[0]), int(row[1]), str(row[4])), []).append(
+                    DeploymentRecoveryReference(str(row[2]), row[3])
+                )
+            return tuple((key[0], key[2], tuple(value)) for key, value in groups.items())
+        finally:
+            conn.close()
+
+    async def select_deployment_recoveries(
+        self,
+    ) -> dict[str, tuple[DeploymentRecoveryReference, ...]]:
+        return await asyncio.to_thread(self._select_deployment_recoveries_sync)
+
+    def _select_deployment_recoveries_sync(
+        self,
+    ) -> dict[str, tuple[DeploymentRecoveryReference, ...]]:
+        conn = self._connect()
+        try:
+            return interruption_data.select_recoveries(conn)
+        finally:
+            conn.close()
+
+    async def fail_recovery_claims(self, conversation_id: str, turn_number: int) -> None:
+        await self._write(self._fail_recovery_claims_sync, conversation_id, turn_number)
+
+    def _fail_recovery_claims_sync(self, conversation_id: str, turn_number: int) -> None:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            self._apply_signal_mutation(conn, admission)
+            claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
+            interruption_data.fail_recovery_claims(
+                conn, conversation_id, turn_number, now=self._integer_now()
+            )
+            self._record_signal_result(conn, None)
+            self._commit_rows(
+                conn,
+                (),
+                always_announce=(
+                    claim_revisions != self._recovery_ticket_claim_revisions(conn, conversation_id)
+                ),
+            )
 
     async def reserve_turn(self, conversation_id: str) -> int:
         return await self._write(self._reserve_turn_sync, conversation_id)
@@ -400,8 +493,9 @@ class ConversationStore:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
+            claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
             apply_facts(conn, conversation_id, facts)
-            interruption_data.settle_delivery(conn, conversation_id, facts)
+            interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
                 conn,
                 self._transaction_participant,
@@ -409,7 +503,13 @@ class ConversationStore:
                 guard=self._transaction_control_guard,
             )
             self._record_signal_result(conn, None)
-            self._commit_rows(conn, ())
+            self._commit_rows(
+                conn,
+                (),
+                always_announce=(
+                    claim_revisions != self._recovery_ticket_claim_revisions(conn, conversation_id)
+                ),
+            )
 
     def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
         """Actual recording errors retained for explicit persistence reconciliation."""
@@ -592,6 +692,7 @@ class ConversationStore:
             try:
                 snapshot = self._begin_validated_attention_write(conn, conversation_id)
                 self._apply_signal_mutation(conn, admission)
+                claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
                 decisions: list[PromptDispatchDecision] = []
                 discarded: list[PromptDiscardedEventPayload] = []
                 for message in messages:
@@ -601,6 +702,10 @@ class ConversationStore:
                         sender_message_id=message.sender_message_id,
                         now=self._integer_now(),
                     )
+                    if reason is None and message.recovery_references:
+                        reason = interruption_data.admit_recovery(
+                            conn, conversation_id, message.recovery_references, self._integer_now()
+                        )
                     if reason is not None:
                         previous = conn.execute(
                             "SELECT payload FROM conversation_events WHERE conversation_id=? "
@@ -642,7 +747,14 @@ class ConversationStore:
                     self._participate_in_append(conn, conversation_id, written)
                 result = tuple(decisions)
                 self._record_signal_result(conn, result)
-                self._commit_rows(conn, tuple(discarded))
+                self._commit_rows(
+                    conn,
+                    tuple(discarded),
+                    always_announce=(
+                        claim_revisions
+                        != self._recovery_ticket_claim_revisions(conn, conversation_id)
+                    ),
+                )
                 return result
             except BaseException as error:
                 self._invalidate_signal_failure(error)
@@ -1148,6 +1260,7 @@ class ConversationStore:
                     conn,
                     conversation_id,
                     lifecycle,
+                    now=self._integer_now(),
                     composed_content_delivered=composed_content_delivered,
                 )
                 if model_change is not None:
@@ -1380,10 +1493,10 @@ class ConversationStore:
             tuple(
                 fact
                 for fact in lifecycle
-                if fact.status in (
-                    LifecycleStatus.refused, LifecycleStatus.unknown, LifecycleStatus.suppressed
-                )
+                if fact.status
+                in (LifecycleStatus.refused, LifecycleStatus.unknown, LifecycleStatus.suppressed)
             ),
+            now=self._integer_now(),
         )
         append_projection(conn, written)
         return tuple(written)
@@ -1716,6 +1829,22 @@ class ConversationStore:
         if admission is not None and admission.mutation is not None:
             assert self.signal_coordinator is not None
             self.signal_coordinator.apply_mutation(conn, admission)
+
+    @staticmethod
+    def _recovery_ticket_claim_revisions(
+        conn: sqlite3.Connection,
+        conversation_id: str,
+    ) -> tuple[tuple[str, int], ...]:
+        """Quiet conversation writes announce when recovery changes a Ticket claim."""
+        return tuple(
+            (str(row[0]), int(row[1]))
+            for row in conn.execute(
+                "SELECT id,worker_step_claim_revision FROM tickets WHERE id IN "
+                "(SELECT owner_id FROM deploy_interruptions WHERE source_conversation_id=? "
+                "AND owner_kind='ticket') ORDER BY id",
+                (conversation_id,),
+            )
+        )
 
     def _commit_rows(
         self,

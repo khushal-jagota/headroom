@@ -502,6 +502,14 @@ class PromptDeliveryRefusalReason(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class DeploymentRecoveryReference:
+    """Internal capability naming immutable interrupted work and its selected stage."""
+
+    interruption_id: str
+    expected_stage: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PromptDispatchDecision:
     """One exact sender's final admission, after preparation and before backend I/O.
 
@@ -729,6 +737,7 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -783,6 +792,7 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
