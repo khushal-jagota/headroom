@@ -150,7 +150,7 @@ private struct ConversationSurface: View {
         opened = false
     }
 
-    // This is the resting line itself, carried upward by the growing surface.
+    // The same leading edge shows the latest line at rest and the conversation name when open.
     private var header: some View {
         HStack(spacing: 0) {
             Button { if opened { close() } else { show() } } label: {
@@ -158,11 +158,11 @@ private struct ConversationSurface: View {
                     Group {
                         if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil { ProgressView().controlSize(.mini) }
                         else { Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0) }
-                    }.frame(width: 12)
+                    }.frame(width: opened ? 0 : 12).clipped().accessibilityHidden(opened)
                     let latest = model.latestMessage
-                    Text(.init(latest?.previewText ?? "Conversation")).font(PanelsTheme.TypeScale.small).lineLimit(1)
+                    Text(.init(opened ? title : latest?.previewText ?? "Conversation")).font(PanelsTheme.TypeScale.small).lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if latest?.own == true, let note = latest?.note, note != "Sent" {
+                    if !opened, latest?.own == true, let note = latest?.note, note != "Sent" {
                         Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
                     }
                     Image(systemName: "chevron.up")
@@ -174,6 +174,7 @@ private struct ConversationSurface: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(opened ? "Close conversation" : model.latestMessage?.previewText ?? "Open conversation")
+            .accessibilityValue(opened ? title : "")
             .accessibilityIdentifier(opened ? "conversation-close" : "conversation-line")
             Button(model.lens.rawValue.capitalized) { model.lens = model.lens == .focus ? .full : .focus; Haptics.selection() }
                 .font(PanelsTheme.TypeScale.small).frame(width: 60, height: ConversationLayout.lineHeight)

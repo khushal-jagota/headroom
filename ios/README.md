@@ -305,9 +305,10 @@ or swiping up on the line extends that bar upward into a full-screen conversatio
 The same input stays in place, keeping its draft and keyboard focus. The line,
 thread and composer share one persistent raised surface. Its height grows with a
 bounce-free spring, and its top corners become square as it fills the page. The
-latest-message line travels with its top edge and becomes the close control;
-Focus/Full is revealed beside it. The thread is revealed inside the growing
-container. There is no second background or cross-fade. Pulling down the line
+leading edge travels upward and shows the conversation name when open, with
+Focus/Full beside it. Tapping the name closes the conversation and restores the
+latest-message line; the expanded header does not repeat that status line. The
+thread is revealed inside the growing container. There is no second background or cross-fade. Pulling down the line
 shrinks the same surface with the finger; a short pull returns it to full height. The
 close control collapses it too. The page underneath stays still and retains its
 scroll position. At rest the line remains visible while typing and recording,

@@ -198,7 +198,11 @@ final class ConversationOperationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--conversation-smoke", "--conversation-stub", base, "--conversation-detail-pages"]
         app.launch()
-        for name in ["Ticket", "Orchestrator", "Chief"] {
+        for (name, title) in [
+            ("Ticket", "Make the conversation experience feel settled"),
+            ("Orchestrator", "The left sidebar and shell design"),
+            ("Chief", "Chief of Staff")
+        ] {
             let link = app.buttons["\(name) fixture"]
             XCTAssertTrue(link.waitForExistence(timeout: 8))
             link.tap()
@@ -216,10 +220,14 @@ final class ConversationOperationTests: XCTestCase {
             XCTAssertTrue(close.waitForExistence(timeout: 5))
             assertFrame(input.frame, equals: restingFrame, context: "\(name) opening")
             XCTAssertLessThan(close.frame.minY, 100)
+            XCTAssertEqual(close.value as? String, title, "Expanded header must name the conversation")
+            XCTAssertTrue(app.buttons["Conversation lens"].isHittable)
             capture(app, "\(name)-expanded")
             close.tap()
             XCTAssertTrue(line.waitForExistence(timeout: 5))
             assertFrame(input.frame, equals: restingFrame, context: "\(name) closing")
+            XCTAssertEqual(line.value as? String ?? "", "", "Closing must restore the latest-message line")
+            XCTAssertNotEqual(line.label, title)
             try await proof(base, "stop")
             try await proof(base, "start/\(name.lowercased())-top-scroll")
             if name == "Ticket" {
