@@ -119,9 +119,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     heldPromptRows = await response.json();
   }
   async function actOnQueueMatrix(heldPromptId: string, mode: "discard" | "steer" | "send_now"): Promise<void> {
+    const promoted = heldPromptRows.find(row => row.heldPromptId === heldPromptId);
     if (mode === "discard") await discardHeldPrompt("browser-fixture", heldPromptId);
     else await promoteHeldPrompt("browser-fixture", heldPromptId, mode);
     await refreshQueueMatrix();
+    if ((window as any).__recordingFlow && mode !== "discard" && promoted) {
+      outgoingMessages = [...outgoingMessages, {messageId: "promoted-"+heldPromptId,
+        content: promoted.content, senderLabel:"owner", mode,
+        sentAtUnixMilliseconds:Date.now(), knownFate:"nothing_yet", accepted:true}];
+    }
   }
   document.addEventListener("visibilitychange", () => { void refreshQueueMatrix(); });
   (window as any).__loadQueueMatrix = async () => {
@@ -157,6 +163,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
     (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
     (window as any).__sentRuns = [...((window as any).__sentRuns ?? []), picked];
+    if ((window as any).__recordingFlow) {
+      outgoingMessages = [{messageId:"recording-refused-steer",content,senderLabel:"owner",mode,
+        sentAtUnixMilliseconds:Date.now(),knownFate:"nothing_yet"}];
+      await new Promise(resolve=>setTimeout(resolve,850));
+      outgoingMessages=[];
+    }
     heldPromptRows = [{
       key: "composer-fallback",
       heldPromptId: "composer-fallback",
