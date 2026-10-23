@@ -97,3 +97,34 @@ struct AgentReadingPage: View {
             .onAppear { if text.isEmpty && !editing { text = originalText; draft = originalText; editing = initiallyEditing } }
     }
 }
+
+/// Retain UIKit's edge-only interactive pop when a detail page hides the native bar.
+/// The original delegate is restored when this page leaves; content drags are untouched.
+struct AgentPageBackGesture: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {}
+
+    final class Controller: UIViewController, UIGestureRecognizerDelegate {
+        private weak var gesture: UIGestureRecognizer?
+        private weak var previousDelegate: (any UIGestureRecognizerDelegate)?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            guard let gesture = navigationController?.interactivePopGestureRecognizer else { return }
+            if gesture.delegate !== self { previousDelegate = gesture.delegate }
+            self.gesture = gesture
+            gesture.delegate = self
+            gesture.isEnabled = true
+        }
+
+        override func viewDidDisappear(_ animated: Bool) {
+            super.viewDidDisappear(animated)
+            if gesture?.delegate === self { gesture?.delegate = previousDelegate }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let navigationController else { return false }
+            return navigationController.viewControllers.count > 1 && navigationController.transitionCoordinator == nil
+        }
+    }
+}

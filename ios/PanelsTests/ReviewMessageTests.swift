@@ -53,6 +53,12 @@ import XCTest
         await restored.load(item: item(), api: api)
         XCTAssertEqual(restored.composer.draft, "Keep this reply")
         XCTAssertEqual(restored.composer.attachments.first?.data, "YWJj")
+        restored.composer.draft = "Corrected reply"
+        restored.composer.attachments = [.init(piece: "file", data: "ZGVm", mediaType: "text/plain", fileName: "corrected.txt")]
+        let edited = ReviewMessageDecision()
+        await edited.load(item: item(), api: api)
+        XCTAssertEqual(edited.composer.draft, "Corrected reply")
+        XCTAssertEqual(edited.composer.attachments.first?.fileName, "corrected.txt")
         ReviewMessageProtocol.state.refuse = false
         ReviewMessageProtocol.state.newMessage = true
         _ = await restored.send()
@@ -60,7 +66,8 @@ import XCTest
         let retry = try XCTUnwrap(restored.attempt)
         XCTAssertNotEqual(retry.id, originalID)
         XCTAssertEqual(retry.message?.ownerReadThroughSequence, 66)
-        XCTAssertEqual(retry.message?.content.last?.fileName, "note.txt")
+        XCTAssertEqual(retry.message?.content.first?.text, "Corrected reply")
+        XCTAssertEqual(retry.message?.content.last?.fileName, "corrected.txt")
         XCTAssertTrue(restored.accepted)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["owner_read_through_sequence"] as? Int, 66)
         await Outbox.shared.drain(api: api)

@@ -15,6 +15,9 @@ struct ReviewMessageView: View {
     @State private var crossed = false
     @State private var recapExpanded = false
     @State private var capturing = false
+    @State private var sendingPresentation = false
+    @State private var outgoingAttempt: PendingWork?
+    private var displayedAttempt: PendingWork? { sendingPresentation ? outgoingAttempt : decision.attempt }
 
     var body: some View {
         GeometryReader { geometry in
@@ -37,12 +40,13 @@ struct ReviewMessageView: View {
                             if decision.historical {
                                 Text("Historical conversation · read only").font(.footnote).foregroundStyle(PanelsTheme.faint)
                             } else if let owner = item.owner, !decision.events.isEmpty {
-                                ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: { await decision.send() }, onCaptureChanged: { capturing = $0 })
-                                    .disabled(decision.busy || decision.attempt != nil)
-                                if let attempt = decision.attempt {
+                                ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: send, onCaptureChanged: { capturing = $0 })
+                                    .disabled(decision.busy || leaving || (decision.attempt != nil && decision.attempt?.state != .failed))
+                                if let attempt = displayedAttempt {
                                     Text(attempt.note).font(.footnote).foregroundStyle(PanelsTheme.faint)
                                     if attempt.state == .failed {
-                                        Button("Retry reply") { Task { _ = await decision.send() } }.buttonStyle(ReviewActionStyle(approval: true))
+                                        Button("Retry reply") { Haptics.light(); Task { _ = await send() } }.buttonStyle(ReviewActionStyle(approval: true))
+                                            .disabled(decision.busy || decision.pending || leaving || capturing)
                                     }
                                 }
                             }
@@ -52,7 +56,7 @@ struct ReviewMessageView: View {
                         .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(Color.white.opacity(0.05)))
                         .shadow(color: .black.opacity(0.12), radius: 20, y: 8)
                         (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
-                            Button("Mark read") { Haptics.light(); Task { if await decision.markRead() { leave(resolved: true) } else { ReviewStyle.error() } } }
+                            Button("Mark read") { Haptics.light(); Task { if await decision.markRead() { Haptics.success(); leave(resolved: true) } else { ReviewStyle.error() } } }
                                 .buttonStyle(ReviewActionStyle(approval: true)).accessibilityIdentifier("review.markRead")
                                 .disabled(decision.through == 0 || decision.busy || decision.pending || capturing || leaving)
                             if let owner = item.owner, let id = item.conversationId {
@@ -66,8 +70,9 @@ struct ReviewMessageView: View {
                         if !decision.loaded { Button("Try again") { Task { await decision.load(item: item, api: store.client) } } }
                     }
                 }
-                .padding(ReviewStyle.gutter)
+                .padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.md).padding(.bottom, ReviewStyle.gutter)
                 .opacity(visible && !leaving ? 1 : 0).offset(x: drag)
+                .allowsHitTesting(!leaving)
                 .simultaneousGesture(DragGesture(minimumDistance: 24).onChanged { value in
                     guard !decision.pending, !decision.busy, !capturing, !leaving, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
                     drag = min(0, value.translation.width)
@@ -79,6 +84,7 @@ struct ReviewMessageView: View {
                     crossed = false
                 })
             }.scrollDismissesKeyboard(.interactively)
+                .scrollDisabled(sendingPresentation || leaving)
         }
         .toolbar { skipToolbar }
         .task {
@@ -87,7 +93,10 @@ struct ReviewMessageView: View {
             else if decision.loaded, decision.events.isEmpty, decision.composer.draft.isEmpty, decision.composer.attachments.isEmpty, decision.attempt == nil { leave(resolved: true) }
         }
         .onAppear { withAnimation(.easeOut(duration: ReviewStyle.fadeIn)) { visible = true } }
-        .onChange(of: decision.attempt?.state) { _, state in if state == .failed || state == .changed { ReviewStyle.error() } }
+        .onChange(of: decision.attempt?.state) { _, state in
+            if state == .failed || state == .changed { ReviewStyle.error() }
+            if state == .failed || state == .changed || state == .uncertain { sendingPresentation = false }
+        }
         .onChange(of: decision.accepted) { _, accepted in if accepted { finishReply() } }
     }
     @ToolbarContentBuilder private var skipToolbar: some ToolbarContent {
@@ -102,6 +111,14 @@ struct ReviewMessageView: View {
             .buttonStyle(.plain).foregroundStyle(PanelsTheme.muted)
             .disabled(decision.busy || decision.pending || capturing || leaving)
             .accessibilityIdentifier("review.skip")
+    }
+    private func send() async -> Bool {
+        guard !sendingPresentation else { return false }
+        outgoingAttempt = decision.attempt
+        sendingPresentation = true
+        let accepted = await decision.send()
+        if !decision.pending && !decision.accepted { sendingPresentation = false }
+        return accepted
     }
     private func finishReply() {
         guard !leaving else { return }

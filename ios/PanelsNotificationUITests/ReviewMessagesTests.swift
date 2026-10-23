@@ -81,6 +81,23 @@ final class ReviewMessagesTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 10))
+        let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
+        XCTAssertTrue(chief.waitForExistence(timeout: 8))
+        XCTAssertGreaterThanOrEqual(chief.frame.height, 44)
+        print("FEEL Chief target: \(chief.frame)")
+        // Hit the added padding above the visible heading, then exercise the real tab shell.
+        chief.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
+        let detailBack = app.buttons["detail-back"]
+        XCTAssertTrue(detailBack.waitForExistence(timeout: 8))
+        XCTAssertEqual(app.navigationBars.count, 0)
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
+        edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.45)), withVelocity: .slow, thenHoldForDuration: 0.5)
+        XCTAssertTrue(detailBack.exists)
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.45)))
+        XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.tabBars.buttons["Review"].isHittable)
         app.tabBars.buttons["Review"].tap()
         XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 12))
         XCTAssertTrue(app.staticTexts["Last unread message"].exists)
@@ -88,17 +105,29 @@ final class ReviewMessagesTests: XCTestCase {
         let input = app.textFields["conversation-input"].firstMatch
         if !input.isHittable { app.swipeUp() }
         XCTAssertTrue(input.waitForExistence(timeout: 8))
+        let resting = input.frame
         input.tap(); input.typeText("Reply kept after refusal")
+        XCTAssertEqual(input.frame.minX, resting.minX, accuracy: 1)
+        XCTAssertEqual(input.frame.width, resting.width, accuracy: 1)
+        XCTAssertGreaterThan(input.frame.width, 280)
+        print("FEEL resting input: \(resting); typed: \(input.frame)")
         app.buttons["Send message"].tap()
         XCTAssertTrue(app.buttons["Retry reply"].waitForExistence(timeout: 8))
+        XCTAssertTrue(input.isEnabled)
+        input.tap(); input.typeText(" corrected")
         let first = XCTAttachment(screenshot: app.screenshot()); first.name = "review-refused-draft"; first.lifetime = .keepAlways; add(first)
         app.terminate(); app.launch()
         app.tabBars.buttons["Review"].tap()
         XCTAssertTrue(app.buttons["Retry reply"].waitForExistence(timeout: 10))
-        XCTAssertEqual(input.value as? String, "Reply kept after refusal")
+        XCTAssertEqual(input.value as? String, "Reply kept after refusal corrected")
+        XCTAssertTrue(input.isEnabled)
         _ = try await URLSession.shared.data(from: URL(string: base + "/proof/new-message")!)
+        // Settle the scrolled card before recording, excluding XCTest's tap-to-reveal scroll.
+        app.swipeUp()
+        _ = try await URLSession.shared.data(from: URL(string: base + "/proof/start/retry-exit")!)
         app.buttons["Retry reply"].tap()
         XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 12))
+        _ = try await URLSession.shared.data(from: URL(string: base + "/proof/stop")!)
         app.buttons["review.skip"].tap()
         XCTAssertTrue(app.staticTexts["Arrived after display"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.staticTexts["First unread message"].exists)
@@ -121,6 +150,7 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertNotEqual(sends[0]["sender_message_id"] as? String, sends[1]["sender_message_id"] as? String)
         XCTAssertEqual(sends[0]["owner_read_through_sequence"] as? Int, 3)
         XCTAssertEqual(sends[1]["owner_read_through_sequence"] as? Int, 3)
+        XCTAssertEqual((sends[1]["content"] as? [[String: Any]])?.first?["text"] as? String, "Reply kept after refusal corrected")
         XCTAssertEqual(writes.compactMap { $0["through_sequence"] as? Int }, [4, 8])
     }
 }

@@ -526,7 +526,19 @@ the bottom spacing and show collapsed Steps. They do not exercise microphone
 recognition, keyboard transitions, or live-server behavior.
 
 Detail pages hide the native navigation bar. Quiet Back and page actions live
-in the page's own scrolling top margin, aligned with its content edge. Yours marks stage
+in the page's own scrolling top margin, aligned with its content edge. The system
+left-edge back gesture remains available, including cancelling partway through;
+ordinary horizontal content drags keep their own behavior. Yours marks stage
 ownership, separately from a conversation waiting for an answer. Its current field
 is shown for reading rather than as a required answer form. Workspace and worker
 rows give Yours the same attention emphasis as desktop.
+
+Review's embedded reply field keeps the same horizontal alignment before and after
+typing. A refused reply can be edited, including its attachments, and those edits
+survive relaunch. Sending it again creates a new message identity while keeping
+the read boundary of the refused attempt. In-flight and uncertain replies stay
+locked. During a successful retry the outgoing card retains its status, Retry row
+and scroll position through the short fade. Retry gives light feedback; a confirmed
+Mark read gives success feedback. Message and proposal headings share the same
+top padding. Chief's Workspace link extends its touch area into the existing card
+padding, preserving its visible spacing.

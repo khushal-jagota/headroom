@@ -17,12 +17,16 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
-DEVICE = (
+DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
     "566D051B-B6BB-4046-9038-66C05CCC2B96"
     if REVIEW_COMPLETION
     else "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6"
 )
-LANE_LOCK = "/tmp/panels-PanelsLaneB.lock" if REVIEW_COMPLETION else "/tmp/panels-PanelsLaneA.lock"
+LANE_LOCK = (
+    "/tmp/panels-"
+    + os.environ.get("PANELS_OFFLINE_LANE", "PanelsLaneB" if REVIEW_COMPLETION else "PanelsLaneA")
+    + ".lock"
+)
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
 REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1"
 
@@ -423,11 +427,14 @@ def main() -> int:
                 "CODE_SIGNING_ALLOWED=NO",
                 "-only-testing:PanelsNotificationUITests/"
                 + (
-                    "ReviewMessagesTests/testCompletionAndRevisit"
-                    if REVIEW_COMPLETION
-                    else "ReviewMessagesTests"
-                    if REVIEW_MESSAGES
-                    else "OfflineOperationTests"
+                    os.environ.get("PANELS_OFFLINE_TEST")
+                    or (
+                        "ReviewMessagesTests/testCompletionAndRevisit"
+                        if REVIEW_COMPLETION
+                        else "ReviewMessagesTests"
+                        if REVIEW_MESSAGES
+                        else "OfflineOperationTests"
+                    )
                 ),
                 *(
                     [
