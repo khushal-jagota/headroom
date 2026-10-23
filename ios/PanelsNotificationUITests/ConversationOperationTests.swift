@@ -198,7 +198,9 @@ final class ConversationOperationTests: XCTestCase {
             // Exercise the standard back button too, and clear only this fixture draft.
             line.tap()
             XCTAssertTrue(app.buttons["Conversation lens"].waitForExistence(timeout: 5))
-            input.tap(); input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Retained draft".count))
+            input.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Retained draft".count))
+            XCTAssertEqual(input.value as? String, "")
             app.navigationBars.buttons.firstMatch.tap()
             XCTAssertTrue(line.waitForExistence(timeout: 5))
             page.swipeDown(velocity: .fast)
@@ -256,8 +258,8 @@ final class ConversationOperationTests: XCTestCase {
         line.tap()
         XCTAssertTrue(app.staticTexts["Panels deployment recovery"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["You: Inspect the interrupted work and continue the current authorized step."].exists)
-        XCTAssertTrue(app.staticTexts["Panels deployment recovery"].isHittable)
         capture(app, "recovery-system-transcript")
+        XCTAssertTrue(app.staticTexts["Panels deployment recovery"].isHittable)
         close.tap()
         // Both cases share the persisted draft in this loopback host.
         input.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()

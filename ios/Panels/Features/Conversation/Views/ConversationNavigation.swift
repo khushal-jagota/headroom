@@ -256,7 +256,7 @@ struct ConversationThread: View {
                 else { position.scrollTo(edge: .bottom) }
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.top, for: .sizeChanges)
+            .defaultScrollAnchor(scrollPolicy.shouldFollowContent ? .bottom : .top, for: .sizeChanges)
             .scrollDismissesKeyboard(.interactively)
             .scrollPosition($position)
             .onScrollPhaseChange { old, phase, context in

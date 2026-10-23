@@ -116,7 +116,7 @@ children without inventing a second active card for a settled parent.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
-`ConversationOverlay` supplies the shared composer and conversation page on Chief,
+`ConversationNavigation` supplies the shared composer and conversation page on Chief,
 Orchestrator and Ticket, described below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
 context links and Dismiss/Reopen actions through its API adapter. It follows
