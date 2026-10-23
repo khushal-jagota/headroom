@@ -827,9 +827,11 @@ Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. Shared date helpers format the ordinary dates that remain.
 
-**The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
-diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
-restated here.
+**Typography.** Every screen uses the shared system sans stack for content and
+controls. Former serif body text is 15px, section titles are 20px, and display titles
+and large usage figures are 24px. Existing sans sizes and the composer's touch-safe
+input size remain as they are. Code, diffs, and tool output keep monospace for
+alignment. `DESIGN.md` defines the typography and visual hierarchy.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),

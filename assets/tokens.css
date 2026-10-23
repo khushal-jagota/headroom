@@ -108,6 +108,7 @@
   --type-sm: 13px;
   --type-md: 15px;
   --type-lg: 20px;
+  --type-xl: 24px;
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
    * the ladder because touch screens must raise them: iOS Safari zooms the whole
@@ -115,18 +116,7 @@
   --type-input: var(--type-sm);
   --type-input-compact: var(--type-xs);
 
-  /* Serif voice — the system speaks in Newsreader where content speaks; the
-   * machine's sans controls stay --font-ui. Its own ladder (mockup px). */
-  --font-serif: "Newsreader", Georgia, serif;
-  --type-serif-sm: 15px;
-  --type-serif-md: 16.5px;
-  --type-serif-lg: 18px;
-  --type-serif-xl: 21px;
-  --type-serif-display: 28px;
-  --type-serif-hero: 30px;
-
-  /* Letter-spacing — the three the design uses: tight on serif titles, open on
-   * uppercase sans labels, a hair on mono. */
+  /* Letter-spacing — tight on titles, open on uppercase labels, a hair on mono. */
   --tracking-title: -0.008em;
   --tracking-label: 0.12em;
   --tracking-mono: 0.03em;
