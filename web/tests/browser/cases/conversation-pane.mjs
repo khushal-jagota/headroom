@@ -124,9 +124,13 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     else await promoteHeldPrompt("browser-fixture", heldPromptId, mode);
     await refreshQueueMatrix();
     if ((window as any).__recordingFlow && mode !== "discard" && promoted) {
-      outgoingMessages = [...outgoingMessages, {messageId: "promoted-"+heldPromptId,
-        content: promoted.content, senderLabel:"owner", mode,
-        sentAtUnixMilliseconds:Date.now(), knownFate:"nothing_yet", accepted:true}];
+      // Promotion refreshes durable history; it is not a new local composer send.
+      const sequence = Math.max(0, ...rows.map(row => row.sequence)) + 1;
+      const prompt = {key:"promoted-"+heldPromptId, kind:"prompt", sequence,
+        createdAt:Date.now(), content:promoted.content, senderLabel:"owner", mode,
+        sentAtUnixMilliseconds:Date.now()};
+      rows = [...rows, prompt];
+      if (visibleRows !== null) visibleRows = [...visibleRows, prompt];
     }
   }
   document.addEventListener("visibilitychange", () => { void refreshQueueMatrix(); });
