@@ -251,11 +251,23 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     frame.get_by_role("link", name="Open child").click(timeout=WAIT_MS)
     frame.get_by_role("heading", name="Child artifact", exact=True).wait_for(timeout=WAIT_MS)
 
-    for link in ("Outside directory", "Symlink escape"):
+    successful_child_src = iframe.get_attribute("src")
+    for link, expected_notice in (
+        ("Outside directory", "This link cannot be opened in the artifact viewer."),
+        ("Symlink escape", "file fetch failed: 404"),
+    ):
+        requests_before_rejection = list(html_requests)
         frame.get_by_role("link", name=link).click(timeout=WAIT_MS)
         notice = artifact.locator("[data-html-navigation-notice]")
-        notice.wait_for(state="visible", timeout=WAIT_MS)
-        assert notice.inner_text() == "This link cannot be opened in the artifact viewer."
+        expect(notice).to_have_text(expected_notice, timeout=WAIT_MS)
+        if link == "Outside directory":
+            assert html_requests == requests_before_rejection
+        else:
+            assert html_requests == requests_before_rejection + [
+                f"{server.base}/files/tickets/{ticket_id}/previews/escape.html"
+            ]
+        assert iframe.get_attribute("src") == successful_child_src
+        assert artifact.locator("[data-visible-content-failed]").count() == 0
         assert frame.locator("[data-html-navigation-notice]").count() == 0
         assert frame.get_by_role("heading", name="Child artifact", exact=True).is_visible()
         assert frame.get_by_role("heading", name="Secret symlink bytes").count() == 0
