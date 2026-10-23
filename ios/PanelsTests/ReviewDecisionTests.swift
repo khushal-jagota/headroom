@@ -100,11 +100,50 @@ import XCTest
         await settle(api)
         let request = try XCTUnwrap(ReviewStub.state.writes.first)
         XCTAssertTrue(request.url!.path.hasSuffix("/reject"))
-        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: String])
-        XCTAssertEqual(body["message"], "Clarify the transition.")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+        XCTAssertEqual(body["message"] as? String, "Clarify the transition.")
+        XCTAssertEqual(body["expected_proposal_revision"] as? Int, decision.proposal?.revision)
         let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
         XCTAssertEqual(work.state, .changed)
         XCTAssertEqual(work.guidance, "Clarify the transition.")
+        XCTAssertEqual(work.note, "This changed, review again")
+        // Workspace uses its own adapter and must carry the same visible revision.
+        do {
+            try await api.returnTicketProposal(decision.ticket!.id, message: "Workspace guidance", expectedProposalRevision: decision.proposal!.revision)
+            XCTFail("Changed work must require another review")
+        } catch let error as APIError {
+            XCTAssertEqual(error.localizedDescription, "This changed, review again")
+        }
+        let workspaceRequest = try XCTUnwrap(ReviewStub.state.writes.last)
+        let workspaceBody = try XCTUnwrap(JSONSerialization.jsonObject(with: workspaceRequest.httpBody!) as? [String: Any])
+        XCTAssertEqual(workspaceBody["expected_proposal_revision"] as? Int, decision.proposal?.revision)
+        XCTAssertEqual(workspaceBody["message"] as? String, "Workspace guidance")
+    }
+
+    func testRestoredSendBackCarriesOriginalRevisionAndHoldsServerRefusal() async throws {
+        let (decision, api, _) = try await setupDecision()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("outbox.store")
+        let server = LocalStore.server(api.baseURL)
+        let proposal = try XCTUnwrap(decision.proposal)
+        try Outbox(store: LocalStore(url: url)).save(PendingWork(id: "restored", created: .now,
+            kind: .sendBack, ticketID: decision.ticket!.id, proposal: proposal, guidance: "Keep these words"), server: server)
+        let restored = Outbox(store: LocalStore(url: url))
+        // The preflight read still matches. The server refuses a change after that read.
+        ReviewStub.state.failWrites = true
+        await restored.drain(api: api)
+        await restored.drain(api: api)
+        let request = try XCTUnwrap(ReviewStub.state.writes.first)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+        XCTAssertEqual(body["expected_proposal_revision"] as? Int, proposal.revision)
+        XCTAssertEqual(ReviewStub.state.writes.count, 1)
+        let saved = try XCTUnwrap(Outbox(store: LocalStore(url: url)).entries(server).first)
+        XCTAssertEqual(saved.state, .changed)
+        XCTAssertEqual(saved.note, "This changed, review again")
+        XCTAssertEqual(saved.guidance, "Keep these words")
+        XCTAssertEqual(APIError(status: 400, message: "the visible proposal changed; read it again before accepting").localizedDescription, "This changed, review again")
+        XCTAssertEqual(APIError(status: 400, message: "Guidance is empty").localizedDescription, "Guidance is empty")
     }
 
     private func settle(_ api: APIClient) async {
@@ -199,7 +238,7 @@ private final class ReviewStubState: @unchecked Sendable {
                 }
                 recorded.append(request)
                 if request.url!.path.hasSuffix("voice-transcriptions") { return (200, Data("{\"transcript\":\"Add the opened state.\"}".utf8)) }
-                return failing ? (409, Data("{\"error\":{\"message\":\"Proposal changed\"}}".utf8)) : (200, Data("{}".utf8))
+                return failing ? (400, Data("{\"error\":{\"code\":\"validation\",\"message\":\"the visible proposal changed; read it again before sending back\"}}".utf8)) : (200, Data("{}".utf8))
             }
             return (200, request.url!.path.contains("manifest") ? manifest : ticket)
         }

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from sqlite3 import Connection
 from typing import Unpack
 
 import pytest
+from fastapi.testclient import TestClient
 
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -197,3 +199,106 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
         assert accepted["ceiling"] == "needs_implementation"
         assert accepted["ceiling_holder"] == {"kind": "chief", "id": "chief"}
         assert accepted["field_values"]["success_condition"] == original.pending_proposal.body
+
+
+@pytest.fixture
+def proposal_client(tmp_db: Connection) -> Iterator[TestClient]:
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from planner.core.clock import build_clock
+    from planner.core.config import load_config
+    from planner.core.db import connect
+    from planner.core.server import create_app
+
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    config = load_config(path=None, env={
+        "PLAN_TEST_MODE": "1", "PLAN_DB_PATH": db_path,
+        "PLAN_LOGS_DIR": str(Path(db_path).parent / "logs"),
+    })
+    with TestClient(create_app(config, build_clock(config), lambda: connect(db_path))) as client:
+        yield client
+
+
+@pytest.mark.parametrize("change_time", ["before_request", "after_preflight"])
+def test_send_back_http_refuses_changed_revision_without_decision_writes(
+    tmp_db: Connection, proposal_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    change_time: str,
+) -> None:
+    original = _park(tmp_db)
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id='c_revision' WHERE id=?",
+        (original.id,),
+    )
+    tmp_db.commit()
+    before: tuple[str, ...] = ()
+
+    def reroute(conn: Connection) -> None:
+        nonlocal before
+        _edit(conn, original, ceiling_holder=CHIEF_PRINCIPAL)
+        conn.commit()
+        before = tuple(conn.iterdump())
+
+    if change_time == "before_request":
+        reroute(tmp_db)
+    else:
+        require_reject = data.require_reject
+
+        def changed_after_preflight(
+            conn: Connection, ticket_id: str, *, principal: Principal, has_guidance: bool,
+        ) -> Ticket:
+            ticket = require_reject(
+                conn, ticket_id, principal=principal, has_guidance=has_guidance,
+            )
+            # A reviewer change leaves the proposal body equal but advances its revision.
+            reroute(conn)
+            return ticket
+
+        monkeypatch.setattr(data, "require_reject", changed_after_preflight)
+
+    response = proposal_client.post(f"/api/tickets/{original.id}/reject", json={
+        "message": "Words for the version I saw",
+        "expected_proposal_revision": original.pending_proposal_revision,
+    })
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == {
+        "code": "validation",
+        "message": "the visible proposal changed; read it again before sending back",
+        "detail": {"ticket_id": original.id},
+    }
+    # Includes proposal, claim, feedback, attention and wakes: no part of rejection committed.
+    assert tuple(tmp_db.iterdump()) == before
+
+
+def test_send_back_http_validates_revision_and_accepts_matching_or_legacy_request(
+    tmp_db: Connection, proposal_client: TestClient,
+) -> None:
+    original = _park(tmp_db)
+    tmp_db.execute("UPDATE tickets SET conversation_id='c_revision' WHERE id=?", (original.id,))
+    tmp_db.commit()
+    path = f"/api/tickets/{original.id}/reject"
+    before = tuple(tmp_db.iterdump())
+    for revision in (True, 0, -1, "1", 1.5):
+        response = proposal_client.post(path, json={"expected_proposal_revision": revision})
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["message"] == (
+            "expected_proposal_revision must be a positive integer"
+        )
+        assert tuple(tmp_db.iterdump()) == before
+    response = proposal_client.post(path, json={
+        "message": "Revise this version",
+        "expected_proposal_revision": original.pending_proposal_revision,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["pending_proposal"] is None
+    replacement = data.file_current_proposal(
+        tmp_db, original.id, body="Replacement",
+        principal=Principal(PrincipalKind.ticket, original.id),
+        now=5,
+    )
+    assert replacement.pending_proposal is not None
+    # The old web/CLI request remains valid without the optional revision or guidance.
+    response = proposal_client.post(path, json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["pending_proposal"] is None

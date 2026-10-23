@@ -8,6 +8,7 @@ cp ios/Panels/Core/Networking/APIClient.swift ios/Panels/Core/Persistence/*.swif
   ios/Panels/Features/Conversation/Models/*.swift ios/Panels/Features/Conversation/Networking/*.swift \
   ios/Panels/Features/Conversation/State/ConversationModel.swift ios/Panels/Features/Review/ReviewAPI.swift \
   ios/Panels/Features/Review/ReviewDecision.swift "$build/Sources/Panels/"
+cp ios/Panels/Features/Ticket/Networking/TicketAPI.swift ios/Panels/Features/Ticket/Models/TicketLifecycle.swift "$build/Sources/Panels/"
 cp ios/PanelsTests/ReviewDecisionTests.swift ios/PanelsTests/OfflineTests.swift ios/PanelsTests/ConversationTests.swift "$build/Tests/PanelsTests/"
 cp -R ios/PanelsTests/Fixtures "$build/Tests/PanelsTests/"
 cat > "$build/Package.swift" <<'SWIFT'

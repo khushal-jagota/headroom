@@ -233,13 +233,14 @@
 
   async function returnForRevision(): Promise<void> {
     const message = revisionDraft.trim();
-    if (!message || revisionBusy) return;
+    const revision = detail.data?.pending_proposal?.revision;
+    if (!message || revisionBusy || revision === undefined) return;
     revisionError = null;
     revisionBusy = true;
     try {
       await write(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
-        body: { message }
+        body: { message, expected_proposal_revision: revision }
       },"stage");
       revisionDraft = "";
       announceResolved();
@@ -321,7 +322,7 @@
               disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}
-              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } },"stage"); announceResolved(); }}
+              onReturn={async (message, revision) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message, expected_proposal_revision: revision } },"stage"); announceResolved(); }}
               {revisionEditor} />
             {/key}
           {/if}

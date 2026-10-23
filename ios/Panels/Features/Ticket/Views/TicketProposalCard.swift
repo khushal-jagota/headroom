@@ -56,7 +56,7 @@ struct TicketProposalCard: View {
         }
         .sheet(isPresented: $returnOpen) {
             TicketTextEditor(title: "What needs changing", actionTitle: "Send it back", requiresText: true, save: { text in
-                try await store.client.returnTicketProposal(presentation.ticket.id, message: text.trimmingCharacters(in: .whitespacesAndNewlines))
+                try await store.client.returnTicketProposal(presentation.ticket.id, message: text.trimmingCharacters(in: .whitespacesAndNewlines), expectedProposalRevision: proposal.revision)
                 await refresh()
             }, text: "")
         }

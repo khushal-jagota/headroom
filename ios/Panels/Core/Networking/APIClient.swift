@@ -3,7 +3,10 @@ import Foundation
 struct APIError: LocalizedError, Sendable {
     let status: Int
     let message: String
-    var errorDescription: String? { message }
+    var isChangedProposal: Bool {
+        status == 400 && message.hasPrefix("the visible proposal changed; read it again before ")
+    }
+    var errorDescription: String? { isChangedProposal ? "This changed, review again" : message }
 }
 
 /// All endpoint paths are confined to this adapter. No calls mark conversations read.

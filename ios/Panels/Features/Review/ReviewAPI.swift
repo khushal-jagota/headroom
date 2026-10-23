@@ -37,9 +37,9 @@ extension APIClient {
         _ = try await reviewWrite("/api/tickets/\(ticketID)/accept/\(field)", body: approval)
     }
 
-    func returnReview(_ ticketID: String, message: String) async throws {
-        struct Body: Encodable { let message: String }
-        _ = try await reviewWrite("/api/tickets/\(ticketID)/reject", body: Body(message: message))
+    func returnReview(_ ticketID: String, message: String, expectedProposalRevision: Int) async throws {
+        struct Body: Encodable { let message: String; let expectedProposalRevision: Int }
+        _ = try await reviewWrite("/api/tickets/\(ticketID)/reject", body: Body(message: message, expectedProposalRevision: expectedProposalRevision))
     }
 
     func transcribeReviewAudio(_ audio: Data) async throws -> String {
