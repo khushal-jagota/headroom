@@ -208,6 +208,7 @@
     recoveryToPlace = null;
     if (placement) placement.cancelled = true;
     placement = null;
+    if (placementReady) { pendingOpen = false; settledOnOpening = true; }
     placementReady = true;
     reader?.releaseEntry();
     if (newestPlacementMessageId !== null) settledMessageIds.add(newestPlacementMessageId);
@@ -391,6 +392,7 @@
         const intent = latestIntent;
         const gesture = gestureGeneration;
         let followingMore = false;
+        let provisionalNewest = false;
         // Svelte and managed Markdown finish their DOM writes before the reading.
         await tick();
         if (startedIn !== generation || !canMeasure()) return;
@@ -476,10 +478,22 @@
           if (targetKey === null) landTheOpen(thread);
           const destination = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
           const target = targetKey === null ? destination : reader?.entryTarget === null || reader?.entryTarget === undefined ? restoredAnchorElement(thread) ?? undefined : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === targetKey);
-          if (target === undefined || !presentationReady(target)) return;
+          if (target === undefined) return;
+          if (!presentationReady(target)) {
+            if (targetKey !== null) return;
+            const viewport = thread.getBoundingClientRect();
+            // A held lazy body cannot hide an available tool or message beside its placeholder.
+            // The provisional newest position is already applied, so this reveals no top flash.
+            provisionalNewest = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].some(node => {
+              if (node === target || !node.querySelector('[data-conversation-row], [data-conversation-tool]') || !presentationReady(node)) return false;
+              const bounds = node.getBoundingClientRect();
+              return bounds.height > 0 && bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+            });
+            if (!provisionalNewest) return;
+          }
           // Position while hidden, then let active lazy blocks finish their own presentation.
           await tick();
-          if (startedIn !== generation || !canMeasure() || thread !== threadElement || !presentationReady(target)) return;
+          if (startedIn !== generation || !canMeasure() || thread !== threadElement || !provisionalNewest && !presentationReady(target)) return;
           geometry = threadGeometry(thread, reservedSpaceElement);
           takeTheReading(geometry.read(reservedSpacePixels));
         }
@@ -560,10 +574,10 @@
           }
         }
         if (startedIn !== generation || gesture !== gestureGeneration || thread !== threadElement) return;
-        settledOnOpening = true;
-        pendingOpen = false;
+        settledOnOpening = !provisionalNewest;
+        pendingOpen = provisionalNewest;
         placementReady = true;
-        if (placement?.destination === 'entry') placement = null;
+        if (!provisionalNewest && placement?.destination === 'entry') placement = null;
         if (sentMessageToPlace !== null && settledMessageIds.has(sentMessageToPlace)) sentMessageToPlace = null;
         else if (sentMessageToPlace !== null) dirty = true;
         takeTheReading(geometry.read(reservedSpacePixels));

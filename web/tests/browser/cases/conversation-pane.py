@@ -2306,7 +2306,7 @@ def _bounded_reader(browser, url):
     assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
     page.evaluate("() => window.__expireDeferred()")
     page.locator('[data-conversation-view-key="e3"]').get_by_text("This diagnostic detail expired.", exact=True).wait_for()
-    evidence = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_uraaehvn/artifacts/diagnostic-expiry.png")
+    evidence = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "data/verification/browser-failure")) / "diagnostic-expiry.png"
     evidence.parent.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(evidence))
     print(f"Diagnostic expiry browser scenario: {time.perf_counter() - started:.3f}s")
