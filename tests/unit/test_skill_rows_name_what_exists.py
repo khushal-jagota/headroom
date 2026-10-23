@@ -62,21 +62,32 @@ def _create_findings(text: str) -> list[dict[str, str]]:
 
 def test_nested_manager_examples_use_the_actual_principal_parser() -> None:
     import json
+    import re
 
     from planner.managed_skills import PACKAGED_SKILLS_ROOT
     from planner.skill_staleness import ticket_create_examples
     from planner.tickets.api import _parse_manager, _parse_principal
 
-    examples = []
-    for source in PACKAGED_SKILLS_ROOT.glob("*/SKILL.md"):
-        for payload in ticket_create_examples(source.read_text()):
-            examples.append(payload)
-            if "manager" in payload:
-                parsed = _parse_manager(payload["manager"])
-                assert parsed.kind.value in {"manager", "chief"}
-            if "ceiling_holder" in payload:
-                assert _parse_principal(payload["ceiling_holder"], "ceiling_holder") is not None
-    assert examples
+    examples = [
+        payload
+        for source in PACKAGED_SKILLS_ROOT.glob("*/SKILL.md")
+        for payload in ticket_create_examples(source.read_text())
+    ]
+    creation_source = (PACKAGED_SKILLS_ROOT / "panels-ticket-creation/SKILL.md").read_text()
+    assignment_section = creation_source.split("## Explicit manager assignment\n", 1)[1].split(
+        "\n## ", 1
+    )[0]
+    inline_managers = [
+        json.loads(value) for value in re.findall(r"`(\{[^`\n]+\})`", assignment_section)
+    ]
+    assert {manager["kind"] for manager in inline_managers} == {"chief", "manager"}
+    examples.extend({"manager": manager} for manager in inline_managers)
+    for payload in examples:
+        if "manager" in payload:
+            parsed = _parse_manager(payload["manager"])
+            assert parsed.kind.value in {"manager", "chief"}
+        if "ceiling_holder" in payload:
+            assert _parse_principal(payload["ceiling_holder"], "ceiling_holder") is not None
     findings = stale_references_in(
         "example",
         _create_example(json.dumps({"manager": {"kind": "worker", "id": "t_one"}})),
