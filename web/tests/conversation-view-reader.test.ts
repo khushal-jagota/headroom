@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ConversationViewReader } from '../src/lib/conversation/view/reader.svelte';
 import { viewSnapshot, viewChanges } from './support/conversation/view-fixture';
 import type { FixtureEvent } from './support/conversation/view-fixture';
+import type { ViewBodyReference } from '../src/lib/conversation/view/contracts';
 
 class Source {
   static all: Source[] = [];
@@ -26,7 +27,7 @@ async function start(initial = snapshot()) {
 
 it('does not replay existing live output when its first body read races a newer version', async () => {
   const initial = snapshot();
-  const reference = { body_id: 'live:turn', version: '1', byte_count: 100, media_type: 'text/markdown' };
+  const reference: ViewBodyReference = { body_id: 'live:turn', version: '1', byte_count: 100, media_type: 'text/markdown' };
   initial.status.live_output = { runtime_epoch: 'epoch', turn_key: 'turn:1', version: 1, byte_count: 100, reference };
   const reader = await start(initial);
   expect(reader.liveOutputIsArrival(reference, false)).toBe(false);

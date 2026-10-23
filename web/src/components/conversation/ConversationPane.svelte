@@ -479,7 +479,7 @@
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
     style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
-    aria-busy={!placementReady || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing'}>
+    aria-busy={reader?.entryPhase !== 'error' && (!placementReady || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
     bind:placementReady
     {ownerReadThroughSequence}
