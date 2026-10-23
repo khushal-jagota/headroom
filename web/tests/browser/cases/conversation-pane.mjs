@@ -220,7 +220,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__sendScrollRegression = (moveLayer: boolean) => {
     outgoingMessages = [{messageId: "scroll-send", content: [{piece: "text", text: "Regression prompt"}],
-      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet"}];
+      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet", accepted: true}];
     if (moveLayer) conversationState = "opened";
   };
   (window as any).__answerScrollRegression = (paragraphCount: number) => {
