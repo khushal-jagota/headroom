@@ -461,8 +461,9 @@ this lane did not run a simulator or write to a live server.
 
 Rows and page titles share one activity mark: an unread dot takes precedence over
 the fixed-size working spinner, matching the web. They never appear together. Reduce Motion substitutes a static
-working mark. Detail-page activity sits beside the full title in the scrolling page. The Chief Workspace heading aligns at the top of its minimum touch area,
-matching the first-content inset on orchestrator cards.
+working mark. Detail-page activity sits beside the full title in the scrolling page. Workspace cards use the same 16-point top inset and title-to-first-group gap.
+The Chief has no eyebrow or reserved eyebrow height; its header uses its natural
+content height, as do orchestrator headers.
 
 Verification: the four-job iOS Simulator build and four existing conversation host
 tests passed. A stub-only, locked PanelsLaneB pass captured Workspace and the
