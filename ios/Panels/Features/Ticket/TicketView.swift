@@ -47,7 +47,7 @@ struct TicketView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .primaryAction) { ticketMenu } }
         .panelsScreen()
-        .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId)
+        .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket")
         .refreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error) { await load() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }

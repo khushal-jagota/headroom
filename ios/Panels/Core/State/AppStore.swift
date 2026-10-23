@@ -19,6 +19,19 @@ import Observation
     private var loadingMore = false
 
     init() {
+#if DEBUG
+        if let at = ProcessInfo.processInfo.arguments.firstIndex(of: "--conversation-stub"), ProcessInfo.processInfo.arguments.indices.contains(at + 1),
+           let local = URL(string: ProcessInfo.processInfo.arguments[at + 1]), ["localhost", "127.0.0.1"].contains(local.host) {
+            baseURL = local
+            return
+        }
+#endif
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--conversation-smoke") {
+            baseURL = URL(string: "http://127.0.0.1:1")!
+            return
+        }
+#endif
         let saved = UserDefaults.standard.string(forKey: "panels.baseURL")
         baseURL = saved.flatMap(URL.init(string:)) ?? APIClient.defaultBaseURL
     }

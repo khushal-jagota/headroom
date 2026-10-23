@@ -68,7 +68,8 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -parallel-testing-enabled NO test
 ```
 
-There are no UI test suites. `PanelsTests/Fixtures` contains unmodified responses
+`PanelsNotificationUITests` holds the notification and opt-in conversation UI
+scenarios. `PanelsTests/Fixtures` contains unmodified responses
 captured with read-only GETs on 2026-10-22. Tests protect two previously uncovered
 wire-contract risks: snake-case/nullable/grouping and page decoding; and the
 review/detail/artifact response shapes. One tiny parser test protects heartbeat
@@ -110,8 +111,8 @@ children without inventing a second active card for a settled parent.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
-`ConversationOverlay` supplies the shared conversation card on Chief,
-Orchestrator and Ticket. The partial delivery and remaining work are listed below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
+`ConversationOverlay` supplies the shared composer and conversation page on Chief,
+Orchestrator and Ticket, described below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
 context links and Dismiss/Reopen actions through its API adapter. It follows
 foreground change revisions and supports pull-to-refresh. Its empty state omits
@@ -290,46 +291,56 @@ paths, and preservation of markdown code blocks. They reuse the existing XCTest
 target and require no server. Simulator captures are a separate read-only smoke
 pass, and do not establish physical-device haptics or frame-rate performance.
 
-## Native conversation preview
+## Native conversation
 
-Chief, Orchestrator and Ticket now share a native floating conversation card. It
-keeps the document beneath it, aligns to the content gutter, retains bottom scroll
-clearance after collapse, and offers rest, peeked and opened states. Peek grows
-with the draft; input caps at six lines. Motion uses the shared tokens and respects
-Reduce Motion. Speech starts only after a tap and permission, transcribes into an
-editable draft, and never sends automatically. Keyboard entry remains available.
+Chief, Orchestrator and Ticket share a latest-message line and a composer. Tapping
+or swiping up on the line opens a separate conversation page. Its header contains
+the name, a close control and the Focus/Full word. Pulling down the header closes
+it. Opening and closing retain the draft. The line remains visible while typing
+and recording, with the latest message from either side and “You:” for outgoing
+messages. Working uses the server's current running state.
 
-The implementation follows `t_02zd37tz/artifacts/design.html`, confirmed by the
-owner through firstmate, and the overlay implementation at `0480bc3e`. The named
-`overlay-states.html` was not present in either ticket's current artifact inventory;
-current `design.html`, `overlay-plan.md` and the overlay implementation's phone
-capture were read instead. No live transcript was opened or marked read.
+The empty composer is 48 points tall with a plus and microphone. Text opens a
+card with the input above the controls. The side insets, padding and 30-point
+circle follow Wren's composer; Panels keeps its own controls. The bottom uses the
+system safe area plus one point, matching the 35-point reference on the target
+phone. The model sheet reads the backend catalog and applies the selected model
+and reasoning to the next message. An existing conversation keeps its backend.
+The plus menu accepts files, library pictures, camera photos and a slash command. Steer, Queue and Send now
+use the existing delivery modes. Stop interrupts the running turn. The separate
+microphone remains available while working or editing a draft.
 
-Reads use the server's Focus/Full view projection. The mounted foreground card
-polls status every two seconds and requests transcript data only when expanded.
-Earlier pages and deferred message bodies are fetched on demand. The working line
-uses server authority, pending permission, plan and tool facts. Sends use the
-Chief/Manager/Ticket owner door, a stable sender message ID, and steer mode. A lost
-response stays uncertain and is never retried automatically. Reconciliation uses
-the same sender ID so the pending and recorded messages are not drawn twice.
+Messages appear immediately with Sending, Sent, Queued or an explicit failure.
+The local message and its server row share one visual identity and position.
+Confirmed refusal and connection failures offer Retry in place. A timeout or lost
+response remains uncertain and cannot be retried blindly. Suppressed delivery
+says why the message was not delivered. Held messages are recovered from the
+conversation detail. The queue offers Steer in and removal; receipts settle delivery
+even when the corresponding row falls outside the loaded window.
+A new reply follows the bottom only while the reader is already there; scrolling
+up keeps the reader's position and exposes Latest.
 
-This is a partial delivery. First-unread entry and read markers, live token
-streaming, folded Full-mode turn/tool expansion, attachments, run/model controls,
-permission answers, queue management, durable drafts across navigation, and exact
-arrival/queue animations remain. Queued sends currently stay in the thread with a
-Queued note. Record reconciliation can still change a steered message's position.
-The single screenshot is a deterministic fixture smoke capture, not live-server
-or interaction proof. It exposed excessive composer stretching; the intrinsic
-height fix was compiled afterward, without a second capture. Keyboard transitions,
-speech recognition, VoiceOver, frame timing and physical haptics need device review.
+The foreground surface subscribes to the existing Focus/Full tail and reads a
+coherent projection when it changes, with a 700ms refresh fallback. Full subscribes
+to live output and reads its versioned text body. Streaming and recorded replies
+share a visual identity. Focus follows the server's reply-only contract. Earlier
+pages and deferred bodies load on demand. Opening finds the first unread owner
+message, loading earlier pages if necessary, or returns to the latest line.
+Speech starts on an explicit tap after permission. Words are held until recording
+ends, then appear as an editable draft. Cancel discards recognition results. Nothing
+sends automatically. Reduce Motion removes the composer shape animation and uses
+a page fade.
 
-`ios/scripts/test-conversation.sh` runs four Foundation-only host tests. They cover
-previously uncovered projection inline/deferred decoding, stable sender-ID
-reconciliation, blank/uncertain send behavior, and the exact send request against
-an intercepted URLSession. Setup reuses the shared API decoder; no backend,
-browser, or live write is involved. The Debug-only `--conversation-smoke` launch
-argument renders a deterministic read-only fixture with all composer actions
-disabled and no AppShell/network task. It is excluded from Release.
+`ios/scripts/test-conversation.sh` runs the Foundation host checks.
+`ios/scripts/test-conversation-simulator.py` provides an opt-in loopback stub and
+one UI scenario for the keyboard, scroll position, delivery transitions, model
+sheet, voice-draft flow and page opening/closing. It locks PanelsLaneA, uses the
+separate task bundle, and does not boot, shut down or erase a simulator. Set
+`PANELS_CONVERSATION_OUTPUT` to an external evidence directory. Debug smoke mode
+is restricted to loopback; without a valid stub URL it uses a closed loopback port.
+The voice scenario injects recognition output: it does not prove microphone capture
+or speech recognition. Physical-device haptics, VoiceOver, audio transcription,
+camera capture and server read-marker writes remain outside this proof.
 
 ## App-wide feel pass
 
@@ -432,8 +443,8 @@ sort by newest update, with identifier ties. The existing REST pagination remain
 unloaded managers are not globally reordered by the native client. Unread remains
 a row mark, without a Messages group. Desktop rail geometry and browser bundle
 reload prompts have no native counterpart. The shared conversation still uses
-native scrolling; Latest refreshes its newest page before placement, and opening
-the card does not permanently enlarge the page's reserved bottom space.
+native scrolling; Latest returns to the newest loaded message, and opening
+the page does not permanently enlarge the underlying page's reserved bottom space.
 
 `SyncMainTests` contains two host checks: independent success deadlines (old coverage
 had one deadline), blocked Agent classification (old coverage checked rail exclusion
@@ -441,7 +452,8 @@ only). They reuse the existing host package and decoder, with no connected host.
 The conversation host test adds the new suppressed fate so it cannot be mistaken for uncertain delivery or retried.
 
 The iOS app no longer displays interruption accounts or manual worker restart in
-More or conversations, and no longer requests the interruption endpoint. The
+More. The conversation Stop control only interrupts the current turn; it does
+not expose interruption accounts or restart workers. The
 remaining deployment status decoding does not require interruption fields.
 
 ## Ticket disclosure and conversation input spacing
@@ -452,9 +464,9 @@ pages. Both disclosures use the existing plain toggle without an extra animation
 
 Speech updates trim leading and trailing whitespace from the recognized text and
 the existing draft before joining them. Internal line breaks remain. The multiline
-input uses its intrinsic height, within the existing six-line limit. The conversation
+input uses its intrinsic height, within the five-line limit. The conversation
 card relies on the system bottom safe area rather than adding another 12-point gap;
-its top clearance and page-content reservation follow that placement.
+the latest line occupies its own surface above it.
 
 Verification for this change: generic iOS Simulator build with four jobs, six
 conversation host tests and six system/synchronization host tests. The added speech

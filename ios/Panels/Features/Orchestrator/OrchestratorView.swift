@@ -55,7 +55,7 @@ struct OrchestratorView: View {
         }
         .navigationTitle(headerCollapsed ? detail?.title ?? "Orchestrator" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
-        .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId)
+        .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator")
         .toolbar { ToolbarItem(placement: .topBarTrailing) {
             AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
         } }
