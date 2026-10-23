@@ -88,7 +88,7 @@ struct ReviewView: View {
                 }
             }.background(PanelsTheme.surface)
         }
-        .onChange(of: LocalStore.shared.revision) { _, _ in
+        .onChange(of: LocalStore.shared.workRevision) { _, _ in
             for decision in decisions.values { decision.refreshVoiceDraft() }
             if let item = displayedItem, !item.isMessage, !queueItems.contains(where: { $0.id == item.id }) { displayedItem = queue.current(in: queueItems) }
             for work in savedDecisions where work.state == .changed {
@@ -471,7 +471,7 @@ private struct ReviewReturnComposer: View {
             if let error = decision.error ?? voice.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
         }.padding(.bottom, PanelsTheme.Space.md)
             .onAppear { decision.refreshVoiceDraft(); focused = true; voice.restore(api: api, draftID: decision.revisionDraftID) }
-            .onChange(of: LocalStore.shared.revision) { _, _ in decision.refreshVoiceDraft(); voice.restore(api: api, draftID: decision.revisionDraftID) }
+            .onChange(of: LocalStore.shared.workRevision) { _, _ in decision.refreshVoiceDraft(); voice.restore(api: api, draftID: decision.revisionDraftID) }
             .onDisappear { voice.preserve() }
     }
     @ViewBuilder private var voiceStatus: some View {
