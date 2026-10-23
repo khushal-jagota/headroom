@@ -438,3 +438,32 @@ it('retains the parked unread target when expanded scopes reach the shared item 
   reader.releaseEntry();
   expect(reader.entryHeld).toBe(false);
 });
+
+it('keeps restoration pending when the newer half fails and retries that context before placement', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const anchorPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  anchorPage.newer = cursor(11);
+  const newerPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 12 }]).page;
+  const { fetch, pending } = holdPages();
+  const anchor = { key: anchorPage.items[0].key, order: { sequence: 11, slot: 0 }, offset: -17, following: false };
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, anchor);
+  readers.push(reader);
+  const ready = reader.connect();
+  Source.all.at(-1)!.send('snapshot', snapshot());
+  await flushDemand();
+  pending[0].complete(Response.json(anchorPage));
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  // The anchor's older page exists, but the context below it is still incomplete.
+  expect(reader.restoring).toBe(true);
+  pending[1].complete(Response.json({ error: 'offline' }, { status: 503 }));
+  await ready;
+  await vi.waitFor(() => expect(reader.restorationFailed).toBe(true));
+  expect(reader.restoring).toBe(true);
+  reader.retryRestoration();
+  await vi.waitFor(() => expect(pending).toHaveLength(3));
+  expect(JSON.parse(new URL(fetch.mock.calls[2][0], 'http://local').searchParams.get('cursor')!).order.sequence).toBe(11);
+  pending[2].complete(Response.json(newerPage));
+  await vi.waitFor(() => expect(reader.restoring).toBe(false));
+  expect(reader.restorationFailed).toBe(false);
+  expect(reader.pages.flatMap(page => page.items).map(item => item.key)).toEqual([anchorPage.items[0].key, newerPage.items[0].key]);
+});

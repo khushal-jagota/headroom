@@ -236,6 +236,9 @@
       const before = thread.scrollTop;
       thread.scrollTop = clamped;
       positionWritesPixels += thread.scrollTop - before;
+      // A tab can disappear between motion frames. Remember the line actually
+      // on screen without changing the motion's follow or gesture intent.
+      if (canMeasure()) saveLogicalAnchor(thread);
     }
   }
 
@@ -277,7 +280,7 @@
   }
 
   function saveLogicalAnchor(thread:HTMLDivElement):void{
-    if(reader===null||reader.restoring)return;
+    if(reader===null||reader.restoring||pendingOpen||!settledOnOpening||!placementReady)return;
     const top=thread.getBoundingClientRect().top;
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
@@ -287,7 +290,7 @@
 
   function onThreadScroll(): void {
     const thread = threadElement;
-    if (thread === null || !canMeasure() || conversationMotion(thread).active(positionMotion)) return;
+    if (thread === null || !canMeasure() || pendingOpen || !placementReady || conversationMotion(thread).active(positionMotion)) return;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return;
     jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels);
@@ -365,6 +368,18 @@
       .sort((a,b) => a.item!.order.sequence-b.item!.order.sequence || a.item!.order.slot-b.item!.order.slot);
     const next = candidates.find(candidate => candidate.item!.order.sequence >= viewAnchor!.order.sequence);
     return next?.node ?? candidates.at(-1)?.node ?? null;
+  }
+
+  /** Released previews keep their height but do not load until they approach the reader. */
+  function restorationPresentationReady(thread: HTMLDivElement): boolean {
+    if (contentElement === null) return false;
+    const viewport = thread.getBoundingClientRect();
+    for (const released of contentElement.querySelectorAll<HTMLElement>('[data-visible-content-state="released"]')) {
+      const bounds = released.getBoundingClientRect();
+      if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) return false;
+    }
+    return [...contentElement.querySelectorAll('[aria-busy="true"], [data-markdown-rendering]')].every(node =>
+      node.closest('[data-visible-content-state="released"], [data-visible-content-state="retained"]') !== null);
   }
 
   function landTheOpen(thread: HTMLDivElement): void {
@@ -478,11 +493,21 @@
         if (pendingOpen || !settledOnOpening || reader?.entryPhase === 'placing') {
           if (reader !== null && reader.pages.length === 0 && (reader.status === null || reader.loading)) return;
           const targetKey = reader?.entryTarget?.key ?? (viewAnchor && !viewAnchor.following ? viewAnchor.key : null);
+          if (viewAnchor !== null && !viewAnchor.following) {
+            const held = restoredAnchorElement(thread);
+            if (held) {
+              // This provisional hidden position gives lazy content near the held
+              // line a chance to hydrate before the final placement is revealed.
+              landTheOpen(thread);
+            }
+            if (!restorationPresentationReady(thread)) return;
+          }
           if (targetKey === null) landTheOpen(thread);
           const destination = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
           const target = targetKey === null ? destination : reader?.entryTarget === null || reader?.entryTarget === undefined ? restoredAnchorElement(thread) ?? undefined : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === targetKey);
           if (target === undefined) return;
-          if (!presentationReady(target)) {
+          const restoringAnchor = viewAnchor !== null && !viewAnchor.following;
+          if (!restoringAnchor && !presentationReady(target)) {
             if (targetKey !== null) return;
             const viewport = thread.getBoundingClientRect();
             // A held lazy body cannot hide an available tool or message beside its placeholder.
@@ -497,7 +522,7 @@
           } else pendingPresentationTarget = null;
           // Position while hidden, then let active lazy blocks finish their own presentation.
           await tick();
-          if (startedIn !== generation || !canMeasure() || thread !== threadElement || !provisionalNewest && !presentationReady(target)) return;
+          if (startedIn !== generation || !canMeasure() || thread !== threadElement || !provisionalNewest && !restoringAnchor && !presentationReady(target)) return;
           geometry = threadGeometry(thread, reservedSpaceElement);
           takeTheReading(geometry.read(reservedSpacePixels));
         }
@@ -717,7 +742,7 @@
       requestReconciliation();
     });
     const acceptanceObserver = new MutationObserver(() => { repairLayout(thread); requestReconciliation(); });
-    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "aria-busy", "data-markdown-rendering"]});
+    acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "aria-busy", "data-markdown-rendering", "data-visible-content-state"]});
     observer.observe(thread);
     observer.observe(content);
     return () => { thread.removeEventListener('conversation-text-presentation', onTextPresentation); observer.disconnect(); acceptanceObserver.disconnect(); stopFollowing(); conversationMotion(thread).cancel(positionMotion); };

@@ -470,6 +470,11 @@
   </div>
 
   {#if conversationState !== "rest" && transcriptVisible}
+  {#if reader?.restorationFailed}
+    <div class="chat-receipt" role="status" data-conversation-restoration-status="error">Your conversation position did not load.
+      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>
+    </div>
+  {/if}
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->

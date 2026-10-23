@@ -748,6 +748,13 @@ person — a wheel, a finger, a hand on the scrollbar — so nothing the thread 
 to itself is mistaken for them; while they are reading elsewhere nothing moves
 them, and the jump button is the way back.
 
+Returning to a browser tab restores the line the person left and its offset in the
+view, even if they were at the newest message. The existing logical anchor carries
+that position. Content that arrived while the tab was hidden stays below it and
+does not start live follow. The reader restores a bounded neighborhood around the
+anchor before the viewport places it. If that read fails, the position stays pending
+and the person can retry. Visible live text keeps its normal line-by-line follow.
+
 ## Reading a turn
 
 A turn is one thing in the thread, however much it took to produce. While it runs

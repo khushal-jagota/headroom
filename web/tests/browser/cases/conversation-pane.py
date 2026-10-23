@@ -3011,6 +3011,21 @@ def _position_commit(browser, url):
             assert max(row['bottom'] for row in frames)-min(row['bottom'] for row in frames)<=2,frames
             assert max(row['contentBottom'] for row in frames)-min(row['contentBottom'] for row in frames)<=3,frames
             proof['contraction'].append({'trigger':trigger,'frames':frames})
+        # The existing send fixture proves the held message remains 32px below the top.
+        page.goto(url)
+        page.evaluate("window.__setupScrollRegression('plain')")
+        _settle_conversation_layout(page)
+        page.evaluate('window.__sendScrollRegression(true)')
+        _settle_conversation_layout(page)
+        def sent_gap():
+            return page.locator('[data-conversation-thread]').evaluate("""thread=>{const row=thread.querySelector('[data-conversation-outgoing], [data-conversation-row="prompt"]');return row.getBoundingClientRect().top-thread.getBoundingClientRect().top;}""")
+        held_gap=sent_gap()
+        assert abs(held_gap-32)<=2,held_gap
+        page.evaluate('window.__answerScrollRegression(1)')
+        _settle_conversation_layout(page)
+        answered_gap=sent_gap()
+        assert abs(answered_gap-32)<=2,answered_gap
+        proof['sentHold']={'beforeAnswer':held_gap,'afterAnswer':answered_gap}
         # A real live-output body version change retains multiline 120ms line cadence.
         page.goto(url+'?reader=1&live-stream=1')
         page.locator('[data-conversation-entry="complete"]').wait_for()
@@ -3025,10 +3040,18 @@ def _position_commit(browser, url):
           const sample=()=>{frames.push({ms:performance.now()-start,top:thread.scrollTop,growth:thread.scrollHeight-before});if(performance.now()-start<1800)requestAnimationFrame(sample);else resolve(frames);};sample();
         })""")
         moving=[b for a,b in zip(frames,frames[1:],strict=False) if b['top']-a['top']>.5]
+        # Linear per-line motion exposes its duration as line height / screen speed.
+        # This measures the written pixels, rather than a duration constant or call.
+        import statistics
+        line_height=page.locator('[data-conversation-content]').evaluate('node=>parseFloat(getComputedStyle(node.lastElementChild).lineHeight)')
+        speeds=[(b['top']-a['top'])/(b['ms']-a['ms']) for a,b in zip(frames,frames[1:],strict=False)
+          if b['top']-a['top']>1 and 8 < b['ms']-a['ms'] < 30]
+        observed_line_ms=line_height/statistics.median(speeds)
+        assert 100 <= observed_line_ms <= 145, {'lineHeight':line_height,'observedLineMs':observed_line_ms,'frames':frames}
         proof['streaming']={'frames':frames,'events':page.evaluate('window.__presentationEvents')}
         assert len(moving)>3 and moving[-1]['ms']>300,proof['streaming']
         assert frames[-1]['top']-frames[0]['top']<=frames[-1]['growth']+2,frames
-        proof['streaming']={'frames':frames,'arrivalHeight':frames[-1]['growth'],'events':page.evaluate('window.__presentationEvents')}
+        proof['streaming']={'frames':frames,'arrivalHeight':frames[-1]['growth'],'observedLineMs':observed_line_ms,'lineHeight':line_height,'events':page.evaluate('window.__presentationEvents')}
         proof['seconds']=round(time.perf_counter()-started,3)
         proof['newHosts']=0
         (output/'position-commit-proof.json').write_text(json.dumps(proof,indent=2))
@@ -3038,10 +3061,170 @@ def _position_commit(browser, url):
         (output/'position-commit-latest.json').write_text(json.dumps(proof,indent=2))
         page.close()
 
+def _tab_return(browser, url):
+    """A remembered row and its pixel offset survive hidden backlog admission."""
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
+    output.mkdir(parents=True, exist_ok=True)
+    proof = []
+    page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
+    reading = """() => {
+      const thread=document.querySelector('[data-conversation-thread]'), top=thread.getBoundingClientRect().top;
+      const row=[...thread.querySelectorAll('[data-conversation-view-key]')].find(row=>row.getBoundingClientRect().bottom>top+1);
+      return {key:row?.dataset.conversationViewKey,offset:row?row.getBoundingClientRect().top-top:null,scroll:thread.scrollTop};
+    }"""
+    hidden = """() => {
+      window.__fixtureVisible=false;
+      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__fixtureVisible?'visible':'hidden'});
+      document.dispatchEvent(new Event('visibilitychange'));
+    }"""
+    sample_return = """held => {
+      window.__returnFrames=[];window.__stopReturnFrames=false;
+      const sample=()=>{
+        const thread=document.querySelector('[data-conversation-thread]');
+        const region=document.querySelector('.conversation-transcript-region');
+        const row=[...thread.querySelectorAll('[data-conversation-view-key]')].find(row=>row.dataset.conversationViewKey===held.key);
+        const visible=getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
+        window.__returnFrames.push({ms:performance.now(),visible,scroll:thread.scrollTop,
+          offset:row?row.getBoundingClientRect().top-thread.getBoundingClientRect().top:null});
+        if(!window.__stopReturnFrames)requestAnimationFrame(sample);
+      };
+      window.__fixtureVisible=true;requestAnimationFrame(sample);document.dispatchEvent(new Event('visibilitychange'));
+    }"""
+
+    def wait_for_reveal():
+        page.wait_for_function('''() => {
+          const thread=document.querySelector('[data-conversation-thread]');
+          const region=document.querySelector('.conversation-transcript-region');
+          return thread&&region&&getComputedStyle(thread).visibility!=='hidden'
+            &&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
+        }''',timeout=10000)
+        # Keep sampling after reveal so a deferred reconciliation cannot hide a snap.
+        page.wait_for_timeout(350)
+
+    def assert_frames(held, frames):
+        visible = [frame for frame in frames if frame['visible']]
+        assert visible, frames
+        assert all(frame['offset'] is not None and abs(frame['offset']-held['offset']) <= 1 for frame in visible), (held, visible)
+
+    try:
+        for position, backlog, admission in (
+            ('scrollback', 0, 'immediate'), ('latest', 0, 'immediate'),
+            ('scrollback', 120, 'immediate'), ('latest', 120, 'immediate'),
+            ('scrollback', 120, 'delayed'), ('scrollback', 120, 'failed'),
+            ('scrollback', 120, 'bodies'),
+        ):
+            page.goto(url+'?reader=1')
+            page.locator('[data-conversation-entry="complete"]').wait_for()
+            _settle_conversation_layout(page)
+            if position == 'scrollback':
+                page.locator('[data-conversation-thread]').hover()
+                page.mouse.wheel(0, -750)
+                page.wait_for_timeout(300)
+            held = page.evaluate(reading)
+            assert held['key'] and held['scroll'] > 0, held
+            page.evaluate(hidden)
+            page.wait_for_timeout(100)
+            calls_before = page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length')
+            page.evaluate('(count)=>window.__backlog(count)', backlog)
+            page.evaluate('(mode)=>{window.__returnProbe.hold=mode==="delayed";window.__returnProbe.fail=mode==="failed";window.__returnProbe.bodies=mode==="bodies";window.__returnProbe.bodyHold=mode==="bodies";}', admission)
+            page.wait_for_timeout(100)
+            assert page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length') == calls_before
+            page.evaluate(sample_return, held)
+            if admission == 'delayed':
+                page.wait_for_function('window.__returnProbe.waiting>0')
+                page.wait_for_timeout(250)
+                waiting = page.evaluate('window.__returnFrames')
+                # Any retained content that the user can see must already be correct.
+                visible = [frame for frame in waiting if frame['visible']]
+                if visible:
+                    assert_frames(held, visible)
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+            if admission == 'bodies':
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.wait_for_timeout(250)
+                waiting=page.evaluate('window.__returnFrames')
+                visible=[frame for frame in waiting if frame['visible']]
+                if visible:
+                    assert_frames(held,visible)
+                page.evaluate('window.__returnProbe.releaseBodies()')
+            if admission == 'failed':
+                page.wait_for_timeout(350)
+                # Explicit retry retains the same remembered target after a failed read.
+                retry = page.get_by_role('button', name='Retry conversation position', exact=True)
+                retry.wait_for(state='visible')
+                failed = page.evaluate('window.__returnFrames')
+                visible = [frame for frame in failed if frame['visible']]
+                if visible:
+                    assert_frames(held, visible)
+                page.evaluate('window.__returnProbe.fail=false')
+                retry.click()
+            wait_for_reveal()
+            frames = page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
+            assert_frames(held, frames)
+            after = page.evaluate(reading)
+            assert after['key'] == held['key'] and abs(after['offset']-held['offset']) <= 1, (held, after)
+            assert page.locator('[data-conversation-view-key]').count() <= 300
+            page.screenshot(path=str(output / f'tab-return-{position}-{backlog}-{admission}.png'))
+            proof.append({'position':position,'backlog':backlog,'admission':admission,'held':held,'after':after,'frames':frames})
+        # A hidden transition can interrupt a visible 240ms Latest move between frames.
+        page.goto(url+'?reader=1')
+        page.locator('[data-conversation-entry="complete"]').wait_for()
+        _settle_conversation_layout(page)
+        page.locator('[data-conversation-thread]').hover()
+        page.mouse.wheel(0,-750)
+        page.wait_for_timeout(300)
+        before_motion=page.evaluate(reading)
+        page.evaluate("""before => {
+          window.__midMotionHeld=null;
+          const sample=()=>{
+            const thread=document.querySelector('[data-conversation-thread]');
+            const remaining=thread.scrollHeight-thread.clientHeight-thread.scrollTop;
+            if(thread.scrollTop>before.scroll+1&&remaining>2&&thread.closest('[data-conversation-pane]').hasAttribute('data-conversation-motion')){
+              const top=thread.getBoundingClientRect().top;
+              const row=[...thread.querySelectorAll('[data-conversation-view-key]')].find(row=>row.getBoundingClientRect().bottom>top+1);
+              window.__midMotionHeld={key:row.dataset.conversationViewKey,offset:row.getBoundingClientRect().top-top,scroll:thread.scrollTop};
+              window.__fixtureVisible=false;
+              Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__fixtureVisible?'visible':'hidden'});
+              document.dispatchEvent(new Event('visibilitychange'));
+              return;
+            }
+            requestAnimationFrame(sample);
+          };requestAnimationFrame(sample);
+        }""",before_motion)
+        page.get_by_role('button',name='Jump to latest message',exact=True).click()
+        page.wait_for_function('window.__midMotionHeld!==null')
+        held=page.evaluate('window.__midMotionHeld')
+        assert held['scroll']>before_motion['scroll']+1,(before_motion,held)
+        page.wait_for_timeout(150)
+        page.evaluate(sample_return,held)
+        wait_for_reveal()
+        frames=page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
+        assert_frames(held,frames)
+        after=page.evaluate(reading)
+        assert after['key']==held['key'] and abs(after['offset']-held['offset'])<=1,(held,after)
+        proof.append({'position':'mid-Latest-motion','backlog':0,'admission':'immediate','beforeMotion':before_motion,'held':held,'after':after,'frames':frames})
+        receipt={'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0,
+          'visibility':'Synthetic document visibility events exercise the production visibility handler in real Chromium.'}
+        (output/'tab-return-proof.json').write_text(json.dumps(receipt,indent=2))
+        print('TAB_RETURN_PROOF '+json.dumps({'cases':len(proof),'seconds':receipt['seconds'],'newHosts':0}),flush=True)
+    finally:
+        (output/'tab-return-latest.json').write_text(json.dumps({'cases':proof,'seconds':round(time.perf_counter()-started,3)},indent=2))
+        page.close()
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'tab-return':
+            _tab_return(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'position':
             _position_commit(browser, urls[0])
             return
@@ -3066,6 +3249,7 @@ def run(browser, urls):
         if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'intents':
             _latest_obsolete_intents(browser, urls[0])
             return
+        _tab_return(browser, urls[0])
         _position_commit(browser, urls[0])
         _settled_motion(browser, urls[0])
         _settled_unread_entry(browser, urls[0])

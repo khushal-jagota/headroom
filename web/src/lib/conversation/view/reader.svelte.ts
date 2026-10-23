@@ -40,6 +40,7 @@ export class ConversationViewReader {
     trouble = $state(false);
     loading = $state(false);
     restoring = $state(false);
+    restorationFailed = $state(false);
     entryPhase = $state<'idle' | 'loading' | 'placing' | 'error' | 'complete'>('idle');
     entryTarget = $state.raw<ViewReaderAnchor | null>(null);
     entryTargetReady = $state(false);
@@ -123,8 +124,47 @@ export class ConversationViewReader {
         this.requests.clear();
     }
     constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>(), private entryReadThroughSequence: number | null = null) {
-        this.restoring = initialAnchor !== null && !initialAnchor.following;
+        this.restoring = transcript && initialAnchor !== null && !initialAnchor.following;
         if (transcript && entryReadThroughSequence !== null && initialAnchor === null) this.entryPhase = 'loading';
+    }
+    /** Restore a bounded neighborhood, not a page that ends at the held line.
+     * The newest snapshot already suffices when it still contains that line.
+     * Otherwise one older page and one newer page supply both sides of it. */
+    private async restoreAnchor(): Promise<void> {
+        if (!this.restoring || !this.initialAnchor || this.disposed) return;
+        const anchor = this.initialAnchor;
+        let page = this.pages.find(page => page.scope.kind === 'timeline');
+        if (!page?.items.some(item => item.key === anchor.key)) {
+            const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline,
+                order: { ...anchor.order, slot: anchor.order.slot + 1 } };
+            if (!await this.load(timeline, cursor, 'older', true)) {
+                this.failRestoration();
+                return;
+            }
+            page = this.pages.find(page => page.scope.kind === 'timeline');
+        }
+        if (this.disposed) return;
+        if (page?.newer && !await this.load(timeline, page.newer, 'newer')) {
+            this.failRestoration();
+            return;
+        }
+        if (this.disposed) return;
+        this.restoring = false;
+        this.restorationFailed = false;
+        this.changed();
+        if (this.source === null) void this.connect().catch(() => undefined);
+    }
+    private failRestoration(): void {
+        if (this.disposed) return;
+        this.restorationFailed = true;
+        this.loading = false;
+        this.trouble = true;
+        this.changed();
+    }
+    retryRestoration(): void {
+        if (!this.restorationFailed) return;
+        this.restorationFailed = false;
+        void this.restoreAnchor();
     }
     /** Entry is an operation, not a moving copy of the durable read watermark. */
     private async prepareEntry(): Promise<void> {
@@ -278,7 +318,7 @@ export class ConversationViewReader {
         this.pages = pages.filter(p => p.items.length > 0 || scopeKey(p.scope) === preferred);
     }
     async connect(): Promise<void> {
-        if (this.disposed || this.requests.size > 0 || this.entryStarted && ['loading', 'placing', 'error'].includes(this.entryPhase))
+        if (this.disposed || this.requests.size > 0 || this.restoring && this.receivedSnapshot || this.entryStarted && ['loading', 'placing', 'error'].includes(this.entryPhase))
             return;
         if (this.reconnecting !== null)
             return this.reconnecting;
@@ -311,7 +351,7 @@ export class ConversationViewReader {
             const source = new EventSource(this.url('/tail', query));
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
-            const ready = () => { this.loading = false; this.trouble = false; this.changed(); if (!settled) {
+            const ready = () => { this.loading = false; this.trouble = this.restorationFailed; this.changed(); if (!settled) {
                 settled = true;
                 resolve();
             } };
@@ -344,11 +384,7 @@ export class ConversationViewReader {
                     }
                     this.noteStatus(value.status);
                     this.coverage = value.coverage.through_sequence;
-                    if (this.restoring && this.initialAnchor) {
-                        const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline, order: { ...this.initialAnchor.order, slot: this.initialAnchor.order.slot + 1 } };
-                        await this.load(timeline, cursor, 'older', true);
-                        this.restoring = false;
-                    }
+                    if (this.restoring) await this.restoreAnchor();
                     if (this.entryPhase === 'loading' && !this.entryStarted) {
                         if (value.coverage.through_sequence <= (this.entryReadThroughSequence ?? 0)) {
                             // The admitted snapshot proves that there is no unread range.
