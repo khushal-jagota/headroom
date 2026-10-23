@@ -1,7 +1,7 @@
 /* The single token file. The app's entire personality is tunable here — no other
  * file hardcodes a colour, radius, duration, spacing step, border width, size, or
  * font. Near black values: restrained neutral-dark surfaces, one deliberate slate-blue
- * brand accent meaning "needs the human", a closed five-size type scale. No new
+ * brand accent meaning "needs the human", a shared sans type scale. No new
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
 :root {
@@ -101,14 +101,17 @@
   --border-color: rgba(255, 255, 255, 0.10);
   --shadow-float: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
 
-  /* Type — two font stacks plus the closed sans size scale */
+  /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
+   * preserve the former serif hierarchy under the owner's size-preservation exception. */
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --type-xs: 11px;
   --type-sm: 13px;
   --type-md: 15px;
   --type-lg: 20px;
-  --type-xl: 24px;
+  --type-prose-lg: 18px;
+  --type-display: 28px;
+  --type-hero: 30px;
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
    * the ladder because touch screens must raise them: iOS Safari zooms the whole

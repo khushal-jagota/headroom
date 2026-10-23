@@ -12,7 +12,7 @@
 
 [data-screen="config"] :is(.agents-page-head, .agents-detail-head) h1 {
   font-family: var(--font-ui);
-  font-size: var(--type-xl);
+  font-size: var(--type-display);
   font-weight: 500;
   letter-spacing: var(--tracking-title);
   line-height: 1.2;

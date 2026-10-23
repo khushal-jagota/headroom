@@ -828,8 +828,10 @@ remains only as the fallback that turns a raw field, Stage, or Worker type id in
 has loaded. Shared date helpers format the ordinary dates that remain.
 
 **Typography.** Every screen uses the shared system sans stack for content and
-controls. Former serif body text is 15px, section titles are 20px, and display titles
-and large usage figures are 24px. Existing sans sizes and the composer's touch-safe
+controls. The owner's size-preservation guidance keeps former serif 18px prose,
+28px display titles, and 30px hero figures through shared sans tokens. Smaller body
+text uses 15px and section titles use 20px. These retained sizes are an explicit
+exception to the five-size limit. Existing sans sizes and the composer's touch-safe
 input size remain as they are. Code, diffs, and tool output keep monospace for
 alignment. `DESIGN.md` defines the typography and visual hierarchy.
 
