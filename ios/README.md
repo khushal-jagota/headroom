@@ -315,7 +315,8 @@ The plus menu accepts files, library pictures, camera photos and a slash command
 use the existing delivery modes. Stop interrupts the running turn. The separate
 microphone remains available while working or editing a draft.
 
-Messages appear immediately with Sending, Sent, Queued or an explicit failure.
+Messages appear immediately with Sending, Queued or an explicit failure.
+Successfully delivered messages have no delivery label in the thread.
 The local message and its server row share one visual identity and position.
 Confirmed refusal and connection failures offer Retry in place. A timeout or lost
 response remains uncertain and cannot be retried blindly. Suppressed delivery

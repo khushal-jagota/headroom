@@ -56,7 +56,7 @@ struct WorkspaceCard: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if chief { ConversationSignalMark(signal: signal) }
                     }
-                }.frame(minHeight: 44, alignment: .bottom).contentShape(Rectangle())
+                }.frame(minHeight: 44, alignment: chief ? .top : .bottom).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .conversationAccessibility(label: [project, title].compactMap { $0 }.joined(separator: ", "), signal: signal)

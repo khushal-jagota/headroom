@@ -333,7 +333,7 @@ private struct ConversationThread: View {
                                 if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
                                     Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
                                 } else { Text(.init(row.text)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
-                                if let note = row.note {
+                                if let note = row.note, note != "Sent" {
                                     HStack {
                                         if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
                                         Text(note).foregroundStyle(note.hasPrefix("Not sent") ? PanelsTheme.error : PanelsTheme.faint)
