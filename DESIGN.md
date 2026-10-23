@@ -51,18 +51,16 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **The scales are closed.** The sans type sizes, the 4/8/12 radius steps, the fixed spacing
-   scale. Snap to them; don't invent a size for a one-off. A new category needs evidence of need
-   (`PRINCIPLES.md`), not taste. The one added category is the **serif ladder** (`--font-serif`
-   plus its six `--type-serif-*` sizes) — the voice below earns it.
+8. **The scales are closed.** The shared type scale is 11, 13, 15, 20, and 24px;
+   the radius and spacing scales are fixed too. Snap new work to them. Existing sans
+   size exceptions remain until a separate design decision changes those surfaces.
 
-9. **The system speaks in serif; the machine stays sans.** Everything the product or its agents
-   *say* is set in serif (Newsreader) — ticket titles and prose, recaps, proposals, notes, field
-   values, day and sprint bodies, conversation messages, the capture inputs, the empty-state lines.
-   Everything that is a *control or a fact* stays in the sans UI face — the nav, labels, pills,
-   buttons, filters, counts, key hints, status words, dates. The split *is* the hierarchy: on any
-   surface the words are the content and the small sans elements are the machinery. No italics
-   except input placeholders.
+9. **One sans voice.** Content and controls use the same system sans stack
+   (`--font-ui`). Hierarchy comes from size, weight, spacing, and emphasis. Former
+   serif body text uses 15px, section titles use 20px, and display titles and large
+   usage figures use 24px. Code, diffs, tool output, and `code`, `pre`, `kbd`, and
+   `samp` retain monospace because alignment carries meaning. No italics except
+   input placeholders.
 
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
     and a long soft shadow, with the solid-amber Approve glowing beneath.
@@ -77,10 +75,10 @@ bubble-less assistant, recessed composer).
   bubble-less **worker** prose, compact closed thought and tool details, one persistent
   status line, explicit permissions, and a recessed composer carrying the model and effort
   in force plus Steer, Send Now, run-when-free, Stop and New when applicable.
-- **The serif redesign, across every screen** (`assets/tokens.css` serif ladder;
-  `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — the serif/sans voice
-  split, the amber-only accent, the line diet, and the single depth-bearing ask surface, applied
-  to Day, Review, Workspace, Ticket, Sprint, Backlog, and Ideas, plus the shell presence readout.
+- **Shared typography across every screen** (`assets/tokens.css` type scale;
+  `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — one
+  system sans voice for content and controls, with monospace for aligned technical
+  text. Size, spacing, and emphasis carry the hierarchy.
 
 ## Framing
 
