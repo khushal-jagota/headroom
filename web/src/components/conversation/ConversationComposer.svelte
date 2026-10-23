@@ -25,6 +25,7 @@
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
+  import UnifiedModelPicker from "./UnifiedModelPicker.svelte";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -1106,26 +1107,43 @@
           <div class="chat-add" bind:this={addMenuElement}>
             <button
               type="button"
-              class="chat-image chat-add-btn"
+              class="chat-everything chat-add-btn"
               class:on={pendingImages.length + pendingFiles.length > 0}
               data-conversation-add
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
               aria-expanded={addMenuOpen}
-              aria-label="Add a picture, a file, a photo, or a command"
-              title="Add a picture, a file, a photo, or a command"
+              aria-label="Everything: conversation actions"
+              title="Conversation actions"
               disabled={inputDisabled}
               onclick={() => (addMenuOpen = !addMenuOpen)}
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
+              Everything
             </button>
             {#if addMenuOpen}
-              <div class="chat-add-menu" role="menu">
+              <div class="chat-add-menu" role="dialog" aria-label="Conversation actions">
+                {#if showRunPicker}
+                  <UnifiedModelPicker
+                    chevron="drawn"
+                    view={runControlsView.picker}
+                    bind:snapshots={backends}
+                    models={runControlsView.pickerSource.models}
+                    backendEffortOptions={runControlsView.pickerSource.backendEffortOptions}
+                    showUsage
+                    disabled={runControlsView.disabled}
+                    attributes={{ "data-conversation-picker-model": "" }}
+                    afterChoose={() => {}}
+                    onChooseBackend={(backend) => runControlIntents.chooseBackend(backend)}
+                    onChooseModel={runControlIntents.chooseModel}
+                  />
+                {/if}
+                {#if voiceAvailable}
+                  <button type="button" class="chat-add-item" data-voice-record
+                    disabled={inputDisabled} onclick={() => { addMenuOpen = false; void voice?.startRecording(); }}
+                  >Record a voice message</button>
+                {/if}
                 <button
                   type="button"
                   class="chat-add-item"
-                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-image
                   data-conversation-image-count={pendingImages.length || undefined}
@@ -1140,7 +1158,6 @@
                 <button
                   type="button"
                   class="chat-add-item"
-                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-file
                   data-conversation-file-count={pendingFiles.length || undefined}
@@ -1155,7 +1172,6 @@
                 <button
                   type="button"
                   class="chat-add-item"
-                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-camera
                   onclick={() => { addMenuOpen = false; cameraInput?.click(); }}
@@ -1170,7 +1186,6 @@
                 <button
                   type="button"
                   class="chat-add-item"
-                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-slash
                   onmousedown={(event) => event.preventDefault()}
@@ -1233,8 +1248,6 @@
             <ComposerRunControls
               view={runControlsView}
               intents={runControlIntents}
-              bind:snapshots={backends}
-              beforeSubmit={microphone}
             />
           {:else}
             <span class="chat-submit">{@render microphone()}</span>
@@ -1258,6 +1271,11 @@
 <style>
   /* One affordance where three used to be, at the size a finger can find. */
   .chat-add { position: relative; display: inline-flex; }
+  .chat-everything {
+    border: 0; background: transparent; color: var(--text-faintest);
+    padding: 0; font: inherit; cursor: pointer;
+  }
+  .chat-everything:hover { color: var(--text-strong); }
   .chat-add-menu {
     position: absolute;
     inset-block-end: calc(100% + var(--space-2));
