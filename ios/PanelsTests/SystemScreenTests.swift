@@ -11,6 +11,17 @@ final class SystemScreenTests: XCTestCase {
         XCTAssertEqual(UsagePresentation.cost(nil), "—")
         XCTAssertNotEqual(UsagePresentation.number(0), "—")
     }
+    // Gap: GET-only tests cannot prove explicit refresh reaches the server's provider
+    // read door, or that a partial HTTP-200 failure remains visible. In-memory transport.
+    func testExplicitRefreshUsesPostAndPreservesPartialFailure() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [UsageRefreshStub.self]
+        let client = APIClient(baseURL: URL(string: "https://usage.invalid")!, session: URLSession(configuration: config))
+        let result = try await client.refreshUsageBackends()
+        XCTAssertEqual(result.backends.first?.cachedUsage?.observedAt, "2026-10-22T19:21:07Z")
+        XCTAssertEqual(result.failure, "Claude read failed; previous limits retained.")
+        try await client.refreshRecordedUsage()
+    }
     func testCapacityReadingsDoNotConfusePerCoreCPUOrMissingMemoryWithZero() {
         XCTAssertEqual(VPSPresentation.cpuShare(180, cores: 12), 15)
         XCTAssertNil(VPSPresentation.cpuShare(20, cores: 0))
@@ -31,4 +42,24 @@ final class SystemScreenTests: XCTestCase {
             XCTAssertNil(SettingsServerAddress.validated(address), address)
         }
     }
+}
+
+private final class UsageRefreshStub: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertNil(request.url?.query)
+        let body: String
+        switch request.url!.path {
+        case "/api/conversation/backends/refresh":
+            body = #"{"backends":[{"backend_key":"codex","installed":true,"version":null,"cached_usage":{"observed_at":"2026-10-22T19:21:07Z","windows":[]},"diagnoses":[]}],"usage_outcomes":[{"backend_key":"codex","outcome":"succeeded","detail":null},{"backend_key":"claude","outcome":"failed","detail":"Claude read failed; previous limits retained."}]}"#
+        case "/api/conversation/usage/refresh": body = #"{"sources":[]}"#
+        default: XCTFail("Unexpected refresh path"); body = "{}"
+        }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
