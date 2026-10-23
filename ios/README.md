@@ -443,3 +443,22 @@ The conversation host test adds the new suppressed fate so it cannot be mistaken
 The iOS app no longer displays interruption accounts or manual worker restart in
 More or conversations, and no longer requests the interruption endpoint. The
 remaining deployment status decoding does not require interruption fields.
+
+## Ticket disclosure and conversation input spacing
+
+Ticket Steps starts collapsed, with the total count visible in the same 50-point
+row as Artifacts. The list opens inline; individual step links keep their reading
+pages. Both disclosures use the existing plain toggle without an extra animation.
+
+Speech updates trim leading and trailing whitespace from the recognized text and
+the existing draft before joining them. Internal line breaks remain. The multiline
+input uses its intrinsic height, within the existing six-line limit. The conversation
+card relies on the system bottom safe area rather than adding another 12-point gap;
+its top clearance and page-content reservation follow that placement.
+
+Verification for this change: generic iOS Simulator build with four jobs, six
+conversation host tests and six system/synchronization host tests. The added speech
+test covers the previously untested trailing-newline draft path using the existing
+host model, without a connected host. Locked PanelsLaneA fixture captures compare
+the bottom spacing and show collapsed Steps. They do not exercise microphone
+recognition, keyboard transitions, or live-server behavior.
