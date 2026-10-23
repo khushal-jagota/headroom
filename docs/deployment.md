@@ -418,6 +418,18 @@ supervisor identifies adopted descendants directly and uses PID handles when sig
 them, so a reused PID cannot select an unrelated process. Service-manager apps are
 outside this owned tree. There is no independent heartbeat that can outlive the work.
 
+Each renewal receipt reports the deployment, phase, and exact saved timestamps.
+When reconciliation succeeds, every committed renewal has one receipt.
+If the command exits before the writer reports its commit, the
+supervisor stops the writer and recovers that receipt under the same lock. A competing
+transition cannot supply the receipt. Recovery never extends the lease and has a bounded
+wait. An attempt that stops before a commit produces no receipt.
+
+If recovery cannot prove the commit, the step reports failure explicitly. A recovered
+receipt does not erase a writer error. The command keeps its own nonzero exit status.
+Status cards read the saved lifecycle file directly. Their freshness does not depend
+on these log receipts.
+
 Renewal lock acquisition is limited to five seconds. A refused renewal prevents an
 ordinary command from starting. If renewal fails during a command, the supervisor stops
 renewing and lets that command finish before failing the step; it must not interrupt an
@@ -431,14 +443,19 @@ retain their existing order and isolated paths.
 `GET /api/deployment-status` projects that evidence into `idle`, `preparing`,
 `restarting`, `back_up`, `problem`, or `unknown`. Preparation and restart evidence
 expires 15 minutes after the runner last renews it. A proved success appears as
-`back_up` for 24 hours and only when the running app SHA exactly matches the requested SHA. Failure and
+a brief Deployed confirmation. The interval starts at the recorded success time,
+so reads and reconnects never extend it. Existing records use that same time without
+migration. Record evidence remains valid for 24 hours, independently of the card.
+The record must prove that the requested release was served, and the responding
+server must run that release. An open tab can still run the previous release.
+Its update prompt takes priority over Deployed. Failure and
 rollback remain problems until a later deployment supersedes them. The server watches
 the lifecycle path and sends the existing contentless change signal after create,
 replace, change, or deletion, so connected browsers re-read the canonical file.
 The connected shell shows “Deployed” for fresh success, with a steady status mark.
 It removes that confirmation at expiry, even without another response from the server.
-The 24-hour window schedules a browser timer for at most 86,400,001 milliseconds,
-which is below the signed 32-bit limit of 2,147,483,647 milliseconds.
+The shell uses the earlier of record expiry and the confirmation deadline.
+Missing or invalid confirmation evidence returns the shell to its connection status.
 
 An app deployed before this lifecycle feature cannot expose the new status endpoints or
 observe runner updates while that old app is serving. The current workflow tool and

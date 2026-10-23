@@ -58,6 +58,8 @@ function actionFixture() {
   vi.stubGlobal('MutationObserver',class {observe(){}disconnect(){}});
   class Surface extends EventTarget {
     parentElement:null=null;isConnected=true;clientHeight=100;scrollHeight=100;writes:number[]=[];value=0;
+    style={value:'',priority:'',getPropertyValue(){return this.value},getPropertyPriority(){return this.priority},
+      setProperty(_name:string,value:string,priority=''){this.value=value;this.priority=priority},removeProperty(){this.value='';this.priority=''}};
     get scrollTop(){return this.value}set scrollTop(value:number){this.writes.push(value);this.value=value}
     getBoundingClientRect(){return {top:0,bottom:100}}
   }
@@ -84,6 +86,87 @@ function actionFixture() {
   return {root,newRoot:()=>new Root(),surface,coordinator,action,move,page,options,press,frame,rows:(value:typeof rows)=>{rows=value},dispose:()=>{action.destroy();coordinator.dispose()}};
 }
 
+describe('pending page retains admitted user movement',()=>{
+  it('captures positive and negative movement before a queued scroll event',()=>{
+    for(const delta of [20,-20]) {
+      const f=actionFixture();try {
+        const initial=delta<0?100:0;
+        if(initial){f.surface.scrollHeight=200;f.surface.scrollTop=initial;f.rows([{id:'a',top:110},{id:'b',top:140}])}
+        f.press();f.surface.scrollHeight=1000;
+        f.surface.scrollTop=initial+delta;
+        // No scroll event runs before the real publication boundary.
+        f.coordinator.captureBeforePublication();
+        f.rows([{id:'a',top:initial+110},{id:'c',top:initial+140}]);
+        f.action.update(f.options(2,f.page('next','after',['a','c'])));
+        f.coordinator.flush();
+        expect(f.surface.scrollTop).toBe(initial+100+delta);
+        f.surface.dispatchEvent(new Event('scroll'));f.frame();
+        expect(f.move).toHaveBeenCalledTimes(1);
+      } finally {f.dispose()}
+    }
+  });
+  it('excludes range contraction during motion and publication from admitted travel',()=>{
+    const f=actionFixture();try {
+      f.surface.scrollHeight=200;f.surface.scrollTop=100;
+      f.rows([{id:'a',top:110},{id:'b',top:140}]);f.press();
+      // Motion shrinks the range before its queued native scroll event.
+      f.surface.scrollHeight=150;f.surface.scrollTop=50;
+      f.surface.dispatchEvent(new Event('scroll'));
+      f.surface.scrollTop=40;f.coordinator.captureBeforePublication();
+      // Publication contracts the range again during the suspended phase.
+      f.surface.scrollHeight=100;f.surface.scrollTop=0;
+      f.surface.dispatchEvent(new Event('scroll'));
+      f.rows([{id:'a',top:210},{id:'c',top:240}]);
+      f.action.update(f.options(2,f.page('next','after',['a','c'])));
+      f.coordinator.flush();expect(f.surface.scrollTop).toBe(190);
+    } finally {f.dispose()}
+  });
+  it('synchronizes a publication without an eligible winner before later user movement',()=>{
+    const f=actionFixture();try {
+      f.surface.scrollHeight=200;f.surface.scrollTop=100;
+      f.rows([{id:'a',top:110},{id:'b',top:140}]);f.press();
+      f.coordinator.captureBeforePublication();f.surface.scrollHeight=100;f.surface.scrollTop=0;
+      // Another publication leaves this action's request and intent pending.
+      f.action.update(f.options(2));f.coordinator.flush();
+      f.surface.scrollHeight=1000;f.surface.scrollTop=20;
+      f.surface.dispatchEvent(new Event('scroll'));
+      f.coordinator.captureBeforePublication();f.rows([{id:'a',top:110},{id:'c',top:140}]);
+      f.action.update(f.options(3,f.page('next','after',['a','c'])));
+      f.coordinator.flush();expect(f.surface.scrollTop).toBe(120);
+    } finally {f.dispose()}
+  });
+  it('preserves a deferred card offset across a parent write and later user travel',()=>{
+    const f=actionFixture();let parent:ReturnType<typeof navigationScrollWindow>|undefined;
+    try {
+      const parentRoot=f.newRoot();
+      parent=navigationScrollWindow(parentRoot as unknown as HTMLElement,{...f.options(),pageRestoration:{...f.options().pageRestoration!,priority:'parent'}});
+      f.press();const event=new Event('keydown',{cancelable:true});Object.defineProperty(event,'key',{value:'End'});parentRoot.dispatchEvent(event);
+      f.coordinator.captureBeforePublication();f.surface.scrollHeight=1000;
+      f.rows([{id:'a',top:110},{id:'c',top:140}]);
+      const next=f.options(2,f.page('next','after',['a','c']));
+      f.action.update(next);parent.update({...next,pageRestoration:{...next.pageRestoration!,priority:'parent'}});
+      expect(f.coordinator.flush()).toBe(true);expect(f.surface.scrollTop).toBe(100);
+      f.surface.scrollTop=130;f.surface.dispatchEvent(new Event('scroll'));
+      f.coordinator.captureBeforePublication();
+      f.rows([{id:'a',top:210},{id:'c',top:240}]);
+      expect(f.coordinator.flush()).toBe(false);expect(f.surface.scrollTop).toBe(230);
+    } finally {parent?.destroy();f.dispose()}
+  });
+  it('shares native anchoring ownership and restores its exact inline policy on retirement and disposal',()=>{
+    const f=actionFixture();try {
+      f.surface.style.setProperty('overflow-anchor','auto','important');
+      const release=f.coordinator.holdNativeAnchoring(f.surface as unknown as HTMLElement);
+      f.press();expect(f.surface.style.value).toBe('none');
+      release();release();expect(f.surface.style.value).toBe('none');
+      // Disappearance retires the action holder, including its previous priority.
+      f.rows([]);f.coordinator.flush();
+      expect(f.surface.style.value).toBe('auto');expect(f.surface.style.priority).toBe('important');
+      f.surface.style.removeProperty();f.rows([{id:'a',top:10}]);f.press();
+      f.dispose();expect(f.surface.style.value).toBe('');expect(f.surface.style.priority).toBe('');
+    } finally {f.dispose()}
+  });
+});
+
 describe('explicit intent waits for the actual rendered page',()=>{
   it('does not restore ordinary publications or interpret another owner restoration as user travel',()=>{
     const f=actionFixture();let sibling:ReturnType<typeof navigationScrollWindow>|undefined;
@@ -94,7 +177,7 @@ describe('explicit intent waits for the actual rendered page',()=>{
       root.querySelectorAll=()=>[{id:'x',getBoundingClientRect:()=>({top:-f.surface.scrollTop,bottom:20-f.surface.scrollTop})},
         {id:'y',getBoundingClientRect:()=>({top:20-f.surface.scrollTop,bottom:40-f.surface.scrollTop})}];
       sibling=navigationScrollWindow(root as unknown as HTMLElement,{...f.options(2,f.page(null,'after',['x','y'])),move:siblingMove});
-      f.press();f.rows([{id:'a',top:110},{id:'c',top:140}]);
+      f.press();f.surface.scrollHeight=1000;f.rows([{id:'a',top:110},{id:'c',top:140}]);
       f.action.update(f.options(3,f.page('next','after',['a','c'])));f.coordinator.flush();
       expect(f.surface.writes).toEqual([100]);
       f.surface.dispatchEvent(new Event('scroll'));f.frame();

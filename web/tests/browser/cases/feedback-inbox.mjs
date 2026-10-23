@@ -24,7 +24,7 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
     updated_at: Date.now() / 1000, handled_at: null
   }];
   const requests: any[] = [];
-  let deployment = {state:"preparing", deployed_sha:null,target_sha:"abc",outcome:null,detail:null,valid_until:new Date(Date.now()+600000).toISOString()};
+  let deployment = {state:"preparing", deployed_sha:null,target_sha:"abc",outcome:null,detail:null,valid_until:new Date(Date.now()+600000).toISOString(),success_display_until:null as string | null};
   // The release the deploy produces. The monitor rechecks on pageshow.
   let servedSha = "booted";
   (window as any).__release = (sha: string) => {
@@ -32,8 +32,11 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
     window.dispatchEvent(new Event("pageshow"));
   };
   (window as any).__deployment = async (state: string) => {
-    // Each call renews the window, so a state is capturable at any point in the case.
-    deployment = {...deployment, state, valid_until:new Date(Date.now()+600000).toISOString()};
+    // Only a new fixture transition creates a success interval. Refetches and
+    // connection changes return this same deadline, just like the server.
+    deployment = {...deployment, state,
+      valid_until:new Date(Date.now()+(state === "back_up" ? 86400000 : 600000)).toISOString(),
+      success_display_until:state === "back_up" ? new Date(Date.now()+300000).toISOString() : null};
     await queryClient.invalidateQueries({queryKey:["deployment-status"]});
   };
   let interruptions = {accounts: [] as any[]};

@@ -86,7 +86,9 @@ def test_reopen_preserves_installed_retired_definitions_and_owner_specialists(
         name = definition["profile"]["specialist_skill"]
         source = f"---\nname: {name}\ndescription: Owner specialist\n---\n\nOwner custom prose.\n"
         conn.execute(
-            "INSERT INTO managed_skills(skill_name,source_text,updated_at) VALUES (?,?,?)",
+            "INSERT INTO managed_skills(skill_name,source_text,updated_at) VALUES (?,?,?) "
+            "ON CONFLICT(skill_name) DO UPDATE SET "
+            "source_text=excluded.source_text, updated_at=excluded.updated_at",
             (name, source, 456),
         )
     conn.commit()

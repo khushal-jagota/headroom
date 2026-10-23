@@ -404,7 +404,7 @@ describe("manager rail projection", () => {
 // Shared-publication adoption: these are browser adapters, not a new Signal policy.
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
-import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
+import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, navigationWorkingAgentCount, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
@@ -526,7 +526,7 @@ describe('shared Review and runtime counts',()=>{
     const records:NavigationRecord[]=[ask('b',2,{is_backlogged:true,blocked:true,terminal:true,worker_step_claim_out:true}),
       ask('c',2),ask('a',2),ask('earliest',1),ask('manager',0,{ceiling_holder:{kind:'chief',id:'chief'}}),
       ask('claim-only',0,{ticket_status:'empty',worker_step_claim_out:true,conversation_id:null}),
-      ...sourceRecords.slice(1).filter(record=>record.kind!=='chief').map(record=>record.kind==='manager' ? {...record,value:{...record.value,conversation_id:'manager-current'}} : record),conversation('historical'),conversation('manager-current'),
+      ...sourceRecords.slice(1).filter(record=>record.kind!=='chief').map(record=>record.kind==='manager' ? {...record,value:{...record.value,conversation_id:'manager-current'}} : record),conversation('historical'),conversation('unlinked'),conversation('manager-current'),
       {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:'conversation'}},
       {kind:'address',id:'history',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'historical',current:false,parent_kind:'chief',parent_id:'chief'}}];
     try {
@@ -536,20 +536,33 @@ describe('shared Review and runtime counts',()=>{
       if (manager?.kind==='conversation') manager.value.attention.current!.signal.working=false;
       adapter.publishSnapshot(currentSnapshot({...continuity,records}),'counts');
       let view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationWorkingAgentCount(view)).toBe(0);
       expect(navigationReviewPresentation(view)).toMatchObject({runningConversationCount:0,exactOutClaimCount:2,
         items:[{ticket_id:'earliest',field:'implementation',proposal_field:'plan'},{ticket_id:'a'},{ticket_id:'c'}]});
-      const active=conversation('conversation');active.value.attention.current!.signal.working=true;
+      const active=conversation('conversation',0,false);active.value.attention.current!.signal.working=true;
       const historical=conversation('historical');historical.value.attention.current!.signal.working=true;
       adapter.publishBatch(envelope({...continuity,base_revision:'0',revision:'1',upserts:[active,historical,conversation('manager-current')],deletes:[]}),encodeCursor({...continuity,revision:'1'}),'counts-batch');
       view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationWorkingAgentCount(view)).toBe(2);
       expect(navigationReviewPresentation(view).runningConversationCount).toBe(2);
+      expect(navigationReviewPresentation(view).currentConversationIds).toEqual(new Set(['conversation','manager-current']));
       const lost=knowledge.loseRuntime()!;
+      expect(navigationWorkingAgentCount(lost)).toBeNull();
       expect(navigationReviewPresentation(lost)).toMatchObject({runningConversationCount:null,exactOutClaimCount:2});
       // Backlogged b stays outside Review but still contributes its outclaim.
       expect(navigationReviewPresentation(lost).items.map(item=>item.ticket_id)).toEqual(['earliest','a','c']);
       const missing={...view,conversations:new Map([...view.conversations].filter(([id])=>id!=='conversation'))};
+      expect(navigationWorkingAgentCount(missing)).toBeNull();
       expect(navigationReviewPresentation(missing).runningConversationCount).toBeNull();
+      const staleConversations=new Map(view.conversations);
+      const current=staleConversations.get('conversation')!;
+      if(current.working.state!=='fresh')throw new Error('Expected current working fact');
+      staleConversations.set('conversation',{...current,working:{...current.working,state:'retained'}});
+      expect(navigationWorkingAgentCount({...view,conversations:staleConversations})).toBeNull();
+      staleConversations.set('conversation',{...current,working:{state:'unknown'}});
+      expect(navigationWorkingAgentCount({...view,conversations:staleConversations})).toBeNull();
       const empty={...view,publication:{...view.publication,records:[]}};
+      expect(navigationWorkingAgentCount(empty)).toBe(0);
       expect(navigationReviewPresentation(empty).runningConversationCount).toBe(0);
       // Identity is stricter than same-field membership; a newer body cannot wear an older stamp.
       const item=navigationReviewPresentation(view).items[0];

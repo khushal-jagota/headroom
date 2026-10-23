@@ -190,7 +190,7 @@ Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/
 
 ## Browser synchronization boundary
 
-The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary Manager headers and children, Chief child pagination, Review queue, shell work count, Ticket masthead and current-stage section, and Chief conversation pointer use it. Ordinary manager content and exact-identity proposal bodies remain separate detail reads.
+The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary Manager headers and children, Chief child pagination, Review queue, Ticket masthead and current-stage section, and Chief conversation pointer use it. Ordinary manager content and exact-identity proposal bodies remain separate detail reads.
 
 One presentation result belongs to each effective view identity. Shared indexes supply parent membership, identity joins, addresses, and Review facts. Knowledge changes invalidate the result even without a new publication. Feature modules own DOM assertions and dependency checks. The application captures relevant mounted observers before each command and retains bounded visibility evidence independently of the domain result.
 
@@ -198,7 +198,9 @@ The current-stage section admits detail only when public identity, control facts
 
 Ticket masthead Project names follow the existing parent-or-own Project rule. The masthead never rewrites the full detail object used by actions, fields, proposals, blockers, and configuration. Missing source membership cannot credit a retained masthead as current. Shared read errors appear once in a composed workspace. Distinct failed content or detail reads retain their own error lines.
 
-The Review and shell count deduplicates current Ticket, Chief, and existing manager conversation pointers. Historical-only and unlinked conversations do not contribute. The exact unfiltered Worker out-claim count remains a separate fact. Unknown runtime count is null and omits the runtime mark or count line. Known zero preserves the existing behavior.
+The shared browser API `navigationWorkingAgentCount(view)` returns the workspace-wide number of agents at work. It returns `null` when the view is absent or runtime authority is unavailable. For a scoped view, it uses the server's exact global total, including zero or `null`. It does not count the limited records resident in the browser. Filters, pagination, and record eviction do not reduce the total.
+
+For a complete publication, the API deduplicates current Ticket, Chief, and Manager conversation pointers. It counts fresh `working: true` facts and returns `null` if any current pointer lacks a fresh working fact. Historical-only and unlinked conversations do not contribute. Unread messages do not affect the count. The existing Review count delegates to this API. The exact unfiltered Worker out-claim count remains separate. This API adds no display or placement.
 
 The proposal review queue contains active Tickets that await owner approval and have a stage gate and a pending proposal. Backlogged Tickets do not contribute to this queue or its count, even when another selected surface loads their records. The Ticket API, navigation index, and browser presentation use this eligibility rule. Backlog preserves the proposal. Resume restores an otherwise eligible Ticket to the queue.
 

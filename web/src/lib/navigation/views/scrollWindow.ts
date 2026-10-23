@@ -20,6 +20,21 @@ export function navigationScrollWindow(root:HTMLElement,initial:ScrollWindowOpti
   let travel=0;
   let lastTop=surface.scrollTop;
   let restoring=false;
+  let publicationSuspended=false;
+  let releaseAnchoring:(()=>void)|undefined;
+  function captureMovement() {
+    const current=surface.scrollTop;
+    // A shrinking layout clamps the old position. Only travel beyond that
+    // normalized baseline changes the explicit intent's viewport offset.
+    const baseline=options.pageRestoration
+      ? Math.min(Math.max(0,lastTop),Math.max(0,surface.scrollHeight-surface.clientHeight)) : lastTop;
+    const delta=current-baseline;
+    if(!restoring&&!publicationSuspended) {
+      travel=Math.sign(delta);
+      if(pageIntent?.anchor)pageIntent.anchor.top-=delta;
+    }
+    lastTop=current;
+  }
   const viewportTop=()=>scroll?scroll.getBoundingClientRect().top:0;
   const nodes=()=>[...root.querySelectorAll<HTMLElement>(options.selector)];
   function remember() {
@@ -51,6 +66,10 @@ export function navigationScrollWindow(root:HTMLElement,initial:ScrollWindowOpti
       windowId:options.window.window_id,publicationId:options.pageRestoration.publicationId,
       previousAnchor:options.window.request.anchor,previousDirection:options.window.request.direction,
       anchor:anchor ? {...anchor} : null};
+    if(pageIntent) {
+      lastTop=surface.scrollTop;
+      releaseAnchoring=options.pageRestoration!.coordinator.holdNativeAnchoring(surface);
+    }
     options.activate?.();options.move(cursor,direction);return true;
   }
   // A short page cannot produce native scroll events. Only explicit user intent
@@ -82,10 +101,10 @@ export function navigationScrollWindow(root:HTMLElement,initial:ScrollWindowOpti
       remember();demand();
     });
   }
-  function onScroll(){if(!restoring)travel=Math.sign(surface.scrollTop-lastTop);lastTop=surface.scrollTop;remember();schedule();}
+  function onScroll(){captureMovement();remember();schedule();}
   target.addEventListener('scroll',onScroll,{passive:true});
   const observer=new MutationObserver(()=>schedule(true));observer.observe(root,{childList:true,subtree:true});
-  function retirePage() {pageIntent=undefined;pending=undefined;}
+  function retirePage() {pageIntent=undefined;pending=undefined;releaseAnchoring?.();releaseAnchoring=undefined;}
   function eligible() {
     if(disposed||!pageIntent)return false;
     const policy=options.pageRestoration,view=options.window;
@@ -122,7 +141,8 @@ export function navigationScrollWindow(root:HTMLElement,initial:ScrollWindowOpti
         retirePage();
         queueMicrotask(()=>restoring=false);
       },
-      synchronize(){lastTop=surface.scrollTop;travel=0;},
+      captureBeforePublication(){captureMovement();publicationSuspended=true;},
+      synchronize(){lastTop=surface.scrollTop;travel=0;publicationSuspended=false;},
       dispose(){retirePage();cancelAnimationFrame(frame);}
     });
   }

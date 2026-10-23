@@ -174,15 +174,29 @@ type NavigationReviewPresentation = {
 };
 function finishReviewPresentation(view:EffectiveNavigationView,items:import('../types').NavigationReviewItem[],pointers:Set<string>,exactOutClaimCount:number):NavigationReviewPresentation {
   items.sort((a,b) => a.waiting_since-b.waiting_since || (a.ticket_id < b.ticket_id ? -1 : a.ticket_id > b.ticket_id ? 1 : 0));
-  let runningConversationCount: number | null = view.runtimeCurrent ? 0 : null;
-  for (const id of pointers) {
-    const fact = view.conversations.get(id)?.working;
-    if (!fact || fact.state !== 'fresh') { runningConversationCount = null; break; }
-    if (runningConversationCount !== null && fact.value) runningConversationCount += 1;
-  }
   const counts=view.publication.view?.counts;
-  if(counts){runningConversationCount=view.runtimeCurrent?counts.running_conversations:null;exactOutClaimCount=counts.out_claims;}
-  return {items,runningConversationCount,exactOutClaimCount,currentConversationIds:pointers};
+  if(counts)exactOutClaimCount=counts.out_claims;
+  return {items,runningConversationCount:navigationWorkingAgentCount(view),exactOutClaimCount,currentConversationIds:pointers};
+}
+
+/** Workspace-wide count. A scoped view supplies its exact total without a resident-row scan. */
+export function navigationWorkingAgentCount(view:EffectiveNavigationView | null | undefined):number | null {
+  if(!view?.runtimeCurrent)return null;
+  const counts=view.publication.view?.counts;
+  if(counts)return counts.running_conversations;
+  const pointers=new Set<string>();
+  for(const record of view.publication.records) {
+    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') && record.value.conversation_id!==null) {
+      pointers.add(record.value.conversation_id);
+    }
+  }
+  let count=0;
+  for(const id of pointers) {
+    const fact=view.conversations.get(id)?.working;
+    if(!fact || fact.state!=='fresh')return null;
+    if(fact.value)count+=1;
+  }
+  return count;
 }
 
 export function reviewProposalIdentity(item: import('../types').NavigationReviewItem): string {

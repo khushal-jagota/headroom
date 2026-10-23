@@ -16,11 +16,24 @@ import stat
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, TextIO, cast
+from typing import TYPE_CHECKING, Literal, TextIO, cast
+
+# The deployment workflow also executes this file without its package installed.
+if __package__ or TYPE_CHECKING:
+    from .deployment_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
+else:
+    # Direct-file execution has only this directory on sys.path. importlib keeps
+    # the same configuration source without a second statically named module.
+    from importlib import import_module
+
+    DEPLOYMENT_SUCCESS_DISPLAY_SECONDS = import_module(
+        "deployment_configuration"
+    ).DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
 
 LIFECYCLE_VERSION = 1
 MAX_LIFECYCLE_BYTES = 16 * 1024
@@ -132,6 +145,7 @@ class LifecycleProjection:
     outcome: DeploymentOutcome | None
     detail: str | None = None
     valid_until: str | None = None
+    success_display_until: str | None = None
 
     def to_public_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -207,10 +221,15 @@ class DeploymentLifecycleStore:
         deployment_id: str,
         *,
         lock_timeout_seconds: float = RENEW_LOCK_TIMEOUT_SECONDS,
+        lock_fd: int | None = None,
     ) -> DeploymentLifecycle:
         """Refresh active evidence without changing progress or reviving expired work."""
         _validate_deployment_id(deployment_id)
-        with _exclusive_lock(self.lock_path, timeout_seconds=lock_timeout_seconds):
+        lock = (
+            _exclusive_lock(self.lock_path, timeout_seconds=lock_timeout_seconds)
+            if lock_fd is None else _borrowed_lock(self.lock_path, lock_fd)
+        )
+        with lock:
             current_read = _read_lifecycle(self.path)
             if not current_read.available or current_read.lifecycle is None:
                 raise DeploymentLifecycleConflict("there is no readable lifecycle to renew")
@@ -300,6 +319,11 @@ class DeploymentLifecycleStore:
         lifecycle = read.lifecycle
         now = _utc_now(self._now)
         valid_until = _format_time(lifecycle.expires_at)
+        success_display_until = (
+            lifecycle.updated_at + timedelta(seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS)
+            if lifecycle.phase == "succeeded"
+            else None
+        )
         if lifecycle.phase in _NONTERMINAL_PHASES and now >= lifecycle.expires_at:
             return LifecycleProjection(
                 state="unknown",
@@ -337,6 +361,11 @@ class DeploymentLifecycleStore:
             target_sha=lifecycle.requested_sha,
             outcome=outcome,
             detail=detail,
+            success_display_until=(
+                _format_time(success_display_until)
+                if success_display_until is not None and state == "back_up"
+                else None
+            ),
             valid_until=(
                 valid_until
                 if lifecycle.phase in _NONTERMINAL_PHASES
@@ -354,13 +383,22 @@ def _read_lifecycle(path: Path) -> LifecycleRead:
     except OSError:
         return LifecycleRead.unavailable("deployment status file is unavailable")
     try:
+        return _read_lifecycle_descriptor(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _read_lifecycle_descriptor(descriptor: int) -> LifecycleRead:
+    try:
         info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            return LifecycleRead.unavailable("deployment status is not a regular file")
         if info.st_size > MAX_LIFECYCLE_BYTES:
             return LifecycleRead.unavailable("deployment status file is too large")
         chunks: list[bytes] = []
         remaining = MAX_LIFECYCLE_BYTES + 1
         while remaining:
-            chunk = os.read(descriptor, remaining)
+            chunk = os.pread(descriptor, remaining, MAX_LIFECYCLE_BYTES + 1 - remaining)
             if not chunk:
                 break
             chunks.append(chunk)
@@ -370,8 +408,6 @@ def _read_lifecycle(path: Path) -> LifecycleRead:
             return LifecycleRead.unavailable("deployment status file is too large")
     except OSError:
         return LifecycleRead.unavailable("deployment status file is unreadable")
-    finally:
-        os.close(descriptor)
     try:
         payload = json.loads(content)
         lifecycle = _parse_lifecycle(payload)
@@ -523,7 +559,8 @@ def _utc_now(now: Callable[[], datetime]) -> datetime:
 
 
 def _open_regular_readonly(path: Path) -> int:
-    flags = os.O_RDONLY
+    # Reject a FIFO after open rather than waiting for a peer before fstat.
+    flags = os.O_RDONLY | os.O_NONBLOCK
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(path, flags)
@@ -534,12 +571,16 @@ def _open_regular_readonly(path: Path) -> int:
 
 
 class _exclusive_lock:
-    def __init__(self, path: Path, *, timeout_seconds: float | None = None) -> None:
+    def __init__(
+        self, path: Path, *, timeout_seconds: float | None = None,
+        check_active: Callable[[], None] | None = None,
+    ) -> None:
         self.path = path
         self.timeout_seconds = timeout_seconds
+        self.check_active = check_active
         self.stream: TextIO | None = None
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> int:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.is_symlink():
             raise DeploymentLifecycleError("lifecycle lock must not be a symlink")
@@ -558,6 +599,8 @@ class _exclusive_lock:
             else:
                 deadline = time.monotonic() + self.timeout_seconds
                 while True:
+                    if self.check_active is not None:
+                        self.check_active()
                     try:
                         fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                         break
@@ -568,6 +611,9 @@ class _exclusive_lock:
                                 "timed out acquiring deployment lifecycle renewal lock"
                             ) from None
                         time.sleep(min(RENEW_LOCK_POLL_SECONDS, remaining))
+            if self.check_active is not None:
+                self.check_active()
+            return self.stream.fileno()
         except BaseException:
             self.stream.close()
             raise
@@ -578,6 +624,90 @@ class _exclusive_lock:
             fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
         finally:
             self.stream.close()
+
+
+def renewal_lock(
+    path: Path, *, check_active: Callable[[], None] | None = None,
+) -> _exclusive_lock:
+    """Keep the renewal lock in the supervisor until its receipt is accounted for."""
+    return _exclusive_lock(
+        path.with_name(f"{path.name}.lock"),
+        timeout_seconds=RENEW_LOCK_TIMEOUT_SECONDS, check_active=check_active,
+    )
+
+
+def open_renewal_baseline(path: Path) -> int:
+    """Pin the old inode until the renewal and any receipt recovery finish."""
+    return _open_regular_readonly(path)
+
+
+def parse_renewal_result(payload: object, deployment_id: str) -> DeploymentLifecycle:
+    """Validate a writer or recovery result before the supervisor logs a receipt."""
+    lifecycle = _parse_lifecycle(payload)
+    if lifecycle.deployment_id != deployment_id:
+        raise DeploymentLifecycleError("renewal result belongs to another deployment")
+    return lifecycle
+
+
+@contextmanager
+def _borrowed_lock(path: Path, descriptor: int) -> Iterator[int]:
+    """Close only our copy: LOCK_UN would release the supervisor's shared lock."""
+    borrowed = os.dup(descriptor)
+    try:
+        current = _open_regular_readonly(path)
+        try:
+            expected = os.fstat(current)
+            actual = os.fstat(borrowed)
+            if not stat.S_ISREG(actual.st_mode) or (
+                actual.st_dev, actual.st_ino
+            ) != (expected.st_dev, expected.st_ino):
+                raise DeploymentLifecycleError("inherited descriptor is not the lifecycle lock")
+        finally:
+            os.close(current)
+        # A correct inherited descriptor already owns this open-file-description lock.
+        # An unrelated contended descriptor must fail immediately, never wait.
+        fcntl.flock(borrowed, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield borrowed
+    finally:
+        os.close(borrowed)
+
+
+def recover_renewal_receipt(
+    path: Path, deployment_id: str, *, lock_fd: int, baseline_fd: int,
+) -> dict[str, object]:
+    """Prove this attempt's replacement under its retained lock, without renewing."""
+    _validate_deployment_id(deployment_id)
+    lock_path = path.with_name(f"{path.name}.lock")
+    with _borrowed_lock(lock_path, lock_fd):
+        current_fd = _open_regular_readonly(path)
+        try:
+            before = os.fstat(baseline_fd)
+            after = os.fstat(current_fd)
+            if (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino):
+                return {"committed": False}
+            baseline = _read_lifecycle_descriptor(baseline_fd)
+            current = _read_lifecycle_descriptor(current_fd)
+            if baseline.lifecycle is None or current.lifecycle is None:
+                raise DeploymentLifecycleError("cannot read renewal receipt evidence")
+            old = baseline.lifecycle
+            new = current.lifecycle
+            if (
+                old.deployment_id != deployment_id
+                or old.phase not in _NONTERMINAL_PHASES
+                or replace(new, updated_at=old.updated_at, expires_at=old.expires_at) != old
+            ):
+                raise DeploymentLifecycleError("replacement is not this deployment's renewal")
+            # The writer can die between replace and directory fsync. Complete that
+            # durability boundary in this killable helper before claiming a receipt.
+            os.fsync(current_fd)
+            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            return {"committed": True, "lifecycle": new.to_public_dict()}
+        finally:
+            os.close(current_fd)
 
 
 def _atomic_write(path: Path, payload: dict[str, object]) -> None:
@@ -640,6 +770,13 @@ def _cli_parser() -> argparse.ArgumentParser:
     renew = subparsers.add_parser("renew")
     renew.add_argument("--path", type=Path, required=True)
     renew.add_argument("--deployment-id", required=True)
+    renew.add_argument("--lock-fd", type=int, help=argparse.SUPPRESS)
+
+    recovery = subparsers.add_parser("recover-renewal-receipt", help=argparse.SUPPRESS)
+    recovery.add_argument("--path", type=Path, required=True)
+    recovery.add_argument("--deployment-id", required=True)
+    recovery.add_argument("--lock-fd", type=int, required=True)
+    recovery.add_argument("--baseline-fd", type=int, required=True)
 
     read = subparsers.add_parser("read")
     read.add_argument("--path", type=Path, required=True)
@@ -676,7 +813,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             payload = lifecycle.to_public_dict()
         elif arguments.command == "renew":
-            payload = store.renew(arguments.deployment_id).to_public_dict()
+            payload = store.renew(
+                arguments.deployment_id, lock_fd=arguments.lock_fd,
+            ).to_public_dict()
+        elif arguments.command == "recover-renewal-receipt":
+            payload = recover_renewal_receipt(
+                arguments.path, arguments.deployment_id,
+                lock_fd=arguments.lock_fd, baseline_fd=arguments.baseline_fd,
+            )
         elif arguments.command == "read":
             read = store.read()
             payload = (
@@ -686,7 +830,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             payload = store.project(arguments.deployed_sha).to_public_dict()
-    except DeploymentLifecycleError as exc:
+    except (DeploymentLifecycleError, OSError) as exc:
         print(json.dumps({"error": str(exc)}, sort_keys=True), file=sys.stderr)
         return 2
     print(json.dumps(payload, sort_keys=True))
