@@ -1,6 +1,6 @@
 ---
-name: panels-worker-research
-description: Stage-by-stage guidance for a research Worker type Panels Ticket.
+name: "panels-worker-research"
+description: "Stage-by-stage guidance for a research Worker type Panels Ticket."
 ---
 
 # Research ticket stages
@@ -13,19 +13,19 @@ This worker runs unattended. The user reviews at each approval gate, not in conv
 
 The sequence is **Brief → Research Plan → Findings → Consequences → Done**.
 
-- **needs_brief** — the question as asked, its boundaries, and what the answer is for.
-- **needs_research_plan** — the transferable problem, the questions, the search angles, and the stop conditions.
-- **needs_findings** — the evidence, gathered, vetted, and synthesized.
-- **needs_consequences** — the deliverable written, linked, and reported.
+- **needs\_brief** — the question as asked, its boundaries, and what the answer is for.
+- **needs\_research\_plan** — the transferable problem, the questions, the search angles, and the stop conditions.
+- **needs\_findings** — the evidence, gathered, vetted, and synthesized.
+- **needs\_consequences** — the deliverable written, linked, and reported.
 - **done** — finished.
 
-### needs_brief — preserve the question
+### needs\_brief — preserve the question
 
 Keep the requester's wording, the boundaries, and the stated uncertainty. Record what the answer is for, because that decides what depth is enough. Do not narrow an ambiguous question, and do not begin answering it.
 
 If the question is too vague to research, say so rather than inventing a sharper one. That is an exploration ticket, not this.
 
-### needs_research_plan — choose the evidence path
+### needs\_research\_plan — choose the evidence path
 
 This is the crux. State the transferable problem before you list any source: who is trying to achieve what, the mechanism that makes it hard, and the constraints. Then ask which other domains face that mechanism under a different name.
 
@@ -40,9 +40,9 @@ A good **research plan** gives:
 
 Keep it decision-level. It is the one cheap moment to redirect the work before the effort is spent.
 
-### needs_findings — gather, vet, synthesize
+### needs\_findings — gather, vet, synthesize
 
-Fan out subagents, one per search angle. Give each a goal and let it adapt. Do not tell them about each other, because blind angles find different things. If an angle returns nothing, record that as a result.
+Research intelligently, use a couple sub agents, look at results adapt, continue, adapt continue, until you believe that you hsve sufficiently met the conditions of research. You don't need to do this in layers, just adapt strategies as research comes in.
 
 Vet and synthesize the returns yourself. Never pass a subagent's output through as findings.
 
@@ -57,7 +57,7 @@ Use probes, tests, or sketches only where the plan calls for them as evidence.
 
 If coverage was cut, say what was dropped and why. Silent truncation reads as full coverage.
 
-### needs_consequences — land the deliverable
+### needs\_consequences — land the deliverable
 
 Write the substance as a ticket artifact and link it. Keep the **Consequences** field to a short report: what was found, what stayed open, and where the artifact is.
 
@@ -71,4 +71,4 @@ The reader did not do the research and did not read the research plan. Write the
 - If the evidence shows the question itself is wrong, say so and stop. Do not quietly answer a better question instead.
 - Unresolved is a valid finding. Confidence must not outrun the evidence.
 
-Follow `panels-worker` for shared ownership, proposal, approval, Chat, and ceiling mechanics. This skill only defines research-specific work.
+Follow `panels-worker` for shared ownership, proposal, approval, Chat, scope, and reconciliation mechanics. This skill only defines research-specific work.

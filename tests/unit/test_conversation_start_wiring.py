@@ -23,6 +23,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationTurnReference,
+    DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -123,11 +124,13 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -136,11 +139,13 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
         )
 
     async def send_with_receipt(
@@ -152,11 +157,13 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
@@ -166,11 +173,13 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
             record_refusal=record_refusal,
         )
 

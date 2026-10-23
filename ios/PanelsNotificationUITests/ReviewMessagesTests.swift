@@ -1,0 +1,76 @@
+import XCTest
+
+/// Reuses the offline harness: real SwiftUI, persisted outbox and loopback HTTP only.
+final class ReviewMessagesTests: XCTestCase {
+    @MainActor func testLiveReadOnlyWorkspaceAndReview() throws {
+        guard ProcessInfo.processInfo.environment["PANELS_LIVE_READ_ONLY"] == "1" else { throw XCTSkip("Explicit read-only live pass only") }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
+        XCTAssertTrue(chief.waitForExistence(timeout: 20))
+        let workspace = XCTAttachment(screenshot: app.screenshot()); workspace.name = "live-workspace"; workspace.lifetime = .keepAlways; add(workspace)
+        app.tabBars.buttons["Review"].tap()
+        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["There is nothing to review right now."].exists)
+        let review = XCTAttachment(screenshot: app.screenshot()); review.name = "live-review-read-only"; review.lifetime = .keepAlways; add(review)
+        app.tabBars.buttons["Workspace"].tap()
+        chief.tap()
+        // The Chief page's container identifier is inherited by this button.
+        let line = app.buttons.containing(.image, identifier: "chevron.up").firstMatch
+        XCTAssertTrue(line.waitForExistence(timeout: 15))
+        line.tap()
+        XCTAssertTrue(app.buttons["Close conversation"].waitForExistence(timeout: 10))
+        let conversation = XCTAttachment(screenshot: app.screenshot()); conversation.name = "live-conversation-read-only"; conversation.lifetime = .keepAlways; add(conversation)
+        app.terminate()
+    }
+    @MainActor func testUnreadReplyRefusalQueueAndHistoricalNavigation() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Review"].tap()
+        XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.staticTexts["Last unread message"].exists)
+        XCTAssertTrue(app.buttons["proof.html"].exists || app.staticTexts["proof.html"].exists)
+        let input = app.textFields["conversation-input"].firstMatch
+        if !input.isHittable { app.swipeUp() }
+        XCTAssertTrue(input.waitForExistence(timeout: 8))
+        input.tap(); input.typeText("Reply kept after refusal")
+        app.buttons["Send message"].tap()
+        XCTAssertTrue(app.buttons["Retry reply"].waitForExistence(timeout: 8))
+        let first = XCTAttachment(screenshot: app.screenshot()); first.name = "review-refused-draft"; first.lifetime = .keepAlways; add(first)
+        app.terminate(); app.launch()
+        app.tabBars.buttons["Review"].tap()
+        XCTAssertTrue(app.buttons["Retry reply"].waitForExistence(timeout: 10))
+        XCTAssertEqual(input.value as? String, "Reply kept after refusal")
+        _ = try await URLSession.shared.data(from: URL(string: base + "/proof/new-message")!)
+        app.buttons["Retry reply"].tap()
+        XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 12))
+        app.buttons["review.skip"].tap()
+        XCTAssertTrue(app.staticTexts["Arrived after display"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["First unread message"].exists)
+        app.buttons["review.markRead"].tap()
+        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.textFields["conversation-input"].exists)
+        app.buttons["review.openConversation"].tap()
+        XCTAssertTrue(app.staticTexts["Historical transcript"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Historical conversation · read only"].exists)
+        let historical = XCTAttachment(screenshot: app.screenshot()); historical.name = "review-exact-history"; historical.lifetime = .keepAlways; add(historical)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["review.markRead"].tap()
+        XCTAssertTrue(app.buttons["Revisit skipped items"].waitForExistence(timeout: 8))
+        app.buttons["Revisit skipped items"].tap()
+        XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 8))
+        let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
+        let writes = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
+        let sends = writes.filter { $0["sender_message_id"] != nil }
+        XCTAssertEqual(sends.count, 2)
+        XCTAssertNotEqual(sends[0]["sender_message_id"] as? String, sends[1]["sender_message_id"] as? String)
+        XCTAssertEqual(sends[0]["owner_read_through_sequence"] as? Int, 3)
+        XCTAssertEqual(sends[1]["owner_read_through_sequence"] as? Int, 3)
+        XCTAssertEqual(writes.compactMap { $0["through_sequence"] as? Int }, [4, 8])
+    }
+}

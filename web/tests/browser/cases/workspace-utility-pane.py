@@ -105,8 +105,6 @@ def run(browser, urls):
             result = {"skills": [skill]}
         elif path == "/api/worker-types":
             result = {"worker_types": manifests}
-        elif path == "/api/deployment-interruptions":
-            result = {"accounts": []}
         elif path == "/api/feedback/count":
             result = {"open_count": 0}
         elif path == "/api/meta":
@@ -1181,11 +1179,15 @@ def verify_conversation_overlay(browser, url):
         # A scrollback reader keeps the same content while the composer changes.
         thread.evaluate('e=>e.scrollTop=Math.max(0,e.scrollHeight-e.clientHeight-500)')
         page.wait_for_timeout(100)
-        anchor = thread.evaluate('''e=>{const r=e.getBoundingClientRect();const row=[...e.querySelectorAll('[data-conversation-row]')].find(n=>n.getBoundingClientRect().bottom>r.top+10);return row?{key:row.closest('[data-conversation-view-key]')?.getAttribute('data-conversation-view-key'),text:row.textContent,top:row.getBoundingClientRect().top-r.top}:null;}''')
+        anchor = thread.evaluate('''e=>{const r=e.getBoundingClientRect();const row=[...e.querySelectorAll('[data-conversation-row]')].find(n=>n.getBoundingClientRect().bottom>r.top+10);return row?{key:row.closest('[data-conversation-view-key]')?.getAttribute('data-conversation-view-key'),text:row.textContent,top:row.getBoundingClientRect().top-r.top,bottomOffset:row.getBoundingClientRect().top-r.bottom}:null;}''')
         assert anchor and anchor['key'], (name, anchor)
-        def assert_anchor(label, thread=thread, anchor=anchor, name=name):
-            measured = thread.evaluate('''(e,key)=>{const row=[...e.querySelectorAll('[data-conversation-view-key]')].find(n=>n.dataset.conversationViewKey===key);const content=row?.querySelector('[data-conversation-row]')??row;return content?{text:content.textContent,top:content.getBoundingClientRect().top-e.getBoundingClientRect().top}:null;}''', anchor['key'])
-            assert measured and measured['text'] == anchor['text'] and abs(measured['top'] - anchor['top']) <= 2, (name,label,anchor,measured)
+        anchor_proof = []
+        def assert_anchor(label, *, edge='top', anchor=anchor, thread=thread, name=name, anchor_proof=anchor_proof):
+            measured = thread.evaluate('''(e,key)=>{const row=[...e.querySelectorAll('[data-conversation-view-key]')].find(n=>n.dataset.conversationViewKey===key);const content=row?.querySelector('[data-conversation-row]')??row;const bounds=e.getBoundingClientRect();return content?{text:content.textContent,top:content.getBoundingClientRect().top-bounds.top,bottomOffset:content.getBoundingClientRect().top-bounds.bottom}:null;}''', anchor['key'])
+            coordinate = 'bottomOffset' if edge == 'bottom' else 'top'
+            anchor_proof.append({'operation':label,'edge':edge,'before':anchor,'after':measured,'tolerance':2})
+            print('ANCHOR_GEOMETRY '+json.dumps({'name':name,**anchor_proof[-1]}),flush=True)
+            assert measured and measured['text'] == anchor['text'] and abs(measured[coordinate] - anchor[coordinate]) <= 2, (name,label,anchor,measured)
             return measured
         box.fill('A shorter draft')
         page.wait_for_timeout(250)
@@ -1197,11 +1199,16 @@ def verify_conversation_overlay(browser, url):
         # Collapse cannot remove document scroll range or clamp the reader.
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
         end_scroll = document.evaluate('e=>e.scrollTop')
+        collapse_before = {'thread':transcript_bounds(),'anchor':thread.evaluate('''(e,key)=>{const n=[...e.querySelectorAll('[data-conversation-view-key]')].find(n=>n.dataset.conversationViewKey===key);const c=n.querySelector('[data-conversation-row]')??n;return {top:c.getBoundingClientRect().top,text:c.textContent};}''', anchor['key'])}
         page.locator('[data-conversation-collapse]').click()
         page.wait_for_timeout(250)
+        collapse_after = {'thread':transcript_bounds(),'anchor':thread.evaluate('''(e,key)=>{const n=[...e.querySelectorAll('[data-conversation-view-key]')].find(n=>n.dataset.conversationViewKey===key);const c=n.querySelector('[data-conversation-row]')??n;return {top:c.getBoundingClientRect().top,text:c.textContent};}''', anchor['key'])}
+        print('COLLAPSE_GEOMETRY '+json.dumps({'name':name,'before':collapse_before,'after':collapse_after}),flush=True)
         assert document.evaluate('e=>e.scrollHeight') >= highwater
         assert document.evaluate('e=>e.scrollTop') == end_scroll
-        assert_anchor('collapse to peeked')
+        # Collapse removes the top of the window. The same content stays fixed
+        # relative to its bottom, rather than following the new top edge.
+        collapsed_anchor = {**anchor, **assert_anchor('collapse to peeked', edge='bottom')}
         box.click()
         page.wait_for_timeout(250)
         final = document.get_by_text(final_text, exact=True)
@@ -1225,7 +1232,9 @@ def verify_conversation_overlay(browser, url):
         card_keyboard = pane.bounding_box()
         assert card_keyboard['y'] >= max(host['y'], 100) - 1, (name, card_keyboard, host)
         assert card_keyboard['y'] + card_keyboard['height'] <= min(host['y'] + host['height'], 520) + 1, (name, card_keyboard, host)
-        assert_anchor('keyboard reduction and displacement')
+        # Keyboard displacement keeps the thread-top offset. Compare against
+        # the post-collapse position, after that operation moves the top edge.
+        assert_anchor('keyboard reduction and displacement', anchor=collapsed_anchor)
         thread.evaluate('e=>e.scrollTop=e.scrollHeight')
         page.wait_for_timeout(100)
         expect(tail).to_be_in_viewport()
@@ -1278,7 +1287,7 @@ def verify_conversation_overlay(browser, url):
             artifact.locator('[data-ticket-artifact-close]').click()
             expect(artifact).to_have_count(0)
             assert document.evaluate('e=>e.scrollTop') == doc_scroll_before_artifact
-        proof['hosts'].append({'name':name,'host':host,'titleChannel':title,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
+        proof['hosts'].append({'name':name,'host':host,'titleChannel':title,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'anchorChecks':anchor_proof,'collapse':{'before':collapse_before,'after':collapse_after},'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
         draft_before_dismissal = box.input_value()
         doc_before_dismissal = document.evaluate('e=>e.scrollTop')
         point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + pane.bounding_box()['y'])/2}

@@ -135,3 +135,86 @@ def test_boot_import_uses_admission_exact_claim_and_publishes_no_runtime_turn(
         attachment.close()
     finally:
         composition.close()
+
+
+def test_server_lifespan_delivers_recovery_after_runtime_admission(tmp_path: Path) -> None:
+    """Prove startup wiring and Signal admission with the existing fake backend wire."""
+    import time
+
+    from fastapi.testclient import TestClient
+    from tests.unit.test_conversation_system import _FakeBackend, _FakeBackendChild
+    from tests.unit.test_sprint_item_supervisors import _app
+
+    from planner.conversation.backends.contracts import BackendEventSink
+    from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
+    from planner.conversation.message_files import ConversationMessageFiles
+
+    backend = _FakeBackend("interrupted")
+
+    def make_child(
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
+    ) -> _FakeBackendChild:
+        del message_files
+        # The HTTP lifespan must publish its admitted runtime before any backend starts.
+        assert app.state.conversation is not None
+        assert resolved_start.conversation_id == backend.conversation_id
+        return _FakeBackendChild(backend, event_sink)
+
+    app, path = _app(
+        tmp_path,
+        backend_child_factories={key: make_child for key in ConversationBackendKey},
+    )
+    with connect(str(path)) as conn:
+        conn.execute(
+            "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
+            "created_at,model) VALUES ('interrupted','claude',?,'full',0,'opus')",
+            (str(tmp_path),),
+        )
+        conn.execute(
+            "INSERT INTO conversation_lifecycle_facts VALUES "
+            "('interrupted','turn','1',1,'turn','running',NULL)"
+        )
+        conn.execute(
+            "INSERT INTO conversation_turn_occurrences VALUES "
+            "('interrupted',1,'interrupted-occurrence','old-epoch')"
+        )
+        conn.execute("INSERT INTO conversation_runtime_epoch VALUES (1,'old-epoch')")
+        conn.commit()
+    write_manifest(
+        path,
+        CaptureManifest(
+            "release",
+            "stop",
+            123,
+            "captured",
+            None,
+            (
+                CapturedTurn(
+                    "interrupted", 1, "interrupted-occurrence", "old-epoch", "running",
+                    "Bare conversation", "unknown", None, None, None,
+                ),
+            ),
+        ),
+    )
+
+    with TestClient(app) as client:
+        # No message request triggers this delivery. Startup alone must reach the wire.
+        deadline = time.monotonic() + 10
+        while True:
+            with connect(str(path)) as conn:
+                recovery = conn.execute(
+                    "SELECT recovery_state FROM deploy_interruptions"
+                ).fetchone()[0]
+            if recovery == "resumed" or time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+        assert recovery == "resumed"
+        assert len(backend.writes) == 1
+        wire = backend.written_texts()[0]
+        assert "A deployment ended this turn. External actions can remain uncertain." in wire
+        assert "Do not replay unknown prompts or permission answers." in wire
+        assert client.get("/api/deployment-interruptions").status_code == 404
+    assert backend.live_children == 0

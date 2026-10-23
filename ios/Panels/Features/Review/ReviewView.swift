@@ -21,10 +21,17 @@ struct ReviewView: View {
     var body: some View {
         Group {
             if let item = displayedItem ?? queue.current(in: queueItems) {
+                if item.isMessage {
+                    ReviewMessageView(item: item, onSkip: { advance(item, resolved: false) }, onResolved: {
+                        advance(item, resolved: true)
+                        Task { await store.refresh() }
+                    }).id(item.id).transition(.identity)
+                } else {
                 ReviewProposalView(item: item, decision: decisions[item.id] ?? ReviewDecision(), cardHeight: $cardHeight, openTicket: openTicket.map { action in { action(item.ticketId) } }, onSkip: { advance(item, resolved: false) }, onResolved: {
                     advance(item, resolved: true)
                     Task { await store.refresh() }
                 }).id(item.id).transition(.identity)
+                }
             } else if store.review != nil {
                 ScrollView {
                     VStack(spacing: PanelsTheme.Space.lg) {
@@ -71,7 +78,7 @@ struct ReviewView: View {
         }
         .onChange(of: LocalStore.shared.revision) { _, _ in
             for decision in decisions.values { decision.refreshVoiceDraft() }
-            if let item = displayedItem, !queueItems.contains(where: { $0.id == item.id }) { displayedItem = queue.current(in: queueItems) }
+            if let item = displayedItem, !item.isMessage, !queueItems.contains(where: { $0.id == item.id }) { displayedItem = queue.current(in: queueItems) }
             for work in savedDecisions where work.state == .changed {
                 if let item = queueItems.first(where: { $0.ticketId == work.ticketID }) {
                     queue.restore(item)
@@ -86,9 +93,9 @@ struct ReviewView: View {
         .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
             // Pin the visible ask until its exit finishes, including when the server
             // removes it from the live queue while its approval sheet is closing.
-            if displayedItem == nil || !queueItems.contains(where: { $0.id == displayedItem?.id }) { displayedItem = queue.current(in: queueItems) }
+            if displayedItem == nil || (displayedItem?.isMessage == false && !queueItems.contains(where: { $0.id == displayedItem?.id })) { displayedItem = queue.current(in: queueItems) }
             // Keep the next complete ask ready before the current one leaves.
-            for item in pending.prefix(30) {
+            for item in pending.prefix(30) where !item.isMessage {
                 let decision = decisions[item.id] ?? ReviewDecision()
                 decisions[item.id] = decision
                 if decision.proposal == nil { await decision.load(item: item, api: store.client) }

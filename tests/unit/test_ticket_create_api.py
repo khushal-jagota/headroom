@@ -248,31 +248,6 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
     assert _snapshot(db_path) == before
 
 
-def test_deploy_interruption_summary_uses_request_connection_on_its_own_thread(
-    create_api: tuple[TestClient, Path],
-) -> None:
-    client, db_path = create_api
-    with closing(connect(str(db_path))) as conn:
-        conn.execute(
-            "INSERT INTO deploy_interruption_accounts "
-            "(capture_id,deployment_id,captured_at,capture_state,detail) "
-            "VALUES ('capture','deployment',1,'unavailable','Capture timed out.')"
-        )
-        conn.commit()
-    response = client.get("/api/deployment-interruptions")
-    assert response.status_code == 200
-    assert response.json() == {
-        "accounts": [
-            {
-                "deployment_id": "deployment",
-                "capture_state": "unavailable",
-                "detail": "Capture timed out.",
-                "entries": [],
-            }
-        ]
-    }
-
-
 def test_create_refuses_holders_without_authority_before_kickoff_routing(
     create_api: tuple[TestClient, Path],
 ) -> None:

@@ -121,8 +121,8 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     assert_prepared_rejected(path)
     with current_navigation_database(path) as conn:
         current = snapshot(conn)
-        assert current["schema_version"] == 8
-        assert current["semantics"] == "attention-knowledge-v8-manager-updated-at"
+        assert current["schema_version"] == 9
+        assert current["semantics"] == "attention-knowledge-v9-review-messages"
         assert current["scope"] == old["scope"]
         assert current["epoch"] != old["epoch"]
         assert source_facts(conn)["events"] == original["source"]["events"]
@@ -130,3 +130,37 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
         assert all("priority" not in record["value"] for record in current["records"])
     with pytest.raises(ResetRequired, match="incompatible_continuity"):
         read_page(path, old_cursor, DeliveryConfig())
+
+
+def test_review_projection_upgrade_resets_old_cursors_without_granting_authority(
+    tmp_path: Path,
+) -> None:
+    """A deployed schema-8 projection must rebuild before runtime installs schema 9."""
+    path = tmp_path / "review-upgrade.db"
+    with current_navigation_database(path) as conn:
+        before = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute("UPDATE alembic_version SET version_num='automatic_deployment_recovery'")
+        # The native branch is already installed in this fixture's current database.
+        conn.execute("INSERT INTO alembic_version VALUES ('native_push_deliveries')")
+        conn.execute("UPDATE navigation_meta SET schema_version=8")
+        conn.execute("UPDATE navigation_view_meta SET projection_version=4")
+        conn.commit()
+    engine = _migration_engine(str(path), 1000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_alembic_config(connection), "head")
+    finally:
+        engine.dispose()
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 7
+        assert conn.execute("SELECT epoch FROM navigation_meta").fetchone()[0] != before["epoch"]
+        with pytest.raises(RuntimeError, match="current schema"):
+            snapshot(conn)
+    with current_navigation_database(path) as conn:
+        assert snapshot(conn)["schema_version"] == 9
+        assert (
+            conn.execute("SELECT ordering_generation FROM navigation_view_meta")
+            .fetchone()[0]
+            .endswith("review-v2")
+        )

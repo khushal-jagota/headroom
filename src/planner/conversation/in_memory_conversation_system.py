@@ -22,6 +22,7 @@ from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationStartRequest,
     ConversationTurnReference,
+    DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -193,6 +194,7 @@ class _HeldPrompt:
     reply_requested: bool = True
     snapshot_sent_at_unix_milliseconds: int = 0
     queue_reason: PromptQueueReason = PromptQueueReason.requested
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
 
 @dataclass
@@ -248,11 +250,13 @@ class InMemoryConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         receipt = await self.send_with_receipt(
             conversation_id,
@@ -261,11 +265,13 @@ class InMemoryConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
         )
         return receipt.fate
 
@@ -278,11 +284,13 @@ class InMemoryConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         require_message_content(content)
@@ -356,6 +364,7 @@ class InMemoryConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
             )
         elif mode is PromptDeliveryMode.queue:
             fate = self._hold_prompt(
@@ -370,6 +379,7 @@ class InMemoryConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
             )
         elif mode is PromptDeliveryMode.steer:
             if any(not isinstance(piece, MessageText) for piece in content):
@@ -386,6 +396,7 @@ class InMemoryConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                 )
                 if isinstance(steer_fate, PromptDeliveryInjected):
                     fate = steer_fate
@@ -405,6 +416,7 @@ class InMemoryConversationSystem:
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    recovery_references=recovery_references,
                 )
         else:
             # send-now against a busy agent: the incumbent dies first, and this message runs
@@ -422,6 +434,7 @@ class InMemoryConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
             )
             if isinstance(fate, PromptDeliveryRefused):
                 # The incumbent is already dead and the agent is free, so the held prompts
@@ -446,6 +459,7 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryQueued:
         state.held_prompts_created += 1
         state.held_prompts.append(
@@ -466,6 +480,7 @@ class InMemoryConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
             )
         )
         return PromptDeliveryQueued(queue_position=len(state.held_prompts))
@@ -921,6 +936,7 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
@@ -1019,6 +1035,7 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
@@ -1033,6 +1050,7 @@ class InMemoryConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
             recorded_messages=recorded_messages,
         )
         if isinstance(written, PromptDeliveryRefused):
@@ -1046,6 +1064,7 @@ class InMemoryConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                recovery_references=recovery_references,
             ),
         )
         for message in messages:
@@ -1069,6 +1088,7 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryInjected | PromptDeliveryRefused:
         if not backend_supports_steer(state.resolved_start.backend_key):
             return PromptDeliveryRefused(
@@ -1088,6 +1108,7 @@ class InMemoryConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written

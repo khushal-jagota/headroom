@@ -46,12 +46,14 @@
   let {
     itemId,
     workspaceName,
+    requestedConversationId = null,
     backHref = "#/workspace/chief-of-staff",
     workspaceResource = null,
     navigationErrorHandledByParent = false
     // A host that is already a way back can pass null so the line is not drawn.
   }: {
     itemId: string;
+    requestedConversationId?: string | null;
     navigationErrorHandledByParent?: boolean;
     workspaceName: string;
     backHref?: string | null;
@@ -91,6 +93,13 @@
   $effect(()=>navigation.owner.setDemand('manager',{selected:{kind:'manager',id:itemId},selected_conversation_id:selectedPastConversationId,windows:[]}));
   onDestroy(()=>navigation.owner.setDemand('manager',undefined));
   let conversationState = $state<ConversationState>("rest");
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!publicItem || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== publicItem.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
+  });
   let backends = $state<readonly BackendSnapshot[]>([]);
 
   let hoverTarget = $state<HTMLElement | null>(null);
@@ -317,9 +326,10 @@
           </div>
       {/if}
     </ResourceState>
-  {#snippet readingAside()}
+  {#snippet readingAside(registerArtifactFrame)}
   {#if shownFile}
     <ArtifactPreview
+      {registerArtifactFrame}
       target={shownFile}
       reloadSignal={artifactReloadSignal}
       bind:element={artifactElement}

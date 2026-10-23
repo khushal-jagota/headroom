@@ -7,6 +7,7 @@ final class ConversationOperationTests: XCTestCase {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_CONVERSATION_STUB_URL"])
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "reset")
         let app = XCUIApplication()
         app.launchArguments = ["--conversation-smoke", "--conversation-stub", base, "--conversation-fixture-speech"]
         app.launch()
@@ -237,6 +238,12 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["You: Inspect the interrupted work and continue the current authorized step."].exists)
         XCTAssertTrue(app.staticTexts["Panels deployment recovery"].isHittable)
         capture(app, "recovery-system-transcript")
+        close.tap()
+        // Both cases share the persisted draft in this loopback host.
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Large text draft".count))
+        XCTAssertEqual(input.value as? String, "")
+        app.terminate()
     }
 
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {

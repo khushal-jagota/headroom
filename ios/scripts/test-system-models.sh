@@ -5,7 +5,7 @@ cd "$(dirname "$0")/../.."
 build=$(mktemp -d "${TMPDIR:-/tmp}/panels-system-tests.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/Sources/Panels" "$build/Tests/PanelsTests"
-cp ios/Panels/Core/Persistence/LocalStore.swift ios/Panels/Core/Networking/APIClient.swift ios/Panels/Models/*.swift \
+cp ios/Panels/Core/Persistence/LocalStore.swift ios/Panels/Core/Networking/APIClient.swift ios/Panels/Models/*.swift ios/Panels/Features/Conversation/Models/ConversationContracts.swift \
   ios/Panels/Features/More/Usage/UsageModels.swift \
   ios/Panels/Features/More/VPS/VPSModels.swift \
   ios/Panels/Features/More/Settings/SettingsModels.swift "$build/Sources/Panels/"

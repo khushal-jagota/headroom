@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { RegisterManagedArtifactFrame } from "../lib/managedArtifactPress";
   import { onDestroy, tick } from "svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One managed file, at full size, filling whatever box the host gives it.
@@ -24,8 +25,9 @@
 
   let {
     target,
-    reloadSignal = 0
-  }: { target: FilePreviewTarget; reloadSignal?: number } = $props();
+    reloadSignal = 0,
+    registerArtifactFrame
+  }: { target: FilePreviewTarget; reloadSignal?: number; registerArtifactFrame?: RegisterManagedArtifactFrame } = $props();
 
   let visible = $state(false);
   let host: HTMLElement;
@@ -67,7 +69,7 @@
         if (controller.signal.aborted) return;
         if (retained) holdVisibleContentHeight(host);
         if (current.kind === "html") {
-          const documentBody = prepareManagedHtmlPreviewDocument(body, current.href);
+          const documentBody = prepareManagedHtmlPreviewDocument(body, current.href, Boolean(registerArtifactFrame));
           const previousUrl = objectUrl;
           objectUrl = URL.createObjectURL(new Blob([documentBody], { type: "text/html" }));
           htmlFrameHref = objectUrl;
@@ -83,6 +85,9 @@
 
     return () => controller.abort();
   });
+  function artifactFrame(element: HTMLIFrameElement) {
+    return { destroy: registerArtifactFrame?.(element) };
+  }
   onDestroy(() => { if (objectUrl) URL.revokeObjectURL(objectUrl); });
 
 </script>
@@ -97,6 +102,7 @@
   {/if}
   {#if htmlFrameHref}
     <iframe
+      use:artifactFrame
       class="file-preview-document-frame"
       data-file-preview-html
       src={htmlFrameHref}

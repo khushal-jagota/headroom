@@ -1,6 +1,6 @@
 ---
-name: panels-worker-exploration
-description: Stage-by-stage guidance for an exploration Worker type Panels Ticket.
+name: "panels-worker-exploration"
+description: "Stage-by-stage guidance for an exploration Worker type Panels Ticket."
 ---
 
 # Exploration ticket stages
@@ -13,22 +13,22 @@ Adjust the depth of Understanding, Findings, and Answer to the ticket. Keep disc
 
 The sequence is **Brief → Understanding → Research Plan → Findings → Answer → Proposed Follow-up → Consequences → Done**.
 
-- **needs_brief** — preserve the premise and intake context without inventing the solution.
-- **needs_understanding** — establish the shared frame and purpose through collaborative discussion.
-- **needs_research_plan** — decide what evidence will answer the real questions and when research is sufficient.
-- **needs_findings** — discover, vet, and synthesize the evidence.
-- **needs_answer** — reach and record the answer through collaborative discussion.
-- **needs_proposed_follow_up** — propose only consequences supported by the approved answer.
-- **needs_consequences** — perform and verify exactly the approved follow-up.
+- **needs\_brief** — preserve the premise and intake context without inventing the solution.
+- **needs\_understanding** — establish the shared frame and purpose through paired discussion.
+- **needs\_research\_plan** — decide what evidence will answer the real questions and when research is sufficient.
+- **needs\_findings** — discover, vet, and synthesize the evidence.
+- **needs\_answer** — reach and record the answer through paired discussion.
+- **needs\_proposed\_follow\_up** — propose only consequences supported by the approved answer.
+- **needs\_consequences** — perform and verify exactly the approved follow-up.
 - **done** — finished.
 
-### needs_brief — preserve the premise
+### needs\_brief — preserve the premise
 
 A good **Brief** keeps the user's wording, source context, boundaries, and uncertainty intact. State what prompted the exploration and why it matters, but do not silently narrow an ambiguous question, assume a preferred route, or manufacture a solution. The premise is ready when a later discussion can begin from it without mistaking an agent guess for user intent.
 
-### needs_understanding — establish the shared frame
+### needs\_understanding — establish the shared frame
 
-This is user-owned collaborative work. Use a small, purposeful set of questions to establish:
+This is paired work. Use a small, purposeful set of questions to establish:
 
 - the root problem and the user's actual intent;
 - relevant constraints and what is already known;
@@ -39,7 +39,7 @@ Work top-down and one question at a time. Let each answer shape the next questio
 
 Ask only questions whose answers materially change the exploration. Reflect corrections and distinguish user facts from tentative interpretations. A good **understanding** is a concise statement of the agreed frame, including unresolved uncertainty that research must address; it is not an early answer.
 
-### needs_research_plan — choose the evidence path
+### needs\_research\_plan — choose the evidence path
 
 A good **research plan** defines:
 
@@ -50,17 +50,17 @@ A good **research plan** defines:
 
 Abstract from the current implementation to the underlying mechanism so the research can reveal better routes rather than merely validate what exists. Keep the plan decision-level: concrete enough to execute and review, but not a speculative findings document. Research may be online, in the codebase, or both; do not force research into Understanding.
 
-### needs_findings — discover, vet, and synthesize
+### needs\_findings — discover, vet, and synthesize
 
-Execute the approved plan, adapting the search when evidence exposes a real gap. The Findings stage owns source discovery, corpus curation, provenance, and synthesis together; do not invent a separate corpus step.
+Execute the approved plan, adapting the search when evidence exposes a real gap. The Findings stage owns source discovery, corpus curation, provenance, and synthesis together; do not invent a separate corpus step. Importantly, it does not own answers. It just owns researching the things that need to be researched. Making decisions is part of needs answer.
 
 Prefer first-hand evidence and mechanism-relevant comparables. Preserve where each important claim came from, what could not be confirmed, and meaningful source limitations. Separate **fact**, **inference**, and **hypothesis**. Synthesize rather than inventory: surface patterns, counterexamples, implications, contradictions, new unknowns, viable options, and useful decomposition of the problem.
 
-Use sketches, prototypes, or tests only when the plan calls for them as evidence. They are investigative probes, not permission to implement downstream work. A good **Findings** field leaves the answer discussion with traceable evidence, explicit gaps, and the real tradeoffs exposed.
+Use sketches, prototypes, or tests only when the plan calls for them as evidence. They are investigative probes, not permission to implement downstream work. A good **Findings** field leaves the answer discussion with traceable evidence, explicit gaps, and the real tradeoffs exposed. The user is not likely to always read the research. It's very long. Do not expect the user to have read the research.
 
-### needs_answer — reach the durable answer
+### needs\_answer — reach the durable answer
 
-This is user-owned collaborative work. Use the research to facilitate the user's judgment: explain tradeoffs, test interpretations, and keep unresolved choices visible. Do not choose for the user or turn the first recommendation into a foregone conclusion. Continue the discussion until the shared answer is ready to preserve formally.
+This is paired work. Use the research to facilitate the user's judgment: explain tradeoffs, test interpretations, and keep unresolved choices visible. Do not choose for the user or turn the first recommendation into a foregone conclusion. Continue the discussion until the shared answer is ready to preserve formally.
 
 A good **answer** states:
 
@@ -73,19 +73,17 @@ A good **answer** states:
 
 The formal answer must be durable enough to guide later work without reconstructing the chat.
 
-### needs_proposed_follow_up — propose consequences
+### needs\_proposed\_follow\_up — propose consequences
 
 Derive follow-up only from the approved answer. It may propose tickets, durable files, record updates, another exploration, or no action. Give each proposed consequence enough destination and scope to approve, and explain how it follows from the answer. Do not create records, modify destinations, publish artifacts, or take any other side effect before approval.
 
 A good **Proposed Follow-up** is the smallest complete, answer-supported package of consequences; it does not turn every interesting observation into work.
 
-### needs_consequences — apply the approved follow-up
+### needs\_consequences — apply the approved follow-up
 
 Perform exactly the approved follow-up and nothing broader. Verify created IDs, destinations, placements, and links; preserve the exploration's durable artifacts and provenance where they belong. Report what was actually applied and how it was checked.
 
-When the approved follow-up creates a Ticket, load and follow
-`panels-ticket-creation`. The approved answer and follow-up remain the authority for
-what may be created, its provenance, and its destination.
+When the approved follow-up creates a Ticket, load and follow `panels-ticket-creation`. The approved answer and follow-up remain the authority for what may be created, its provenance, and its destination.
 
 The Consequences stage is application and bookkeeping, not a hidden implementation stage. Do not perform substantive downstream work inside this ticket; create or route that work through the approved destination instead.
 
@@ -94,7 +92,7 @@ The Consequences stage is application and bookkeeping, not a hidden implementati
 - Keep the stages distinct: Understanding frames the problem, Research Plan chooses the evidence path, Findings produces the evidence, and Answer records the user's decision.
 - Preserve uncertainty when evidence does not resolve it; confidence must not outrun provenance.
 - Do not let a familiar implementation, a large source list, or a polished prototype substitute for mechanism-level understanding.
-- Follow `panels-worker` for shared ownership, proposal, approval, Chat, and ceiling mechanics; this skill only defines exploration-specific work.
+- Follow `panels-worker` for shared ownership, proposal, approval, Chat, scope, and reconciliation mechanics; this skill only defines exploration-specific work.
 
 ## How to think
 

@@ -72,7 +72,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
             let nextID = UUID().uuidString
             let next = ConversationSend(conversationId: message.conversationId, content: message.content, mode: message.mode,
                                     backendKey: message.backendKey, model: message.model, reasoningEffort: message.reasoningEffort,
-                                    senderMessageId: nextID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
+                                    senderMessageId: nextID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), ownerReadThroughSequence: message.ownerReadThroughSequence)
             let replacement = PendingWork(id: nextID, created: .now, kind: .message, owner: work.owner, message: next, priorMessageIDs: (work.priorMessageIDs ?? []) + [id])
             do { try save(replacement, server: server); try store.remove(server: server, kind: "outbox", id: id) }
             catch { store.saveError = error.localizedDescription; return }
@@ -111,6 +111,13 @@ struct PendingWork: Codable, Identifiable, Sendable {
                             try save(work, server: server); continue
                         }
                         if work.state == .serverQueued { continue }
+                        if message.ownerReadThroughSequence != nil {
+                            let current = try await api.conversationConfiguration(owner, id: id)
+                            if current.heldPrompts.contains(where: { $0.senderMessageId == work.id }) {
+                                work.state = .serverQueued; work.note = "Queued on server"
+                                try save(work, server: server); continue
+                            }
+                        }
                     } else if work.state != .waiting {
                         work.state = .uncertain; work.note = "Delivery uncertain · check conversation"
                         try save(work, server: server); continue
@@ -121,7 +128,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
                     if let id = result.conversationId {
                         work.message = ConversationSend(conversationId: id, content: message.content, mode: message.mode,
                             backendKey: message.backendKey, model: message.model, reasoningEffort: message.reasoningEffort,
-                            senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds)
+                            senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds, ownerReadThroughSequence: message.ownerReadThroughSequence)
                     }
                     switch result.fate {
                     case "started", "injected": work.state = .sent; work.note = "Sent"; work.completed = .now
@@ -130,7 +137,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
                         if let id = result.conversationId {
                             work.message = ConversationSend(conversationId: id, content: message.content, mode: message.mode,
                                 backendKey: message.backendKey, model: message.model, reasoningEffort: message.reasoningEffort,
-                                senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds)
+                                senderMessageId: message.senderMessageId, sentAtUnixMilliseconds: message.sentAtUnixMilliseconds, ownerReadThroughSequence: message.ownerReadThroughSequence)
                         }
                     case "refused": work.state = .failed; work.note = "Not sent · tap to retry"
                     case "suppressed": work.state = .changed; work.note = "Not sent · no longer applicable"

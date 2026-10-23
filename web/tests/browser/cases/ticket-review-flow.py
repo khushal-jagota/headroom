@@ -160,6 +160,13 @@ def run(browser, urls):
     fixture_overrides = {}
     revisions = []
     session_revised = False
+    review_messages = []
+    review_read = 0
+    review_message_sends = []
+    review_held = []
+    review_send_fate = "refused"
+    review_message_mode = False
+
 
     def fixture_ticket(identity):
         if identity in fixture_overrides:
@@ -272,6 +279,8 @@ def run(browser, urls):
             ]
             if identity != "t_review" or not source_deleted
         ]
+        if review_message_mode:
+            source = [row for row in source if row["id"] == "t_review"]
         parent = {
             "id": "outcome_kept",
             "title": "Kept outcome",
@@ -315,6 +324,12 @@ def run(browser, urls):
                     proposal_revision=proposal["revision"] if proposal else 0,
                 )
             elif record["kind"] == "conversation" and record["id"] == ticket["conversation_id"]:
+                if review_message_mode:
+                    unread = [event for event in review_messages if event["sequence"] > review_read]
+                    record["value"]["first_unread_owner_message_at"] = unread[0]["created_at"] if unread else None
+                    record["value"]["owner_read_through_sequence"] = review_read
+                    record["value"]["latest_sequence"] = review_messages[-1]["sequence"] if review_messages else 0
+
                 record["value"]["attention"]["current"]["signal"]["working"] = runtime_working
                 retained_conversation = json.loads(json.dumps(record))
         if source_deleted and retained_conversation is not None:
@@ -343,7 +358,7 @@ def run(browser, urls):
         route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 
     def respond(route):
-        nonlocal navigation_proposal, session_revised, fail_field_save
+        nonlocal navigation_proposal, session_revised, fail_field_save, review_read
         path = route.request.url.split("/api/", 1)[1]
         requests.append(path)
         if path.startswith("resource-body?"):
@@ -353,7 +368,32 @@ def run(browser, urls):
             path = path.removesuffix("/workspace")
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path.split("?")[0] == "test/navigation-publication":
+        if review_message_mode and path.startswith("conversation/conversations/review-message"):
+            if "/events?" in path:
+                after = int(parse_qs(path.split("?", 1)[1])["after"][0])
+                result = {"events": [event for event in review_messages if event["sequence"] > after]}
+            elif path.endswith("/owner-read"):
+                review_read = route.request.post_data_json["through_sequence"]
+                ticket["conversation_signal"]["message_for_owner"] = any(event["sequence"] > review_read for event in review_messages)
+                result = {"owner_read_through_sequence": review_read}
+            elif "/view/receipts?" in path:
+                result = {"conversation_id": "review-message", "receipts": []}
+            else:
+                result = {"conversation_id": "review-message", "latest_sequence": review_messages[-1]["sequence"],
+                          "owner_read_through_sequence": review_read, "held_prompts": review_held}
+        elif review_message_mode and path == "tickets/t_review/conversation/send":
+            review_message_sends.append(route.request.post_data_json)
+            if review_send_fate == "refused":
+                result = {"conversation_id": "review-message", "fate": "refused", "refusal_reason": "backend_did_not_start"}
+            else:
+                review_read = route.request.post_data_json["owner_read_through_sequence"]
+                ticket["conversation_signal"]["message_for_owner"] = any(event["sequence"] > review_read for event in review_messages)
+                if review_send_fate == "lost-queued":
+                    review_held.append({"sender_message_id": route.request.post_data_json["sender_message_id"]})
+                    route.abort("connectionreset")
+                    return
+                result = {"conversation_id": "review-message", "fate": review_send_fate}
+        elif path.split("?")[0] == "test/navigation-publication":
             assert route.request.method == "POST"
             result = review_snapshot(force_publication=True)
             if "?view=" in path:
@@ -1397,6 +1437,121 @@ def run(browser, urls):
     )
     assert page.url == original_url
     print(f"Artifact link browser coverage: {time.monotonic() - artifact_started:.2f}s", flush=True)
+    # Reuse this host for the new browser boundary: the complete unread run, a draft
+    # through publication/Skip, attachments, failed send, and a later unread message.
+    review_message_mode = True
+    source_deleted = False
+    ticket.update(conversation_id="review-message", title="Messages in review", recap="The reply stays beside the unread messages.",
+                  conversation_signal={"working": False, "message_for_owner": True},
+                  stage="needs_success_condition", ticket_status="awaiting_approval",
+                  pending_proposal={"field": "success_condition", "body": "A separate decision", "created_at": 500, "revision": 1})
+    navigation_proposal = None
+    def owner_message(sequence, text):
+        return {"conversation_id": "review-message", "sequence": sequence, "kind": "message_to_owner", "created_at": sequence,
+                "payload": {"text": text, "sender_label": "worker", "sender": {"kind": "ticket", "id": "t_review"},
+                            "recipient": {"kind": "owner", "id": "owner"}}}
+    review_messages[:] = [owner_message(i, f"Unread message {i}") for i in range(1, 122)]
+    review_messages[120]["payload"]["text"] += "\n\n[HTML plan](/files/tickets/t_review/artifacts/plan.html)"
+    page.evaluate("window.__showTicket('t_review')")
+    page.evaluate("window.__refresh()")
+    page.evaluate("window.__showReview()")
+    message_card = page.locator('[data-review-item-type="message"]')
+    expect(message_card.locator('[data-review-message-sequence]')).to_have_count(121)
+    expect(message_card.locator('[data-review-message-sequence="121"]')).to_contain_text("Unread message 121")
+    message_card.locator('[data-review-message-sequence="121"]').scroll_into_view_if_needed()
+    expect(message_card.locator('[data-review-message-sequence="121"] iframe')).to_have_count(1)
+    assert review_read == 0, "Showing review must not mark messages read"
+    reply = message_card.locator('[data-review-reply]')
+    reply.fill("Keep these words")
+    page.evaluate("window.__replyNode=document.querySelector('[data-review-reply]')")
+    page.evaluate("window.__batch()")
+    expect(reply).to_have_value("Keep these words")
+    assert page.evaluate("window.__replyNode===document.querySelector('[data-review-reply]')")
+    message_card.locator('input[type="file"]').set_input_files({"name": "notes.txt", "mimeType": "text/plain", "buffer": b"An attachment"})
+    expect(message_card.locator('.review-attachment')).to_contain_text("notes.txt")
+    expect(message_card.locator('[data-review-attach]')).to_be_enabled()
+    expect(message_card.locator('[data-voice-record]')).to_have_count(1)
+    message_card.locator('[data-skip]').click()
+    expect(page.locator('[data-review-item-type="proposal"]')).to_be_visible()
+    page.evaluate("window.__showTicket('t_review')")
+    page.evaluate("window.__showReview()")
+    expect(reply).to_have_value("Keep these words")
+    expect(message_card.locator('.review-attachment')).to_contain_text("notes.txt")
+    message_card.locator('[data-review-send]').click()
+    expect(message_card.locator('.error-line')).to_be_visible()
+    expect(reply).to_have_value("Keep these words")
+    expect(reply).to_be_enabled()
+    assert review_read == 0
+    assert review_message_sends[-1]["owner_read_through_sequence"] == 121
+    assert review_message_sends[-1]["content"][-1]["piece"] == "file"
+    refused_identity = review_message_sends[-1]["sender_message_id"]
+    # A later message arrives after the run was drawn. The reply cannot consume it.
+    review_messages.append(owner_message(122, "This arrived during your reply."))
+    review_send_fate = "queued"
+    page.evaluate("""() => {
+      const original = Element.prototype.animate;
+      window.__reviewFades=[];
+      Element.prototype.animate=function(frames,options) {
+        if(this.matches('[data-review-item-type="message"]')) {
+          window.__reviewFades.push({options, text:this.querySelector('textarea')?.value,
+            files:this.querySelectorAll('.review-attachment').length, height:this.getBoundingClientRect().height});
+        }
+        return original.call(this,frames,options);
+      };
+    }""")
+    message_card.locator('[data-review-send]').click()
+    expect(message_card.locator('[data-review-message-sequence="122"]')).to_be_visible()
+    expect(message_card.locator('[data-review-message-sequence]')).to_have_count(1)
+    assert review_read == 121
+    fade = page.evaluate("window.__reviewFades[0]")
+    assert fade["text"] == "Keep these words" and fade["files"] == 1
+    assert fade["options"]["duration"] == 160
+    assert fade["options"]["easing"] == "cubic-bezier(.3,0,.8,.15)"
+    assert review_message_sends[-1]["sender_message_id"] != refused_identity
+    expect(reply).to_have_value("")
+    assert len(review_message_sends) == 2
+    expect(message_card.locator('[data-open-conversation]')).to_have_attribute("href", "#/workspace/t_review?conversation=review-message")
+    # Screenshot the actual implementation at useful desktop and narrow widths.
+    shots = os.environ.get("PANELS_REVIEW_SCREENSHOTS")
+    if shots:
+        from pathlib import Path
+        Path(shots).mkdir(parents=True, exist_ok=True)
+        page.set_viewport_size({"width": 1100, "height": 850})
+        page.screenshot(path=str(Path(shots) / "review-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.screenshot(path=str(Path(shots) / "review-narrow.png"), full_page=True)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size({"width": 1280, "height": 900})
+    message_card.locator('[data-review-mark-read]').click()
+    expect(message_card).to_have_count(0)
+    assert review_read == 122
+    expect(page.locator('[data-review-item-type="proposal"]')).to_be_visible()
+    # A queued send whose response is lost clears the last queue item on the server.
+    # The held card and immutable attempt must survive that publication until retry
+    # discovers queue admission, without sending its attachment a second time.
+    ticket["pending_proposal"] = None
+    ticket["ticket_status"] = "agent"
+    ticket["conversation_signal"]["message_for_owner"] = True
+    review_messages.extend([owner_message(123, "Please read the attached plan.\n\n[HTML plan](/files/tickets/t_review/artifacts/plan.html)"),
+                            owner_message(124, "The revised plan keeps the original scope.")])
+    page.evaluate("window.__refresh()")
+    expect(message_card.locator('[data-review-message-sequence]')).to_have_count(2)
+    reply.fill("Keep the scope and the attachment.")
+    message_card.locator('input[type="file"]').set_input_files({"name": "scope.txt", "mimeType": "text/plain", "buffer": b"Keep scope"})
+    expect(message_card.locator('.review-attachment')).to_contain_text("scope.txt")
+    review_send_fate = "lost-queued"
+    message_card.locator('[data-review-send]').click()
+    expect(message_card.locator('.error-line')).to_be_visible()
+    expect(reply).to_have_value("Keep the scope and the attachment.")
+    page.evaluate("window.__refresh()")
+    expect(message_card).to_be_visible()
+    expect(reply).to_be_disabled()
+    sent_count = len(review_message_sends)
+    message_card.locator('[data-review-send]').click()
+    expect(message_card).to_have_count(0)
+    expect(page.locator('[data-review-empty]')).to_be_visible()
+    assert review_read == 124
+    assert len(review_message_sends) == sent_count
     page.evaluate("window.__showConfig()")
     stage_table = page.locator("[data-worker-stage-table]")
     stage_table.locator("[data-worker-stage-row]").first.wait_for()
@@ -1405,4 +1560,5 @@ def run(browser, urls):
     assert stage_table.locator("[data-stage-owner-select]").count() == editable_rows
     assert stage_table.locator("select").count() == editable_rows
     assert stage_table.locator("input, [contenteditable]").count() == 0
-    pass
+    page.unroute_all(behavior="wait")
+    page.close()

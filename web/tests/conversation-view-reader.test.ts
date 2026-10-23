@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ConversationViewReader } from '../src/lib/conversation/view/reader.svelte';
 import { viewSnapshot, viewChanges } from './support/conversation/view-fixture';
 import type { FixtureEvent } from './support/conversation/view-fixture';
+import type { ViewBodyReference } from '../src/lib/conversation/view/contracts';
 
 class Source {
   static all: Source[] = [];
@@ -17,12 +18,27 @@ const rows: FixtureEvent[] = [{ conversation_id: 'c', sequence: 1, kind: 'messag
 const snapshot = () => viewSnapshot('c', 'focus', rows);
 const readers: ConversationViewReader[] = [];
 afterEach(() => { for (const reader of readers) reader.close(); readers.length = 0; Source.all = []; vi.useRealTimers(); });
-async function start() {
+async function start(initial = snapshot()) {
   vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
   const reader = new ConversationViewReader('c', 'focus', true); readers.push(reader);
-  const ready = reader.connect(); Source.all[0].send('snapshot', snapshot()); await ready;
+  const ready = reader.connect(); Source.all.at(-1)!.send('snapshot', initial); await ready;
   return reader;
 }
+
+it('does not replay existing live output when its first body read races a newer version', async () => {
+  const initial = snapshot();
+  const reference: ViewBodyReference = { body_id: 'live:turn', version: '1', byte_count: 100, media_type: 'text/markdown' };
+  initial.status.live_output = { runtime_epoch: 'epoch', turn_key: 'turn:1', version: 1, byte_count: 100, reference };
+  const reader = await start(initial);
+  expect(reader.liveOutputIsArrival(reference, false)).toBe(false);
+  const next = { ...reference, version: '2', byte_count: 200 };
+  // A version that overtakes the initial body read is still restoration until
+  // some text actually appears. Replacing painted text is a genuine arrival.
+  expect(reader.liveOutputIsArrival(next, false)).toBe(false);
+  expect(reader.liveOutputIsArrival(next, true)).toBe(true);
+  reader.status = { ...initial.status, live_output: { ...initial.status.live_output!, turn_key: 'turn:2', reference: next } };
+  expect(reader.liveOutputIsArrival(next, false)).toBe(true);
+});
 
 it('replays the unchanged coverage after a deferred history read and ignores the closed stream', async () => {
   const reader = await start();
@@ -286,4 +302,168 @@ it('returns false for failed, invalid, canceled, and disposed admission', async 
   reader.close();
   expect(await disposed).toBe(false);
   expect(await reader.load()).toBe(false);
+});
+
+async function startEntry(watermark: number) {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, null, undefined, undefined, watermark);
+  readers.push(reader);
+  const initial = snapshot(); initial.coverage.through_sequence = watermark + 100;
+  const ready = reader.connect(); Source.all[0].send('snapshot', initial); await ready;
+  return reader;
+}
+
+it('freezes unread entry at its captured cursor and waits for placement before reconnect', async () => {
+  const page = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  const fetch = vi.fn(async (_url: string) => new Response(JSON.stringify(page)));
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  const url = new URL(fetch.mock.calls[0][0], 'http://local');
+  expect(JSON.parse(url.searchParams.get('cursor')!).order).toEqual({ sequence: 10, slot: Number.MAX_SAFE_INTEGER });
+  expect(url.searchParams.get('direction')).toBe('newer');
+  expect(reader.entryTarget?.key).toBe(page.items[0].key);
+  expect(reader.entryTarget?.offset).toBe(32);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(Source.all).toHaveLength(1);
+  reader.finishEntry();
+  expect(reader.entryPhase).toBe('complete');
+  expect(Source.all).toHaveLength(2);
+});
+
+it.each(['HTTP 503', 'active transport cancellation'])('offers retry after %s and keeps the original watermark', async (failure) => {
+  const fetch = vi.fn(async (_url: string) => {
+    if (failure === 'active transport cancellation') throw new DOMException('Entry transport cancelled', 'AbortError');
+    return new Response('', { status: 503 });
+  });
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('error'));
+  expect(reader.loading).toBe(false);
+  expect(reader.entryTarget).toBeNull();
+  fetch.mockImplementation(async () => new Response(JSON.stringify(viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page)));
+  reader.retryEntry();
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  for (const call of fetch.mock.calls) {
+    const url = new URL(call[0], 'http://local');
+    expect(JSON.parse(url.searchParams.get('cursor')!).order.sequence).toBe(10);
+  }
+});
+
+it('replaces hidden-only unread pages within bounds', async () => {
+  const visible = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 12 }]).page;
+  const hidden = { ...visible, items: visible.items.map(item => ({ ...item, row_kind: 'token_usage' })), newer: {
+    projection_version: 1, lens: 'focus', scope: visible.scope, order: { sequence: 11, slot: 0 }
+  }};
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(hidden))).mockResolvedValueOnce(new Response(JSON.stringify(visible)));
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(reader.pages[0].items).toEqual(visible.items);
+  expect(reader.entryTarget?.key).toBe(visible.items[0].key);
+});
+
+it('does not publish a cancelled unread entry into a disposed reader', async () => {
+  let complete!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { complete = resolve; })));
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(complete).toBeDefined());
+  reader.close();
+  complete(new Response(JSON.stringify(snapshot().page)));
+  await Promise.resolve(); await Promise.resolve();
+  expect(reader.pages).toEqual([]);
+  expect(reader.entryTarget).toBeNull();
+});
+
+it('admits newest after an exhausted unread window without inventing an unread anchor', async () => {
+  const page = snapshot().page;
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...page, items: [], newer: null })))
+    .mockResolvedValueOnce(new Response(JSON.stringify(page)));
+  vi.stubGlobal('fetch', fetch);
+  const reader = await startEntry(1);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  expect(reader.entryTarget).toBeNull();
+  expect(reader.entryTargetReady).toBe(true);
+  const latest = new URL(String(fetch.mock.calls[1][0]), 'http://local');
+  expect(latest.searchParams.has('cursor')).toBe(false);
+  expect(latest.searchParams.get('direction')).toBe('older');
+});
+
+it('holds cold entry until its own deferred body is ready', async () => {
+  const page = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  page.items = page.items.map(item => item.kind !== 'row' ? item : { ...item, body: { kind: 'deferred', reference: {
+    body_id: 'entry-body', version: 'one', byte_count: 10, media_type: 'application/json'
+  } } });
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(page))));
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  reader.entryBodyReady('unrelated'); reader.finishEntry();
+  expect(reader.entryPhase).toBe('placing');
+  expect(reader.entryTargetReady).toBe(false);
+  reader.entryBodyReady(reader.entryTarget!.key); reader.finishEntry();
+  expect(reader.entryPhase).toBe('complete');
+});
+
+
+it('uses the initial snapshot without paging when its coverage proves no unread range', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, null, undefined, undefined, 1);
+  readers.push(reader);
+  const ready = reader.connect(); Source.all[0].send('snapshot', snapshot()); await ready;
+  expect(reader.entryPhase).toBe('placing');
+  expect(reader.entryTarget).toBeNull();
+  expect(reader.entryTargetReady).toBe(true);
+  expect(fetch).not.toHaveBeenCalled();
+  reader.finishEntry();
+  expect(reader.entryPhase).toBe('complete');
+});
+
+it('retains the parked unread target when expanded scopes reach the shared item bound', async () => {
+  const first = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(first))));
+  const reader = await startEntry(10);
+  await vi.waitFor(() => expect(reader.entryPhase).toBe('placing'));
+  reader.finishEntry();
+  expect(reader.entryHeld).toBe(true);
+  for (let index = 0; index < 3; index++) {
+    const scope = { kind: 'turn' as const, key: `turn:${index}` };
+    const page = viewSnapshot('c', 'focus', Array.from({ length: 100 }, (_, n) => ({ ...rows[0], sequence: 100 + index * 100 + n }))).page;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...page, scope }))));
+    await reader.expand(scope, true);
+  }
+  expect(reader.pages.flatMap(page => page.items).length).toBeLessThanOrEqual(300);
+  expect(reader.pages.flatMap(page => page.items).some(item => item.key === reader.entryTarget?.key)).toBe(true);
+  reader.releaseEntry();
+  expect(reader.entryHeld).toBe(false);
+});
+
+it('keeps restoration pending when the newer half fails and retries that context before placement', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const anchorPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  anchorPage.newer = cursor(11);
+  const newerPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 12 }]).page;
+  const { fetch, pending } = holdPages();
+  const anchor = { key: anchorPage.items[0].key, order: { sequence: 11, slot: 0 }, offset: -17, following: false };
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, anchor);
+  readers.push(reader);
+  const ready = reader.connect();
+  Source.all.at(-1)!.send('snapshot', snapshot());
+  await flushDemand();
+  pending[0].complete(Response.json(anchorPage));
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  // The anchor's older page exists, but the context below it is still incomplete.
+  expect(reader.restoring).toBe(true);
+  pending[1].complete(Response.json({ error: 'offline' }, { status: 503 }));
+  await ready;
+  await vi.waitFor(() => expect(reader.restorationFailed).toBe(true));
+  expect(reader.restoring).toBe(true);
+  reader.retryRestoration();
+  await vi.waitFor(() => expect(pending).toHaveLength(3));
+  expect(JSON.parse(new URL(fetch.mock.calls[2][0], 'http://local').searchParams.get('cursor')!).order.sequence).toBe(11);
+  pending[2].complete(Response.json(newerPage));
+  await vi.waitFor(() => expect(reader.restoring).toBe(false));
+  expect(reader.restorationFailed).toBe(false);
+  expect(reader.pages.flatMap(page => page.items).map(item => item.key)).toEqual([anchorPage.items[0].key, newerPage.items[0].key]);
 });

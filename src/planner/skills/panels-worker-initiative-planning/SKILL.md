@@ -1,26 +1,22 @@
 ---
-name: panels-worker-initiative-planning
-description: Stage-by-stage guidance for planning a confirmed direction across multiple Panels Tickets.
+name: "panels-worker-initiative-planning"
+description: "Stage-by-stage guidance for planning a confirmed direction across multiple Panels Tickets."
 ---
 
 # Initiative planning ticket stages
 
-Initiative Planning starts after the direction is confirmed. It works out the shared
-shape and cross-Ticket decisions, then creates the bounded Tickets that will carry the
-work. It does not replace Exploration, sprint planning, prioritization, or the local
-planning and implementation each Ticket owns.
+Initiative Planning starts after the direction is confirmed. It works out the shared shape and cross-Ticket decisions, then creates the bounded Tickets that will carry the work. It does not replace Exploration, sprint planning, prioritization, or the local planning and implementation each Ticket owns.
 
 ### The stages
 
-The sequence is **Brief → Rough Split into Parts → Question Tree → Question Answers →
-Proposed Tickets → Consequences → Done**.
+The sequence is **Brief → Rough Split into Parts → Question Tree → Question Answers → Proposed Tickets → Consequences → Done**.
 
-- **needs_brief** — preserve the confirmed direction and source context.
-- **needs_rough_split_into_parts** — section the initiative into its important parts.
-- **needs_question_tree** — map the cross-cutting questions that must be answered.
-- **needs_question_answers** — work through the consequential questions with the user.
-- **needs_proposed_tickets** — derive the downstream Tickets for the user's sense-check.
-- **needs_consequences** — create and verify exactly those approved Tickets.
+- **needs\_brief** — preserve the confirmed direction and source context.
+- **needs\_rough\_split\_into\_parts** — section the initiative into its important parts.
+- **needs\_question\_tree** — map the cross-cutting questions that must be answered.
+- **needs\_question\_answers** — research and recommend answers before focused user review.
+- **needs\_proposed\_tickets** — derive the downstream Tickets for the user's sense-check.
+- **needs\_consequences** — create and verify exactly those approved Tickets.
 - **done** — finished.
 
 ## The scope test
@@ -28,40 +24,24 @@ Proposed Tickets → Consequences → Done**.
 A question belongs in Initiative Planning only when its answer:
 
 - shapes the initiative as a whole;
-- defines a boundary, dependency, interface, or sequencing constraint between Tickets;
-  or
+- defines a boundary, dependency, interface, or sequencing constraint between Tickets; or
 - begins inside one Ticket but would force another Ticket to change.
 
-Use the counterfactual: **if this answer changed, would multiple Tickets or the seam
-between them need to change?** If not, leave the question to its Ticket. Important local
-questions may be carried into a Ticket outline, but they are not answered here.
+Use the counterfactual: **if this answer changed, would multiple Tickets or the seam between them need to change?** If not, leave the question to its Ticket. Important local questions may be carried into a Ticket outline, but they are not answered here.
 
-Treat the confirmed direction as the premise. Do not reopen what the user wants merely
-because the top-level how is difficult. If source material exposes a genuine
-contradiction, name it and bring it to the user rather than silently changing the
-direction or inventing a reconciliation.
+Treat the confirmed direction as the premise. Do not reopen what the user wants merely because the top-level how is difficult. If source material exposes a genuine contradiction, name it and bring it to the user rather than silently changing the direction or inventing a reconciliation.
 
-### needs_brief — preserve the confirmed direction
+### needs\_brief — preserve the confirmed direction
 
-Keep the user's wording, the approved Exploration answer when one exists, the source
-manager or project context, and explicit boundaries. State what is confirmed and
-what still needs top-level planning without turning uncertainty about *how* into
-uncertainty about *whether* to pursue the direction.
+Keep the user's wording, the approved Exploration answer when one exists, the source Manager or project context, and explicit boundaries. State what is confirmed and what still needs top-level planning without turning uncertainty about *how* into uncertainty about *whether* to pursue the direction.
 
-A good **Brief** lets the Rough Split into Parts begin without reconstructing the
-intake or mistaking an agent assumption for settled direction. It does not contain a
-guessed solution or premature Ticket list.
+A good **Brief** lets the Rough Split into Parts begin without reconstructing the intake or mistaking an agent assumption for settled direction. It does not contain a guessed solution or premature Ticket list.
 
-### needs_rough_split_into_parts — section the work
+### needs\_rough\_split\_into\_parts — section the work
 
-Read the source context and inspect relevant records or systems narrowly before shaping
-the work. Divide the initiative into the few parts that make it understandable. Each
-part should name a distinct responsibility or outcome, why it matters, and the important
-seams it has with the other parts.
+Read the source context and inspect relevant records or systems narrowly before shaping the work. Divide the initiative into the few parts that make it understandable. Each part should name a distinct responsibility or outcome, why it matters, and the important seams it has with the other parts.
 
-Do not use generic project phases merely to fill the field. Do not assume the initiative
-is software architecture. Do not turn the parts into Tickets yet: later answers may
-change where Ticket boundaries belong.
+Do not use generic project phases merely to fill the field. Do not assume the initiative is software architecture. Do not turn the parts into Tickets yet: later answers may change where Ticket boundaries belong.
 
 A good **Rough Split into Parts**:
 
@@ -70,35 +50,21 @@ A good **Rough Split into Parts**:
 - makes coordination seams visible; and
 - is broad enough for the Question Tree to challenge the eventual decomposition.
 
-### needs_question_tree — expose the cross-cutting decisions
+### needs\_question\_tree — expose the cross-cutting decisions
 
-Build a prioritized, nested tree under the parts from Rough Split into Parts. Start with
-the questions whose answers constrain later branches. Show subordinate questions only
-where an answer creates a real follow-on choice. Distinguish questions that block
-coherent Ticket outlines from questions that can safely be carried into downstream work.
+Build a prioritized, nested tree under the Rough Split into Parts. Start with the questions whose answers constrain later branches. Show subordinate questions only where an answer creates a real follow-on choice. Distinguish questions that block coherent Ticket outlines from questions that can safely be carried into downstream work.
 
-For every question, be able to name what other part, Ticket boundary, dependency, or
-interface its answer affects. Remove questions that fail the scope test. Do not pad the
-tree with implementation checklists, answer it prematurely, or use exhaustive detail as
-a substitute for judgment.
+For every question, be able to name what other part, Ticket boundary, dependency, or interface its answer affects. Remove questions that fail the scope test. Do not pad the tree with implementation checklists, answer it prematurely, or use exhaustive detail as a substitute for judgment.
 
-The approved field is for the user's sense-check. Show only the concise question outline:
-no blocker labels, affected-system notes, rationale, or agent-working detail. Keep a short
-tree inline. When it would become a wall of text, use a ticket-owned HTML artifact with
-progressive disclosure and link it from a brief field summary. Keep one canonical copy.
+The approved field is for the user's sense-check. Show only the concise question outline: no blocker labels, affected-system notes, rationale, or agent-working detail. Keep a short tree inline. Before Question Answers, create a ticket-owned HTML artifact as the living question tree so the later research, recommendations, and decisions have one usable home. Prefer a calm, Notion-style document with progressive disclosure over a dense dashboard. Link it from a brief field summary and keep one canonical copy.
 
-A good **question tree** is small enough to navigate, complete enough to expose the
-initiative's consequential choices, and ordered so Question Answers can work one useful
-branch at a time.
+A good **question tree** is small enough to navigate, complete enough to expose the initiative's consequential choices, and ordered so Question Answers can work one useful branch at a time.
 
-### needs_question_answers — settle the shared approach
+### needs\_question\_answers — settle the shared approach
 
-This is user-owned collaborative work. Begin from the approved tree and choose a bounded branch or small
-related group. Treat it as one continuous conversation: acknowledge the user's answer,
-briefly orient any branch change, then ask the next bounded question. Ground factual
-questions with available sources and tools. For judgment questions, explain the practical
-options and implications, make a recommendation when useful, and let the user settle the
-consequential choice. Do not dump the whole tree on the user as an interview.
+This stage is agent-led preparation followed by focused paired review. Begin from the approved tree and choose a bounded branch or small related group. Before asking the user to answer, investigate each question with the available records, sources, and tools, then write the best supported answer and its practical implications. For a judgment question, make a recommendation. When the evidence leaves a genuine choice, give the bounded options and recommend one; often one well-supported recommendation is enough, so do not manufacture alternatives merely to appear balanced.
+
+Open each prepared answer for paired review. Let the user accept it, correct it, or talk through only the specific parts they care about. Treat their participation as review and decision-making, not as the agent's research method. As the conversation continues, acknowledge the user's response, briefly orient any branch change, and bring forward the next prepared answer or related group. Do not dump the whole tree on the user as an interview or make them answer every question from scratch.
 
 As the conversation proceeds:
 
@@ -108,22 +74,13 @@ As the conversation proceeds:
 - add genuinely new cross-cutting questions and retire superseded branches; and
 - move newly discovered local questions to the future Ticket that owns them.
 
-If a living question-tree artifact exists, update it as branches change. Otherwise keep
-the working state in the collaborative conversation and make the final field the durable
-result. The formal **question answers** field is a synthesis, not a transcript: group the
-settled answers by the parts from Rough Split into Parts, preserve the implications that
-downstream Tickets need, and list only unresolved questions that can safely be deferred
-with a clear owner.
+Keep the living HTML question-tree artifact current as proposed answers are researched, reviewed, settled, superseded, or deferred. The formal **question answers** field is a synthesis, not a transcript: group the settled answers by the Rough Split into Parts, preserve the implications that downstream Tickets need, and list only unresolved questions that can safely be deferred with a clear owner.
 
-Do not propose until every question that blocks coherent Ticket boundaries is answered
-or the user has explicitly chosen a safe deferral. A strong result makes the shared
-approach usable without replaying the chat and does not consume Ticket-local planning.
+Do not propose until every question that blocks coherent Ticket boundaries is answered or the user has explicitly chosen a safe deferral. A strong result makes the shared approach usable without replaying the chat and does not consume Ticket-local planning.
 
-### needs_proposed_tickets — derive the bounded work
+### needs\_proposed\_tickets — derive the bounded work
 
-Derive the smallest coherent Ticket set from the approved answers. This stage does not
-re-argue the shared approach. It packages that approach into reviewable units so the
-user can sense-check the boundaries before anything is created.
+Derive the smallest coherent Ticket set from the approved answers. This stage does not re-argue the shared approach. It packages that approach into reviewable units so the user can sense-check the boundaries before anything is created.
 
 Each outline should give only what creation and later Ticket work need:
 
@@ -133,34 +90,17 @@ Each outline should give only what creation and later Ticket work need:
 - **inherited context** — only shared decisions that materially constrain this Ticket;
 - **local questions** — decisions intentionally left to this Ticket;
 - **dependencies** — blocking relationships, interfaces, or ordering that matter; and
-- **destination** — the initiative's Project and Sprint, plus its Manager when that
-  classification still applies.
+- **destination** — the source Manager when one exists, otherwise the applicable project and sprint context.
 
-Check the package against the Rough Split into Parts. Every important part should be
-owned, no two Tickets should silently own the same decision, and dependencies should not
-conceal an unanswered cross-cutting question. Do not copy the entire planning record
-into every outline, specify local implementation, or create records during this stage.
+Check the package against the Rough Split into Parts. Every important part should be owned, no two Tickets should silently own the same decision, and dependencies should not conceal an unanswered cross-cutting question. Do not copy the entire planning record into every outline, specify local implementation, or create records during this stage.
 
-If outlining exposes a consequential question that should have been answered earlier,
-do not bury a guess inside one Ticket. Surface the gap for user decision before treating
-the outlines as final. A good **Proposed Tickets** field is concise enough to scan and
-complete enough to approve as the exact creation package.
+If outlining exposes a consequential question that should have been answered earlier, do not bury a guess inside one Ticket. Surface the gap for user decision before treating the outlines as final. A good **Proposed Tickets** field is concise enough to scan and complete enough to approve as the exact creation package.
 
-### needs_consequences — create the approved Tickets
+### needs\_consequences — create the approved Tickets
 
-Create exactly the approved outlines and nothing broader. Use the outlined Worker type,
-title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the
-shared creation model; the approved outlines remain the authority for what may be
-created. Preserve the planning Ticket's direct Project and Sprint on each new Ticket.
-Preserve its Manager only when that classification applies. Do not move Initiative
-Planning work to Personal / Planning or invent a new container. When creating a
-Ticket that relies on existing Tickets being complete, pass each prerequisite Ticket id
-with repeatable `--blocked-by <ticket-id>`.
+Create exactly the approved outlines and nothing broader. Use the outlined Worker type, title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the shared creation model; the approved outlines remain the authority for what may be created. When the planning Ticket belongs to a Manager, create the new Tickets under that same item. Otherwise preserve the planning Ticket's project and sprint context without inventing a new container. When creating a Ticket that relies on existing Tickets being complete, pass each prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
 
-Encode shared context proportionately: each created Ticket should understand its own
-boundary without receiving the entire initiative record. Update the manager only
-when approved shared information naturally belongs there; do not create mandatory
-duplicate storage.
+Encode shared context proportionately: each created Ticket should understand its own boundary without receiving the entire initiative record. Update the Manager only when approved shared information naturally belongs there; do not create mandatory duplicate storage.
 
 Read every created Ticket back and verify:
 
@@ -169,18 +109,11 @@ Read every created Ticket back and verify:
 - kickoff context and scope boundary; and
 - approved blocking relationships.
 
-A good **Consequences** lists the created Ticket ids and destinations and states what was
-verified. It performs no downstream implementation and ends once the approved records
-are correct.
+A good **Consequences** lists the created Ticket ids and destinations and states what was verified. It performs no downstream implementation and ends once the approved records are correct.
 
 ### Initiative Planning disciplines
 
-- Keep the sequence honest: Rough Split into Parts identifies the parts; Question Tree
-  exposes shared decisions; Question Answers settles them; Proposed Tickets derives the
-  work; Consequences creates it.
-- Apply the scope test repeatedly. A large initiative does not justify absorbing local
-  Ticket decisions.
-- Prefer one clear shared decision over copied context everywhere. The planning Ticket
-  remains discoverable; each downstream Ticket receives only what changes its work.
-- Follow `panels-worker` for shared ownership, proposals, approval, Ticket Chat, and the
-  ceiling. This skill defines only Initiative Planning work.
+- Keep the sequence honest: Rough Split into Parts identifies parts; Question Tree exposes shared decisions; Question Answers settles them; Proposed Tickets derives the work; Consequences creates it.
+- Apply the scope test repeatedly. A large initiative does not justify absorbing local Ticket decisions.
+- Prefer one clear shared decision over copied context everywhere. The planning Ticket remains discoverable; each downstream Ticket receives only what changes its work.
+- Follow `panels-worker` for shared ownership, proposals, approval, Ticket Chat, scope, and reconciliation mechanics. This skill defines only Initiative Planning work.

@@ -22,7 +22,7 @@ from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuth
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
-VIEW_PROJECTION_VERSION = 4
+VIEW_PROJECTION_VERSION = 5
 
 ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
 ViewGroup = Literal[
@@ -66,7 +66,7 @@ class ViewWindowRequest(TypedDict):
 
 
 class ViewRequest(TypedDict):
-    projection_version: Literal[4]
+    projection_version: Literal[5]
     scope_generation: int
     locale: str
     selected: ViewOwner | None
@@ -103,6 +103,7 @@ class ViewSettledManagerValue(TypedDict):
 
 
 class ViewConversationValue(TypedDict):
+    first_unread_owner_message_at: int | None
     owner_read_through_sequence: int
     error_acknowledged_through_sequence: int
     attention: AttentionKnowledge
@@ -172,7 +173,7 @@ class ViewContent(TypedDict):
 
 class ViewIdentity(TypedDict):
     wire_version: Literal[3]
-    projection_version: Literal[4]
+    projection_version: Literal[5]
     view_id: str
     scope_generation: int
     ordering_generation: str

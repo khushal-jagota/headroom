@@ -481,6 +481,7 @@ export type SendPromptBody = {
  * to a conversation that does not exist yet they are what to create it on.
  */
 export type OwnerSendBody = {
+  owner_read_through_sequence?: number;
   conversation_id: string | null;
   backend_key?: string;
   model?: string;

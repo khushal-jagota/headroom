@@ -22,9 +22,19 @@ One screen per part of the system:
 
 - **Removed calendar screens** — Day and date-range Sprint screens no longer exist.
   Old dated links use the unavailable-route view. A bare former Home address opens Chief.
-- **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
-  walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
-  Proposal items add their labelled recap, ask, approval, and send-back controls.
+- **Review** — one oldest-first queue holds owner-addressed proposals and unread conversations.
+  Each conversation gets one card with its complete unread run, including progress messages.
+  A proposal from the same Worker remains a separate decision. The badge counts both kinds.
+  The title and recap name the conversation. Skip and Open conversation stay above the card.
+  Mini bars separate messages. Linked artifacts appear where the message links them.
+  The reply field holds paperclip, microphone, and send controls. Mark read sits below it.
+  Opening Review does not acknowledge a message. Mark read or an accepted reply clears only
+  the messages displayed when the owner acts. Later messages remain unread.
+  A failed reply stays in place with its words and attachments. An uncertain send retains
+  its identity until the recorded outcome resolves it. The card fades out after acceptance.
+  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal
+  guard, with the draft intact. Open conversation names the exact conversation.
+  Proposal items keep their recap, ask, approval, and send-back controls.
   A proposal routed to a Manager also creates a durable manager wake. Other
   non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
   Keyboard shortcuts drive the actions that apply to the current item when the
@@ -652,6 +662,10 @@ hand-rolling the same shapes per screen. Each does one job:
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
+- **ReviewMessageCard** — the complete unread run for one conversation, read from its
+  durable watermark. It reuses message rendering, file previews, voice capture, and durable
+  composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
+  Navigation publications carry identity and recap facts, never message bodies.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
@@ -729,19 +743,42 @@ hand-rolling the same shapes per screen. Each does one job:
   is read only: the actions go, the picker stays, and it is the way back to the current
   conversation.
 
-  The transcript uses native browser scroll behavior. A reader who follows the end
-  keeps the newest content in sight. A reader who scrolls back leaves that mode.
-  The browser holds the top line when it can. If content above or within the view
-  grows, text below it can move. Panels does not restore an exact paragraph offset.
-  Opening the conversation, sending a message, and Latest each place the view once.
-  Latest returns focus to the Conversation region after the button disappears.
-  If the reader moves focus elsewhere before the jump completes, that focus stays there.
-  An explicit send places the sent prompt near the top, even during a layer resize.
-  If a shorter transcript clamps the view to the end, later content follows the end.
-  Latest reflects the actual content, separately from the answer room below a sent
-  message. Reply content consumes that room. A resize counts the reply already present
-  and cannot recreate exhausted room. Exact text preservation during image growth
-  is not a requirement for this release. Further conversation refinement is separate work.
+  The transcript retains native browser anchoring for ordinary history prepends.
+  Internal motion writes sizes and scroll position in the same animation frame,
+  over 240ms with linear timing. Card state travel uses a separate 150ms duration. Reader navigation
+  cancels automatic travel. Replies consume reserved answer room. A new streaming
+  line can advance over 120ms when new text arrives and the reader already follows
+  newest. A multi-line chunk advances one line per step, bounded by the height
+  of the text that arrived. Layout changes and entry never enter this stream path.
+  Other deliberate moves use one computed destination.
+  The newest line has a 12px bottom gap. A held top line sits 32px below the edge,
+  clear of the 20px fade. The bottom fade appears only when content remains below.
+
+  Cold entry captures the owner-read watermark before the read credit advances.
+  The first visible unread message is admitted through bounded pages and placed before
+  the transcript appears. The existing busy region stays mounted. Failure exposes
+  an error and Retry, rather than an indefinite hidden transcript. An existing
+  anchor survives restoration. With nothing unread, entry uses newest. A fresh open
+  or lens switch commits its position before the transcript appears. Deferred body
+  and Markdown presentation must be ready at the destination. Later layout changes
+  retain the bottom or held message without animated catch-up.
+  A parked unread target survives expansion and arrivals until reader navigation.
+
+  Latest uses confirmed page admission and retains its reader identity through layout
+  and focus. It returns focus to the Conversation region after its button disappears,
+  unless the person moves focus elsewhere. The centered pill counts distinct unread
+  messages below the view against the owner's read watermark. Read history shows
+  Latest. Tools and structural rows do not increase the count.
+
+  The textarea mirror measures one empty line. Draft growth adds to the overlay's
+  measured peek height and leaves transcript height unchanged. The composer cap and
+  visible-viewport bounds remain separate constraints. Sent messages retain one keyed
+  bubble through delivery outcomes, with applicable recovery actions in place.
+  A running agent does not place a new send in the queue. Confirmed queue membership
+  places it there. Acceptance or a correlated record places it in the transcript.
+  Unresolved sends remain durable without a provisional destination. An unanswered
+  or terminal outcome retains its recovery behavior without false acceptance.
+  Focus excludes tools throughout the turn. Settled turn heads have no disclosure controls.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and
@@ -749,13 +786,26 @@ hand-rolling the same shapes per screen. Each does one job:
   can be that line, and so can a request waiting on you. Clicking the input **peeks** it
   open: a card over the page, with the line gone because the transcript now says the same
   thing. A control takes it **opened**, the available visible height of the pane, and the same control
-  brings it back. Clicking the ticket behind it, or pressing Escape, drops it one state.
+  brings it back. A primary press outside the conversation returns it directly to rest.
+  Escape moves it back one state. Ticket and Manager surfaces share the outside-press rule,
+  including artifact controls beside the document. Presses inside the card keep menus,
+  selection, and conversation previews usable. Outside presses retain their normal action.
+
+  An open HTML artifact announces primary presses through one fixed message from its
+  sandboxed frame. The surface explicitly registers that exact frame. Only its current,
+  visible frame can return that surface to rest. Inline previews do not register.
+  Hidden, detached, fully clipped, unrelated, and offscreen frames cannot dismiss a card.
+  The frame keeps its script-only sandbox and its original document restrictions.
+  State changes measure in the mutation callback before the next paint. Resize and
+  content measurements stay coalesced in an animation frame. Rapid card reversals start
+  at the current rendered height.
 
   Three things are true of all three. Nothing moves it but a person — a request arriving
   or a turn starting never opens it, which is why the line at rest has to carry that news.
   It is a layer and never a mode: nothing is locked, and the ticket underneath stays
   readable and scrollable. And it is one conversation at three heights, never three
-  screens. A move between peeked and opened keeps the reader's place in the transcript.
+  screens. A move between peeked and opened keeps visible content fixed relative
+  to the bottom of the transcript. A parked unread target retains its top hold.
   Reopening from rest lands on the newest unanswered request or the end of the conversation.
   Every state keeps whatever the person had half-typed.
 
@@ -816,9 +866,13 @@ Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. Shared date helpers format the ordinary dates that remain.
 
-**The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
-diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
-restated here.
+**Typography.** Every screen uses the shared system sans stack for content and
+controls. The owner's size-preservation guidance keeps former serif 18px prose,
+28px display titles, and 30px hero figures through shared sans tokens. Smaller body
+text uses 15px and section titles use 20px. These retained sizes are an explicit
+exception to the five-size limit. Existing sans sizes and the composer's touch-safe
+input size remain as they are. Code, diffs, and tool output keep monospace for
+alignment. `DESIGN.md` defines the typography and visual hierarchy.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),

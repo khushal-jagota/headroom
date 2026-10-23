@@ -7,6 +7,7 @@ import sqlite3
 from typing import Any, cast
 
 from planner.navigation.contracts import SCHEMA_VERSION, NavigationRecord, RecordKey
+from planner.navigation.review import canonical_review_address
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.logic import GROUPS, compact, digest, group, project, section_key
 from planner.navigation.views.ordering import ORDERING_GENERATION, sort_key
@@ -43,17 +44,14 @@ def _metadata(
     )
     attention = value["attention"] if kind == "conversation" else _attention(conn, conversation)
     current = attention and attention["current"]
-    review = (
-        kind == "ticket"
-        and eligible_for_owner_review(
-            ticket_status=value["ticket_status"],
-            is_backlogged=value["is_backlogged"],
-            holder_is_owner=value["ceiling_holder"] == {"kind": "owner", "id": "owner"},
-            has_gating_field=value["gating_field"] is not None,
-            has_proposal=all(
-                value[name] is not None for name in ("proposal_field", "proposal_created_at")
-            ),
-        )
+    review = kind == "ticket" and eligible_for_owner_review(
+        ticket_status=value["ticket_status"],
+        is_backlogged=value["is_backlogged"],
+        holder_is_owner=value["ceiling_holder"] == {"kind": "owner", "id": "owner"},
+        has_gating_field=value["gating_field"] is not None,
+        has_proposal=all(
+            value[name] is not None for name in ("proposal_field", "proposal_created_at")
+        ),
     )
     unread = (
         kind == "address"
@@ -201,10 +199,21 @@ def _members(
                         "review",
                         None,
                         rank=int(value["proposal_created_at"]),
-                        title_key=b"",
+                        title_key=b"proposal",
                         id_key=identity.encode(),
                     )
             elif kind == "address" and metadata[12]:
+                conversation_id = str(value["conversation_id"])
+                if canonical_review_address(conn, conversation_id) == identity:
+                    conversation = record(conn, ("conversation", conversation_id))
+                    assert conversation is not None
+                    add(
+                        "review",
+                        None,
+                        rank=int(conversation["first_unread_owner_message_at"]),
+                        title_key=b"message",
+                        id_key=conversation_id.encode(),
+                    )
                 # One canonical address per owner/conversation. Preserve current-first order.
                 add("unread", None, rank=-int(value["current"]), title_key=b"")
                 owner = (str(value["owner_kind"]), str(value["owner_id"]))
@@ -296,6 +305,29 @@ def update(
                     (identity,),
                 )
             )
+    # Re-evaluate every competing address when its selected owner/address disappears.
+    # Source records are already final here; the old index preserves deleted pointers.
+    address_conversations: set[str] = set()
+    for key in affected:
+        if key[0] != "address":
+            continue
+        value = record(conn, key)
+        old_pointer = conn.execute(
+            "SELECT conversation_id FROM navigation_view_index WHERE kind=? AND id=?", key
+        ).fetchone()
+        if value:
+            address_conversations.add(str(value["conversation_id"]))
+        if old_pointer and old_pointer[0]:
+            address_conversations.add(str(old_pointer[0]))
+    for conversation_id in address_conversations:
+        affected.update(
+            ("address", str(row[0]))
+            for row in conn.execute(
+                "SELECT id FROM navigation_records WHERE kind='address' "
+                "AND json_extract(value,'$.conversation_id')=?",
+                (conversation_id,),
+            )
+        )
     sections: set[str] = set()
     pointer_ids: set[str] = {identity for kind, identity in changed if kind == "conversation"}
     globals_changed = False
@@ -371,6 +403,7 @@ def update(
         ).fetchone()[0]
         unread_delta = int(bool(unread)) - int(bool(old_unread))
         _delta(conn, "navigation_view_globals", ("unread",), unread_delta)
+        _delta(conn, "navigation_view_globals", ("review",), unread_delta)
         globals_changed |= unread_delta != 0
         if unread:
             conn.execute(

@@ -86,3 +86,9 @@ uses the existing UI-test target and one localhost stub. It takes
 recording, process termination and restored UI, which host model tests cannot
 prove. It captures cold loading, offline actions, and relaunch/reconnect clips.
 It never calls the live Panels server or boots, shuts down or erases a simulator.
+
+Review replies keep the displayed read boundary in the same persisted message as
+the sender identity and attachments. Reconnect, queue acceptance and explicit retry
+preserve that boundary. Review drafts are scoped to the conversation separately
+from the full conversation composer. The draft clears after accepted delivery; a
+refusal or uncertain response keeps it available.

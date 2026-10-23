@@ -1392,3 +1392,31 @@ def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
         assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize("starting_head", ["native_push_deliveries", "review_messages"])
+def test_native_and_review_histories_upgrade_to_one_head(
+    tmp_path: Path, starting_head: str
+) -> None:
+    """Either installed branch must gain the other schema without replaying its own."""
+    from alembic import command
+
+    path = tmp_path / "combined-native-review.db"
+    engine = db_module._migration_engine(str(path), 1000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), starting_head)
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), "head")
+    finally:
+        engine.dispose()
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+            ("reconcile_native_recovery",)
+        ]
+        assert "recovery_sender_message_id" in {
+            column[1]
+            for column in conn.execute("PRAGMA table_info(deploy_interruption_deliveries)")
+        }
+        assert conn.execute("SELECT count(*) FROM notification_apns_devices").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM notification_apns_deliveries").fetchone() == (0,)

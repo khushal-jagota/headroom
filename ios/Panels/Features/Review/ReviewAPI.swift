@@ -55,7 +55,7 @@ extension APIClient {
         _ = try await reviewWrite("/api/tickets/\(id)", method: "PATCH", body: Body(title: title))
     }
 
-    private func reviewWrite<T: Encodable>(_ path: String, method: String = "POST", body: T) async throws -> Data {
+    func reviewWrite<T: Encodable>(_ path: String, method: String = "POST", body: T) async throws -> Data {
         var request = URLRequest(url: try url(path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

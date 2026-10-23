@@ -153,6 +153,7 @@ async def send_message(
     conversation_id: str | None = None,
     created_conversation_id: str | None = None,
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     retain_created_conversation: bool = False,
@@ -170,6 +171,10 @@ async def send_message(
     prompt and leaves no missing-reply marker when the turn ends.
     """
     caller = ctx.principal
+    if owner_read_through_sequence is not None and (
+        caller.kind is not PrincipalKind.owner or system_message
+    ):
+        raise ValueError("only the owner can acknowledge messages with a reply")
     if system_message and recipient.kind is PrincipalKind.owner:
         raise PlannerError(
             ErrorCode.validation,
@@ -239,6 +244,7 @@ async def send_message(
                 runs_under=runs_under,
                 sender_label=label,
                 mode=prompt_mode,
+                owner_read_through_sequence=owner_read_through_sequence,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
@@ -268,6 +274,7 @@ async def send_message(
                 runs_under=runs_under,
                 sender_label=label,
                 mode=prompt_mode,
+                owner_read_through_sequence=owner_read_through_sequence,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
@@ -301,6 +308,7 @@ async def send_message(
                     runs_under=runs_under,
                     sender_label=label,
                     mode=prompt_mode,
+                    owner_read_through_sequence=owner_read_through_sequence,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,

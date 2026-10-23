@@ -1,5 +1,4 @@
 <script lang="ts">
-  import DeploymentInterruptions from "./DeploymentInterruptions.svelte";
   import { onDestroy, tick, untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ConnectionStatus } from "../lib/changeStream";
@@ -177,7 +176,6 @@
   </div>
 </div>
 
-<DeploymentInterruptions />
 
 <style>
   .status-slot { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--glide-space) var(--glide-ease); }

@@ -2,7 +2,8 @@
   import { conversationOverlay } from "../lib/conversation/layout/overlay";
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
-  import { isPrimaryPressOutsideConversation } from "../lib/conversation/dismissal";
+  import { createConversationDismissal } from "../lib/conversation/dismissal";
+  import type { RegisterManagedArtifactFrame } from "../lib/managedArtifactPress";
   import type { ConversationState } from "../lib/conversation/conversationState";
 
   let {
@@ -17,27 +18,26 @@
     conversationState?: ConversationState;
     children: Snippet;
     conversation: Snippet;
-    readingAside?: Snippet;
+    readingAside?: Snippet<[RegisterManagedArtifactFrame]>;
     onDocumentClick?: (event: MouseEvent) => void;
   } = $props();
 
-  function dismissConversation(event: PointerEvent): void {
-    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
-  }
+  const dismissal = createConversationDismissal(() => { conversationState = "rest"; });
+  const dismissOutsideConversation = dismissal.surface;
 
 </script>
 
-<div use:conversationOverlay class={`manager-page ${className}`} {...attributes}>
+<div use:conversationOverlay use:dismissOutsideConversation class={`manager-page ${className}`} {...attributes}>
   <div class="manager-reading">
     <!-- Links keep their keyboard behavior. The host only redirects plain file clicks. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <main class="manager-doc" onpointerdowncapture={dismissConversation} onclick={onDocumentClick}>
+    <main class="manager-doc" onclick={onDocumentClick}>
       <div class="manager-column">{@render children()}</div>
     </main>
-    {@render readingAside?.()}
+    {@render readingAside?.(dismissal.registerArtifactFrame)}
   </div>
-  <div class="conversation-layer" onpointerdowncapture={dismissConversation}>
+  <div class="conversation-layer">
     <div class="conversation-column">{@render conversation()}</div>
   </div>
 </div>

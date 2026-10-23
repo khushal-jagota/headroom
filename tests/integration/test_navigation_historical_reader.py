@@ -126,7 +126,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
 
     with current_navigation_database(candidate) as connection:
         current = snapshot(connection)
-        assert current["schema_version"] == 8
+        assert current["schema_version"] == 9
         initial_epoch = current["epoch"]
         facts = source_facts(connection)
         _assert_current_reader(connection)
@@ -191,7 +191,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     assert reopened["source"] == before["source"]
     with current_navigation_database(restored) as connection:
         restored_snapshot = snapshot(connection)
-        assert restored_snapshot["schema_version"] == 8
+        assert restored_snapshot["schema_version"] == 9
         assert restored_snapshot["epoch"] != initial_epoch
         ticket = next(
             row

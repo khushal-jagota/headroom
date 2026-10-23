@@ -374,7 +374,7 @@
           {#if externalPane}
             {@render externalPane()}
           {:else if opening.chiefMarked}
-            <ChiefConversation showRequestErrorLine={false} />
+            <ChiefConversation showRequestErrorLine={false} requestedConversationId={address.selectedConversationId ?? null} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
                pages that let the document scroll, so without this they have no scroller of
@@ -417,6 +417,7 @@
 <view.default
                 navigationErrorHandledByParent
                 id={opening.markedTicketId}
+                requestedConversationId={address.selectedConversationId ?? null}
                 openFile={address.openFile}
                 onOpenFile={openFileOnTicket}
               />
@@ -430,6 +431,7 @@
 <view.default
                 navigationErrorHandledByParent
                 itemId={opening.openManagerId}
+                requestedConversationId={address.selectedConversationId ?? null}
                 workspaceName="Workspace"
                 backHref="#/workspace"
                 workspaceResource={{
