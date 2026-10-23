@@ -23,6 +23,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationTurnReference,
+    DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -128,6 +129,7 @@ class _LinkWatchingConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -141,6 +143,7 @@ class _LinkWatchingConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
         )
 
     async def send_with_receipt(
@@ -157,6 +160,7 @@ class _LinkWatchingConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
@@ -171,6 +175,7 @@ class _LinkWatchingConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
             record_refusal=record_refusal,
         )
 

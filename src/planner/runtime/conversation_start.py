@@ -336,7 +336,6 @@ async def _send_with_addressed_receipt(
 ) -> AddressedPromptDeliveryReceipt:
     """Keep recipient attribution and freshness for caller-authored and system sends."""
     if recipient is not None:
-        refusal_options = {"record_refusal": True} if record_refusal else {}
         return await system.send_with_receipt(
             conversation_id,
             content,
@@ -349,7 +348,7 @@ async def _send_with_addressed_receipt(
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
-            **refusal_options,
+            record_refusal=record_refusal,
         )
     fate = await system.send(
         conversation_id,

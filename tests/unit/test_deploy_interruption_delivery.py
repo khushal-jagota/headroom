@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from tests.unit.test_conversation_system import _Harness, _run, _start
@@ -496,7 +497,7 @@ def test_rebind_preserves_interruption_context_in_the_actual_backend_prompt(tmp_
 
 @pytest.mark.parametrize("owner", ["bare", "chief", "manager", "ticket"])
 def test_automatic_recovery_resumes_current_conversation_once(
-    tmp_path: Path, owner: str,
+    tmp_path: Path, owner: Literal["bare", "chief", "manager", "ticket"],
 ) -> None:
     """Boot recovery reaches the wire for every owner kind, including no Ticket."""
     from dataclasses import replace
