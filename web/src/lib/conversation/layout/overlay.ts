@@ -1,3 +1,4 @@
+import { conversationMotion, CONVERSATION_CARD_MS } from "../surfaceMotion";
 import { visibleHostBounds, retainClearance } from './geometry';
 import { CONVERSATION_PEEK_FRACTION, TICKET_SHORT_LANDSCAPE_PEEK_FRACTION, SHORT_LANDSCAPE_WIDTH, SHORT_LANDSCAPE_HEIGHT } from './config';
 
@@ -8,6 +9,9 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
   let composer: HTMLElement | null = null;
   let documentScroller: HTMLElement | null = null;
   let frame = 0;
+  let cardState: string | undefined;
+  let cardHeight = 0;
+  let layer: HTMLElement | null = null;
   const viewport = window.visualViewport;
   const set = (name: string, value: number) => {
     const text = `${value}px`;
@@ -59,6 +63,24 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
       composer.toggleAttribute('data-conversation-composer-constrained', constrained);
     }
     if (card) {
+      layer = card.closest<HTMLElement>('.conversation-layer');
+      const nextState = card.dataset.conversationState;
+      if (layer && nextState !== cardState) {
+        const previousState = cardState;
+        cardState = nextState;
+        const from = cardHeight;
+        const motion = conversationMotion(card);
+        motion.cancel(layer);
+        layer.style.removeProperty('height');
+        const wanted = layer.getBoundingClientRect().height;
+        if (previousState !== undefined && from > 0) {
+          const movingLayer = layer;
+          motion.move(layer, fraction => {
+            movingLayer.style.height = `${from + (wanted - from) * fraction}px`;
+          }, CONVERSATION_CARD_MS, () => movingLayer.style.removeProperty('height'));
+        }
+      }
+      if (layer) cardHeight = layer.getBoundingClientRect().height;
       clearance = retainClearance(clearance, rect.bottom - card.getBoundingClientRect().top);
       set('--conversation-clearance', clearance);
     }
@@ -67,7 +89,7 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
   const sizes = new ResizeObserver(schedule);
   const children = new MutationObserver(schedule);
   sizes.observe(host);
-  children.observe(host, { childList: true, subtree: true });
+  children.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-conversation-state"] });
   viewport?.addEventListener('resize', schedule);
   viewport?.addEventListener('scroll', schedule);
   window.addEventListener('resize', schedule);
@@ -76,6 +98,7 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
   schedule();
   return { destroy() {
     cancelAnimationFrame(frame);
+    if (card && layer) conversationMotion(card).cancel(layer);
     sizes.disconnect(); children.disconnect();
     viewport?.removeEventListener('resize', schedule);
     viewport?.removeEventListener('scroll', schedule);

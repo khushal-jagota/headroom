@@ -43,7 +43,7 @@ def run(browser, urls):
             const b = button.getBoundingClientRect(), s = getComputedStyle(button);
             const glyph = button.querySelector('svg,.chat-send-fill');
             const g = glyph?.getBoundingClientRect();
-            return {label:button.getAttribute('aria-label'),square:button.matches('.chat-image,.chat-send'),
+            return {label:button.getAttribute('aria-label'),square:button.matches('.chat-image,.chat-send'),send:button.matches('.chat-send'),
               pill:button.matches('.listbox-picker-trigger'),w:b.width,h:b.height,cy:b.y+b.height/2,
               outside:b.left < bounds.left-1 || b.right > bounds.right+1,
               background:s.backgroundColor,border:s.borderTopWidth,stop:button.hasAttribute('data-conversation-stop'),glyph:g ? [g.width,g.height] : null,
@@ -55,9 +55,10 @@ def run(browser, urls):
         for b in result["buttons"]:
             assert not b["outside"], b
             if b["square"]:
-                assert abs(b["w"] - 32) <= 0.1 and abs(b["h"] - 32) <= 0.1, b
+                size = 28 if b["send"] else 32
+                assert abs(b["w"] - size) <= 0.1 and abs(b["h"] - size) <= 0.1, b
                 assert b["offset"] and max(abs(n) for n in b["offset"]) <= 0.1, b
-                assert b["glyph"] == ([11, 11] if b["stop"] else [22, 22]), b
+                assert b["glyph"] == ([11, 11] if b["stop"] else [14, 14] if b["send"] else [22, 22]), b
             if b["pill"]:
                 assert abs(b["h"] - 32) <= 0.1, b
         centers = [b["cy"] for b in result["buttons"]]
@@ -65,6 +66,7 @@ def run(browser, urls):
         stop = page.locator("[data-conversation-stop]")
         send = page.locator("[data-conversation-send].on")
         if send.count():
+            page.wait_for_function("""() => {const e=document.querySelector('[data-conversation-send].on');if(!e)return false;const probe=document.createElement('span');probe.style.color='var(--accent-bright)';e.append(probe);const accent=getComputedStyle(probe).color;probe.remove();return getComputedStyle(e).backgroundColor===accent;}""")
             assert send.evaluate(
                 "e => {const probe=document.createElement('span');probe.style.color='var(--accent-bright)';e.append(probe);const accent=getComputedStyle(probe).color;probe.remove();return getComputedStyle(e).backgroundColor === accent}"
             )
@@ -109,7 +111,7 @@ def run(browser, urls):
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     # Local browser capability is enough to render the microphone; never record.
     page.add_init_script(
-        "Object.defineProperty(navigator, 'mediaDevices', {value:{getUserMedia:async()=>{throw Error('not used')}}});"
+        "Object.defineProperty(navigator, 'mediaDevices', {value:{getUserMedia:async()=>{window.__voiceAttempts=(window.__voiceAttempts??0)+1;throw Error('permission denied')}}});"
     )
     _unsent_words_outlive_a_rebuild(page, [__file__, *urls][1])
     for width in [980, 390]:
@@ -136,16 +138,13 @@ def run(browser, urls):
                 attach(page)
             settled(page)
             geometry(page)
-            if width == 390 and state == "running":
-                assert page.locator(".model-picker-face").evaluate(
-                    "e => e.scrollWidth > e.clientWidth && getComputedStyle(e).textOverflow === 'ellipsis'"
-                )
+            # Model choices are inside Everything; the resting footer keeps its bounds.
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), (
                 width,
                 state,
             )
             if state == "empty":
-                assert page.locator("[data-conversation-send]").count() == 0
+                assert page.locator("[data-conversation-send]").is_disabled()
             if state == "attachments":
                 boxes = page.locator(ATTACHMENTS).evaluate_all(
                     "els => els.map(e => e.getBoundingClientRect().top)"
@@ -163,6 +162,18 @@ def run(browser, urls):
                     page.locator("[data-conversation-error]").inner_text()
                     == "Message refused: connection lost"
                 )
+
+    # Voice remains reachable inside Everything; denied microphone access preserves the draft.
+    page.goto(urls[0], wait_until="domcontentloaded")
+    page.locator(INPUT).fill("Keep these words")
+    page.locator("[data-conversation-add]").click()
+    voice = page.locator(".chat-add-menu [data-voice-record]")
+    assert voice.is_visible()
+    voice.click()
+    page.wait_for_function("window.__voiceAttempts === 1")
+    assert page.locator(".chat-add-menu").count() == 0
+    assert page.locator(INPUT).input_value() == "Keep these words"
+    assert page.locator("[data-conversation-send]").is_enabled()
 
     # Image-only, file-only and mixed drafts occupy one identical strip height.
     strip_heights = []

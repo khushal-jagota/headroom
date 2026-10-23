@@ -8,13 +8,13 @@ import type { ThreadItem } from '../threadLayout';
 import type { ConversationTaskProgress } from '../taskProgress';
 import { whatThisRowSays, toolCallSentence, type RestLine } from '../restLine';
 function pieces(content: ViewMessagePiece[]): MessagePiece[] { return content.map(piece => piece.piece === 'image' ? { ...piece, file_name: piece.file_name ?? undefined } : piece); }
-function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequence' | 'created_at'>, body: ViewRowBody): TranscriptRow {
+function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequence' | 'created_at'> & Partial<Pick<ConversationViewRow, 'sender_message_id'>>, body: ViewRowBody): TranscriptRow {
     const base = { key: item.key, sequence: item.source_sequence, createdAt: item.created_at };
     switch (body.kind) {
-        case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds };
-        case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail) };
+        case 'prompt': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, mode: body.mode, sentAtUnixMilliseconds: body.sent_at_unix_milliseconds };
+        case 'prompt_refused': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null, reason: body.reason, sentence: refusalSentence(body.reason, body.refusal_detail) };
         case 'prompt_uncertain':
-        case 'prompt_discarded': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label };
+        case 'prompt_discarded': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null };
         case 'agent_message': return { ...base, kind: body.kind, content: pieces(body.content), toOwner: body.to_owner };
         case 'explicit_reply_missing': return { ...base, kind: body.kind, promptSender: body.prompt_sender };
         case 'tool_call': return { ...base, kind: body.kind, toolCallId: body.tool_call_id, title: body.title, toolKind: body.tool_kind, detail: body.detail, startedDetail: body.started_detail, cappedDetailSequence: body.capped_detail_sequence, status: body.status, progress: null };
@@ -31,7 +31,7 @@ const rowsByBody = new WeakMap<ViewRowBody, {
     key: string;
     row: TranscriptRow;
 }>();
-export function rowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequence' | 'created_at'>, body: ViewRowBody): TranscriptRow {
+export function rowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequence' | 'created_at'> & Partial<Pick<ConversationViewRow, 'sender_message_id'>>, body: ViewRowBody): TranscriptRow {
     const cached = rowsByBody.get(body);
     if (cached?.key === item.key)
         return cached.row;

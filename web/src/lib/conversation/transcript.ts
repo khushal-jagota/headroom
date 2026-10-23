@@ -43,6 +43,7 @@ export type TranscriptRow =
       createdAt: number;
       content: readonly MessagePiece[];
       senderLabel: string;
+      senderMessageId?: string | null;
       mode: PromptDeliveryMode;
       /** The instant the person pressed send, in unix milliseconds by the sender's own
        *  clock — or the whole second the row was written in, for the messages whose
@@ -56,6 +57,7 @@ export type TranscriptRow =
       createdAt: number;
       content: readonly MessagePiece[];
       senderLabel: string;
+      senderMessageId?: string | null;
       reason: PromptDeliveryRefusalReason;
       sentence: string;
     }
@@ -66,6 +68,7 @@ export type TranscriptRow =
       createdAt: number;
       content: readonly MessagePiece[];
       senderLabel: string;
+      senderMessageId?: string | null;
     }
   | {
       key: string;
@@ -74,6 +77,7 @@ export type TranscriptRow =
       createdAt: number;
       content: readonly MessagePiece[];
       senderLabel: string;
+      senderMessageId?: string | null;
     }
   | {
       key: string;
@@ -304,6 +308,7 @@ export function transcriptRows(
           createdAt,
           content: messageContentOf(event.payload),
           senderLabel: event.payload.sender_label,
+          senderMessageId: event.payload.sender_message_id ?? null,
           mode: event.payload.mode,
           sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt)
         });
@@ -316,6 +321,7 @@ export function transcriptRows(
           createdAt,
           content: messageContentOf(event.payload),
           senderLabel: event.payload.sender_label,
+          senderMessageId: event.payload.sender_message_id ?? null,
           reason: event.payload.refusal_reason,
           sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail)
         });
@@ -327,7 +333,8 @@ export function transcriptRows(
           sequence,
           createdAt,
           content: messageContentOf(event.payload),
-          senderLabel: event.payload.sender_label
+          senderLabel: event.payload.sender_label,
+          senderMessageId: event.payload.sender_message_id ?? null
         });
         break;
       case "prompt_discarded":
@@ -337,7 +344,8 @@ export function transcriptRows(
           sequence,
           createdAt,
           content: messageContentOf(event.payload),
-          senderLabel: event.payload.sender_label
+          senderLabel: event.payload.sender_label,
+          senderMessageId: event.payload.sender_message_id ?? null
         });
         break;
       case "agent_message":
