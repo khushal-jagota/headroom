@@ -104,10 +104,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let scrollReplacementGeneration = 0;
   let running = $state(false);
   let ownerReadThroughSequence = $state(0);
+  (window as any).__setReadWatermark=(value:number)=>{ownerReadThroughSequence=value;};
+  (window as any).__appendLabelTools=()=>{rows=[...rows,...[29,30].map(sequence=>({key:'label-tool-'+sequence,kind:'tool_call',sequence,createdAt:sequence,toolCallId:'label-tool-'+sequence,title:'Unread tool '+sequence,toolKind:'read',detail:null,startedDetail:null,status:'completed',progress:null}))];};
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let outgoingMessages = $state<any[]>([]);
   let composerDisabled = $state(false);
+  let fixturePlaceholder=$state<string|undefined>(undefined);
+  (window as any).__fixturePlaceholder=(value:string|undefined)=>fixturePlaceholder=value;
   let ask = $state<any>(null);
 
   // The connected test proves real writers and automatic SSE. This former E2E
@@ -651,6 +655,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         {outgoingMessages}
         ownSenderLabel="owner"
         composerDisabled={composerDisabled}
+        composerPlaceholder={fixturePlaceholder}
         {composerCatalog}
         onSend={captureSend}
         onDiscardHeldPrompt={(heldPromptId: string) => actOnQueueMatrix(heldPromptId, "discard")}

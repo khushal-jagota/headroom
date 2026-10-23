@@ -735,11 +735,15 @@ answer and this browser simply missed it, so a conversation holding a send nobod
 answered for reads the record again the moment the server is reachable. If the row
 is there, the copy goes, the ordinary way.
 
-Sending also decides where the thread sits. The message that was just sent
-settles near the top of the view with the rest of it kept for the answer, and
+Acceptance also decides where the thread sits. The accepted message
+settles 32px below the top of the view with the rest of it kept for the answer, and
 then nothing moves for as long as the answer fits in that space. Once the turn
-outgrows the view the thread follows, by the least it can while keeping the
-newest line in sight, and never backwards. Scrolling away is read from the
+outgrows the view, new streaming text advances one line per 120ms step when the
+reader already follows newest. A multi-line chunk can take several steps, bounded
+by the height of the arriving text. Layout changes and entry do not use this path. An accepted
+send uses one precomputed destination over 240ms with linear timing. Fresh opens
+and lens switches establish their position before reveal. Later layout changes
+retain the bottom or held message without animated catch-up. Scrolling away is read from the
 person — a wheel, a finger, a hand on the scrollbar — so nothing the thread does
 to itself is mistaken for them; while they are reading elsewhere nothing moves
 them, and the jump button is the way back.

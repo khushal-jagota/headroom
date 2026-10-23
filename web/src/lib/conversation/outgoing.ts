@@ -1,16 +1,8 @@
-/** A message this browser has sent that the record does not have yet.
- *
- * Sending is not a round trip a person should have to watch. The message exists the
- * moment Enter is pressed — this browser has the text, and it mints the message's id and
- * the instant it was sent right there — so it is drawn straight away and the network work
- * happens underneath it.
- *
- * That leaves one question, and it is the only thing this module decides: when has the
- * record caught up? A sent message becomes exactly one of three rows — delivered, refused,
- * or discarded — and each of them carries back the id this browser minted. So the answer
- * is "when a row carrying its id arrives", whichever of the three that row is. At that
- * point the local copy simply stops being drawn: the row is the message now, and it is
- * drawn where the record puts it rather than being swapped into place.
+/** A send remains durable while transport resolves its destination. Unresolved sends
+ * draw neither a provisional thread bubble nor a queue row. Confirmed acceptance
+ * commits one transcript display slot; confirmed queue membership uses the tray.
+ * A correlated record row replaces the contents of that same mounted slot. Recovery
+ * outcomes stay visible without claiming that the agent accepted the message.
  */
 
 import type { ConversationEvent, PromptDeliveryMode, SentMessagePiece } from "./wire";
@@ -48,7 +40,7 @@ export type OutgoingMessage = {
   messageId: string;
   /** The mounted bubble retains this identity when its words are sent again. */
   displayMessageId?: string;
-  /** Transport acknowledged this send; preserves its UI placement before the record body.
+  /** Transport or a correlated prompt receipt accepted this send; retains placement before the record body.
    * This is not authority for backend history admission. */
   accepted?: boolean;
   /** Viewport intent only: recalled content does not request fresh send placement.
@@ -322,21 +314,46 @@ export function anOutgoingMessageIsWaitingOnTheRecord(
   );
 }
 
-/** Explicit queue membership alone places a message above the composer. */
+/** A transport in flight has no rendered destination. Acceptance or a record commits
+ * the thread; confirmed queue membership commits the tray. Recovery remains visible. */
 export function outgoingMessagesByPlace(
   outgoing: readonly OutgoingMessage[],
   where: {
     composerStackMessageIds: readonly string[];
     serverHeldSenderMessageIds: ReadonlySet<string>;
+    recordedSenderMessageIds?: ReadonlySet<string>;
   }
 ): { thread: readonly OutgoingMessage[]; composerStack: readonly OutgoingMessage[] } {
+  const recorded = (message: OutgoingMessage): boolean =>
+    where.recordedSenderMessageIds?.has(message.messageId) ?? false;
   const aboveTheComposer = (message: OutgoingMessage): boolean =>
-    where.composerStackMessageIds.includes(message.messageId)
-    || where.serverHeldSenderMessageIds.has(message.messageId);
+    !message.accepted && !recorded(message) && (
+      where.composerStackMessageIds.includes(message.messageId)
+      || where.serverHeldSenderMessageIds.has(message.messageId)
+      || message.knownFate === "waiting_for_the_agent"
+    );
   return {
-    thread: outgoing.filter((message) => !aboveTheComposer(message)),
+    thread: outgoing.filter(message => !aboveTheComposer(message) && (
+      message.accepted || recorded(message) || message.knownFate === "answer_never_came_back"
+    )),
     composerStack: outgoing.filter(aboveTheComposer)
   };
+}
+
+/** Receipt lookup is for unresolved identities, separate from mounted presentation.
+ * Batch every candidate once so neither acknowledged nor unanswered older IDs starve later sends. */
+export function outgoingReceiptBatches(outgoing: readonly OutgoingMessage[], acknowledged: ReadonlySet<string>): string[][] {
+  const ids = outgoing.filter(message => !acknowledged.has(message.messageId)).map(message => message.messageId);
+  const batches: string[][] = [];
+  for (let offset = 0; offset < ids.length; offset += 64) batches.push(ids.slice(offset, offset + 64));
+  return batches;
+}
+
+/** Definitive receipts release durable copies. Only a bounded visible presentation
+ * waits for row admission; a resting reader needs no local presentation at all. */
+export function retainOutgoingPresentations(outgoing: readonly OutgoingMessage[], acknowledged: ReadonlySet<string>, admitted: ReadonlySet<string>, transcript: boolean): readonly OutgoingMessage[] {
+  const retained = new Set(transcript ? outgoing.filter(message => acknowledged.has(message.messageId) && !admitted.has(message.messageId)).slice(-300).map(message => message.messageId) : []);
+  return outgoing.filter(message => !acknowledged.has(message.messageId) || retained.has(message.messageId));
 }
 
 // --- surviving a reload ---------------------------------------------------------------------

@@ -18,7 +18,7 @@
 <!-- A row is as tall as what it contains. It carries no provisional height, because a
      height that is only right once the row has been looked at makes the thread's own
      size a function of where the reader has already been. -->
-<div use:register={displayKey} data-conversation-view-key={itemKey} class:marker class:assistant-continuation={assistantContinuation} class:tool class:tool-continuation={toolContinuation}>
+<div use:register={displayKey} data-conversation-view-key={itemKey} data-conversation-display-key={displayKey ?? undefined} class:marker class:assistant-continuation={assistantContinuation} class:tool class:tool-continuation={toolContinuation}>
   {@render children()}
 </div>
 
