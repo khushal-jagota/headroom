@@ -70,6 +70,7 @@ import Observation
             switch result.fate {
             case "started", "injected": return true
             case "queued": setNote(id, "Queued"); return true
+            case "suppressed": setNote(id, "Not delivered · \(result.reason ?? "no longer applicable")")
             case "refused": setNote(id, "Not delivered · \(result.refusalReason ?? "refused")")
             default: setNote(id, "Delivery uncertain · do not resend")
             }

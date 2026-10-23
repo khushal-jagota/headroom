@@ -412,3 +412,36 @@ stopped on row selector mismatches before opening the file or sending a message.
 Firstmate accepted the captures and requested compile-only verification after
 rebasing. No live-server writes, simulator lifecycle changes, new permanent tests,
 or physical-device validation were performed.
+
+## Main release synchronization (2026-10-23)
+
+The app includes main release `7379896f`, merged from the iOS branch's common
+ancestor `ff1a4e5b`. Review and ticket approval keep their existing request shapes;
+reviewer pickers offer only the owner, current parent orchestrator and Chief,
+matching the server's stricter authority checks. Send-back, artifacts, native push
+registration and the payload-free change stream retain their existing contracts.
+The server now derives notification attention from current external requests and
+suppresses obsolete internal review notices; iOS continues to read those facts.
+
+Deployed appears only while both `valid_until` and `success_display_until` are
+usable and in the future, with a connected stream. More retains the deployment
+interruption account after status expiry. The same account appears in the relevant
+conversation. Missing evidence is shown as unavailable. Restart Worker is manual
+and offered only when the server says it is eligible; queued restart never claims
+resumption. Removed conversations have no link. No automatic replay was added.
+
+Dependency-blocked workers take precedence over Agent and Errored on complete
+worker pages; Workspace continues to exclude blocked work. Loaded settled rows
+sort by newest update, with identifier ties. The existing REST pagination remains:
+unloaded managers are not globally reordered by the native client. Unread remains
+a row mark, without a Messages group. Desktop rail geometry and browser bundle
+reload prompts have no native counterpart. The shared conversation still uses
+native scrolling; Latest refreshes its newest page before placement, and opening
+the card does not permanently enlarge the page's reserved bottom space.
+
+`SyncMainTests` adds three host checks: independent success deadlines (old coverage
+had one deadline), blocked Agent classification (old coverage checked rail exclusion
+only), and the interruption GET/manual restart wire path with queued versus resumed
+wording (a new API boundary). They reuse the existing host package, decoder and
+URLProtocol pattern, with no connected host. The conversation host test adds the
+new suppressed fate so it cannot be mistaken for uncertain delivery or retried.

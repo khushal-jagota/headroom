@@ -24,6 +24,16 @@ import XCTest
         let calls = await service.calls
         XCTAssertEqual(calls, 1)
     }
+    func testSuppressedDeliveryIsExplicitAndDoesNotRetry() async {
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "suppressed")
+        model.draft = "Stale notice"
+        let sent = await model.send(to: .chief, using: service)
+        XCTAssertFalse(sent)
+        XCTAssertEqual(model.outgoing.first?.note, "Not delivered · no longer current")
+        let calls = await service.calls
+        XCTAssertEqual(calls, 1)
+    }
     func testAcceptedMessageReconcilesBySenderIDWithoutDuplicate() async throws {
         let model = ConversationModel()
         let service = ConversationStub(fate: "started")
@@ -68,7 +78,7 @@ private actor ConversationStub: ConversationServing {
     init(fate: String) { self.fate = fate }
     func sendConversation(_ owner: ConversationOwner, message: ConversationSend) async throws -> ConversationDelivery {
         calls += 1; senderID = message.senderMessageId
-        return ConversationDelivery(conversationId: "conv_1", fate: fate, refusalReason: nil)
+        return ConversationDelivery(conversationId: "conv_1", fate: fate, refusalReason: nil, reason: "no longer current")
     }
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot {
         let json = #"{"page":{"items":[{"kind":"row","key":"row-1","sender_message_id":"SENDER","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}],"older":null},"status":{"authority":"current","turn_running":true,"rest":{"latest_happened":null,"latest_tool":{"kind":"tool_call","title":"Reading the code"},"permission_title_excerpt":null,"plan_progress":{"current_text_excerpt":null}}}}"#.replacingOccurrences(of: "SENDER", with: senderID)

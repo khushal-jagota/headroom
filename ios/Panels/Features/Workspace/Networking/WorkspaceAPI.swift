@@ -19,7 +19,7 @@ extension APIClient {
             let existing = Set(rows.map(\.id))
             rows += page.managers.filter { !existing.contains($0.id) }
         }
-        return ManagersResponse(managers: rows, page: page.page)
+        return ManagersResponse(managers: rows.sorted { $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt }, page: page.page)
     }
 }
 

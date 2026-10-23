@@ -16,6 +16,7 @@
 		141C57725CE90E4AE2CA7CF3 /* WorkerSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABFC6D2D67B4C2799E37EA3 /* WorkerSections.swift */; };
 		18B3FBCD4CC57EEAB99D6336 /* FeedbackContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356BA2ECFEB85ADECDEC8FC5 /* FeedbackContracts.swift */; };
 		1B14E49D1C6A4CDC96C70B5E /* IdeasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E028417D25209D3538F3BD0 /* IdeasModel.swift */; };
+		1C6FF6E084CD9CE47E1B66E2 /* DeploymentInterruptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032AC9C66A8E827DB164EB0F /* DeploymentInterruptionsView.swift */; };
 		1CF617E5CB22439081760340 /* NotificationContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 303B9337EE98BDDC53CDDA26 /* NotificationContracts.swift */; };
 		20C309706CC5E0D237E32796 /* ConversationSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72037237092505D752A1877E /* ConversationSpeech.swift */; };
 		23C2B5D08DA29C319EDD15F4 /* ArtifactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCEE66ABADAB38227077931 /* ArtifactListView.swift */; };
@@ -108,6 +109,7 @@
 		F3784DFC79283CDE139D6BAC /* TicketLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B1B908D97FA9F1D565E7D44 /* TicketLifecycle.swift */; };
 		F5678A0C6C2DCF5758843DFC /* artifacts.json in Resources */ = {isa = PBXBuildFile; fileRef = 08B13A66D381488CEFC63E89 /* artifacts.json */; };
 		F70457F000B7D649DB66BB39 /* WorkspaceContextMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 235B29593C129B082143CFEF /* WorkspaceContextMenu.swift */; };
+		F78A1934FC191CC93F383358 /* SyncMainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76AB62F6DEDE6CC81D07EEA /* SyncMainTests.swift */; };
 		FA8B9255C9A250AB3535F32F /* PanelsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C53D8C52A18D5B5D1295C5F /* PanelsApp.swift */; };
 		FCF89F630317387F7FCA3437 /* review.json in Resources */ = {isa = PBXBuildFile; fileRef = 783A5F0113315294102CE6CE /* review.json */; };
 		FDFE6ADACE950453A345B463 /* TicketView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99A69BEF25D336DE99BFC97 /* TicketView.swift */; };
@@ -132,6 +134,7 @@
 
 /* Begin PBXFileReference section */
 		01D73A7F608F5039244AFEEC /* ArtifactMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactMarkdown.swift; sourceTree = "<group>"; };
+		032AC9C66A8E827DB164EB0F /* DeploymentInterruptionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeploymentInterruptionsView.swift; sourceTree = "<group>"; };
 		03DBCE9A46181847779DEAE1 /* TicketProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketProposalCard.swift; sourceTree = "<group>"; };
 		0485F7682F6F961D6F2780E8 /* TicketStepRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketStepRow.swift; sourceTree = "<group>"; };
 		050F4E53EA9313A8C93AC324 /* ticket-full.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "ticket-full.json"; sourceTree = "<group>"; };
@@ -226,6 +229,7 @@
 		D00C1733528B6700CE613C4A /* managers.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = managers.json; sourceTree = "<group>"; };
 		D0ECD7AEF51D48B7F98759CD /* WorkspaceGrouping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceGrouping.swift; sourceTree = "<group>"; };
 		D29C8CDDC8655C079CF659EB /* ArtifactSystemPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactSystemPreview.swift; sourceTree = "<group>"; };
+		D76AB62F6DEDE6CC81D07EEA /* SyncMainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncMainTests.swift; sourceTree = "<group>"; };
 		DB327F0996C3D32DD8DD510B /* Newsreader-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Newsreader-OFL.txt"; sourceTree = "<group>"; };
 		DCDBEEB1F264107CC2E7303C /* NotificationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationController.swift; sourceTree = "<group>"; };
 		E06B109119D33F64C8FD6510 /* Newsreader.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Newsreader.ttf; sourceTree = "<group>"; };
@@ -453,6 +457,7 @@
 				2E8189870D845B834795C410 /* ModelDecodingTests.swift */,
 				17E0FB6A2045DB077EB6CB08 /* NotificationTests.swift */,
 				5132416BEB05BE495C8EAE55 /* ReviewDecisionTests.swift */,
+				D76AB62F6DEDE6CC81D07EEA /* SyncMainTests.swift */,
 				6E5637000DA621E2A9B9D641 /* SystemScreenTests.swift */,
 				A5B65B958CE406314A52A4AB /* TicketTests.swift */,
 				1704E7E98D27A5B4734FD5ED /* WorkerScreenTests.swift */,
@@ -744,6 +749,14 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
+		E32324B339D433625AA86E1E /* Deployment */ = {
+			isa = PBXGroup;
+			children = (
+				032AC9C66A8E827DB164EB0F /* DeploymentInterruptionsView.swift */,
+			);
+			path = Deployment;
+			sourceTree = "<group>";
+		};
 		E774A6ABCF4154D3DD68B090 /* Ticket */ = {
 			isa = PBXGroup;
 			children = (
@@ -763,6 +776,7 @@
 				B2F9F10209EE43738770AD71 /* Artifacts */,
 				CA58D003E6A9571793398499 /* Chief */,
 				897BCEC036FBEF0A146112E8 /* Conversation */,
+				E32324B339D433625AA86E1E /* Deployment */,
 				2D6E6ED00FA2D5F27339EAD2 /* More */,
 				B3A62A6484A4D929F35FBF8A /* Notifications */,
 				73EBD0F6997051927D318A71 /* Orchestrator */,
@@ -930,6 +944,7 @@
 				56C8379A0AA3BC97F760B875 /* ModelDecodingTests.swift in Sources */,
 				B4243DBDDE811B5F218AD753 /* NotificationTests.swift in Sources */,
 				90EB1C39A24377C3C2BA8300 /* ReviewDecisionTests.swift in Sources */,
+				F78A1934FC191CC93F383358 /* SyncMainTests.swift in Sources */,
 				9543F7F44D02038703F8DC57 /* SystemScreenTests.swift in Sources */,
 				DE4550E09997382CFE236EF6 /* TicketTests.swift in Sources */,
 				596213FF2F45F11074DAE941 /* WorkerScreenTests.swift in Sources */,
@@ -966,6 +981,7 @@
 				A024AC45EA335509FC4BEADA /* ConversationModel.swift in Sources */,
 				86CACDE0C4FDE111CDFF6A93 /* ConversationOverlay.swift in Sources */,
 				20C309706CC5E0D237E32796 /* ConversationSpeech.swift in Sources */,
+				1C6FF6E084CD9CE47E1B66E2 /* DeploymentInterruptionsView.swift in Sources */,
 				85EB4A27FABBB5B9E9C7224E /* DeploymentStrip.swift in Sources */,
 				C9F696AD1D9B408F44AFA6F6 /* FeedbackAPI.swift in Sources */,
 				18B3FBCD4CC57EEAB99D6336 /* FeedbackContracts.swift in Sources */,

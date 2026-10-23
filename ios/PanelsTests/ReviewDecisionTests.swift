@@ -7,7 +7,7 @@ import XCTest
     func testDeploymentStatusExpiresAndPreservesFailure() {
         let now = Date(timeIntervalSince1970: 1_000)
         func status(_ state: String, expiry: String? = "1970-01-01T00:20:00Z", outcome: String? = nil) -> DeploymentStatus {
-            DeploymentStatus(state: state, deployedSha: nil, targetSha: nil, outcome: outcome, detail: nil, validUntil: expiry)
+            DeploymentStatus(state: state, deployedSha: nil, targetSha: nil, outcome: outcome, detail: nil, validUntil: expiry, successDisplayUntil: expiry)
         }
         func visible(_ value: DeploymentStatus, connected: Bool = true, at date: Date = Date(timeIntervalSince1970: 1_000)) -> DeploymentStatusPresentation? {
             DeploymentStatusPresentation.resolve(value, connected: connected, readFailed: false, now: date)

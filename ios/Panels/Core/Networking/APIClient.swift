@@ -104,3 +104,20 @@ extension APIClient {
         return TicketsResponse(tickets: rows, page: page.page)
     }
 }
+
+extension APIClient {
+    func deploymentInterruptions() async throws -> DeploymentInterruptionSummary {
+        try await get("/api/deployment-interruptions")
+    }
+
+    func restartInterruptedWorker(_ id: String) async throws -> DeploymentRestartResult {
+        var request = URLRequest(url: try url("/api/tickets/\(id)/restart-worker"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        return try Self.decoder().decode(DeploymentRestartResult.self, from: data)
+    }
+}
