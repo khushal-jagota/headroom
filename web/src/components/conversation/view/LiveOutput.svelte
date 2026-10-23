@@ -6,6 +6,7 @@
       reader: ConversationViewReader;
   } = $props();
   let text = $state('');
+  let arriving = $state(false);
   let expired = $state(false);
   let loading = false;
   let dirty = false;
@@ -34,6 +35,7 @@
           const value = await reader.body(reference, abort.signal);
           if (generation === current) {
               expired = false;
+              arriving = reader.liveOutputIsArrival(reference, lastReference !== "");
               text = value;
               lastReference = key;
           }
@@ -73,5 +75,5 @@
       clearTimeout(timer); text = ''; });
 </script>
 {#if expired}<p role="status">{DIAGNOSTIC_EXPIRED_MESSAGE}</p>{/if}
-{#if text}<article class="chat-a c2-streaming" data-conversation-row="streaming"><MarkdownBlock {text}/></article>{/if}
+{#if text}<article class="chat-a c2-streaming" data-conversation-row="streaming" data-conversation-stream-arrival={arriving ? "true" : "false"}><MarkdownBlock {text}/></article>{/if}
 <style>.c2-streaming { color: var(--text-muted); }</style>

@@ -14,9 +14,10 @@
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
   import { TURN_STOPPED_SENTENCE } from '../../../lib/conversation/transcript';
-  let { reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
+  let { reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
+      withdrawnDisplayIds?: ReadonlySet<string>;
       onStopDrawingMessage?: (id:string)=>Promise<void>|void;
       onSendAgain?: (id:string)=>Promise<void>|void;
       reader: ConversationViewReader;
@@ -41,8 +42,11 @@
   const displaySlots = $derived.by(() => {
     exitRevision;
     if (ledgerConversation !== reader.id) { ledger = []; previousDisplay = []; ledgerConversation = reader.id; }
-    const next = reconcileDisplaySlots(ledger, items, outgoingMessages, acknowledgedMessageIds);
-    const retained = exits.retain(next, previousDisplay, () => { exitRevision += 1; });
+    const next = reconcileDisplaySlots(ledger, items, outgoingMessages, acknowledgedMessageIds, withdrawnDisplayIds);
+    // A confirmed queue destination transfers the display slot immediately. It is
+    // not a dismissal, so retaining a fading transcript copy would draw it twice.
+    const previous = previousDisplay.filter(slot => !withdrawnDisplayIds.has(slot.key));
+    const retained = exits.retain(next, previous, () => { exitRevision += 1; });
     ledger = retained.filter(slot => slot.local !== null);
     previousDisplay = retained;
     return retained;

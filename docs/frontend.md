@@ -731,8 +731,12 @@ hand-rolling the same shapes per screen. Each does one job:
 
   The transcript retains native browser anchoring for ordinary history prepends.
   Internal motion writes sizes and scroll position in the same animation frame,
-  over 240ms with linear timing. Card state travel takes 150ms. Reader navigation
-  cancels automatic travel. Replies consume reserved answer room, then advance by lines.
+  over 240ms with linear timing, including card state travel. Reader navigation
+  cancels automatic travel. Replies consume reserved answer room. A new streaming
+  line can advance over 120ms when new text arrives and the reader already follows
+  newest. A multi-line chunk advances one line per step, bounded by the height
+  of the text that arrived. Layout changes and entry never enter this stream path.
+  Other deliberate moves use one computed destination.
   The newest line has a 12px bottom gap. A held top line sits 32px below the edge,
   clear of the 20px fade. The bottom fade appears only when content remains below.
 
@@ -740,18 +744,26 @@ hand-rolling the same shapes per screen. Each does one job:
   The first visible unread message is admitted through bounded pages and placed before
   the transcript appears. The existing busy region stays mounted. Failure exposes
   an error and Retry, rather than an indefinite hidden transcript. An existing
-  anchor stays visible during restoration. With nothing unread, entry uses newest.
+  anchor survives restoration. With nothing unread, entry uses newest. A fresh open
+  or lens switch commits its position before the transcript appears. Deferred body
+  and Markdown presentation must be ready at the destination. Later layout changes
+  retain the bottom or held message without animated catch-up.
   A parked unread target survives expansion and arrivals until reader navigation.
 
   Latest uses confirmed page admission and retains its reader identity through layout
   and focus. It returns focus to the Conversation region after its button disappears,
-  unless the person moves focus elsewhere. The centered pill counts admitted visible
-  messages below the view; event sequence differences are not message counts.
+  unless the person moves focus elsewhere. The centered pill counts distinct unread
+  messages below the view against the owner's read watermark. Read history shows
+  Latest. Tools and structural rows do not increase the count.
 
   The textarea mirror measures one empty line. Draft growth adds to the overlay's
   measured peek height and leaves transcript height unchanged. The composer cap and
   visible-viewport bounds remain separate constraints. Sent messages retain one keyed
   bubble through delivery outcomes, with applicable recovery actions in place.
+  A running agent does not place a new send in the queue. Confirmed queue membership
+  places it there. Acceptance or a correlated record places it in the transcript.
+  Unresolved sends remain durable without a provisional destination. An unanswered
+  or terminal outcome retains its recovery behavior without false acceptance.
   Focus excludes tools throughout the turn. Settled turn heads have no disclosure controls.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
@@ -766,7 +778,8 @@ hand-rolling the same shapes per screen. Each does one job:
   or a turn starting never opens it, which is why the line at rest has to carry that news.
   It is a layer and never a mode: nothing is locked, and the ticket underneath stays
   readable and scrollable. And it is one conversation at three heights, never three
-  screens. A move between peeked and opened keeps the reader's place in the transcript.
+  screens. A move between peeked and opened keeps visible content fixed relative
+  to the bottom of the transcript. A parked unread target retains its top hold.
   Reopening from rest lands on the newest unanswered request or the end of the conversation.
   Every state keeps whatever the person had half-typed.
 
@@ -827,9 +840,13 @@ Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. Shared date helpers format the ordinary dates that remain.
 
-**The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
-diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
-restated here.
+**Typography.** Every screen uses the shared system sans stack for content and
+controls. The owner's size-preservation guidance keeps former serif 18px prose,
+28px display titles, and 30px hero figures through shared sans tokens. Smaller body
+text uses 15px and section titles use 20px. These retained sizes are an explicit
+exception to the five-size limit. Existing sans sizes and the composer's touch-safe
+input size remain as they are. Code, diffs, and tool output keep monospace for
+alignment. `DESIGN.md` defines the typography and visual hierarchy.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),

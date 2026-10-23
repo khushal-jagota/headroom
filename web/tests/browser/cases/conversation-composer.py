@@ -5,6 +5,8 @@
 def run(browser, urls):
 
     import base64
+    import os
+    from pathlib import Path
 
     INPUT = "[data-conversation-input]"
     ATTACHMENTS = "[data-chat-image-name], [data-chat-file-name]"
@@ -138,13 +140,23 @@ def run(browser, urls):
                 attach(page)
             settled(page)
             geometry(page)
-            # Model choices are inside Everything; the resting footer keeps its bounds.
+            # The restored inline controls retain the settled footer bounds.
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), (
                 width,
                 state,
             )
             if state == "empty":
-                assert page.locator("[data-conversation-send]").is_disabled()
+                assert page.locator("[data-conversation-send]").count() == 0
+                assert page.locator(INPUT).get_attribute("placeholder") == "Message the agent..."
+                assert page.locator(".chat-foot > [data-conversation-model-picker]").is_visible()
+                assert page.locator(".chat-submit > [data-voice-record]").is_visible()
+                add = page.locator("[data-conversation-add]")
+                assert add.get_attribute("aria-haspopup") == "menu"
+                assert add.get_attribute("aria-label") == "Add a picture, a file, a photo, or a command"
+                output = os.environ.get("PANELS_RESTORED_INPUT_ARTIFACT_DIR")
+                if output:
+                    Path(output).mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(Path(output) / f"restored-input-{width}.png"))
             if state == "attachments":
                 boxes = page.locator(ATTACHMENTS).evaluate_all(
                     "els => els.map(e => e.getBoundingClientRect().top)"
@@ -163,11 +175,10 @@ def run(browser, urls):
                     == "Message refused: connection lost"
                 )
 
-    # Voice remains reachable inside Everything; denied microphone access preserves the draft.
+    # Inline voice denial preserves the draft without the Add menu.
     page.goto(urls[0], wait_until="domcontentloaded")
     page.locator(INPUT).fill("Keep these words")
-    page.locator("[data-conversation-add]").click()
-    voice = page.locator(".chat-add-menu [data-voice-record]")
+    voice = page.locator(".chat-submit > [data-voice-record]")
     assert voice.is_visible()
     voice.click()
     page.wait_for_function("window.__voiceAttempts === 1")
@@ -305,6 +316,10 @@ def run(browser, urls):
     page.wait_for_function("window.__attempts.length === 1")
     assert page.locator(INPUT).input_value() == ""
     assert names(page) == []
+    # The pending-send affordance remains after the successful local draft clear.
+    pending_send = page.locator("[data-conversation-send]")
+    assert pending_send.is_visible() and pending_send.is_disabled()
+    assert pending_send.get_attribute("aria-busy") == "true"
     page.evaluate("window.__resolveSend(false)")
     page.wait_for_function(
         "document.querySelector('[data-conversation-input]').value === 'original draft'"

@@ -25,7 +25,6 @@
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
-  import UnifiedModelPicker from "./UnifiedModelPicker.svelte";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -108,7 +107,7 @@
     supportsSteer = false,
     fateNote = null,
     errorNote = null,
-    placeholder = "Steer the work",
+    placeholder = "Message the agent...",
     disabled = false,
     showRunPicker = true,
     onSend,
@@ -279,18 +278,15 @@
   // The foot this menu lives in is replaced whole by a question or a permission ask.
   // A menu that is not on the screen must not still be holding the Escape key.
   $effect(() => {
-    if (userInput !== null || takenOver) addMenuOpen = false;
+    if (userInput !== null || takenOver || inputDisabled) addMenuOpen = false;
   });
 
   $effect(() => {
     if (!addMenuOpen) return;
     const shutTheMenu = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
-      // The nested picker owns its first Escape and returns focus to its trigger.
-      if (addMenuElement?.querySelector('.listbox-picker-panel')) return;
       event.preventDefault();
       addMenuOpen = false;
-      addMenuElement?.querySelector<HTMLButtonElement>('[data-conversation-add]')?.focus();
     };
     window.addEventListener("keydown", shutTheMenu, true);
     return () => window.removeEventListener("keydown", shutTheMenu, true);
@@ -1110,43 +1106,26 @@
           <div class="chat-add" bind:this={addMenuElement}>
             <button
               type="button"
-              class="chat-everything chat-add-btn"
+              class="chat-image chat-add-btn"
               class:on={pendingImages.length + pendingFiles.length > 0}
               data-conversation-add
-              aria-haspopup="dialog"
+              aria-haspopup="menu"
               aria-expanded={addMenuOpen}
-              aria-label="Everything: conversation actions"
-              title="Conversation actions"
+              aria-label="Add a picture, a file, a photo, or a command"
+              title="Add a picture, a file, a photo, or a command"
               disabled={inputDisabled}
               onclick={() => (addMenuOpen = !addMenuOpen)}
             >
-              Everything
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
             </button>
             {#if addMenuOpen}
-              <div class="chat-add-menu" role="dialog" aria-label="Conversation actions">
-                {#if showRunPicker}
-                  <UnifiedModelPicker
-                    chevron="drawn"
-                    view={runControlsView.picker}
-                    bind:snapshots={backends}
-                    models={runControlsView.pickerSource.models}
-                    backendEffortOptions={runControlsView.pickerSource.backendEffortOptions}
-                    showUsage
-                    disabled={runControlsView.disabled}
-                    attributes={{ "data-conversation-picker-model": "" }}
-                    afterChoose={() => {}}
-                    onChooseBackend={(backend) => runControlIntents.chooseBackend(backend)}
-                    onChooseModel={runControlIntents.chooseModel}
-                  />
-                {/if}
-                {#if voiceAvailable}
-                  <button type="button" class="chat-add-item" data-voice-record
-                    disabled={inputDisabled} onclick={() => { addMenuOpen = false; void voice?.startRecording(); }}
-                  >Record a voice message</button>
-                {/if}
+              <div class="chat-add-menu" role="menu">
                 <button
                   type="button"
                   class="chat-add-item"
+                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-image
                   data-conversation-image-count={pendingImages.length || undefined}
@@ -1161,6 +1140,7 @@
                 <button
                   type="button"
                   class="chat-add-item"
+                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-file
                   data-conversation-file-count={pendingFiles.length || undefined}
@@ -1175,6 +1155,7 @@
                 <button
                   type="button"
                   class="chat-add-item"
+                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-camera
                   onclick={() => { addMenuOpen = false; cameraInput?.click(); }}
@@ -1189,6 +1170,7 @@
                 <button
                   type="button"
                   class="chat-add-item"
+                  role="menuitem"
                   disabled={inputDisabled}
                   data-conversation-slash
                   onmousedown={(event) => event.preventDefault()}
@@ -1251,6 +1233,8 @@
             <ComposerRunControls
               view={runControlsView}
               intents={runControlIntents}
+              bind:snapshots={backends}
+              beforeSubmit={microphone}
             />
           {:else}
             <span class="chat-submit">{@render microphone()}</span>
@@ -1274,11 +1258,6 @@
 <style>
   /* One affordance where three used to be, at the size a finger can find. */
   .chat-add { position: relative; display: inline-flex; }
-  .chat-everything {
-    border: 0; background: transparent; color: var(--text-faintest);
-    padding: 0; font: inherit; cursor: pointer;
-  }
-  .chat-everything:hover { color: var(--text-strong); }
   .chat-add-menu {
     position: absolute;
     inset-block-end: calc(100% + var(--space-2));
@@ -1293,10 +1272,6 @@
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-md);
     box-shadow: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
-  }
-  .chat-add-menu :global(.listbox-picker-panel) {
-    position: static;
-    max-width: 100%;
   }
   .chat-add-item {
     display: flex;

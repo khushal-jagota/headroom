@@ -1,7 +1,7 @@
 import { RAIL_MOTION } from '../workspaceRailMotion';
 
 export const CONVERSATION_MOVE_MS = 240;
-export const CONVERSATION_CARD_MS = 150;
+export const CONVERSATION_CARD_MS = CONVERSATION_MOVE_MS;
 type Move = { position: boolean; start: number; duration: number; apply: (fraction: number) => void; done?: () => void; finish: (completed: boolean) => void };
 const surfaces = new WeakMap<HTMLElement, ReturnType<typeof createSurfaceMotion>>();
 

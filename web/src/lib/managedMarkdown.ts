@@ -51,7 +51,7 @@ const SOURCE_UNSET = Symbol("source-unset");
 
 export function createManagedMarkdownSurface(
   host: HTMLElement,
-  options: { mode: "read-only" }
+  options: { mode: "read-only"; onRendered?: () => void }
 ): ReadOnlyManagedMarkdownSurface;
 
 export function createManagedMarkdownSurface(
@@ -61,7 +61,7 @@ export function createManagedMarkdownSurface(
 
 export function createManagedMarkdownSurface(
   host: HTMLElement,
-  options: { mode: ManagedMarkdownMode }
+  options: { mode: ManagedMarkdownMode; onRendered?: () => void }
 ): ReadOnlyManagedMarkdownSurface | EditableManagedMarkdownSurface {
   const mode = options.mode;
   const previews = new Map<HTMLElement, MountedPreview>();
@@ -75,6 +75,8 @@ export function createManagedMarkdownSurface(
   let parsing: AbortController | null = null;
   let stopVirtualDocument: (() => void) | null = null;
   let renderGeneration = 0;
+  let rendering = false;
+  function rendered(): void { rendering = false; options.onRendered?.(); }
   let documentRegion: ReturnType<typeof ManagedMarkdownRegion> | null = null;
 
   function cancelReadOnlyWork(): void {
@@ -133,10 +135,12 @@ export function createManagedMarkdownSurface(
   }
 
   function updateReadOnly(next: ReadOnlyRenderInput): void {
+    rendering = true;
     if (next.source.length < MARKDOWN_WORKER_THRESHOLD) {
       cancelReadOnlyWork();
       resetVisibleContentHeight(host);
       repaint(next.source, next);
+      rendered();
       return;
     }
     // A source refresh keeps its painted document while the replacement parses.
@@ -162,6 +166,7 @@ export function createManagedMarkdownSurface(
       documentRegion?.reveal(target => {
         if (destroyed || generation !== renderGeneration) return;
         render(target);
+        rendered();
       });
     }
     parseMarkdownInWorker(next.source, controller.signal).then(document => {
@@ -177,7 +182,7 @@ export function createManagedMarkdownSurface(
       message.className = "quiet-line";
       message.dataset.visibleContentFailed = "";
       message.textContent = error instanceof Error ? error.message : "Text could not load.";
-      if (painted) host.appendChild(message);
+      if (painted) { host.appendChild(message); rendered(); }
       else reveal(target => target.appendChild(message));
     });
   }
@@ -365,7 +370,7 @@ export function createManagedMarkdownSurface(
           depth: input.depth,
           visited: [...input.visited]
         };
-        if (sameReadOnlyInput(lastReadOnlyInput, next)) return;
+        if (sameReadOnlyInput(lastReadOnlyInput, next)) { if (!rendering) rendered(); return; }
         updateReadOnly(next);
         lastReadOnlyInput = next;
       },

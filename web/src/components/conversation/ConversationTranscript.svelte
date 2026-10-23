@@ -181,7 +181,7 @@
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
       <UserMessage row={item.row} {conversationId} {ownSenderLabel}/>
     {:else if item.row.kind === "agent_message"}
-      <article class="chat-a" data-conversation-row="agent_message">
+      <article class="chat-a" data-conversation-row="agent_message" data-conversation-source-key={item.row.key}>
         <MessagePieces content={item.row.content} {conversationId} />
       </article>
     {:else if item.row.kind === "explicit_reply_missing"}

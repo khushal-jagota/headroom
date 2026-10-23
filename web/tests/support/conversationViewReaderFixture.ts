@@ -1,6 +1,10 @@
 /** A finite indexed-page transport for browser lifecycle and scroll admission checks. */
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
 export function installConversationViewReaderFixture(id='bounded-reader'):void {
+  const positionRace=new URLSearchParams(location.search).has('position-race');
+  const positionBodies: Array<()=>void>=[];
+  const positionProbe={hold:true,waiting:0,release:()=>{positionProbe.hold=false;for(const release of positionBodies.splice(0))release();}};
+  (window as any).__positionProbe=positionProbe;
   const unreadText=new URLSearchParams(location.search).get('unread');
   const unread=unreadText===null?null:Number(unreadText);
   const entryProbe={hold:new URLSearchParams(location.search).has('entry-hold'),fail:new URLSearchParams(location.search).has('entry-fail'),waiting:0,release:()=>{}};
@@ -17,14 +21,23 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   let completeBody: (()=>void)|null=null;
   const sources:EventTarget[]=[];
   const folds=new URLSearchParams(location.search).has('folds');
+  const liveStream=new URLSearchParams(location.search).has('live-stream');
   const visual=new URLSearchParams(location.search).has('visual');
   let sequence=2000;
+  // Return probes reuse this finite transport. Arm only after the initial layout.
+  (window as any).__backlog=(count:number)=>{sequence+=count;};
+  const returnBodies=new Map<string,string>();
+  const returnBodyReleases:Array<()=>void>=[];
+  const returnProbe={hold:false,fail:false,bodies:false,bodyHold:false,bodyWaiting:0,waiting:0,release:()=>{},
+    releaseBodies:()=>{returnProbe.bodyHold=false;for(const release of returnBodyReleases.splice(0))release();}};
+  (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
   (window as any).__viewCalls=calls;
   const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
-  const liveText='Temporary streaming prose.';
+  let liveText='Temporary streaming prose.';
+  let liveVersion=1;
   const deferredEndingText=JSON.stringify({kind:'turn_ended',ending:'completed',error_summary:null,automatic_compaction_result:null});
-  if(visual)status.live_output={runtime_epoch:'fixture',turn_key:'turn:1',version:1,byte_count:liveText.length,reference:{body_id:'live:fixture',version:'1',byte_count:liveText.length,media_type:'text/markdown'}};
+  if(visual||liveStream)status.live_output={runtime_epoch:'fixture',turn_key:'turn:1',version:1,byte_count:liveText.length,reference:{body_id:'live:fixture',version:'1',byte_count:liveText.length,media_type:'text/markdown'}};
   function item(n:number):ConversationViewRow{return{kind:'row',key:'e'+n,row_kind:'agent_message',order:{sequence:n,slot:0},source_sequence:n,sender_message_id:null,changed_through_sequence:n,created_at:n,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',to_owner:true,content:[{piece:'text',text:`Owner answer ${n}. `+'The same message remains reachable without all previous bodies in memory. '.repeat(4)}]}}};}
   function visualPage(url:URL):ConversationViewPage{
     const lens=url.searchParams.get('lens')==='full'?'full':'focus';
@@ -91,6 +104,16 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
         row.row_kind='prompt';
         row.body={kind:'inline',value:{kind:'prompt',sender_label:row.source_sequence===1997?'Chief':'owner',mode:'queue',sent_at_unix_milliseconds:row.created_at,content:[{piece:'text',text:row.source_sequence===1999?'A long owner prompt retains its existing width limit. '.repeat(20):'Short prompt.'}]}};
       }
+      if(positionRace && row.source_sequence>=1991){
+        const body=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:Array.from({length:row.source_sequence===2000?400:18},(_,index)=>`Late paragraph ${row.source_sequence}.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n')}]});
+        row.row_kind='agent_message';
+        row.body={kind:'deferred',reference:{body_id:'position:'+row.source_sequence,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
+      }
+      if(returnProbe.bodies && row.body.kind==='inline'){
+        const bodyId='return:'+row.source_sequence;
+        const body=JSON.stringify(row.body.value);returnBodies.set(bodyId,body);
+        row.body={kind:'deferred',reference:{body_id:bodyId,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
+      }
       return row;
     });
     const position=(n:number):ViewPageCursor=>({projection_version:1,lens,scope:{kind:'timeline',key:null},order:{sequence:n,slot:0}});
@@ -121,13 +144,37 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,location.origin);
     if(url.pathname==='/api/conversation/backends')return Response.json({backends:[]});
+    if(url.pathname.endsWith('/view/body/content')){
+      const reference=JSON.parse(url.searchParams.get('reference')!);
+      if(String(reference.body_id).startsWith('return:')){
+        if(returnProbe.bodyHold){returnProbe.bodyWaiting++;await new Promise<void>(resolve=>returnBodyReleases.push(resolve));}
+        return new Response(returnBodies.get(reference.body_id));
+      }
+    }
+    if(positionRace&&url.pathname.endsWith('/view/body/content')){
+      const reference=JSON.parse(url.searchParams.get('reference')!);
+      if(String(reference.body_id).startsWith('position:')){
+        if(positionProbe.hold){positionProbe.waiting++;await new Promise<void>(resolve=>positionBodies.push(resolve));}
+        const sequence=Number(reference.body_id.split(':')[1]);
+        return Response.json({kind:'agent_message',to_owner:true,content:[{piece:'text',text:Array.from({length:sequence===2000?400:18},(_,index)=>`Late paragraph ${sequence}.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n')}]});
+      }
+    }
     if(ownerWidth&&url.pathname.endsWith('/view/body/content'))return ownerWidth==='immediate'?new Response(widthBody):await new Promise<Response>(resolve=>{releaseOwnerBody=()=>resolve(new Response(widthBody));});
     if(expiry&&url.pathname.endsWith('/view/body/content')&&deferredExpired)return Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410});
     if(expiry&&url.pathname.endsWith('/view/body/content'))return await new Promise<Response>(resolve=>{completeBody=()=>resolve(new Response(delayedBody));});
     if(expiry&&url.pathname.endsWith('/events/2/detail'))return expired?Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410}):Response.json({detail:'Cached whole diagnostic'});
     if(folds&&url.pathname.endsWith('/view/body/content'))return new Response(deferredOwner);
-    if(visual&&url.pathname.endsWith('/view/body/content'))return new Response(JSON.parse(url.searchParams.get('reference')!).body_id==='completed:13'?deferredEndingText:liveText);
+    if((visual||liveStream)&&url.pathname.endsWith('/view/body/content'))return new Response(JSON.parse(url.searchParams.get('reference')!).body_id==='completed:13'?deferredEndingText:liveText);
     if(url.pathname.endsWith('/view/pages')) {
+      if(returnProbe.hold){
+        returnProbe.waiting++;
+        await new Promise<void>((resolve,reject)=>{
+          const abort=()=>reject(new DOMException('Aborted','AbortError'));
+          returnProbe.release=()=>{init?.signal?.removeEventListener('abort',abort);resolve();};
+          if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});
+        });
+      }
+      if(returnProbe.fail)return Response.json({error:'Return admission failed'},{status:503});
       const cursored=url.searchParams.has('cursor');
       if(unread!==null && cursored && url.searchParams.get('direction')==='newer'){
         if(entryProbe.hold){entryProbe.waiting++;await new Promise<void>((resolve,reject)=>{const abort=()=>reject(new DOMException('Aborted','AbortError'));entryProbe.release=()=>{init?.signal?.removeEventListener('abort',abort);resolve();};if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});});}
@@ -155,6 +202,12 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     });}
     close(){this.closed=true;}
   }
+  (window as any).__streamProbe={append:(text:string)=>{
+    liveText+=text;liveVersion++;
+    status.live_output={runtime_epoch:'fixture',turn_key:'turn:1',version:liveVersion,byte_count:liveText.length,reference:{body_id:'live:fixture',version:String(liveVersion),byte_count:liveText.length,media_type:'text/markdown'}};
+    const before=sequence;sequence++;status.revision=sequence;
+    for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,location.origin).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:1,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
+  }};
   (window as any).__expireDiagnostics=()=>{
     expired=true;status.diagnostics_expired=true;
     for(const source of sources){if((source as Source).closed)continue;source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL(source.raw,location.origin)),coverage:{through_sequence:sequence},status})}));}
