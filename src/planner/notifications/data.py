@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from planner.core import ticket_blocks
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.notifications import attention as attention_data
+from planner.notifications.apns_data import queue_intent as queue_apns_intent
 from planner.notifications.contracts import (
     MANAGER_NOTIFICATION_SUBJECT_KEY,
     NOTIFICATION_SUBJECTS,
@@ -407,6 +408,7 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
             enabled=preferences.get((_preference_subject_key(edge), edge.notification_type), False),
         )
         if intent is not None:
+            queue_apns_intent(conn, key, intent, now)
             for subscription_id in subscriptions:
                 conn.execute(
                     "INSERT OR IGNORE INTO notification_deliveries"

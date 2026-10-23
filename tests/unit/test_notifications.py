@@ -128,7 +128,10 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
     # first on the phone and the approval would never be read.
     assert loop.poll_once() == 1
     assert [subscription for subscription, _ in sent] == [subscription_id]
-    assert [intent.body for _, intent in sent] == ["Phone-worthy work needs your approval."]
+    assert [intent.body for _, intent in sent] == [
+        "A proposal is waiting. Open Panels to review it."
+    ]
+    assert [intent.title for _, intent in sent] == ["Phone-worthy work · Needs approval"]
     assert {intent.route for _, intent in sent} == {f"/#/workspace/{ticket.id}"}
     assert {intent.tag for _, intent in sent} == {f"panels-ticket-{ticket.id}"}
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from planner.core.contracts import PrincipalKind
+from planner.notifications.config import NOTIFICATION_LABEL_MAX_CHARS
 from planner.notifications.contracts import (
     NOTIFICATION_TYPE_BY_ID,
     AttentionEdge,
@@ -10,11 +11,11 @@ from planner.notifications.contracts import (
 )
 
 _REASONS = {
-    "awaiting_reply": "has a message for you",
-    "awaiting_answer": "is waiting on your answer",
-    "awaiting_approval": "needs your approval",
-    "assigned": "is assigned to you",
-    "errored": "has an error",
+    "awaiting_reply": "There is an unread message. Open Panels to read it.",
+    "awaiting_answer": "A worker is waiting. Open Panels to answer the question.",
+    "awaiting_approval": "A proposal is waiting. Open Panels to review it.",
+    "assigned": "The next stage is yours. Open Panels to complete it.",
+    "errored": "Something failed. Open Panels to inspect the error.",
 }
 
 
@@ -51,10 +52,13 @@ def decide_notification(edge: AttentionEdge, *, enabled: bool) -> NotificationIn
         raise ValueError(f"unknown notification subject kind: {edge.subject.kind.value}")
     if not enabled:
         return None
-    reason = _REASONS[edge.notification_type]
+    label = " ".join(edge.subject_label.split())
+    if len(label) > NOTIFICATION_LABEL_MAX_CHARS:
+        shortened = label[:NOTIFICATION_LABEL_MAX_CHARS]
+        label = (shortened.rsplit(" ", 1)[0] if " " in shortened else shortened) + "…"
     return NotificationIntent(
-        title="Panels",
-        body=f"{edge.subject_label} {reason}.",
+        title=f"{label} · {NOTIFICATION_TYPE_BY_ID[edge.notification_type].label}",
+        body=_REASONS[edge.notification_type],
         route=_subject_route(edge),
         # OS notification replacement is the final overlap coalescing boundary.
         tag=_subject_tag(edge),

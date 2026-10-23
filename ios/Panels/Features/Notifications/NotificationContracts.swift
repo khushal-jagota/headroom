@@ -1,6 +1,6 @@
 import Foundation
 
-/// Native push wire contract. The server-side APNs adapter is not implemented yet.
+/// Native push wire contract, shared by registration and owner-scoped revocation.
 struct NativePushRegistration: Codable, Sendable, Equatable {
     let deviceToken: String
     let bundleId: String
@@ -13,6 +13,7 @@ struct NativePushRegistration: Codable, Sendable, Equatable {
 
 protocol NativePushRegistering: Sendable {
     func register(_ device: NativePushRegistration) async throws
+    func unregister(_ device: NativePushRegistration) async throws
 }
 
 enum NotificationDestination: Equatable, Sendable {

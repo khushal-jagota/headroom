@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from planner.core.authctx import (
+    AUTHENTICATED_OWNER_SCOPE_KEY,
     PLAN_ACTOR_SCOPE_KEY,
     PLAN_MANAGER_ID_SCOPE_KEY,
     PLAN_SPRINT_ITEM_ID_SCOPE_KEY,
@@ -89,6 +90,7 @@ class TrustedIngressMiddleware:
                 scope[PLAN_TICKET_ID_SCOPE_KEY] = None
                 scope[PLAN_MANAGER_ID_SCOPE_KEY] = None
                 scope[PLAN_SPRINT_ITEM_ID_SCOPE_KEY] = None
+                scope[AUTHENTICATED_OWNER_SCOPE_KEY] = True
 
         await self.app(scope, receive, send)
 

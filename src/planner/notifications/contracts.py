@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Final
+from dataclasses import dataclass, field
+from typing import Final, Literal
 
 from planner.core.contracts import Principal, PrincipalKind
 
@@ -159,3 +159,39 @@ class WebPushResult:
     delivered: bool
     expired: bool = False
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class APNsConfig:
+    key_path: str = field(repr=False)
+    key_id: str
+    team_id: str
+    bundle_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class APNsDevice:
+    device_id: str
+    device_token: str = field(repr=False)
+    bundle_id: str
+    environment: Literal["development", "production"]
+    registration_version: int
+    updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAPNsDelivery:
+    edge: EdgeKey
+    device: APNsDevice
+    intent: NotificationIntent
+    attempts: int
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class APNsResult:
+    delivered: bool
+    dead_token: bool = False
+    retryable: bool = False
+    error: str | None = None
+    invalidated_at_ms: int | None = None

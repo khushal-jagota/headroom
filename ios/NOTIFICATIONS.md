@@ -3,7 +3,8 @@
 ## What Panels does today
 
 The backend has durable attention edges and a Web Push delivery queue. There is
-no notification history/feed API and no APNs sender. `/api/changes` is a
+no notification history/feed API. An APNs sender now shares those attention edges
+and preferences, with its own durable queue. `/api/changes` is a
 content-free foreground refresh signal, not a notification stream. Polling it
 cannot wake a suspended iOS app. The native app already follows it while open.
 
@@ -11,18 +12,19 @@ cannot wake a suspended iOS app. The native app already follows it while open.
 all five; Chief and managers offer message, answer and error notifications.
 `attention.py` records false-to-true transitions. `logic/policy.py` applies the
 saved preferences and constructs a title, body, route and replacement tag.
-`runtime.py` and `web_push.py` deliver those intents to browser subscriptions.
+`runtime.py`, `web_push.py`, and `apns.py` deliver those intents to browser
+subscriptions and registered native devices.
 `web/src/routes/NotificationsRoute.svelte` manages preferences and Web Push
 subscriptions. An APNs token is not a Web Push subscription: it has neither a
 browser endpoint nor the browser encryption keys.
 
 | Event | Lock-screen example | Needed from Khushal |
 | --- | --- | --- |
-| awaiting_reply | Chief of Staff · Message / There is an unread message. Open Chief to read and reply. | Read and reply |
-| awaiting_answer | iOS app · Needs an answer / The worker is waiting. Open the ticket and answer the question. | Answer |
-| awaiting_approval | iOS app · Needs approval / The implementation is ready. Review and approve the proposal. | Decide on the proposal |
-| assigned | iOS app · Assigned to you / The next stage is yours. Open the ticket to complete it. | Complete the stage |
-| errored | iOS launch · Error / The orchestrator's turn failed. Open it to inspect the error. | Inspect and decide what to do |
+| awaiting_reply | Chief of Staff · Message / There is an unread message. Open Panels to read it. | Read the message |
+| awaiting_answer | iOS app · Needs an answer / A worker is waiting. Open Panels to answer the question. | Answer |
+| awaiting_approval | iOS app · Needs approval / A proposal is waiting. Open Panels to review it. | Decide on the proposal |
+| assigned | iOS app · Assigned / The next stage is yours. Open Panels to complete it. | Complete the stage |
+| errored | iOS launch · Error / Something failed. Open Panels to inspect the error. | Inspect and decide what to do |
 
 These are payload examples, not generated claims about a live ticket. The sender
 must use the real subject label and only assert details established by the edge.
@@ -50,15 +52,14 @@ for a different configured server and never changes the server automatically.
 Conversation reading and replies remain owned by the destination page.
 Notification handling only opens that page.
 
-The current build intentionally reports **Server delivery is not connected yet**.
+The default build intentionally reports **Server delivery is not connected yet**.
 `APNS_REGISTRATION_ENABLED=NO` prevents all device-registration requests. Merely
 allowing notifications does not claim that background delivery works. The build
 can still receive Simulator injections, which bypass the provider and APNs.
 
-## Proposed native contract — server work remains
+## Native registration contract
 
-No backend file is changed by this delivery. The following endpoint is a proposed
-handoff contract, not an endpoint already available in Panels:
+The backend now serves this endpoint:
 
 ```
 PUT /api/notifications/apns/devices
@@ -67,27 +68,38 @@ Content-Type: application/json
 {"device_token":"lowercase hex", "bundle_id":"app.panels.ios", "environment":"development"}
 ```
 
-Return any 2xx only after the device is durably registered. The app uses the same
-URLSession and configured server as its API client. The server must authenticate
-the owner through the deployed access boundary, validate the allowed bundle IDs,
-validate the token and environment, and idempotently upsert the owner/device
-registration. Never treat possession of a device token as authentication. If the
+The endpoint returns 200 only after the device is durably registered. The app uses the same
+URLSession and configured server as its API client. The server requires the owner
+identity established by the configured Tailscale trusted ingress; headerless local
+requests and employee claims cannot register or revoke devices. Deploy behind
+Tailscale Serve, keep the backend loopback-only, and ensure ingress strips and supplies
+its identity headers. A client-supplied identity header is not a login mechanism.
+The endpoint validates allowed bundle IDs, even-length lowercase hex tokens and the
+environment, and idempotently upserts each owner/token/bundle/environment combination.
+Never treat possession of a device token as authentication. If the
 native client needs additional credentials at deployment, provide them through
-its API session before enabling this integration. Add owner-scoped revocation and
-remove expired tokens on APNs `Unregistered`; do not log tokens. Changing servers
-in this preview rejects old-server taps but does not revoke the old registration;
-server-side revocation must be available before rolling out multi-server use.
+its API session before enabling this integration. `DELETE` at the same endpoint,
+with the same JSON body, revokes only that registration and its deliveries; it returns
+`{"removed": true}` or `{"removed": false}`. Revocation works even after credentials
+or a bundle ID are removed. The app's adapter exposes it and attempts revocation after
+an in-session permission denial. After an app restart the old token is not retained;
+the explicit authenticated endpoint remains available for owner cleanup.
+Changing servers rejects old-server taps but does not automatically revoke an old
+registration; revoke it explicitly before multi-server use. APNs `Unregistered`,
+`ExpiredToken`, `BadDeviceToken`, and `DeviceTokenNotForTopic` remove dead tokens.
+A stale response cannot revoke a newer registration. Tokens and provider JWTs are
+redacted from HTTP transport logs and never included in delivery errors.
 
-Add an APNs delivery adapter alongside Web Push using the same attention edges,
-preferences and policy. Browser and native deliveries need independent queue
-records, delivery attempts and expiry cleanup; a browser success must not consume
-the native delivery. Send only on a new attention edge, not every refresh. Apply
-bounded retries to transient APNs errors and reject invalid tokens permanently.
-Use the development or production APNs endpoint corresponding to registration;
-set `apns-topic` to the exact registered bundle ID, `apns-push-type: alert`, and
-`apns-priority: 10`. Set a bounded expiration, and use the subject replacement tag
-as the basis for a <=64-byte collapse ID. Prevent one device's invalid token from
-blocking others. Preserve useful event text and current preferences.
+The APNs delivery adapter runs alongside Web Push using the same attention edges,
+preferences and policy. Browser and native deliveries have independent queue
+records, delivery attempts and expiry cleanup; a browser success cannot consume
+the native delivery. Only a new attention edge sends a notification. Transport errors,
+429, 500 and 503 responses retry with increasing delays, for at most five attempts
+within a five-minute lifetime. Other provider rejections stop that delivery.
+The endpoint matches the registration's development or production environment;
+`apns-topic` is its exact bundle ID, `apns-push-type` is `alert`, and priority is 10.
+The subject replacement tag is hashed to a 64-byte collapse ID. Expiration is five
+minutes after queueing. One invalid token does not block another device.
 
 Payload (custom fields are siblings of `aps`):
 
@@ -96,13 +108,13 @@ Payload (custom fields are siblings of `aps`):
   "aps": {
     "alert": {
       "title": "iOS app · Needs approval",
-      "body": "A proposal is waiting. Open Review to approve or return it."
+      "body": "A proposal is waiting. Open Panels to review it."
     },
     "sound": "default",
     "thread-id": "panels-ticket-t_42"
   },
   "server_url": "https://panels.example.com",
-  "route": "/#/review?ticket=t_42"
+  "route": "/#/workspace/t_42"
 }
 ```
 
@@ -123,6 +135,27 @@ implicit actions or a different target.
 
 ## Apple account and release work remains
 
+The server reads these environment variables; none has a committed credential value:
+
+| Variable | Required value |
+| --- | --- |
+| `PLAN_APNS_KEY_PATH` | Absolute path to the secret `.p8` signing key readable by the server |
+| `PLAN_APNS_KEY_ID` | Apple's key identifier |
+| `PLAN_APNS_TEAM_ID` | Apple Developer team identifier |
+| `PLAN_APNS_BUNDLE_IDS` | Comma-separated exact allowed app IDs, such as `app.panels.ios`; include a separate test ID only when needed |
+
+Native sending quietly skips network access when these inputs or a canonical HTTPS
+origin are absent. Partial credentials disable registration with 503. A complete but
+unreadable/invalid key produces a bounded delivery failure, not a successful push.
+Provider JWTs use ES256 and refresh after 50 minutes. Restart the backend when
+changing credentials or allowed topics, so its connection and JWT cache are renewed.
+
+Owner authentication and the payload origin use the existing
+`PLAN_TRUSTED_INGRESS_PROVIDER=tailscale`, `PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN`, and
+`PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN` settings. The origin must exactly identify
+the HTTPS Panels server selected in the app, without user credentials, a path,
+query or fragment. The endpoint must sit behind the verified owner access boundary.
+
 1. Register the production bundle ID in the intended Apple Developer team and
    enable Push Notifications. Register a distinct test App ID if physical-device
    tests use `app.panels.ios.pios-notify`.
@@ -136,7 +169,9 @@ implicit actions or a different target.
    development profile and `production` for TestFlight/App Store; set the same
    value for the registration body. Inspect the signed archive entitlement.
 5. Deploy the authenticated endpoint and sender, verify the app's access session,
-   then build with `APNS_REGISTRATION_ENABLED=YES`. Leave it NO before that point.
+   then build with the explicit Xcode override `APNS_REGISTRATION_ENABLED=YES`.
+   The checked-in default remains NO. Set `APNS_ENVIRONMENT` to the signed profile's
+   environment. Registration already uses the server endpoint through the app's API session.
 6. On a signed physical device verify token upsert, every event type, opt-out,
    failed registration/retry, foreground/background/terminated taps, token
    rotation, invalid-token cleanup and notification settings changes. Test both

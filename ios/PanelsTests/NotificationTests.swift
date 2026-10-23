@@ -34,6 +34,7 @@ final class NotificationTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let device = NativePushRegistration(deviceToken: "0011aaff", bundleId: "app.panels.ios.pios-notify", environment: "development")
         try await NativePushAPI(client: APIClient(baseURL: URL(string: "https://push-stub.invalid")!, session: session)).register(device)
+        try await NativePushAPI(client: APIClient(baseURL: URL(string: "https://push-stub.invalid")!, session: session)).unregister(device)
         do {
             try await NativePushAPI(client: APIClient(baseURL: URL(string: "https://rejected.invalid")!, session: session)).register(device)
             XCTFail("A refused registration must not be reported as connected")
@@ -55,7 +56,7 @@ private final class NativePushURLProtocol: URLProtocol, @unchecked Sendable {
                 body.append(buffer, count: count)
             }
         }
-        guard request.httpMethod == "PUT", request.url?.path == "/api/notifications/apns/devices",
+        guard ["PUT", "DELETE"].contains(request.httpMethod ?? ""), request.url?.path == "/api/notifications/apns/devices",
               request.value(forHTTPHeaderField: "Content-Type") == "application/json",
               let payload = try? JSONSerialization.jsonObject(with: body) as? [String: String],
               payload == ["device_token": "0011aaff", "bundle_id": "app.panels.ios.pios-notify", "environment": "development"] else {

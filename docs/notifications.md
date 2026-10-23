@@ -1,8 +1,10 @@
 # Notifications
 
 Panels can be installed from the browser as a small home-screen or desktop app. It
-uses Web Push, so a selected event can reach an enabled phone or Mac while the Panels
-page is closed. The service worker does not cache pages or provide an offline copy of
+uses Web Push for browsers and can deliver Apple push notifications to the native iOS
+app when the server's Apple credentials and the app's signing are configured. A selected
+event can reach an enabled phone or Mac while Panels is closed. The service worker
+does not cache pages or provide an offline copy of
 Panels.
 
 ## What becomes a notification
@@ -106,6 +108,13 @@ change wakes it promptly, and a periodic pass covers missed wake-ups and retries
 Successful deliveries are recorded. Temporary failures back off and retry. A push
 provider's expired-subscription response disables that device.
 
+Browser and native deliveries have separate records. Sending to a browser never
+consumes the native delivery for the same event. Native attempts stop after five minutes
+or the retry limit. Apple can remove an invalid device token without blocking other
+devices. A delayed rejection cannot remove a token registered again after the send.
+When Apple credentials are absent, native delivery makes no network calls and claims
+no success. The browser path continues as before.
+
 The Web Push signing identity, subscriptions, preferences, attention state, edges, and
 delivery results all live in the main SQLite database. Normal database backup and
 restore therefore preserve the identity that existing devices trust.
@@ -127,4 +136,18 @@ Code paths: `src/planner/notifications/`, the notification tables in the baselin
 `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
-_Last verified: 2026-10-22._
+## Native iOS setup
+
+The native app registers each token for its exact app ID and Apple environment through
+the server's authenticated owner access. Removing that registration stops future sends
+to that token. Revocation remains available if the Apple key is later removed. The
+server stores tokens in its database; private Apple keys stay in server secrets.
+
+App registration is disabled by default. The remaining deployment inputs and the
+registration and notification contracts are in [the native notification guide](../ios/NOTIFICATIONS.md).
+Actual Apple delivery and signed physical-device behavior still need live testing.
+
+Code paths: `src/planner/notifications/apns.py`, `src/planner/notifications/apns_data.py`,
+`src/planner/notifications/config.py`, and `ios/Panels/Features/Notifications/`.
+
+_Last verified: 2026-10-23._

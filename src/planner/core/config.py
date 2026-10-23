@@ -15,6 +15,8 @@ import yaml
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.environments.app import AppValidationError, validate_app_sha
+from planner.notifications.config import load_apns_config
+from planner.notifications.contracts import APNsConfig
 
 # ConversationStore retries only rolled-back SQLite writer contention.
 CONVERSATION_WRITE_LOCK_RETRY_SECONDS: Final = 0.05
@@ -53,6 +55,7 @@ class Config:
     test_mode: bool
     fake_now: str | None
     app_sha: str | None = None
+    apns: APNsConfig | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -284,4 +287,5 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         test_mode=test_mode,
         fake_now=fake_now,
         app_sha=app_sha,
+        apns=load_apns_config(env),
     )
