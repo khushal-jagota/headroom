@@ -185,8 +185,13 @@ presentation and API extension are confined to `Features/More/Feedback`.
 Usage reads cached Codex and Claude allowances, plus recorded local CLI token and
 cost totals for today, 7, 30 or 90 days. Provider filters apply to the totals and
 chart. Missing values stay unavailable and partial source reads show their issues.
-Pull-to-refresh rereads the stored snapshot; it does not ingest CLI files, refresh
-provider credentials, sign in or update a backend. Cost estimates are not bills.
+Pull-to-refresh and the toolbar refresh button request fresh provider allowances
+and reread local CLI records, just like Usage on the web. Existing readings stay
+visible during refresh, with each source’s last-read time; failed provider reads
+keep the previous allowance and show the error. Refresh gives haptic feedback.
+Opening the screen only reads stored values. Cost estimates are not bills.
+The Panels server row in More displays deployment status without opening a page;
+VPS has its own navigation row.
 
 VPS reads machine measurements, CPU history, services and paged processes. Its
 15-second foreground poll preserves the loaded process window. CPU history offers

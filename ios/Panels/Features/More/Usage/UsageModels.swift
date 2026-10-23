@@ -62,6 +62,40 @@ extension APIClient {
     func usageBackends() async throws -> UsageBackends { try await get("/api/conversation/backends") }
 }
 
+struct UsageBackendRefresh: Decodable, Sendable {
+    let backends: [UsageBackend]
+    let usageOutcomes: [UsageRefreshOutcome]
+    var failure: String? {
+        let failures = usageOutcomes.filter { $0.outcome == "failed" }.map {
+            $0.detail ?? "\($0.backendKey.capitalized) limits could not be refreshed."
+        }
+        return failures.isEmpty ? nil : failures.joined(separator: " ")
+    }
+}
+struct UsageRefreshOutcome: Decodable, Sendable {
+    let backendKey: String
+    let outcome: String
+    let detail: String?
+}
+
+extension APIClient {
+    func refreshUsageBackends() async throws -> UsageBackendRefresh {
+        let (data, response) = try await usageRefreshRequest("/api/conversation/backends/refresh")
+        try Self.validate(response, data: data)
+        return try Self.decoder().decode(UsageBackendRefresh.self, from: data)
+    }
+    func refreshRecordedUsage() async throws {
+        let (data, response) = try await usageRefreshRequest("/api/conversation/usage/refresh")
+        try Self.validate(response, data: data)
+    }
+    private func usageRefreshRequest(_ path: String) async throws -> (Data, URLResponse) {
+        var request = URLRequest(url: try url(path))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        return try await session.data(for: request)
+    }
+}
+
 enum UsagePresentation {
     static func number(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }

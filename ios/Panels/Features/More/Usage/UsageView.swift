@@ -10,6 +10,8 @@ struct UsageView: View {
     @State private var backends: [UsageBackend] = []
     @State private var error: String?
     @State private var loading = false
+    @State private var refreshing = false
+    @State private var readGeneration = 0
     private let metrics = ["Limits", "Tokens", "Cost"]
     private var selectedMetrics: UsageMetrics? {
         provider == "All" ? summary?.totals : summary?.providers.first { $0.provider == provider.lowercased() }
@@ -18,16 +20,28 @@ struct UsageView: View {
     var body: some View {
         List {
             Section {
-                Picker("Usage", selection: $metric) { ForEach(metrics, id: \.self) { Text($0) } }.accessibleSegmentedPicker()
+                Picker("Usage", selection: $metric) { ForEach(metrics, id: \.self) { Text($0) } }.accessibleSegmentedPicker().disabled(refreshing)
                 Picker("Provider", selection: $provider) { ForEach(["All", "Codex", "Claude"], id: \.self) { Text($0) } }
             }.listRowBackground(PanelsTheme.raised)
-            if let error { Section { LoadErrorView(message: error) { await load() } } }
             if loading && summary == nil && backends.isEmpty { ProgressView("Reading usage…") }
             if metric == "Limits" { limits } else { recorded }
+            if let error { Section { LoadErrorView(message: error) { await refresh() } } }
         }
         .navigationTitle("Usage").panelsScreen()
         .task(id: "\(store.baseURL):\(metric):\(days):\(store.revision)") { await load() }
-        .refreshable { await load() }
+        .refreshable { await refresh() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { Task { await refresh() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .opacity(refreshing ? 0 : 1)
+                        .overlay { if refreshing { ProgressView() } }
+                }
+                .accessibilityLabel(refreshing ? "Refreshing usage and limits" : "Refresh usage and limits")
+                .accessibilityIdentifier("usage.refresh")
+                .disabled(refreshing)
+            }
+        }
         .onChange(of: metric) { _, _ in Haptics.selection() }
         .onChange(of: days) { _, _ in Haptics.selection() }
         .onChange(of: provider) { _, _ in Haptics.selection() }
@@ -70,7 +84,7 @@ struct UsageView: View {
             Section {
                 Picker("Period", selection: $days) {
                     Text("Today").tag(1); Text("7 days").tag(7); Text("30 days").tag(30); Text("90 days").tag(90)
-                }.accessibleSegmentedPicker()
+                }.accessibleSegmentedPicker().disabled(refreshing)
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                     Text(metric == "Cost" ? UsagePresentation.cost(selectedMetrics?.costUsd) : UsagePresentation.number(selectedMetrics?.totalTokens))
                         .font(PanelsTheme.TypeScale.title).monospacedDigit().contentTransition(.numericText())
@@ -126,7 +140,36 @@ struct UsageView: View {
         let value = period.providers.first { $0.provider == provider.lowercased() }
         return metric == "Cost" ? value?.costUsd : value?.totalTokens
     }
+    @MainActor private func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true
+        readGeneration += 1
+        Haptics.light()
+        defer { refreshing = false }
+        let client = store.client
+        let requestedDays = days
+        async let allowanceRead = client.refreshUsageBackends()
+        async let recordedRead: Void = client.refreshRecordedUsage()
+        var failures: [String] = []
+        do {
+            let result = try await allowanceRead
+            guard store.baseURL == client.baseURL else { return }
+            backends = result.backends.filter { ["codex", "claude"].contains($0.backendKey) }
+            if let failure = result.failure { failures.append(failure) }
+        } catch { failures.append(error.localizedDescription) }
+        do {
+            try await recordedRead
+            let result = try await client.usage(days: requestedDays)
+            guard store.baseURL == client.baseURL else { return }
+            if days == requestedDays { summary = result }
+        } catch { failures.append(error.localizedDescription) }
+        guard store.baseURL == client.baseURL, !Task.isCancelled else { return }
+        error = failures.isEmpty ? nil : failures.joined(separator: " ")
+        if failures.isEmpty { Haptics.success() } else { Haptics.error() }
+    }
     @MainActor private func load() async {
+        guard !refreshing else { return }
+        let generation = readGeneration
         loading = true
         if metric != "Limits", summary?.days != days { summary = nil }
         defer { loading = false }
@@ -134,13 +177,15 @@ struct UsageView: View {
             if metric == "Limits" {
                 let result = try await store.client.usageBackends()
                 try Task.checkCancellation()
+                guard !refreshing, generation == readGeneration else { return }
                 backends = result.backends.filter { ["codex", "claude"].contains($0.backendKey) }
             } else {
                 let result = try await store.client.usage(days: days)
                 try Task.checkCancellation()
+                guard !refreshing, generation == readGeneration else { return }
                 summary = result
             }
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readGeneration { self.error = error.localizedDescription } }
     }
 }
