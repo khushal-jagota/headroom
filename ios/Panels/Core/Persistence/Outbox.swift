@@ -64,23 +64,26 @@ struct PendingWork: Codable, Identifiable, Sendable {
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
         }
     }
-    func retry(_ id: String, api: APIClient) {
+    @discardableResult
+    func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil) -> String? {
         let server = LocalStore.server(api.baseURL)
-        guard var work = entries(server).first(where: { $0.id == id }), work.state == .failed else { return }
+        guard var work = entries(server).first(where: { $0.id == id }), work.state == .failed else { return nil }
+        var replacementID = id
         // A terminal server refusal needs a new message identity, only on an explicit tap.
         if let message = work.message {
             let nextID = UUID().uuidString
-            let next = ConversationSend(conversationId: message.conversationId, content: message.content, mode: message.mode,
+            let next = ConversationSend(conversationId: message.conversationId, content: content ?? message.content, mode: message.mode,
                                     backendKey: message.backendKey, model: message.model, reasoningEffort: message.reasoningEffort,
                                     senderMessageId: nextID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), ownerReadThroughSequence: message.ownerReadThroughSequence)
             let replacement = PendingWork(id: nextID, created: .now, kind: .message, owner: work.owner, message: next, priorMessageIDs: (work.priorMessageIDs ?? []) + [id])
-            do { try save(replacement, server: server); try store.remove(server: server, kind: "outbox", id: id) }
-            catch { store.saveError = error.localizedDescription; return }
+            do { try save(replacement, server: server); try store.remove(server: server, kind: "outbox", id: id); replacementID = nextID }
+            catch { store.saveError = error.localizedDescription; return nil }
         } else {
             work.state = .waiting; work.note = "Waiting for connection"
-            do { try save(work, server: server) } catch { store.saveError = error.localizedDescription; return }
+            do { try save(work, server: server) } catch { store.saveError = error.localizedDescription; return nil }
         }
         Task { await drain(api: api) }
+        return replacementID
     }
     func drain(api: APIClient) async {
         let server = LocalStore.server(api.baseURL)

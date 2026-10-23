@@ -56,9 +56,10 @@ struct WorkspaceCard: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if chief { ConversationSignalMark(signal: signal) }
                     }
-                }.contentShape(Rectangle())
+                }.padding(.vertical, chief ? 8 : 0).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .padding(.vertical, chief ? -8 : 0)
             .conversationAccessibility(label: [project, title].compactMap { $0 }.joined(separator: ", "), signal: signal)
             .accessibilityIdentifier(chief ? "workspace-chief" : "workspace-orchestrator")
             .modifier(WorkspaceContextMenu(route: route, title: title, parent: project, ticket: nil,

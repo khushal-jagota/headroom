@@ -88,7 +88,7 @@ extension APIClient {
                 clearAcceptedDraft()
             }
             // Outbox content remains the authority if the app closed during a send.
-            if let message = saved?.message {
+            if let saved, saved.state != .failed, let message = saved.message {
                 composer.draft = message.content.compactMap(\.text).joined(separator: "\n")
                 composer.attachments = message.content.filter { $0.piece != "text" }
             }
@@ -98,18 +98,21 @@ extension APIClient {
     func send() async -> Bool {
         guard let api, let item, let owner = item.owner, let id = item.conversationId,
               loaded, through > 0, !historical, !busy, !pending else { return false }
-        if let attempt, [.failed, .changed].contains(attempt.state) {
-            // Explicit refusal retries get a new identity; unknown sends keep theirs.
-            if attempt.state == .failed {
-                Outbox.shared.retry(attempt.id, api: api)
-                attemptID = Outbox.shared.entries(LocalStore.server(api.baseURL)).last { $0.priorMessageIDs?.contains(attempt.id) == true }?.id
-                return false
-            }
-        }
         let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !composer.attachments.isEmpty else { return false }
+        let content: [ConversationSend.Piece] = (text.isEmpty ? [] : [.init(text: text)]) + composer.attachments
+        if let attempt, attempt.state == .failed {
+            // Replace a terminal refusal with the current draft, retaining its read boundary.
+            guard let replacement = Outbox.shared.retry(attempt.id, api: api, content: content) else {
+                error = Outbox.shared.store.saveError
+                return false
+            }
+            attemptID = replacement
+            await Outbox.shared.drain(api: api)
+            return accepted
+        }
         let messageID = UUID().uuidString
-        var message = ConversationSend(conversationId: id, content: (text.isEmpty ? [] : [.init(text: text)]) + composer.attachments,
+        var message = ConversationSend(conversationId: id, content: content,
             senderMessageId: messageID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), ownerReadThroughSequence: through)
         message.mode = "queue"
         let work = PendingWork(id: messageID, created: .now, kind: .message, owner: owner, message: message)

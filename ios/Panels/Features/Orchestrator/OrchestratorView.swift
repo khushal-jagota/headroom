@@ -99,5 +99,6 @@ struct AgentPageControls<Actions: View>: View {
         .foregroundStyle(PanelsTheme.faint)
         .tint(PanelsTheme.faint)
         .buttonStyle(.plain)
+        .background(AgentPageBackGesture())
     }
 }

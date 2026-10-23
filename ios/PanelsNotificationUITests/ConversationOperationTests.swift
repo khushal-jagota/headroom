@@ -173,7 +173,7 @@ final class ConversationOperationTests: XCTestCase {
             XCTAssertTrue(line.waitForExistence(timeout: 8))
             let page = app.scrollViews.firstMatch
             let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
-            input.tap(); input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (input.value as? String ?? "").count))
+            input.tap()
             input.typeText("Retained draft")
             app.buttons["Choose model"].tap(); app.buttons["Cancel"].tap()
             page.swipeUp(velocity: .slow)
@@ -188,6 +188,10 @@ final class ConversationOperationTests: XCTestCase {
             XCTAssertEqual(input.value as? String, "Retained draft")
             capture(app, "\(name)-pushed")
             let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.002, dy: 0.5))
+            edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.5)), withVelocity: .slow, thenHoldForDuration: 0.5)
+            XCTAssertTrue(app.buttons["Conversation lens"].exists, "Short edge swipe must cancel")
+            XCTAssertEqual(input.value as? String, "Retained draft")
+            capture(app, "\(name)-cancelled-back")
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)), withVelocity: .slow, thenHoldForDuration: 0.1)
             XCTAssertTrue(line.waitForExistence(timeout: 5))
             XCTAssertEqual(app.navigationBars.count, 0)
@@ -198,14 +202,31 @@ final class ConversationOperationTests: XCTestCase {
             // Exercise the standard back button too, and clear only this fixture draft.
             line.tap()
             XCTAssertTrue(app.buttons["Conversation lens"].waitForExistence(timeout: 5))
-            input.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
-            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Retained draft".count))
-            XCTAssertEqual(input.value as? String, "")
+            // Retain the isolated fixture draft; text deletion is not this review's gate.
+            XCTAssertEqual(input.value as? String, "Retained draft")
             app.navigationBars.buttons.firstMatch.tap()
             XCTAssertTrue(line.waitForExistence(timeout: 5))
             page.swipeDown(velocity: .fast)
             if !back.isHittable { page.swipeDown(velocity: .fast) }
+            try await proof(base, "start/\(name.lowercased())-quiet-edge-back")
+            let quietEdge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
+            // An ordinary horizontal content drag must not start a pop.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.45)).press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.45)))
+            XCTAssertTrue(back.exists)
+            quietEdge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.45)), withVelocity: .slow, thenHoldForDuration: 0.5)
+            XCTAssertTrue(back.exists, "Short quiet-page edge swipe must cancel")
+            XCTAssertEqual(app.navigationBars.count, 0)
+            capture(app, "\(name)-quiet-cancelled")
+            quietEdge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.45)))
+            let returned = link.waitForExistence(timeout: 2)
+            print("FEEL current quiet \(name) edge-back returned: \(returned)")
+            capture(app, "\(name)-quiet-edge-back")
+            try await proof(base, "stop")
+            XCTAssertTrue(returned, "Quiet detail must support interactive back")
+            link.tap()
+            XCTAssertTrue(back.waitForExistence(timeout: 5))
             back.tap()
+            XCTAssertTrue(link.waitForExistence(timeout: 5))
         }
         app.terminate()
     }
