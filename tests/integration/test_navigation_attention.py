@@ -125,7 +125,9 @@ def test_actual_producer_replacements_change_each_bit_without_generic_counter_ch
     prepared.attach()
     conn = prepared.connect()
     baseline = conversation(conn)
-    generic = {key: value for key, value in baseline.items() if key != "attention"}
+    attention_fields = {"attention", "first_unread_owner_message_at"}
+    generic = {key: value for key, value in baseline.items() if key not in attention_fields}
+    assert baseline["first_unread_owner_message_at"] is None
     previous = snapshot(conn)
     expected = [
         {
@@ -158,12 +160,16 @@ def test_actual_producer_replacements_change_each_bit_without_generic_counter_ch
             kind = "message_to_owner" if index == 2 else "turn_ended"
             payload = "{}" if index == 2 else '{"ending":"failed"}'
             writer.execute(
-                "INSERT INTO conversation_events VALUES('c',?,?,?,0)", (index - 1, kind, payload)
+                "INSERT INTO conversation_events VALUES('c',?,?,?,?)",
+                (index - 1, kind, payload, 100 + index),
             )
         writer.commit()
         writer.close()
         current = conversation(conn)
-        assert {key: value for key, value in current.items() if key != "attention"} == generic
+        assert {
+            key: value for key, value in current.items() if key not in attention_fields
+        } == generic
+        assert current["first_unread_owner_message_at"] == (102 if index >= 2 else None)
         knowledge = current["attention"]
         assert knowledge["current"] == expected[index]
         durable = read_durable_facts(conn, "c")
