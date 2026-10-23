@@ -20,46 +20,6 @@ struct DeploymentStatus: Codable, Sendable {
     var successDisplayUntil: String? = nil
 }
 
-// conversation/deploy_interruptions/contracts.py is the wire authority.
-struct DeploymentInterruptionSummary: Decodable, Sendable {
-    let accounts: [Account]
-    struct Account: Decodable, Identifiable, Sendable {
-        let deploymentId: String
-        let captureState: String
-        let detail: String?
-        let entries: [DeploymentInterruption]
-        var id: String { deploymentId }
-    }
-}
-struct DeploymentInterruption: Decodable, Identifiable, Sendable {
-    let interruptionId: String
-    let conversationId: String?
-    let displayName: String
-    let ownerKind: String
-    let ownerId: String?
-    let recoveryState: String
-    let detail: String
-    let canRestart: Bool
-    var id: String { interruptionId }
-    var recoveryLabel: String {
-        switch recoveryState {
-        case "awaiting_action": "Awaiting action"
-        case "unable_to_resume": "Unable to resume"
-        default: recoveryState.capitalized
-        }
-    }
-}
-struct DeploymentRestartResult: Decodable, Sendable {
-    let started: Bool
-    let deliveryFate: String?
-    let notStartedBecause: String?
-    var message: String {
-        if started { return "Restart requested. The account confirms when the agent resumes." }
-        if deliveryFate == "queued" { return "Restart queued. The agent has not resumed yet." }
-        return notStartedBecause ?? "The restart did not confirm resumption. Check the conversation."
-    }
-}
-
 // Match the web's expiry rules: stale progress becomes reconnecting, and a
 // successful deployment only stays visible until its server-provided expiry.
 enum DeploymentStatusPresentation: String {

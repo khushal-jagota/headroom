@@ -21,7 +21,6 @@ struct MoreView: View {
                     }.accessibilityIdentifier("more.deployment")
                 }
             }.listRowBackground(PanelsTheme.raised)
-            Section { DeploymentInterruptionsView() }.listRowBackground(PanelsTheme.raised)
             Section("Work") {
                 destination("Ideas", symbol: "lightbulb", route: .ideas)
                 destination("Feedback", symbol: "bubble.left", route: .feedback)

@@ -9,7 +9,6 @@ import Observation
     var chief: ChiefDetail?
     var review: ReviewResponse?
     var deployment: DeploymentStatus?
-    var interruptions: DeploymentInterruptionSummary?
     var managerPage: PageFacts?
     var ticketPage: PageFacts?
     var errors: [String: String] = [:]
@@ -27,7 +26,7 @@ import Observation
     func configure(baseURL: URL) {
         self.baseURL = baseURL
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
-        managers = []; tickets = []; chief = nil; review = nil; deployment = nil; interruptions = nil
+        managers = []; tickets = []; chief = nil; review = nil; deployment = nil
         managerPage = nil; ticketPage = nil; errors = [:]
     }
 
@@ -70,8 +69,7 @@ import Observation
         async let chiefRead: () = read("Chief", from: api) { try await api.chief() } apply: { self.chief = $0 }
         async let reviewRead: () = read("Review", from: api) { try await api.review() } apply: { self.review = $0 }
         async let deployRead: () = read("Deployment", from: api) { try await api.deployment() } apply: { self.deployment = $0 }
-        async let interruptionRead: () = read("Interrupted sessions", from: api) { try await api.deploymentInterruptions() } apply: { self.interruptions = $0 }
-        _ = await (managerRead, ticketRead, chiefRead, reviewRead, deployRead, interruptionRead)
+        _ = await (managerRead, ticketRead, chiefRead, reviewRead, deployRead)
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
         revision += 1
     }
