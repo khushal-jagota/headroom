@@ -101,3 +101,11 @@ it("decodes old Item links and emits canonical Manager paths and view queries", 
   expect(workspaceAddress(old!.selection, old!.view)).toBe("#/workspace/manager/si_existing/t_existing");
   expect(workspaceAddress({kind:"none"}, old!.view)).toBe("#/workspace?view=managers");
 });
+
+it("keeps the exact conversation when review opens a historical message", () => {
+  const href = workspaceAddress({kind:"ticket",id:"t_history"}, undefined, null, "old/conversation");
+  const address = parseWorkspaceAddress(href)!;
+  expect(address.selection).toEqual({kind:"ticket",id:"t_history"});
+  expect(address.selectedConversationId).toBe("old/conversation");
+  expect(workspaceAddress(address.selection,address.view,address.openFile,address.selectedConversationId)).toBe(href);
+});

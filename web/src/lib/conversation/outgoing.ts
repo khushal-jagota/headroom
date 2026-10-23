@@ -35,6 +35,8 @@ export type OutgoingMessageKnownFate =
   | "answer_never_came_back";
 
 export type OutgoingMessage = {
+  /** Immutable displayed read boundary for an explicit review reply. */
+  ownerReadThroughSequence?: number;
   /** What this browser called the message. It rides out with the send and comes back on
    *  the message's row, which is what lets the two be recognised as one message. */
   messageId: string;
@@ -760,6 +762,7 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     messageId,
     content: pieces,
     ...(held.accepted === true ? { accepted: true } : {}),
+    ...(typeof held.ownerReadThroughSequence === "number" && Number.isSafeInteger(held.ownerReadThroughSequence) && held.ownerReadThroughSequence >= 0 ? { ownerReadThroughSequence: held.ownerReadThroughSequence } : {}),
     ...(typeof held.displayMessageId === "string" ? { displayMessageId: held.displayMessageId } : {}),
     senderLabel,
     mode: decodedMode as PromptDeliveryMode,

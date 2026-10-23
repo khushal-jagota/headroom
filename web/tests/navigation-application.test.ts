@@ -35,7 +35,7 @@ describe('application presentation and command evidence',()=>{
       const restored=presentationFor(knowledge.accept({...publication,records:publication.records.map(row=>
         row.kind==='ticket'?{...pending,value:{...pending.value,is_backlogged:false}}:row),
         view:{...publication.view,contentVersion:'two',counts:{...publication.view.counts,review:1}}}));
-      expect(restored.review.items.map(item=>item.ticket_id)).toEqual(['a']);
+      expect(restored.review.items.map(item=>item.review_item_type==='proposal' ? item.ticket_id : item.conversation_id)).toEqual(['a']);
       expect(restored.ticketsById.get('a')?.is_backlogged).toBe(false);
     } finally {collection.destroy();}
   });
@@ -259,4 +259,36 @@ describe('application presentation and command evidence',()=>{
     } finally {tracker.dispose();}
   });
 
+});
+
+describe('mixed review presentation',()=>{
+  it('uses oldest unread time, canonical addresses and historical owner context without proposal priority',()=>{
+    const collection=createNavigationCollection(),knowledge=createNavigationKnowledge(),presentationFor=createNavigationPresentationCache();
+    const pending:TicketRecord={...ticket,value:{...ticket.value,ticket_status:'awaiting_approval',
+      recap:'Worker recap',proposal_field:'plan',proposal_revision:1,proposal_created_at:2}};
+    const historical=conversation('historical');historical.value.first_unread_owner_message_at=2;
+    const current=conversation('a-conversation');current.value.first_unread_owner_message_at=1;
+    const addresses:NavigationRecord[]=[
+      {kind:'address',id:'old-worker',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'historical',current:false,parent_kind:'manager',parent_id:'parent'}},
+      {kind:'address',id:'current-manager',value:{owner_kind:'manager',owner_id:'parent',conversation_id:'historical',current:true,parent_kind:null,parent_id:null}},
+      {kind:'address',id:'current-worker',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'a-conversation',current:true,parent_kind:'manager',parent_id:'parent'}},
+    ];
+    const source=[pending,current,historical,...records.filter(row=>row.kind!=='ticket' && row.kind!=='conversation'),...addresses];
+    try {
+      collection.publishSnapshot(currentSnapshot({...continuity,records:source}),'mixed');
+      const initial=collection.getPublication()!;
+      const items=presentationFor(knowledge.accept(initial)).review.items;
+      expect(items).toMatchObject([
+        {review_item_type:'message',conversation_id:'a-conversation',waiting_since:1,owner_id:'a',recap:'Worker recap'},
+        {review_item_type:'message',conversation_id:'historical',waiting_since:2,owner_id:'parent',title:'Parent'},
+        {review_item_type:'proposal',ticket_id:'a',waiting_since:2},
+      ]);
+      const replaced=presentationFor(knowledge.accept({...initial,records:source.filter(row=>row.id!=='current-manager')}));
+      expect(replaced.review.items[1]).toMatchObject({review_item_type:'message',conversation_id:'historical',owner_id:'a',title:'A',recap:'Worker recap'});
+      const lost=knowledge.loseRuntime()!;
+      expect(presentationFor(lost).review.items).toHaveLength(3);
+      const invalid=knowledge.invalidateDurableFact('historical','message_for_owner',5)!;
+      expect(presentationFor(invalid).review.items).toHaveLength(2);
+    } finally {collection.destroy();}
+  });
 });

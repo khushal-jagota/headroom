@@ -2,7 +2,20 @@
 
 Navigation is a derived view of canonical database facts. It does not own Ticket or conversation state.
 
-The public contract uses schema 8 and `attention-knowledge-v8-manager-updated-at` semantics. It contains Ticket metadata, canonical status, assignment, approval references, manager metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+The public contract uses schema 9 and `attention-knowledge-v9-review-messages` semantics. It contains Ticket metadata, canonical status, assignment, approval references, manager metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+
+Review contains two item kinds: owner-addressed proposals and unread conversations.
+Each conversation contributes one item, even when several addresses name it. A current
+address wins, then stable address identity breaks ties. Historical addresses remain eligible.
+Messages and proposals share oldest-first order. The conversation record supplies
+`first_unread_owner_message_at`, the first owner-message timestamp after its durable read
+boundary. Message bodies stay outside navigation and come from the conversation API.
+The global review count adds distinct unread conversations to eligible proposals.
+The scoped review window includes address keys for messages and Ticket keys for proposals.
+The schema 9 migration rebuilds the derived publication and rotates its epoch. Scoped
+projection version 5 replaces the old review index. Old cursors reset through the existing
+snapshot recovery path. A normal reopen does not rebuild either projection.
+
 
 Conversation attention comes from the accepted Signal producer. Each conversation carries complete current attention or explicitly unavailable runtime knowledge, plus independently durable message and failure facts. Raw lifecycle counters, read positions, and Ticket status never substitute for that source. Consumer adoption is in progress. Complete production parity, render proof, recovery, and performance acceptance remain open.
 

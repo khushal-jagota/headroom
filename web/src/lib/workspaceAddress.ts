@@ -25,6 +25,7 @@ export type WorkspaceAddress = {
   // The file the open Ticket is showing in place of its document. Only a Ticket can have
   // one, so it is dropped from any other address.
   openFile: ManagedFileTarget | null;
+  selectedConversationId?: string | null;
 };
 
 // What the rail draws, read off the address alone.
@@ -100,16 +101,19 @@ export function parseWorkspaceAddress(hash: string): WorkspaceAddress | null {
   const asked = params.get("view");
   const view = asked === "items" ? "managers" : asked === "tickets" || asked === "managers" ? asked : null;
   const openFile = selection.kind === "ticket" ? targetFromPreviewQuery(params) : null;
-  return { selection, view: view ?? impliedWorkspaceView(selection), openFile };
+  return { selection, view: view ?? impliedWorkspaceView(selection), openFile,
+    ...(params.get("conversation") ? {selectedConversationId: params.get("conversation")} : {}) };
 }
 
 export function workspaceAddress(
   selection: WorkspaceSelection,
   view?: WorkspaceView,
-  openFile?: ManagedFileTarget | null
+  openFile?: ManagedFileTarget | null,
+  selectedConversationId?: string | null
 ): string {
   const path = selectionPath(selection);
   const parts: string[] = [];
+  if (selectedConversationId) parts.push(`conversation=${encodeURIComponent(selectedConversationId)}`);
   if (view && view !== impliedWorkspaceView(selection)) parts.push(`view=${view}`);
   if (openFile && selection.kind === "ticket") parts.push(previewQuery(openFile));
   return parts.length === 0 ? path : `${path}?${parts.join("&")}`;
