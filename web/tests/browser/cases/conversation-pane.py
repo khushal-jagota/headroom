@@ -3218,10 +3218,222 @@ def _tab_return(browser, url):
         page.close()
 
 
+def _card_state_motion(browser, url):
+    """Card duration, trailing viewport movement, and sandbox boundaries require real frames."""
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    arm = """() => {
+    const pane=document.querySelector('[data-conversation-pane]');
+    const layer=pane.closest('.conversation-layer');
+    let started=null, stateAt=null, frames=[];
+    const geometry=()=>{const thread=pane.querySelector('[data-conversation-thread]');const line=thread?.querySelector('p:last-child'); const tr=thread?.getBoundingClientRect(); return {height:layer.getBoundingClientRect().height,top:layer.getBoundingClientRect().top,scroll:thread?.scrollTop??0,threadHeight:tr?.height??0,line:line?line.getBoundingClientRect().bottom-(tr?.bottom??0):0};};
+    const initial=geometry();
+    const press=e=>{if(started===null)started=performance.now();};
+    const framePress=e=>{if(e.source===document.querySelector("iframe[data-file-preview-html]")?.contentWindow && typeof e.data?.cardTimingPress==="number") started=e.data.cardTimingPress-performance.timeOrigin;};
+    window.addEventListener("message",framePress);
+    window.addEventListener('pointerdown',press,true); window.addEventListener('keydown',press,true);
+    const observer=new MutationObserver(()=>{if(stateAt===null)stateAt=performance.now();});
+    observer.observe(pane,{attributes:true,attributeFilter:['data-conversation-state']});
+    let stop=false;const sample=()=>{if(started!==null)frames.push({ms:performance.now()-started,...geometry()});if(!stop)requestAnimationFrame(sample);};requestAnimationFrame(sample);
+    window.__finishCardTiming=()=>{stop=true;observer.disconnect();window.removeEventListener('pointerdown',press,true);window.removeEventListener('keydown',press,true);window.removeEventListener("message",framePress);return {initial,stateMs:stateAt===null?null:stateAt-started,state:pane.dataset.conversationState,frames};};
+    }"""
+
+    def summarize(raw):
+        previous = raw["initial"]
+        first = None
+        last_card = None
+        last_view = None
+        card_frames = 0
+        for f in raw["frames"]:
+            if any(abs(f[k] - previous[k]) > 0.2 for k in ("height", "top")):
+                first = f["ms"] if first is None else first
+                last_card = f["ms"]
+                card_frames += 1
+            if any(abs(f[k] - previous[k]) > 0.2 for k in ("scroll", "threadHeight", "line")):
+                last_view = f["ms"]
+            previous = f
+        return {
+            **raw,
+            "firstGeometryMs": first,
+            "lastGeometryMs": last_card,
+            "lastViewportMoveMs": last_view,
+            "cardMovingFrames": card_frames,
+        }
+
+    started = time.perf_counter()
+    results = []
+    repeats = int(os.environ.get("PANELS_CARD_TIMING_SAMPLES", "1"))
+    for host in ("ticket", "manager"):
+        for width in (1280, 390):
+            page = browser.new_page(
+                viewport={"width": width, "height": 900}, reduced_motion="no-preference"
+            )
+            try:
+                page.goto(
+                    url + ("?ticket=1&card-artifact=1" if host == "ticket" else "?card-artifact=1")
+                )
+                page.wait_for_selector("[data-conversation-pane]")
+                page.frame_locator("iframe[data-file-preview-html]").locator(
+                    "#artifact-button"
+                ).wait_for()
+                cases = [
+                    ("rest", "peeked", "input"),
+                    ("peeked", "opened", "expand"),
+                    ("opened", "peeked", "collapse"),
+                    ("peeked", "rest", "outside"),
+                    ("opened", "rest", "outside"),
+                    ("peeked", "rest", "escape"),
+                    ("opened", "peeked", "escape"),
+                    ("peeked", "rest", "artifact-chrome"),
+                    ("peeked", "rest", "artifact-html"),
+                ]
+                for initial, expected, action in cases:
+                    for repeat in range(repeats):
+                        page.evaluate("s=>window.__setConversationState(s)", initial)
+                        page.wait_for_function(
+                            "[...document.querySelectorAll('.conversation-layer')].every(node=>!node.style.height)"
+                        )
+                        page.evaluate(
+                            "() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))"
+                        )
+                        page.evaluate(arm)
+                        if action == "input":
+                            page.locator("[data-conversation-input]").click()
+                        elif action == "expand":
+                            page.locator("[data-conversation-expand]").click()
+                        elif action == "collapse":
+                            page.locator("[data-conversation-collapse]").click()
+                        elif action == "outside":
+                            page.locator("[data-ticket-behind]").click()
+                        elif action == "artifact-chrome":
+                            clicks = page.evaluate("window.__artifactClicks()")
+                            page.locator("[data-ticket-artifact-refresh]").click()
+                            assert page.evaluate("window.__artifactClicks()") == clicks + 1
+                        elif action == "artifact-html":
+                            page.frame_locator("iframe[data-file-preview-html]").locator(
+                                "#artifact-button"
+                            ).click()
+                        else:
+                            page.keyboard.press("Escape")
+                        # Sample beyond the card endpoint to expose a separate trailing viewport move.
+                        page.wait_for_timeout(450)
+                        raw = page.evaluate("window.__finishCardTiming()")
+                        measured = summarize(raw)
+                        assert raw["state"] == expected, (
+                            host,
+                            width,
+                            initial,
+                            action,
+                            raw["state"],
+                        )
+                        assert measured["firstGeometryMs"] is not None, (
+                            host,
+                            width,
+                            action,
+                            measured,
+                        )
+                        # The last three samples confirm stability but do not extend the endpoint timestamp.
+                        assert len(raw["frames"]) >= 3
+                        final = raw["frames"][-1]
+                        assert all(
+                            abs(row[key] - final[key]) < 0.2
+                            for row in raw["frames"][-3:]
+                            for key in ("height", "top", "scroll", "threadHeight", "line")
+                        ), (host, width, action, measured)
+                        heights = [
+                            raw["initial"]["height"],
+                            *[row["height"] for row in raw["frames"]],
+                        ]
+                        direction = 1 if heights[-1] > heights[0] else -1
+                        assert all(
+                            direction * (b - a) >= -0.5
+                            for a, b in zip(heights, heights[1:], strict=False)
+                        ), (host, width, action, measured)
+                        # Frame quantization permits two refresh intervals beyond the 150ms movement.
+                        assert measured["lastGeometryMs"] - measured["firstGeometryMs"] < 190, (
+                            host,
+                            width,
+                            action,
+                            measured,
+                        )
+                        # Total latency includes cold rendering, scheduling, and the final viewport correction.
+                        # Budget: 150ms travel + 100ms cold render + 50ms frame allowance.
+                        endpoint = max(
+                            measured["lastGeometryMs"] or 0, measured["lastViewportMoveMs"] or 0
+                        )
+                        assert endpoint <= 300, (host, width, action, measured)
+                        assert (measured["lastViewportMoveMs"] or 0) <= measured[
+                            "lastGeometryMs"
+                        ] + 35, (host, width, action, measured)
+                        if action == "artifact-html":
+                            assert (
+                                page.frame_locator("iframe[data-file-preview-html]")
+                                .locator("body")
+                                .get_attribute("data-clicked")
+                                == "true"
+                            )
+                        results.append(
+                            {
+                                "host": host,
+                                "width": width,
+                                "from": initial,
+                                "to": expected,
+                                "action": action,
+                                "sample": repeat,
+                                **measured,
+                            }
+                        )
+                # A secondary press never dismisses. A primary press still reaches the artifact control.
+                page.evaluate("window.__setConversationState('peeked')")
+                page.wait_for_timeout(180)
+                frame_button = page.frame_locator("iframe[data-file-preview-html]").locator(
+                    "#artifact-button"
+                )
+                frame_button.click(button="right")
+                assert (
+                    page.locator("[data-conversation-pane]").get_attribute(
+                        "data-conversation-state"
+                    )
+                    == "peeked"
+                )
+            finally:
+                page.close()
+    receipt = {
+        "seconds": round(time.perf_counter() - started, 3),
+        "samples": results,
+        "newHosts": 0,
+        "note": "Real trusted input. Last movement timestamps exclude the stabilization observation period.",
+    }
+    output = Path(
+        os.environ.get(
+            "PANELS_CARD_TIMING_EVIDENCE", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")
+        )
+    )
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "card-state-motion.json").write_text(json.dumps(receipt, indent=2))
+    print(
+        "CARD_STATE_MOTION "
+        + json.dumps({"seconds": receipt["seconds"], "samples": len(results), "newHosts": 0}),
+        flush=True,
+    )
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'card-regression':
+            _card_state_motion(browser, urls[0])
+            _settled_motion(browser, urls[0])
+            _position_commit(browser, urls[0])
+            _conversation_repairs(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'card':
+            _card_state_motion(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'tab-return':
             _tab_return(browser, urls[0])
             return
@@ -3249,6 +3461,7 @@ def run(browser, urls):
         if __import__('os').environ.get('CONVERSATION_LATEST_CASE') == 'intents':
             _latest_obsolete_intents(browser, urls[0])
             return
+        _card_state_motion(browser, urls[0])
         _tab_return(browser, urls[0])
         _position_commit(browser, urls[0])
         _settled_motion(browser, urls[0])

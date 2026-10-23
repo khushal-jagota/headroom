@@ -317,9 +317,10 @@
           </div>
       {/if}
     </ResourceState>
-  {#snippet readingAside()}
+  {#snippet readingAside(registerArtifactFrame)}
   {#if shownFile}
     <ArtifactPreview
+      {registerArtifactFrame}
       target={shownFile}
       reloadSignal={artifactReloadSignal}
       bind:element={artifactElement}

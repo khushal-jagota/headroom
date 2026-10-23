@@ -68,8 +68,8 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
       if (layer && nextState !== cardState) {
         const previousState = cardState;
         cardState = nextState;
-        const from = cardHeight;
         const motion = conversationMotion(card);
+        const from = motion.active(layer) ? layer.getBoundingClientRect().height : cardHeight;
         motion.cancel(layer);
         layer.style.removeProperty('height');
         const wanted = layer.getBoundingClientRect().height;
@@ -87,7 +87,14 @@ export function conversationOverlay(host: HTMLElement): { destroy(): void } {
   }
   function schedule(): void { if (!frame) frame = requestAnimationFrame(measure); }
   const sizes = new ResizeObserver(schedule);
-  const children = new MutationObserver(schedule);
+  const children = new MutationObserver(records => {
+    // State CSS exposes the destination immediately. Measure before the next paint,
+    // rather than show that destination for one frame before the move starts.
+    if (records.some(record => record.type === 'attributes' && record.attributeName === 'data-conversation-state')) {
+      cancelAnimationFrame(frame);
+      measure();
+    } else schedule();
+  });
   sizes.observe(host);
   children.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-conversation-state"] });
   viewport?.addEventListener('resize', schedule);
