@@ -3,8 +3,6 @@
   import { conversationHeight, fadeConversationExit } from "../../../lib/conversation/surfaceMotion";
   let stackElement: HTMLDivElement;
   import { conversationFileHref } from "../../../lib/conversation/wire";
-  import { base64DecodedByteCount } from "../../../lib/conversation/pendingFiles";
-  import ConversationFileCard from "../ConversationFileCard.svelte";
   import {
     heldPromptRowActions,
     heldPromptRowLabel,
@@ -122,7 +120,21 @@
               }
             }}
           >×</button>
-          <span class="chat-qrow-txt">{heldPromptRowLabel(row)}</span>
+          <span class="chat-qrow-txt">
+            {heldPromptRowLabel(row)}
+            {#each row.content as piece}
+              {#if piece.piece === "file" && ("data" in piece || conversationId !== null)}
+                · <a
+                  data-conversation-held-file
+                  href={"data" in piece
+                    ? `data:${piece.media_type};base64,${piece.data}`
+                    : conversationFileHref(conversationId!, piece.stored_file_id)}
+                  download={piece.file_name}
+                  title={piece.file_name}
+                >{piece.file_name}</a>
+              {/if}
+            {/each}
+          </span>
           {#if word}<span class="chat-qrow-state">{word}</span>{/if}
           {#if reason}<span class="chat-qrow-state">{reason}</span>{/if}
           {#if actions.includes("send_again")}
@@ -163,20 +175,6 @@
                 : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
             >Steer</button>
           {/if}
-          {#each row.content as piece}
-            {#if piece.piece === "file" && ("data" in piece || conversationId !== null)}
-              <div class="chat-qrow-file">
-                <ConversationFileCard
-                  href={"data" in piece
-                    ? `data:${piece.media_type};base64,${piece.data}`
-                    : conversationFileHref(conversationId!, piece.stored_file_id)}
-                  fileName={piece.file_name}
-                  mediaType={piece.media_type}
-                  byteCount={"data" in piece ? base64DecodedByteCount(piece.data) : piece.byte_count}
-                />
-              </div>
-            {/if}
-          {/each}
         </li>
       {/each}
     </ol>
@@ -185,5 +183,5 @@
 </div></div>
 
 <style>
-  .chat-qrow-file { grid-column: 2 / -1; min-width: 0; }
+  .chat-qrow-txt a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 </style>
