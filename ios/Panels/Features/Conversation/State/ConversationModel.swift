@@ -84,14 +84,15 @@ import Observation
             let local = outgoing.first { $0.id == item.senderMessageId }
             let note: String?
             switch body.kind {
-            case "prompt": note = "Sent"
+            case "prompt": note = body.isOwnerPrompt ? "Sent" : nil
             case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
             case "prompt_uncertain": note = "Delivery uncertain · do not resend"
             case "prompt_discarded": note = "Not delivered · no longer applicable"
             case "permission_ask", "user_input": note = "Respond on the web"
             default: note = nil
             }
-            return ConversationRow(id: retryAliases[item.id] ?? item.id, text: body.text, own: body.isPrompt, note: note,
+            return ConversationRow(id: retryAliases[item.id] ?? item.id, text: body.text, own: body.isOwnerPrompt, note: note,
+                                   senderLabel: body.isPrompt && !body.isOwnerPrompt ? body.senderLabel : nil,
                                    retryID: local?.retryable == true ? local?.id : nil, item: item)
         }
         var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
@@ -102,12 +103,12 @@ import Observation
         return combined.sorted { (positions[$0.id] ?? Int.max) < (positions[$1.id] ?? Int.max) }
     }
     var latestMessage: ConversationRow? {
-        rows.last(where: { $0.own || ["agent_message", "user_input", "permission_ask"].contains($0.item?.body?.value?.kind ?? "") || $0.id == liveRow?.id })
+        rows.last(where: { $0.own || $0.senderLabel != nil || ["agent_message", "user_input", "permission_ask"].contains($0.item?.body?.value?.kind ?? "") || $0.id == liveRow?.id })
     }
     var latestLine: String {
         guard let row = latestMessage else { return "Conversation" }
         let delivery = row.own && row.note != "Sent" ? row.note.map { " · " + $0 } ?? "" : ""
-        return (row.own ? "You: " : "") + row.text + delivery
+        return row.previewText + delivery
     }
 
     func applyConfiguration(_ configuration: ConversationConfiguration) {

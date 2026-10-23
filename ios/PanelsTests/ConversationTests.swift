@@ -102,6 +102,22 @@ import XCTest
         XCTAssertEqual(page.items.last?.body?.reference?.bodyId, "long")
         XCTAssertEqual(page.older?.order.sequence, 7)
     }
+    // Sender attribution is public projection data, independent of delivery IDs.
+    func testPromptAttributionSurvivesProjectionIntoTranscriptAndRestLine() async throws {
+        for sender in ["owner", "Panels deployment recovery", "Chief", "Manager mgr_1"] {
+            let body: [String: Any] = ["kind": "prompt", "sender_label": sender,
+                                     "content": [["piece": "text", "text": "Continue the authorized step."]]]
+            let item: [String: Any] = ["kind": "row", "key": "prompt", "body": ["kind": "inline", "value": body]]
+            let service = ConversationStub(fate: "started")
+            await service.setSnapshot(Self.snapshot([item]))
+            let model = ConversationModel(); model.conversationID = "conv_1"
+            await model.refresh(using: service, transcript: true)
+            XCTAssertEqual(model.rows.first?.own, sender == "owner")
+            XCTAssertEqual(model.rows.first?.senderLabel, sender == "owner" ? nil : sender)
+            XCTAssertEqual(model.rows.first?.note, sender == "owner" ? "Sent" : nil)
+            XCTAssertEqual(model.latestLine, "\(sender == "owner" ? "You" : sender): Continue the authorized step.")
+        }
+    }
     func testSendKeepsUncertainMessageAndDoesNotRetry() async {
         let model = ConversationModel()
         let service = ConversationStub(fate: "uncertain")

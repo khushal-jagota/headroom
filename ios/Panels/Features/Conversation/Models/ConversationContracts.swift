@@ -54,6 +54,7 @@ struct ConversationBodyChunk: Decodable, Sendable {
 }
 struct ConversationBody: Decodable, Sendable {
     let kind: String
+    let senderLabel: String?
     let content: [Piece]?
     let title: String?
     let detail: String?
@@ -70,6 +71,7 @@ struct ConversationBody: Decodable, Sendable {
         return title ?? questions?.map(\.question).joined(separator: "\n") ?? errorSummary ?? detail ?? (kind == "deferred" ? "Long message — open on the web to read in full" : "")
     }
     var isPrompt: Bool { kind.hasPrefix("prompt") }
+    var isOwnerPrompt: Bool { isPrompt && (senderLabel == nil || senderLabel == "owner") }
 }
 struct ConversationStatus: Decodable, Sendable {
     let authority: String
@@ -169,6 +171,8 @@ struct ConversationRow: Identifiable {
     let text: String
     let own: Bool
     let note: String?
+    var senderLabel: String? = nil
+    var previewText: String { (own ? "You: " : senderLabel.map { $0 + ": " } ?? "") + text }
     var retryID: String? = nil
     var item: ConversationItem? = nil
 }

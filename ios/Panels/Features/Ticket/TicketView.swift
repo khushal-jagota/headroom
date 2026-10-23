@@ -55,9 +55,9 @@ struct TicketView: View {
             ToolbarItem(placement: .topBarTrailing) { ticketMenu }
         }
         .panelsScreen()
-        .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket")
+        .conversationOverlay(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", refreshError: error, retry: { await load() })
         .refreshable { await load(); await loadArtifacts() }
-        .screenLoadState("ticket", hasContent: detail != nil, error: error) { await load() }
+        .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
         .sheet(isPresented: $scopeOpen) {

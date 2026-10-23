@@ -16,7 +16,8 @@ targets:
     sources: [Panels]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.panels.ios
+        PANELS_APP_BUNDLE_IDENTIFIER: app.panels.ios
+        PRODUCT_BUNDLE_IDENTIFIER: $(PANELS_APP_BUNDLE_IDENTIFIER)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Panels/Panels.entitlements
         APNS_ENVIRONMENT: development

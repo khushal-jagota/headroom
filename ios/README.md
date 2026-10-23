@@ -301,15 +301,20 @@ pass, and do not establish physical-device haptics or frame-rate performance.
 ## Native conversation
 
 Chief, Orchestrator and Ticket share a latest-message line and a composer. Tapping
-or swiping up on the line opens a separate conversation page. Its header contains
-the name, a close control and the Focus/Full word. Pulling down the header closes
-it. Opening and closing retain the draft. The line remains visible while typing
-and recording, with the latest message from either side and “You:” for outgoing
-messages. Working uses the server's current running state.
+or swiping up on the line extends that bar upward into a full-screen conversation.
+The same input stays in place, keeping its draft and keyboard focus. The chat uses
+the app background and has no latest-message status line inside it. Its header
+contains the name, a close control and the Focus/Full word. Pulling down the header
+shrinks the thread with the finger; a short pull returns it to full height. The
+close control collapses it too. The page underneath stays still and retains its
+scroll position. At rest the line remains visible while typing and recording,
+with the latest message from either side and “You:” for outgoing messages.
+Working uses the server's current running state.
 
-The empty composer is 48 points tall with a plus and microphone. Text opens a
-card with the input above the controls. The side insets, padding and 30-point
-circle follow Wren's composer; Panels keeps its own controls. The bottom uses the
+The empty composer is at least 48 points tall with a plus and microphone. Text
+opens a card with the input above the controls. At accessibility text sizes the
+model and delivery choices stack above the action row, and icon sizes stay within
+their tap targets. Labels can grow with the text size. The bottom uses the
 system safe area plus one point, matching the 35-point reference on the target
 phone. The model sheet reads the backend catalog and applies the selected model
 and reasoning to the next message. An existing conversation keeps its backend.
@@ -323,8 +328,14 @@ The local message and its server row share one visual identity and position.
 Confirmed refusal and connection failures offer Retry in place. A timeout or lost
 response remains uncertain and cannot be retried blindly. Suppressed delivery
 says why the message was not delivered. Held messages are recovered from the
-conversation detail. The queue offers Steer in and removal; receipts settle delivery
+conversation detail. Its held-prompt records make Steer in and removal available,
+including after relaunch, independently of delivery-note wording; receipts settle delivery
 even when the corresponding row falls outside the loaded window.
+System and other-agent prompts retain their sender labels in the thread and latest
+line; only owner prompts are attributed to You. Conversation pages share one refresh
+error above the composer. Parent refresh failures never add a footer between the
+input and keyboard.
+
 A new reply follows the bottom only while the reader is already there; scrolling
 up keeps the reader's position. Latest appears once the reader is more than 120
 points from the bottom, and fades away within 32 points. Touching the thread or
@@ -344,13 +355,15 @@ pages and deferred bodies load on demand. Opening finds the first unread owner
 message, loading earlier pages if necessary, or returns to the latest line.
 Speech starts on an explicit tap after permission. Words are held until recording
 ends, then appear as an editable draft. Cancel discards recognition results. Nothing
-sends automatically. Reduce Motion removes the composer shape animation and uses
-a page fade.
+sends automatically. Reduce Motion removes the composer shape and open/close
+animations. The header still follows an interactive pull.
 
 `ios/scripts/test-conversation.sh` runs the Foundation host checks.
 `ios/scripts/test-conversation-simulator.py` provides an opt-in loopback stub and
-one UI scenario for the keyboard, scroll position, delivery transitions, model
-sheet, voice-draft flow and page opening/closing. It locks PanelsLaneA, uses the
+UI scenarios in the same host for the keyboard, scroll position, delivery transitions, model
+sheet, voice-draft flow, page opening/closing, queue controls after relaunch,
+offline status geometry, largest-text controls and system sender attribution. The layout/attribution case can run independently of delivery waits.
+It locks PanelsLaneA, uses the
 separate task bundle, and does not boot, shut down or erase a simulator. Set
 `PANELS_CONVERSATION_OUTPUT` to an external evidence directory. The optional
 `PANELS_CONVERSATION_LANE`, `PANELS_CONVERSATION_DEVICE`, and

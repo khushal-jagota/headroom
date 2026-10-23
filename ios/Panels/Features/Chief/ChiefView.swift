@@ -44,7 +44,7 @@ struct ChiefView: View {
         .toolbarBackground(.bar, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .panelsScreen()
-        .conversationOverlay(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff")
+        .conversationOverlay(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", refreshError: error, retry: { await load() })
         .toolbar {
             ToolbarItem(placement: .principal) {
                 AgentNavigationHeader(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: chief?.conversationSignal)
@@ -55,7 +55,7 @@ struct ChiefView: View {
         }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
-        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error) { await load() }
+        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("chief-screen")
     }
 

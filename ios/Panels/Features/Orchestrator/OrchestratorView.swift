@@ -48,7 +48,7 @@ struct OrchestratorView: View {
         .toolbarBackground(.bar, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .panelsScreen()
-        .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator")
+        .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", refreshError: error, retry: { await load() })
         .toolbar {
             ToolbarItem(placement: .principal) {
                 AgentNavigationHeader(title: detail?.title ?? summary?.title ?? "Orchestrator",
@@ -61,7 +61,7 @@ struct OrchestratorView: View {
         }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
-        .screenLoadState("orchestrator", hasContent: detail != nil, error: error) { await load() }
+        .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("orchestrator-screen")
     }
 
