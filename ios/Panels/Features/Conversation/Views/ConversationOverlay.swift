@@ -29,7 +29,7 @@ struct ConversationOverlay: ViewModifier {
             .contentMargins(.bottom, retainedClearance, for: .scrollContent)
             .overlay {
                 GeometryReader { geometry in
-                    let available = max(0, geometry.size.height - ConversationLayout.edgeGap * 2)
+                    let available = max(0, geometry.size.height - ConversationLayout.edgeGap)
                     let expandedHeight = presentation == .opened ? available : min(available, available * ConversationLayout.peekFraction + max(0, composerHeight - 64))
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
@@ -39,11 +39,11 @@ struct ConversationOverlay: ViewModifier {
                             .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(PanelsTheme.border))
                             .shadow(color: .black.opacity(0.45), radius: 12, y: -4)
                             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                                if presentation == .rest { retainedClearance = height + ConversationLayout.edgeGap * 2 }
+                                if presentation == .rest { retainedClearance = height + ConversationLayout.edgeGap }
                             }
                     }
                     .padding(.horizontal, ConversationLayout.gutter)
-                    .padding(.vertical, ConversationLayout.edgeGap)
+                    .padding(.top, ConversationLayout.edgeGap)
                     .animation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Motion.base), value: presentation)
                 }
             }
@@ -170,6 +170,7 @@ struct ConversationOverlay: ViewModifier {
             if keyboard || !model.draft.isEmpty {
                 TextField("Message", text: $model.draft, axis: .vertical)
                     .lineLimit(1...6).focused($focused).textFieldStyle(.plain)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, PanelsTheme.Space.lg).padding(.top, PanelsTheme.Space.md)
             }
             HStack {
@@ -178,7 +179,7 @@ struct ConversationOverlay: ViewModifier {
                     else {
                         focused = false
                         let prefix = model.draft
-                        Task { await speech.start { text in model.draft = prefix + (prefix.isEmpty ? "" : " ") + text } }
+                        Task { await speech.start { text in model.updateSpeechTranscript(text, prefix: prefix) } }
                     }
                 } label: { Label(speech.recording ? "Stop recording" : "Tap to speak", systemImage: speech.recording ? "stop.circle.fill" : "mic").frame(minHeight: 44) }
                 Spacer(minLength: 4)

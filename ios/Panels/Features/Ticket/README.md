@@ -19,7 +19,8 @@ Editors remain open on errors. Send-back requires a nonempty note and an existin
 conversation, and is unavailable for Brief. Pristine tickets can edit worker setup
 using the existing backend/model catalogue. There are no backend changes.
 
-Steps are always visible and push dedicated reading pages using the shared artifact
+Steps start collapsed behind a count row matching Artifacts. Tapping the row opens
+or closes the list inline with the same disclosure behavior. Step rows push dedicated reading pages using the shared artifact
 Markdown content renderer. Managed links use the shared artifact target parser. Complex GFM tables
 remain plain text. Completed fields offer Edit/Done. Managed artifact links preserve their actual ticket or manager owner.
 The artifact count row opens the shared artifact list; it is hidden when empty.

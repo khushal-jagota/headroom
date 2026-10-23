@@ -16,6 +16,12 @@ import Observation
     struct Outgoing: Identifiable { let id: String; let text: String; var note: String? }
     private var loadedLens: ConversationLens?
 
+    func updateSpeechTranscript(_ text: String, prefix: String) {
+        let prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcript = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = [prefix, transcript].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     func refresh(using service: any ConversationServing, transcript: Bool) async {
         guard let id = conversationID else { return }
         let requestedLens = lens

@@ -13,6 +13,7 @@ struct TicketView: View {
     @State private var actionNote: String?
     @State private var busy = false
     @State private var scopeOpen = false
+    @State private var stepsOpen = false
     @State private var recapEditorOpen = false
     @State private var configurationOpen = false
     @State private var renaming = false
@@ -191,13 +192,19 @@ struct TicketView: View {
     }
 
     private func steps(_ presentation: TicketPresentation) -> some View {
-        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-            HStack {
-                Text("Steps").fontWeight(.semibold)
-                Spacer()
-                Text("\(presentation.completedCount) of \(presentation.manifest.fields.count) done")
-            }.font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
-            ForEach(presentation.manifest.fields) { field in TicketStepRow(field: field, presentation: presentation) }
+        VStack(spacing: 0) {
+            Rectangle().fill(PanelsTheme.border).frame(height: 0.5)
+            Button { stepsOpen.toggle() } label: {
+                HStack { Text("Steps"); Spacer(); Text(presentation.manifest.fields.count.formatted()).foregroundStyle(PanelsTheme.faint) }
+                    .font(.body).foregroundStyle(PanelsTheme.text).frame(minHeight: 50).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .accessibilityLabel("Steps")
+                .accessibilityValue("\(presentation.manifest.fields.count) steps, \(stepsOpen ? "expanded" : "collapsed")")
+            if stepsOpen {
+                VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+                    ForEach(presentation.manifest.fields) { field in TicketStepRow(field: field, presentation: presentation) }
+                }
+            }
         }
     }
 

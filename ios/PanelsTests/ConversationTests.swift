@@ -2,6 +2,16 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testSpeechTranscriptDoesNotLeaveAnEmptyLastLine() {
+        let model = ConversationModel()
+        model.updateSpeechTranscript("First line\nSecond line\n", prefix: "")
+        XCTAssertEqual(model.draft, "First line\nSecond line")
+        model.updateSpeechTranscript(" More words\r\n", prefix: "Existing draft\n")
+        XCTAssertEqual(model.draft, "Existing draft More words")
+        model.updateSpeechTranscript("\n", prefix: "Existing draft")
+        XCTAssertEqual(model.draft, "Existing draft")
+    }
+
     func testProjectionUnwrapsInlineBodyAndKeepsDeferredReference() throws {
         let page = try APIClient.decoder().decode(ConversationPage.self, from: Data(Self.page.utf8))
         XCTAssertEqual(page.items.first?.body?.value?.text, "Hello")
