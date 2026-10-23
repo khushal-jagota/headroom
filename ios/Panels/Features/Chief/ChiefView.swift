@@ -56,7 +56,7 @@ struct ChiefView: View {
         }
         .navigationTitle(headerCollapsed ? chief?.label ?? "Chief of Staff" : "")
         .navigationBarTitleDisplayMode(.inline).panelsScreen()
-        .conversationOverlay(owner: .chief, conversationID: nil)
+        .conversationOverlay(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff")
         .toolbar { ToolbarItem(placement: .topBarTrailing) {
             AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
         } }

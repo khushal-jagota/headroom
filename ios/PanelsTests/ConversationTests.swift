@@ -2,6 +2,19 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testSpeechOnlyReleasesFinishedCaptureAndRejectsLateCallbacks() {
+        var capture = ConversationSpeechDraft()
+        let cancelled = capture.begin()
+        capture.receive("Discard this", generation: cancelled)
+        capture.cancel()
+        let current = capture.begin()
+        capture.receive(" Keep this\n", generation: current)
+        capture.receive("Late old words", generation: cancelled)
+        XCTAssertNil(capture.finish(generation: cancelled))
+        XCTAssertEqual(capture.finish(generation: current), "Keep this")
+        XCTAssertNil(capture.finish(generation: current))
+    }
+
     func testSpeechTranscriptDoesNotLeaveAnEmptyLastLine() {
         let model = ConversationModel()
         model.updateSpeechTranscript("First line\nSecond line\n", prefix: "")
@@ -78,21 +91,217 @@ import XCTest
         XCTAssertEqual(json["sent_at_unix_milliseconds"] as? Int, 123)
         XCTAssertEqual((json["content"] as? [[String: String]])?.first, ["piece": "text", "text": "Hello"])
     }
+    func testQueueKeepsOneVisualIdentityThroughDeliveryAndLatestLine() async throws {
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "queued")
+        model.draft = "Hello"
+        model.deliveryMode = "queue"
+        _ = await model.send(to: .chief, using: service)
+        let rowID = try XCTUnwrap(model.rows.first?.id)
+        XCTAssertEqual(model.rows.first?.note, "Queued")
+        XCTAssertEqual(model.latestLine, "You: Hello · Queued")
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.count, 1)
+        XCTAssertEqual(model.rows.first?.id, rowID)
+        XCTAssertEqual(model.rows.first?.note, "Sent")
+        XCTAssertEqual(model.latestLine, "You: Hello")
+    }
+
+    func testExplicitRefusalRetriesInPlaceWithNewDeliveryIdentity() async throws {
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "refused")
+        model.draft = "Hello"
+        _ = await model.send(to: .chief, using: service)
+        let original = try XCTUnwrap(model.outgoing.first?.id)
+        XCTAssertEqual(model.rows.first?.retryID, original)
+        await service.setFate("started")
+        await model.retry(original, to: .chief, using: service)
+        XCTAssertNotEqual(model.outgoing.first?.id, original)
+        XCTAssertEqual(model.rows.first?.id, original)
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.count, 1)
+        XCTAssertEqual(model.rows.first?.id, original)
+        let calls = await service.calls
+        XCTAssertEqual(calls, 2)
+    }
+
+    func testOfflineIsRetryableButLostResponseIsNot() async throws {
+        for (code, retryable) in [(URLError.notConnectedToInternet, true), (.timedOut, false)] {
+            let model = ConversationModel()
+            let service = ConversationStub(fate: "started", failure: code)
+            model.draft = "Keep this"
+            _ = await model.send(to: .chief, using: service)
+            let id = try XCTUnwrap(model.outgoing.first?.id)
+            XCTAssertEqual(model.outgoing.first?.retryable, retryable)
+            if !retryable {
+                await model.retry(id, to: .chief, using: service)
+                let calls = await service.calls
+                XCTAssertEqual(calls, 1)
+            }
+        }
+    }
+
+    func testHeldPromptRecoveredWithoutDuplicatingLocalQueue() async throws {
+        let model = ConversationModel()
+        let json = #"{"backend_key":"codex","model":"sol","reasoning_effort":"medium","held_prompts":[{"held_prompt_id":"held-1","sender_message_id":"message-1","content":[{"piece":"text","text":"Waiting"}]}]}"#
+        let configuration = try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(json.utf8))
+        model.applyConfiguration(configuration)
+        model.applyConfiguration(configuration)
+        XCTAssertEqual(model.rows.count, 1)
+        XCTAssertEqual(model.rows.first?.id, "message-1")
+        XCTAssertEqual(model.latestLine, "You: Waiting · Queued")
+        model.selectedModel = "user-selection"
+        model.applyConfiguration(configuration)
+        XCTAssertEqual(model.selectedModel, "user-selection")
+    }
+
+    func testRetryKeepsAttachmentBytesWithoutDuplicatingFilenameInText() async throws {
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "refused")
+        model.draft = "Read this"
+        model.attachments = [.init(piece: "file", data: "YQ==", mediaType: "text/plain", fileName: "note.txt")]
+        _ = await model.send(to: .chief, using: service)
+        let id = try XCTUnwrap(model.outgoing.first?.id)
+        await model.retry(id, to: .chief, using: service)
+        let message = await service.lastMessage
+        XCTAssertEqual(message?.content.count, 2)
+        XCTAssertEqual(message?.content.first?.text, "Read this")
+        XCTAssertEqual(message?.content.last?.data, "YQ==")
+        XCTAssertTrue(model.attachments.isEmpty)
+    }
+
+    func testUnresolvedMessageDoesNotStayAboveNewerReplyAndRetryDoesNotDuplicateOldReceipt() async throws {
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "refused")
+        model.draft = "Hello"
+        _ = await model.send(to: .chief, using: service)
+        let original = try XCTUnwrap(model.outgoing.first?.id)
+        await service.setFate("started")
+        await model.retry(original, to: .chief, using: service)
+        let retry = try XCTUnwrap(model.outgoing.first?.id)
+        let data = Self.snapshot([
+            Self.item(original, kind: "prompt_refused", text: "Hello", sender: original),
+            Self.item("reply-before-delivery", kind: "agent_message", text: "A new reply"),
+            Self.item("delivered", kind: "prompt", text: "Hello", sender: retry)
+        ])
+        await service.setSnapshot(data)
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.map(\.id), [original, "reply-before-delivery"])
+        XCTAssertEqual(model.latestLine, "A new reply")
+    }
+
+    func testReceiptSettlesQueueEvenOutsideLoadedWindow() async throws {
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "queued")
+        model.draft = "Hello"
+        _ = await model.send(to: .chief, using: service)
+        await service.setSnapshot(Self.snapshot([]))
+        await service.setReceipt("prompt_discarded")
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.first?.note, "Not delivered · no longer applicable")
+        XCTAssertNil(model.rows.first?.retryID)
+    }
+
+    func testLiveBodyBecomesRecordedReplyWithoutChangingIdentity() async throws {
+        let model = ConversationModel()
+        model.conversationID = "conv_1"; model.lens = .full
+        let service = ConversationStub(fate: "started")
+        let output: [String: Any] = ["turn_key": "turn-1", "reference": ["body_id": "live", "version": "epoch:turn-1:0", "byte_count": 10, "media_type": "text/markdown"]]
+        await service.setSnapshot(Self.snapshot([], live: output))
+        await model.refresh(using: service, transcript: true)
+        let liveID = try XCTUnwrap(model.rows.first?.id)
+        XCTAssertEqual(model.rows.first?.text, "Live words")
+        var recorded = Self.item("reply-1", kind: "agent_message", text: "Live words completed")
+        recorded["turn_key"] = "turn-1"
+        await service.setSnapshot(Self.snapshot([recorded]))
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.count, 1)
+        XCTAssertEqual(model.rows.first?.id, liveID)
+        XCTAssertEqual(model.latestLine, "Live words completed")
+    }
+
+    func testFirstUnreadUsesOwnerMessageBoundaryNotToolActivity() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        var read = Self.item("read", kind: "agent_message", text: "Read")
+        read["source_sequence"] = 3
+        var unread = Self.item("unread", kind: "agent_message", text: "Unread")
+        unread["source_sequence"] = 8
+        await service.setSnapshot(Self.snapshot([read, unread], ownerSequence: 8))
+        await model.refresh(using: service, transcript: true)
+        let config = #"{"backend_key":"codex","model":"sol","owner_read_through_sequence":4,"latest_sequence":20}"#
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(config.utf8)))
+        XCTAssertEqual(model.firstUnreadID, "unread")
+        let caughtUp = config.replacingOccurrences(of: "sequence\":4", with: "sequence\":8")
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(caughtUp.utf8)))
+        XCTAssertFalse(model.hasUnread)
+    }
+
+    func testRefusalReasonUsesReadableCopy() {
+        XCTAssertEqual(ConversationDelivery.refusalText("backend_did_not_start"), "agent could not start")
+        XCTAssertEqual(ConversationDelivery.refusalText("backend_cannot_steer"), "try Queue instead")
+    }
+
+    func testQueuePromotionSuppressionIsShownWithoutUnsafeRetry() async throws {
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "queued")
+        model.draft = "Hello"
+        _ = await model.send(to: .chief, using: service)
+        let id = try XCTUnwrap(model.outgoing.first?.id)
+        model.applyHeldChange(.init(fate: "suppressed", discarded: nil, refusalReason: nil, reason: "no longer current"), senderID: id)
+        XCTAssertEqual(model.rows.first?.note, "Not delivered · no longer current")
+        XCTAssertNil(model.rows.first?.retryID)
+    }
+
+    func testQueueActionsUseExistingPromotionAndDiscardDoors() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ConversationRequestStub.self]
+        let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))
+        _ = try await api.changeHeldPrompt("conv_1", heldID: "held-1", discard: false)
+        XCTAssertEqual(ConversationRequestStub.request?.url?.path, "/api/conversation/conversations/conv_1/held-prompts/held-1/promote")
+        XCTAssertEqual(ConversationRequestStub.request?.httpMethod, "POST")
+        _ = try await api.changeHeldPrompt("conv_1", heldID: "held-1", discard: true)
+        XCTAssertEqual(ConversationRequestStub.request?.url?.path, "/api/conversation/conversations/conv_1/held-prompts/held-1")
+        XCTAssertEqual(ConversationRequestStub.request?.httpMethod, "DELETE")
+    }
+
+    private static func item(_ id: String, kind: String, text: String, sender: String? = nil) -> [String: Any] {
+        var item: [String: Any] = ["kind": "row", "key": id, "body": ["kind": "inline", "value": ["kind": kind, "content": [["piece": "text", "text": text]]]]]
+        if let sender { item["sender_message_id"] = sender }
+        return item
+    }
+    private static func snapshot(_ items: [[String: Any]], live: [String: Any]? = nil, ownerSequence: Int = 0) -> String {
+        var status: [String: Any] = ["authority": "current", "turn_running": live != nil, "rest": ["plan_progress": [:], "latest_owner_message_sequence": ownerSequence]]
+        if let live { status["live_output"] = live }
+        let object: [String: Any] = ["page": ["items": items, "older": NSNull()], "status": status]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
     static let page = #"{"items":[{"kind":"row","key":"row-1","sender_message_id":"message-1","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}},{"kind":"row","key":"row-2","body":{"kind":"deferred","reference":{"body_id":"long","version":"v1","byte_count":50000,"media_type":"application/json"}}}],"older":{"projection_version":1,"lens":"focus","scope":{"kind":"timeline","key":null},"order":{"sequence":7,"slot":0}}}"#
 }
 
 private actor ConversationStub: ConversationServing {
-    let fate: String
+    var fate: String
+    let failure: URLError.Code?
+    var lastMessage: ConversationSend?
     var calls = 0
     var senderID = ""
-    init(fate: String) { self.fate = fate }
+    var snapshot: String?
+    var receipt: String?
+    func conversationLiveText(_ id: String, reference: ConversationBodyReference) async throws -> String { "Live words" }
+    func setSnapshot(_ value: String) { snapshot = value }
+    func setReceipt(_ value: String) { receipt = value }
+    func conversationReceipts(_ id: String, messageIDs: [String]) async throws -> [ConversationReceipt] { receipt.map { [ConversationReceipt(senderMessageId: senderID, fate: $0)] } ?? [] }
+    init(fate: String, failure: URLError.Code? = nil) { self.fate = fate; self.failure = failure }
+    func setFate(_ fate: String) { self.fate = fate }
     func sendConversation(_ owner: ConversationOwner, message: ConversationSend) async throws -> ConversationDelivery {
-        calls += 1; senderID = message.senderMessageId
+        calls += 1; senderID = message.senderMessageId; lastMessage = message
+        if let failure { throw URLError(failure) }
         return ConversationDelivery(conversationId: "conv_1", fate: fate, refusalReason: nil, reason: "no longer current")
     }
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot {
         let json = #"{"page":{"items":[{"kind":"row","key":"row-1","sender_message_id":"SENDER","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}],"older":null},"status":{"authority":"current","turn_running":true,"rest":{"latest_happened":null,"latest_tool":{"kind":"tool_call","title":"Reading the code"},"permission_title_excerpt":null,"plan_progress":{"current_text_excerpt":null}}}}"#.replacingOccurrences(of: "SENDER", with: senderID)
-        return try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(json.utf8))
+        return try APIClient.decoder().decode(ConversationSnapshot.self, from: Data((snapshot ?? json).utf8))
     }
     func conversationPage(_ id: String, cursor: ConversationCursor) async throws -> ConversationPage { throw URLError(.unsupportedURL) }
     func conversationBody(_ id: String, reference: ConversationBodyReference) async throws -> ConversationBody { throw URLError(.unsupportedURL) }
