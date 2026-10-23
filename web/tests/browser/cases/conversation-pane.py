@@ -1059,8 +1059,22 @@ def _run(browser, urls):
     assert send_mode_trigger.get_attribute("aria-expanded") == "false"
     assert send_mode_trigger.get_attribute("aria-controls") is None
 
-    page.locator("[data-conversation-add]").click()
-    # The model chooser uses the same one-tab-stop shell and focus contract.
+    # The Add menu consumes the first Escape without changing the pane or refocusing Add.
+    add = page.locator("[data-conversation-add]")
+    add.click()
+    page.locator(INPUT).focus()
+    page.keyboard.press("Escape")
+    assert page.locator(".chat-add-menu").count() == 0
+    assert page.locator(INPUT).evaluate("input => document.activeElement === input")
+    state(page, "peeked")
+    # A disabled composer cannot leave an open menu active.
+    add.click()
+    page.evaluate("window.__setComposerDisabled(true)")
+    page.wait_for_function("!document.querySelector('.chat-add-menu')")
+    assert add.is_disabled()
+    page.evaluate("window.__setComposerDisabled(false)")
+    page.wait_for_function("!document.querySelector('[data-conversation-add]').disabled")
+    # The inline model chooser uses the same one-tab-stop shell and focus contract.
     model_picker = page.locator("[data-conversation-model-picker]")
     model_trigger = model_picker.locator("[data-conversation-picker-trigger]")
     model_label = model_trigger.get_attribute("aria-label")
@@ -1441,7 +1455,6 @@ def _run(browser, urls):
 
     # A run change remains attached to the default steer send. The server-visible
     # fallback is a queued message that explains it is waiting to apply that change.
-    page.locator("[data-conversation-add]").click()
     page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
     page.locator('[data-conversation-picker-choice="sonnet"]').click()
     page.locator(INPUT).fill("steer with a run change")
@@ -1533,7 +1546,7 @@ def _run(browser, urls):
     assert page.locator("[data-conversation-rest-line]").inner_text() != ""
     assert page.get_by_text("waiting for you", exact=True).count() == 0
 
-    # The right of the composer keeps the approved round Send present but disabled when empty. Voice is in Everything.
+    # Inline voice leads Stop and Send; an empty draft offers no Send.
     def submit_order(page):
         return page.locator(".chat-submit > *").evaluate_all(
             """els => els.map(e =>
@@ -1547,19 +1560,19 @@ def _run(browser, urls):
     page.locator(INPUT).click()
     state(page, "peeked")
     page.locator(INPUT).fill("")
-    page.wait_for_function("() => document.querySelector('[data-conversation-send]')?.disabled")
-    assert submit_order(page) == ["delivery", "send"]
+    page.wait_for_function("() => !document.querySelector('[data-conversation-send]')")
+    assert submit_order(page) == ["delivery", "mic"]
 
     page.locator(INPUT).fill("something to send")
     page.wait_for_function("() => document.querySelector('[data-conversation-send]') !== null")
-    assert submit_order(page) == ["delivery", "send"]
+    assert submit_order(page) == ["delivery", "mic", "send"]
 
     page.evaluate("window.__showWorkRunning()")
     page.wait_for_function("() => document.querySelector('[data-conversation-stop]') !== null")
-    assert submit_order(page) == ["delivery", "stop", "send"]
+    assert submit_order(page) == ["delivery", "mic", "stop", "send"]
     page.locator(INPUT).fill("")
-    page.wait_for_function("() => document.querySelector('[data-conversation-send]')?.disabled")
-    assert submit_order(page) == ["delivery", "stop", "send"]
+    page.wait_for_function("() => !document.querySelector('[data-conversation-send]')")
+    assert submit_order(page) == ["delivery", "mic", "stop"]
 
     # The head carries no worker title and no launch folder. The folder is still one
     # press away, where the card keeps everything else it is not showing.
@@ -2674,7 +2687,6 @@ def _overlay_menu_bounds(browser, url):
                         chosen_file.value.set_files([])
                         expect(page.locator('.chat-add-menu')).to_have_count(0)
                     proof['actions'].append([mode,'attachment',method,attribute])
-            add.click()
             picker=page.locator('[data-conversation-model-picker]')
             trigger=picker.locator('[data-conversation-picker-trigger]')
             for method in ('pointer','keyboard'):
