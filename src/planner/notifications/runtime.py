@@ -8,7 +8,9 @@ from time import monotonic
 
 from planner.core.clock import Clock
 from planner.core.db import connect
-from planner.notifications import data
+from planner.notifications import apns_data, data
+from planner.notifications.apns import APNsAdapter, TokenAPNsAdapter, canonical_server_origin
+from planner.notifications.contracts import APNsConfig
 from planner.notifications.web_push import StandardsWebPushAdapter, WebPushAdapter
 
 _LOG = logging.getLogger(__name__)
@@ -23,12 +25,18 @@ class NotificationLoop:
         canonical_origin: str | None,
         busy_timeout_ms: int = 5000,
         adapter: WebPushAdapter | None = None,
+        apns_config: APNsConfig | None = None,
+        apns_adapter: APNsAdapter | None = None,
     ) -> None:
         self._db_path = db_path
         self._clock = clock
         self._busy_timeout_ms = busy_timeout_ms
         self._subject = canonical_origin or "https://localhost"
         self._adapter = adapter or StandardsWebPushAdapter()
+        self._apns_origin = canonical_server_origin(canonical_origin)
+        self._apns = apns_adapter or (
+            TokenAPNsAdapter(apns_config) if apns_config and self._apns_origin else None
+        )
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -63,6 +71,16 @@ class NotificationLoop:
                     expired=result.expired,
                     error=result.error,
                 )
+            native_deliveries = apns_data.pending_deliveries(conn, now)
+            if self._apns is not None and self._apns_origin is not None:
+                for native_delivery in native_deliveries:
+                    native_result = self._apns.send(
+                        native_delivery,
+                        server_url=self._apns_origin,
+                        now=now,
+                    )
+                    apns_data.record_result(conn, native_delivery, native_result, now)
+                return len(deliveries) + len(native_deliveries)
             return len(deliveries)
         finally:
             conn.close()
@@ -89,6 +107,10 @@ class NotificationLoop:
             timeout = 10.0 if deadline is None else max(0.0, deadline - monotonic())
             thread.join(timeout=timeout)
             self._thread = None
+            if not thread.is_alive() and self._apns is not None:
+                self._apns.close()
+        elif self._apns is not None:
+            self._apns.close()
 
     def _run_loop(self, interval: int) -> None:
         while not self._stop.is_set():

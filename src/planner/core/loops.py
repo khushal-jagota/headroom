@@ -165,6 +165,7 @@ def prepare_background_loops(
                 config.db_path,
                 clock,
                 canonical_origin=config.trusted_ingress_canonical_origin,
+                apns_config=config.apns,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
             candidate_manager_wake_loop = ManagerWakeLoop(

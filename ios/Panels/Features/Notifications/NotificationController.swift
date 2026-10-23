@@ -29,6 +29,17 @@ import UserNotifications
         if authorization == .authorized || authorization == .provisional || authorization == .ephemeral {
             UIApplication.shared.registerForRemoteNotifications()
             await registerTokenIfPossible()
+        } else if registrationEnabled, !registering, let registeredDevice, let registeredServer {
+            // Remove the last successful registration when permission is revoked.
+            // Use its original server, even if Settings selected another one.
+            registering = true
+            defer { registering = false }
+            do {
+                try await NativePushAPI(client: APIClient(baseURL: registeredServer, session: client.session)).unregister(registeredDevice)
+                self.registeredDevice = nil
+                self.registeredServer = nil
+                registrationMessage = "This device is disconnected from notifications."
+            } catch { registrationMessage = "Could not disconnect this device: \(error.localizedDescription)" }
         }
     }
 

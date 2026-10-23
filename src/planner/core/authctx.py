@@ -33,6 +33,7 @@ PLAN_SPRINT_ITEM_ID_SCOPE_KEY: Final = "planner.request_sprint_item_id"
 PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
 PLAN_MANAGER_ID_SCOPE_KEY: Final = "planner.request_manager_id"
+AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
 
 
 @dataclass(frozen=True)
@@ -134,3 +135,10 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
+
+
+def require_authenticated_owner(request: Request) -> None:
+    """Device registration needs the deployed access boundary's owner identity."""
+    require_owner(request_context(request))
+    if request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is not True:
+        raise PlannerError(ErrorCode.agent_forbidden, "authenticated owner access is required", {})
