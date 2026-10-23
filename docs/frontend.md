@@ -729,19 +729,30 @@ hand-rolling the same shapes per screen. Each does one job:
   is read only: the actions go, the picker stays, and it is the way back to the current
   conversation.
 
-  The transcript uses native browser scroll behavior. A reader who follows the end
-  keeps the newest content in sight. A reader who scrolls back leaves that mode.
-  The browser holds the top line when it can. If content above or within the view
-  grows, text below it can move. Panels does not restore an exact paragraph offset.
-  Opening the conversation, sending a message, and Latest each place the view once.
-  Latest returns focus to the Conversation region after the button disappears.
-  If the reader moves focus elsewhere before the jump completes, that focus stays there.
-  An explicit send places the sent prompt near the top, even during a layer resize.
-  If a shorter transcript clamps the view to the end, later content follows the end.
-  Latest reflects the actual content, separately from the answer room below a sent
-  message. Reply content consumes that room. A resize counts the reply already present
-  and cannot recreate exhausted room. Exact text preservation during image growth
-  is not a requirement for this release. Further conversation refinement is separate work.
+  The transcript retains native browser anchoring for ordinary history prepends.
+  Internal motion writes sizes and scroll position in the same animation frame,
+  over 240ms with linear timing. Card state travel takes 150ms. Reader navigation
+  cancels automatic travel. Replies consume reserved answer room, then advance by lines.
+  The newest line has a 12px bottom gap. A held top line sits 32px below the edge,
+  clear of the 20px fade. The bottom fade appears only when content remains below.
+
+  Cold entry captures the owner-read watermark before the read credit advances.
+  The first visible unread message is admitted through bounded pages and placed before
+  the transcript appears. The existing busy region stays mounted. Failure exposes
+  an error and Retry, rather than an indefinite hidden transcript. An existing
+  anchor stays visible during restoration. With nothing unread, entry uses newest.
+  A parked unread target survives expansion and arrivals until reader navigation.
+
+  Latest uses confirmed page admission and retains its reader identity through layout
+  and focus. It returns focus to the Conversation region after its button disappears,
+  unless the person moves focus elsewhere. The centered pill counts admitted visible
+  messages below the view; event sequence differences are not message counts.
+
+  The textarea mirror measures one empty line. Draft growth adds to the overlay's
+  measured peek height and leaves transcript height unchanged. The composer cap and
+  visible-viewport bounds remain separate constraints. Sent messages retain one keyed
+  bubble through delivery outcomes, with applicable recovery actions in place.
+  Focus excludes tools throughout the turn. Settled turn heads have no disclosure controls.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and

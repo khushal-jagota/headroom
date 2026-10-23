@@ -80,9 +80,8 @@
       {@render checklist()}
     </button>
   {/if}
-{:else}
+{:else if visible}
   <div class="task-strip" role="group" class:has-composer-gap={composerGap} data-conversation-task-strip onpointerleave={releaseIfOutside}>
-    {#if visible}
       <button
         type="button"
         class="task-pill"
@@ -98,7 +97,6 @@
         <span class="task-count">{position} / {total} tasks</span>
       </button>
       {@render checklist()}
-    {/if}
   </div>
 {/if}
 
