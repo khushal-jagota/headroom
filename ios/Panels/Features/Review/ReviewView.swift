@@ -49,7 +49,10 @@ struct ReviewView: View {
                     HStack {
                         Image(systemName: work.state == .sent ? "checkmark" : work.state == .changed ? "exclamationmark.circle" : "clock")
                         VStack(alignment: .leading) {
-                            Text(work.displayText).font(.subheadline.weight(.semibold))
+                            Text(work.ticketTitle ?? store.tickets.first { $0.id == work.ticketID }?.title ?? work.ticketID ?? "Ticket")
+                                .font(.subheadline.weight(.semibold))
+                            Text([work.displayText, work.proposalFieldLabel ?? work.proposal?.field.capitalized].compactMap { $0 }.joined(separator: " · "))
+                                .font(.subheadline)
                             Text(work.note).font(.caption).foregroundStyle(PanelsTheme.faint)
                             if [.changed, .uncertain, .failed].contains(work.state), let words = work.guidance ?? work.approval?.editedBody, !words.isEmpty {
                                 DisclosureGroup("Saved words") { Text(words).font(.body).textSelection(.enabled) }
@@ -171,7 +174,7 @@ private struct ReviewProposalView: View {
                             }.disabled(decision.busy)
                         }
                     }
-                    actionBar
+                    if !returning { actionBar }
                 }.padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.md).padding(.bottom, PanelsTheme.Space.xl)
                     .offset(x: drag)
                     .opacity(visible && !leaving ? 1 : 0)
@@ -192,6 +195,13 @@ private struct ReviewProposalView: View {
                         })
             }
             .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if returning {
+                    actionBar.padding(.horizontal, ReviewStyle.gutter)
+                        .padding(.top, PanelsTheme.Space.md)
+                        .background(PanelsTheme.surface)
+                }
+            }
             .refreshable { await store.refresh(); await decision.load(item: item, api: store.client) }
             .toolbar { reviewToolbar }
 

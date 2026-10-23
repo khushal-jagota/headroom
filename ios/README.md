@@ -151,7 +151,7 @@ URL session and never sent to the live server during tests. Goal/recap saves,
 settling and backlog changes also have mocked request-contract coverage.
 
 The ticket page adds API actions for recap requests, backlog/resume, approval
-limits, proposal acceptance/return, owner completion, field/title/recap editing,
+limits, proposal acceptance/return, field/title/recap editing,
 blocker removal and pristine worker setup. Live simulator verification is read-only; ticket and Feedback writes are
 exercised only with an injected stub or URLProtocol interception.
 
@@ -271,7 +271,9 @@ retain their actual file owner, including links to files on another ticket.
 The inline list reads on expansion and page refresh, with paging and a search
 field for larger catalogs. HTML runs
 inside a sandboxed frame in a nonpersistent WKWebView, with relative file assets
-and native navigation for managed links. Folder sections show five files before
+and native navigation for managed links. HTML previews offer Phone width and Fit
+desktop. Fit desktop scales a 1024-point canvas into the available width; pinch
+zoom lets the reader inspect a fixed-width design without changing its styles. Folder sections show five files before
 expanding, with image thumbnails and Open/Share/Copy link context menus.
 Markdown uses native text, and images support pinch, pan and double-tap zoom.
 PDF uses continuous PDFKit scrolling, supported media uses AVKit, and other

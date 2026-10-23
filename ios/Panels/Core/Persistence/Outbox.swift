@@ -20,6 +20,8 @@ struct PendingWork: Codable, Identifiable, Sendable {
     var draftID: String?
     var completed: Date?
     var priorMessageIDs: [String]?
+    var ticketTitle: String?
+    var proposalFieldLabel: String?
     var displayText: String {
         message?.content.compactMap { $0.text ?? $0.fileName }.joined(separator: "\n") ?? (kind == .approval ? "Approve" : kind == .sendBack ? "Send back" : "Voice recording")
     }

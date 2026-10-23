@@ -56,6 +56,9 @@ struct TicketStepPage: View {
     @State private var busy = false
     @State private var artifact: AppRoute?
     private var presentation: TicketPresentation? { detail.map { TicketPresentation(ticket: $0, manifest: manifest) } }
+    private var pendingProposal: TicketProposal? {
+        detail?.pendingProposal.flatMap { $0.field == field.id ? $0 : nil }
+    }
 
     var body: some View {
         ScrollView {
@@ -64,21 +67,21 @@ struct TicketStepPage: View {
                 if let presentation {
                     HStack(spacing: PanelsTheme.Space.md) {
                         TicketStepMark(field: field.id, presentation: presentation)
-                        Text(detail?.fieldApprovals[field.id]?.displayLabel ?? "")
+                        Text(pendingProposal != nil ? "Awaiting approval" : detail?.fieldApprovals[field.id]?.displayLabel ?? "")
                             .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     }
                     if editing {
                         TextEditor(text: $draft).frame(minHeight: 360).scrollContentBackground(.hidden)
                             .padding(PanelsTheme.Space.md).background(PanelsTheme.recessed)
                     } else {
-                        let text = detail?.fieldValues[field.id] ?? ""
+                        let text = pendingProposal?.body ?? detail?.fieldValues[field.id] ?? ""
                         ArtifactMarkdownContent(source: text.isEmpty ? "Not started" : text, baseURL: store.baseURL)
                     }
                 } else if error == nil { ProgressView() }
             }.padding(PanelsTheme.Space.xl)
         }.panelsScreen().navigationTitle(field.label).navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if presentation?.isComplete(field.id) == true {
+                if pendingProposal == nil, presentation?.isComplete(field.id) == true {
                     ToolbarItem(placement: .primaryAction) {
                         Button(editing ? "Done" : "Edit") {
                             if editing {

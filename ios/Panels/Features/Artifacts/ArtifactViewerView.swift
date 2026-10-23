@@ -21,6 +21,7 @@ struct ArtifactViewerView: View {
     @State private var loadVersion = 0
     @State private var renderVersion = 0
     @State private var webReady = false
+    @State private var desktopPreview = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
 
     private var activeConversationOwner: ConversationOwner {
@@ -97,9 +98,16 @@ struct ArtifactViewerView: View {
     @ViewBuilder private func content(_ document: ArtifactDocument) -> some View {
         switch target.kind {
         case .html where document.text != nil:
-            ArtifactWebView(source: document.text!, url: document.remoteURL, openLink: follow, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
-                .id(renderVersion)
-                .overlay { if !webReady && showLoading { ProgressView("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
+            VStack(spacing: 0) {
+                Picker("Preview width", selection: $desktopPreview) {
+                    Text("Phone width").tag(false)
+                    Text("Fit desktop").tag(true)
+                }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
+                    .accessibilityIdentifier("artifact-preview-width")
+                ArtifactWebView(source: document.text!, url: document.remoteURL, desktopPreview: desktopPreview, openLink: follow, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
+                    .id(renderVersion)
+                    .overlay { if !webReady && showLoading { ProgressView("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
+            }
         case .markdown where document.text != nil:
             ArtifactMarkdownView(source: document.text!, baseURL: document.remoteURL).refreshable { await load() }
         case .text where document.text != nil:

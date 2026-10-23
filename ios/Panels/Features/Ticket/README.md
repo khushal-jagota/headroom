@@ -24,7 +24,8 @@ using the existing backend/model catalogue. There are no backend changes.
 
 Steps start collapsed behind a count row matching Artifacts. Tapping the row opens
 or closes the list inline with the same disclosure behavior. Step rows push dedicated reading pages using the shared artifact
-Markdown content renderer. Managed links use the shared artifact target parser. Complex GFM tables
+Markdown content renderer. A step with a pending proposal shows that proposal
+and Awaiting approval, even before a canonical field value exists. Managed links use the shared artifact target parser. Complex GFM tables
 remain plain text. Completed fields offer Edit/Done. Managed artifact links preserve their actual ticket or manager owner.
 The artifact count row opens the shared artifact list; it is hidden when empty.
 The conversation slot remains the foundation placeholder, with no transcript or

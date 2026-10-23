@@ -65,6 +65,15 @@ import XCTest
         XCTAssertEqual(body["edited_body"] as? String, decision.draft)
         XCTAssertEqual(body["next_ceiling"] as? String, "next_gate")
         XCTAssertEqual(body["next_holder"] as? [String: String], ["kind": "owner", "id": "owner"])
+        let saved = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
+        XCTAssertEqual(saved.ticketTitle, decision.ticket?.title)
+        XCTAssertEqual(saved.proposalFieldLabel, "Proposal")
+        // Previously saved operations omit both optional attribution fields.
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        legacy.removeValue(forKey: "ticketTitle"); legacy.removeValue(forKey: "proposalFieldLabel")
+        let restored = try JSONDecoder().decode(PendingWork.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(restored.ticketID, saved.ticketID)
+        XCTAssertNil(restored.ticketTitle)
         let repeated = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertFalse(repeated)
         XCTAssertEqual(ReviewStub.state.writes.count, 1)
@@ -106,6 +115,8 @@ import XCTest
         let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
         XCTAssertEqual(work.state, .changed)
         XCTAssertEqual(work.guidance, "Clarify the transition.")
+        XCTAssertEqual(work.ticketTitle, decision.ticket?.title)
+        XCTAssertEqual(work.proposalFieldLabel, "Proposal")
         XCTAssertEqual(work.note, "This changed, review again")
         // Workspace uses its own adapter and must carry the same visible revision.
         do {
