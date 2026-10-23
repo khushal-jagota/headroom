@@ -43,7 +43,7 @@ struct OrchestratorView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
-        .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", refreshError: error, retry: { await load() })
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }

@@ -18,58 +18,22 @@ final class ConversationOperationTests: XCTestCase {
         page.swipeUp()
         let worker = app.staticTexts["Worker 8"]
         XCTAssertTrue(worker.isHittable)
-        let originalPosition = worker.frame.minY
         let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
-        let restingInputFrame = input.frame
-        line.tap()
-        let close = app.buttons["Close conversation"]
-        XCTAssertTrue(close.waitForExistence(timeout: 5))
-        assertFrame(input.frame, equals: restingInputFrame, context: "Expand with keyboard closed")
-        XCTAssertFalse(line.exists, "Expanded chat must not show the resting status line")
-        XCTAssertLessThan(close.frame.minY, 100, "Chat header must occupy the full screen")
-        let header = app.descendants(matching: .any).matching(identifier: "conversation-header").firstMatch
-        let start = header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 45)), withVelocity: .slow, thenHoldForDuration: 0.5)
-        XCTAssertTrue(close.exists, "A short pull should return the chat to its open position")
-        close.tap()
-        XCTAssertTrue(line.waitForExistence(timeout: 5))
-        XCTAssertEqual(worker.frame.minY, originalPosition, accuracy: 1, "Opening chat changed the page's scroll position")
-        line.swipeUp()
-        XCTAssertTrue(close.waitForExistence(timeout: 5))
-        let swipeStart = header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        swipeStart.press(forDuration: 0.1, thenDragTo: swipeStart.withOffset(CGVector(dx: 0, dy: 350)), withVelocity: .slow, thenHoldForDuration: 0.2)
-        XCTAssertTrue(line.waitForExistence(timeout: 5))
-        XCTAssertEqual(worker.frame.minY, originalPosition, accuracy: 1, "Swiping down changed the page's scroll position")
-        input.tap(); input.typeText("Keep this draft")
-        XCTAssertTrue(app.keyboards.firstMatch.exists, "Growing the composer dropped keyboard focus")
         let keyboardVisible = NSPredicate { _, _ in
-            MainActor.assumeIsolated {
-                app.keyboards.firstMatch.frame.minY < app.frame.height - 200
-            }
+            MainActor.assumeIsolated { app.keyboards.firstMatch.frame.minY < app.frame.height - 200 }
         }
-        await fulfillment(of: [expectation(for: keyboardVisible, evaluatedWith: nil)], timeout: 5)
-        let focusedCapture = XCTAttachment(screenshot: app.screenshot())
-        focusedCapture.name = "collapsed-focused-input"; focusedCapture.lifetime = .keepAlways; add(focusedCapture)
-        let focusedInputFrame = input.frame
-        XCTAssertLessThan(input.frame.maxY, app.keyboards.firstMatch.frame.minY, "Collapsed input must stay above the keyboard")
+        input.tap(); input.typeText("Keep this draft")
+        app.buttons["Choose model"].tap(); app.buttons["Cancel"].tap()
+        let originalPosition = worker.frame.minY
         line.tap()
+        let close = app.navigationBars.buttons.firstMatch
         XCTAssertTrue(close.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.keyboards.firstMatch.exists, "Expanding replaced or unfocused the input")
-        assertFrame(input.frame, equals: focusedInputFrame, context: "Expand with keyboard open")
-        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "conversation-input").count, 1)
-        // Synthetic typeText can retract the simulator's software keyboard.
-        // Use its real key so this measures closing with the keyboard still up.
-        app.keyboards.firstMatch.keys["x"].tap()
-        XCTAssertLessThan(app.keyboards.firstMatch.frame.minY, app.frame.height - 200)
-        assertFrame(input.frame, equals: focusedInputFrame, context: "Typing while expanded")
-        app.keyboards.firstMatch.keys["space"].tap() // Commit autocorrection before comparing the retained draft.
-        let expandedDraft = input.value as? String
+        XCTAssertFalse(line.exists, "Conversation page must not repeat the resting line")
+        XCTAssertEqual(input.value as? String, "Keep this draft")
         close.tap()
-        XCTAssertEqual(input.value as? String, expandedDraft, "Collapsing replaced the draft")
-        XCTAssertLessThan(app.keyboards.firstMatch.frame.minY, app.frame.height - 200, "Collapsing dismissed the keyboard")
-        assertFrame(input.frame, equals: focusedInputFrame, context: "Collapse with keyboard open")
-        app.keyboards.firstMatch.keys["y"].tap()
-        XCTAssertTrue((input.value as? String)?.hasSuffix("y") == true, "Typing did not continue in the same input")
+        XCTAssertTrue(line.waitForExistence(timeout: 5))
+        XCTAssertEqual(input.value as? String, "Keep this draft")
+        XCTAssertEqual(worker.frame.minY, originalPosition, accuracy: 1, "Push changed the page scroll position")
         try await proof(base, "stop")
 
         try await proof(base, "start/send-stream")
@@ -176,7 +140,7 @@ final class ConversationOperationTests: XCTestCase {
         capture(app, "online-stable-input")
         input.tap(); input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Offline draft".count))
 
-        // The root overlay must leave with its page and restore that page's draft.
+        // The page composer must leave with its page and restore that page's draft.
         input.tap(); input.typeText("Return to this draft")
         app.buttons["Choose model"].tap(); app.buttons["Cancel"].tap()
         page.swipeUp()
@@ -188,10 +152,9 @@ final class ConversationOperationTests: XCTestCase {
 
     }
 
-    /// The native navigation stack and growing surface must be exercised together;
-    /// host logic cannot detect duplicate bars, lost focus or a changed page offset.
-    /// Reuses the existing stub, fixture files and one simulator host.
-    @MainActor func testDetailPageExpansionAgainstLocalStub() async throws {
+    /// Reuses the existing host to prove native push/pop, draft ownership and page
+    /// scroll restoration. Host-only tests cannot exercise UIKit's edge gesture.
+    @MainActor func testDetailPagePushAgainstLocalStub() async throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_CONVERSATION_STUB_URL"])
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
@@ -204,44 +167,42 @@ final class ConversationOperationTests: XCTestCase {
             ("Chief", "Chief of Staff")
         ] {
             let link = app.buttons["\(name) fixture"]
-            XCTAssertTrue(link.waitForExistence(timeout: 8))
-            link.tap()
+            XCTAssertTrue(link.waitForExistence(timeout: 8)); link.tap()
             let back = app.buttons["detail-back"]
             let line = app.buttons["conversation-line"]
-            XCTAssertTrue(back.waitForExistence(timeout: 8))
             XCTAssertTrue(line.waitForExistence(timeout: 8))
-            XCTAssertEqual(app.navigationBars.count, 0, "Detail controls must be in the page")
+            let page = app.scrollViews.firstMatch
             let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
-            let restingFrame = input.frame
-            capture(app, "\(name)-resting")
-            try await proof(base, "start/\(name.lowercased())-open-close")
-            line.tap()
-            let close = app.buttons["Close conversation"]
-            XCTAssertTrue(close.waitForExistence(timeout: 5))
-            assertFrame(input.frame, equals: restingFrame, context: "\(name) opening")
-            XCTAssertLessThan(close.frame.minY, 100)
-            XCTAssertEqual(close.value as? String, title, "Expanded header must name the conversation")
-            XCTAssertTrue(app.buttons["Conversation lens"].isHittable)
-            capture(app, "\(name)-expanded")
-            close.tap()
-            XCTAssertTrue(line.waitForExistence(timeout: 5))
-            assertFrame(input.frame, equals: restingFrame, context: "\(name) closing")
-            XCTAssertEqual(line.value as? String ?? "", "", "Closing must restore the latest-message line")
-            XCTAssertNotEqual(line.label, title)
-            try await proof(base, "stop")
-            try await proof(base, "start/\(name.lowercased())-top-scroll")
-            if name == "Ticket" {
-                app.buttons.matching(identifier: "ticket-recap").firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.9)).tap()
-            }
-            let top = back.frame.minY
-            let page = app.scrollViews.matching(NSPredicate(format: "identifier != %@", "conversation-thread")).firstMatch
+            input.tap(); input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (input.value as? String ?? "").count))
+            input.typeText("Retained draft")
+            app.buttons["Choose model"].tap(); app.buttons["Cancel"].tap()
             page.swipeUp(velocity: .slow)
-            XCTAssertTrue(!back.isHittable || back.frame.minY < top - 20, "Back must scroll with the page")
-            XCTAssertEqual(app.navigationBars.count, 0, "Scrolling added a bar or title")
-            capture(app, "\(name)-scrolled")
+            let anchor = try XCTUnwrap(page.staticTexts.allElementsBoundByIndex.first(where: { $0.isHittable }))
+            let originalY = anchor.frame.minY
+            try await proof(base, "start/\(name.lowercased())-push-back")
+            line.tap()
+            XCTAssertTrue(app.buttons["Conversation lens"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts[title].exists)
+            XCTAssertEqual(app.navigationBars.count, 1)
+            XCTAssertFalse(line.exists)
+            XCTAssertEqual(input.value as? String, "Retained draft")
+            capture(app, "\(name)-pushed")
+            let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.002, dy: 0.5))
+            edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)), withVelocity: .slow, thenHoldForDuration: 0.1)
+            XCTAssertTrue(line.waitForExistence(timeout: 5))
+            XCTAssertEqual(app.navigationBars.count, 0)
+            XCTAssertEqual(input.value as? String, "Retained draft")
+            XCTAssertEqual(anchor.frame.minY, originalY, accuracy: 1)
+            capture(app, "\(name)-returned")
+            try await proof(base, "stop")
+            // Exercise the standard back button too, and clear only this fixture draft.
+            line.tap()
+            XCTAssertTrue(app.buttons["Conversation lens"].waitForExistence(timeout: 5))
+            input.tap(); input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Retained draft".count))
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(line.waitForExistence(timeout: 5))
             page.swipeDown(velocity: .fast)
             if !back.isHittable { page.swipeDown(velocity: .fast) }
-            try await proof(base, "stop")
             back.tap()
         }
         app.terminate()
@@ -257,7 +218,7 @@ final class ConversationOperationTests: XCTestCase {
         app.launchArguments = ["--conversation-smoke", "--conversation-stub", base, "--conversation-fixture-speech"]
         let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
         let line = app.buttons["conversation-line"]
-        let close = app.buttons["Close conversation"]
+        let close = app.navigationBars.buttons.firstMatch
         let keyboardVisible = NSPredicate { _, _ in
             MainActor.assumeIsolated { app.keyboards.firstMatch.frame.minY < app.frame.height - 200 }
         }

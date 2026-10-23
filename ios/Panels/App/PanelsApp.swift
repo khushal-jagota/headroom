@@ -20,7 +20,7 @@ import SwiftUI
 #else
                 AppShell()
 #endif
-            }.conversationPresentationRoot()
+            }
                 .environment(store).environment(notifications)
                 .preferredColorScheme(.dark)
                 .tint(PanelsTheme.accent)

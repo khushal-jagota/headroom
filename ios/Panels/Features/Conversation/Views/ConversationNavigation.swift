@@ -8,13 +8,11 @@ enum ConversationLayout {
     static let restingHeight: CGFloat = 48
     static let cardHeight: CGFloat = 95
     static let shapeMotion = Animation.timingCurve(0.2, 0.7, 0.5, 1, duration: 0.31)
-    static let pageMotion = Animation.spring(duration: 0.38, bounce: 0)
-    static let restingCornerRadius: CGFloat = 12
     static let lineHeight: CGFloat = 44
     static let surfaceTopPadding: CGFloat = 8
 }
 
-struct ConversationOverlay: ViewModifier {
+struct ConversationNavigation: ViewModifier {
     let owner: ConversationOwner
     let conversationID: String?
     var title = "Conversation"
@@ -22,55 +20,51 @@ struct ConversationOverlay: ViewModifier {
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
     @State private var opened = false
-    @State private var restingHeight: CGFloat = 105
-    @State private var visible = false
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
     func body(content: Content) -> some View {
         content
             .toolbar(.hidden, for: .tabBar)
-            .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: restingHeight) }
-            .accessibilityHidden(opened)
-            .preference(key: ConversationPresentationPreference.self, value: visible ?
-                ConversationPresentation(owner: owner.path, content: AnyView(
-                    ConversationSurface(owner: owner, conversationID: conversationID, title: title,
-                                        opened: $opened, restingHeight: $restingHeight,
-                                        model: model, speech: speech, refreshError: refreshError, retry: retry)
-                        .environment(store)
-                )) : nil)
-            .onAppear { visible = true }
-            .onDisappear { visible = false; opened = false; speech.cancel() }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                surface(isPage: false)
+            }
+            .navigationDestination(isPresented: $opened) {
+                surface(isPage: true)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar(.visible, for: .navigationBar)
+                    .toolbar(.hidden, for: .tabBar)
+            }
             .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
+    }
+
+    private func surface(isPage: Bool) -> some View {
+        ConversationSurface(owner: owner, conversationID: conversationID, title: title,
+                            isPage: isPage, active: isPage || !opened, open: { opened = true },
+                            model: model, speech: speech, refreshError: refreshError, retry: retry)
     }
 }
 
-/// The page owns its conversation data; this persistent app-root surface owns
-/// input focus. Expanding never replaces the input or its layout parent.
+/// Both navigation destinations share the page-owned draft and conversation model.
 private struct ConversationSurface: View {
     let owner: ConversationOwner
     let conversationID: String?
     let title: String
-    @Binding var opened: Bool
-    @Binding var restingHeight: CGFloat
+    let isPage: Bool
+    let active: Bool
+    let open: () -> Void
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var model: ConversationModel
     let speech: ConversationSpeech
     var refreshError: String?
     var retry: (() async -> Void)?
-    @Environment(\.dynamicTypeSize) private var typeSize
-    @ScaledMetric(relativeTo: .body) private var iconSize = 18.0
-    @State private var closingDistance: CGFloat = 0
-    @State private var composerHeight: CGFloat = 61
-    @State private var lineHeight = ConversationLayout.lineHeight
     @State private var changingQueue = false
 
     var body: some View {
         conversation
-        .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)") {
-            guard scenePhase == .active else { return }
+        .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)|\(active)") {
+            guard active, scenePhase == .active else { return }
             model.conversationID = conversationID ?? model.conversationID
             if owner == .chief, model.conversationID == nil {
                 let saved: ConversationReference? = store.client.cached("/api/chief/conversation")
@@ -85,8 +79,8 @@ private struct ConversationSurface: View {
                 do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
             }
         }
-        .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)") {
-            guard scenePhase == .active, let id = model.conversationID else { return }
+        .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)") {
+            guard active, scenePhase == .active, let id = model.conversationID else { return }
             while !Task.isCancelled {
                 do {
                     for try await _ in store.client.conversationChanges(id, lens: model.lens) {
@@ -103,96 +97,64 @@ private struct ConversationSurface: View {
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
 
-    // The line, thread and composer are children of one persistent surface. Its
-    // height grows from the bottom edge; there is no replacement sheet or fill.
     private var conversation: some View {
-        GeometryReader { geometry in
-            let topPadding = opened ? geometry.safeAreaInsets.top : ConversationLayout.surfaceTopPadding
-            let expandedHeight = geometry.size.height + geometry.safeAreaInsets.top
-            let collapsedHeight = composerHeight + lineHeight + ConversationLayout.surfaceTopPadding
-            let height = opened ? max(collapsedHeight, expandedHeight - closingDistance) : collapsedHeight
-            let radius = opened ? min(ConversationLayout.restingCornerRadius, closingDistance / 10) : ConversationLayout.restingCornerRadius
-            VStack(spacing: 0) {
-                header
-                    .fixedSize(horizontal: false, vertical: true)
-                    .geometryGroup()
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { lineHeight = $0 }
-                ConversationThread(model: model, owner: owner, opened: opened)
-                    .frame(height: max(0, height - topPadding - lineHeight - composerHeight))
-                    .clipped()
-                    .accessibilityHidden(!opened)
-                    .allowsHitTesting(opened)
-                bottom
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
+        VStack(spacing: 0) {
+            header
+            if isPage {
+                ConversationThread(model: model, owner: owner)
             }
-            .padding(.top, topPadding)
-            .padding(.bottom, geometry.safeAreaInsets.bottom)
-            .background(PanelsTheme.raised)
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius))
-            .offset(y: geometry.safeAreaInsets.bottom)
-            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottom)
-            .animation(reduceMotion ? nil : ConversationLayout.pageMotion, value: opened)
-            .onChange(of: collapsedHeight, initial: true) { _, height in restingHeight = height }
+            bottom.fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.top, ConversationLayout.surfaceTopPadding)
+        .background(PanelsTheme.raised.ignoresSafeArea(edges: .bottom))
         .foregroundStyle(PanelsTheme.text)
         .tint(PanelsTheme.accent)
         .preferredColorScheme(.dark)
     }
 
-    private func show() {
-        closingDistance = 0
-        opened = true
-    }
-
-    private func close() {
-        closingDistance = 0
-        opened = false
-    }
-
-    // The same leading edge shows the latest line at rest and the conversation name when open.
     private var header: some View {
         HStack(spacing: 0) {
-            Button { if opened { close() } else { show() } } label: {
-                HStack(spacing: 8) {
-                    Group {
-                        if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil { ProgressView().controlSize(.mini) }
-                        else { Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0) }
-                    }.frame(width: opened ? 0 : 12).clipped().accessibilityHidden(opened)
-                    let latest = model.latestMessage
-                    Text(.init(opened ? title : latest?.previewText ?? "Conversation")).font(PanelsTheme.TypeScale.small).lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if !opened, latest?.own == true, let note = latest?.note, note != "Sent" {
-                        Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
-                    }
-                    Image(systemName: "chevron.up")
-                        .rotationEffect(.degrees(opened ? 180 : 0))
-                        .font(.system(size: 11))
+            if isPage {
+                Text(title).font(PanelsTheme.TypeScale.small).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 20)
+                Button(model.lens.rawValue.capitalized) {
+                    model.lens = model.lens == .focus ? .full : .focus
+                    Haptics.selection()
                 }
-                .padding(.leading, 20).padding(.trailing, 14)
-                .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
+                .font(PanelsTheme.TypeScale.small)
+                .frame(width: 60, height: ConversationLayout.lineHeight)
+                .accessibilityLabel("Conversation lens")
+            } else {
+                Button(action: open) {
+                    HStack(spacing: 8) {
+                        Group {
+                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
+                            }
+                        }.frame(width: 12)
+                        let latest = model.latestMessage
+                        Text(.init(latest?.previewText ?? "Conversation"))
+                            .font(PanelsTheme.TypeScale.small).lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if latest?.own == true, let note = latest?.note, note != "Sent" {
+                            Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
+                        }
+                        Image(systemName: "chevron.right").font(.system(size: 11))
+                    }
+                    .padding(.leading, 20).padding(.trailing, 14)
+                    .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.latestMessage?.previewText ?? "Open conversation")
+                .accessibilityIdentifier("conversation-line")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(opened ? "Close conversation" : model.latestMessage?.previewText ?? "Open conversation")
-            .accessibilityValue(opened ? title : "")
-            .accessibilityIdentifier(opened ? "conversation-close" : "conversation-line")
-            Button(model.lens.rawValue.capitalized) { model.lens = model.lens == .focus ? .full : .focus; Haptics.selection() }
-                .font(PanelsTheme.TypeScale.small).frame(width: 60, height: ConversationLayout.lineHeight)
-                .frame(width: opened ? 60 : 0, alignment: .trailing).clipped()
-                .accessibilityLabel("Conversation lens").accessibilityHidden(!opened).allowsHitTesting(opened)
         }
+        .frame(minHeight: ConversationLayout.lineHeight)
         .foregroundStyle(PanelsTheme.faint)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-header")
-        .contentShape(Rectangle())
-        .highPriorityGesture(DragGesture()
-            .onChanged { if opened { closingDistance = max(0, $0.translation.height) } }
-            .onEnded { value in
-                if opened {
-                    if value.translation.height > 110 || value.predictedEndTranslation.height > 220 { close() }
-                    else { withAnimation(reduceMotion ? nil : ConversationLayout.pageMotion) { closingDistance = 0 } }
-                } else if -value.translation.height > 110 || -value.predictedEndTranslation.height > 220 { show() }
-            })
     }
 
     private var bottom: some View {
@@ -240,7 +202,6 @@ private struct ConversationSurface: View {
 struct ConversationThread: View {
     @Bindable var model: ConversationModel
     let owner: ConversationOwner
-    let opened: Bool
     var readOnly = false
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -287,8 +248,7 @@ struct ConversationThread: View {
             }
             .accessibilityIdentifier("conversation-thread")
             .contentMargins(.top, 12, for: .scrollContent)
-            .task(id: opened) {
-                guard opened else { return }
+            .task {
                 await model.prepareOpening(using: store.client)
                 guard !Task.isCancelled else { return }
                 scrollPolicy.open(atUnread: model.firstUnreadID != nil)
@@ -430,8 +390,8 @@ struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationOverlay(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
-        modifier(ConversationOverlay(owner: owner, conversationID: conversationID, title: title, refreshError: refreshError, retry: retry))
+    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
+        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, refreshError: refreshError, retry: retry))
     }
 }
 
@@ -464,7 +424,7 @@ struct ConversationSmokeView: View {
                             .panelsScreen().navigationTitle("Worker details")
                     }
                 }.padding(.horizontal, 20)
-            }.accessibilityIdentifier("conversation-page").panelsScreen().conversationOverlay(owner: .chief, conversationID: "stub", title: "Chief of Staff", refreshError: refreshError, retry: refresh)
+            }.accessibilityIdentifier("conversation-page").panelsScreen().conversationNavigation(owner: .chief, conversationID: "stub", title: "Chief of Staff", refreshError: refreshError, retry: refresh)
                 .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, showsRefreshError: false, retry: refresh)
                 .task {
                     while !Task.isCancelled {

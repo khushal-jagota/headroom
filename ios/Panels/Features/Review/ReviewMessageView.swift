@@ -202,7 +202,7 @@ struct ReviewConversationView: View {
     @State private var model = ConversationModel()
     @State private var historical = true
     var body: some View {
-        ConversationThread(model: model, owner: owner, opened: true, readOnly: historical)
+        ConversationThread(model: model, owner: owner, readOnly: historical)
             .safeAreaInset(edge: .bottom) {
                 if historical { Text("Historical conversation · read only").font(.footnote).padding().frame(maxWidth: .infinity).background(PanelsTheme.raised) }
                 else { ConversationComposer(model: model, owner: owner).padding(.vertical, 8).background(PanelsTheme.raised) }

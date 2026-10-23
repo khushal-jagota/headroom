@@ -44,7 +44,7 @@ struct ChiefView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
-        .conversationOverlay(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", refreshError: error, retry: { await load() })
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
