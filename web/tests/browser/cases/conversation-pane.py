@@ -1059,6 +1059,7 @@ def _run(browser, urls):
     assert send_mode_trigger.get_attribute("aria-expanded") == "false"
     assert send_mode_trigger.get_attribute("aria-controls") is None
 
+    page.locator("[data-conversation-add]").click()
     # The model chooser uses the same one-tab-stop shell and focus contract.
     model_picker = page.locator("[data-conversation-model-picker]")
     model_trigger = model_picker.locator("[data-conversation-picker-trigger]")
@@ -1077,6 +1078,8 @@ def _run(browser, urls):
         )
         == 1
     )
+    _settle_conversation_layout(page)
+    page.mouse.move(0, 0)
     model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
     # A pointer that moves onto a row makes that row the active one.
     page.wait_for_function(
@@ -1438,6 +1441,7 @@ def _run(browser, urls):
 
     # A run change remains attached to the default steer send. The server-visible
     # fallback is a queued message that explains it is waiting to apply that change.
+    page.locator("[data-conversation-add]").click()
     page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
     page.locator('[data-conversation-picker-choice="sonnet"]').click()
     page.locator(INPUT).fill("steer with a run change")
@@ -1529,9 +1533,7 @@ def _run(browser, urls):
     assert page.locator("[data-conversation-rest-line]").inner_text() != ""
     assert page.get_by_text("waiting for you", exact=True).count() == 0
 
-    # The right of the composer is what there is to do, in the agreed order. A composer
-    # with nothing in it offers no Send at all — not a greyed-out one — and the control
-    # that stops the work sits after the microphone, as the approved composer design specifies.
+    # The right of the composer keeps the approved round Send present but disabled when empty. Voice is in Everything.
     def submit_order(page):
         return page.locator(".chat-submit > *").evaluate_all(
             """els => els.map(e =>
@@ -1545,19 +1547,19 @@ def _run(browser, urls):
     page.locator(INPUT).click()
     state(page, "peeked")
     page.locator(INPUT).fill("")
-    page.wait_for_function("() => document.querySelector('[data-conversation-send]') === null")
-    assert submit_order(page) == ["delivery", "mic"]
+    page.wait_for_function("() => document.querySelector('[data-conversation-send]')?.disabled")
+    assert submit_order(page) == ["delivery", "send"]
 
     page.locator(INPUT).fill("something to send")
     page.wait_for_function("() => document.querySelector('[data-conversation-send]') !== null")
-    assert submit_order(page) == ["delivery", "mic", "send"]
+    assert submit_order(page) == ["delivery", "send"]
 
     page.evaluate("window.__showWorkRunning()")
     page.wait_for_function("() => document.querySelector('[data-conversation-stop]') !== null")
-    assert submit_order(page) == ["delivery", "mic", "stop", "send"]
+    assert submit_order(page) == ["delivery", "stop", "send"]
     page.locator(INPUT).fill("")
-    page.wait_for_function("() => document.querySelector('[data-conversation-send]') === null")
-    assert submit_order(page) == ["delivery", "mic", "stop"]
+    page.wait_for_function("() => document.querySelector('[data-conversation-send]')?.disabled")
+    assert submit_order(page) == ["delivery", "stop", "send"]
 
     # The head carries no worker title and no launch folder. The folder is still one
     # press away, where the card keeps everything else it is not showing.
@@ -2655,7 +2657,9 @@ def _overlay_menu_bounds(browser, url):
                         hit(item)
                     else:
                         add.focus()
-                        for _ in range(('image','file','camera','slash').index(attribute)+1):
+                        for _ in range(12):
+                            if item.evaluate('el=>el===document.activeElement'):
+                                break
                             page.keyboard.press('Tab')
                         expect(item).to_be_focused()
                     if attribute=='slash':
@@ -2668,6 +2672,7 @@ def _overlay_menu_bounds(browser, url):
                         chosen_file.value.set_files([])
                         expect(page.locator('.chat-add-menu')).to_have_count(0)
                     proof['actions'].append([mode,'attachment',method,attribute])
+            add.click()
             picker=page.locator('[data-conversation-model-picker]')
             trigger=picker.locator('[data-conversation-picker-trigger]')
             for method in ('pointer','keyboard'):

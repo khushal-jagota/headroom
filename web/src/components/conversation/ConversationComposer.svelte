@@ -279,15 +279,18 @@
   // The foot this menu lives in is replaced whole by a question or a permission ask.
   // A menu that is not on the screen must not still be holding the Escape key.
   $effect(() => {
-    if (userInput !== null || takenOver || inputDisabled) addMenuOpen = false;
+    if (userInput !== null || takenOver) addMenuOpen = false;
   });
 
   $effect(() => {
     if (!addMenuOpen) return;
     const shutTheMenu = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
+      // The nested picker owns its first Escape and returns focus to its trigger.
+      if (addMenuElement?.querySelector('.listbox-picker-panel')) return;
       event.preventDefault();
       addMenuOpen = false;
+      addMenuElement?.querySelector<HTMLButtonElement>('[data-conversation-add]')?.focus();
     };
     window.addEventListener("keydown", shutTheMenu, true);
     return () => window.removeEventListener("keydown", shutTheMenu, true);
@@ -1290,6 +1293,10 @@
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-md);
     box-shadow: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
+  }
+  .chat-add-menu :global(.listbox-picker-panel) {
+    position: static;
+    max-width: 100%;
   }
   .chat-add-item {
     display: flex;
