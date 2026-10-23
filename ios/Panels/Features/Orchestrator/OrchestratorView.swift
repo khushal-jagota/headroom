@@ -15,8 +15,7 @@ struct OrchestratorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                    AgentEyebrow(title: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""))
-                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: detail?.conversationSignal ?? summary?.conversationSignal)
+                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator")
                     if let detail {
                         AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
                     }
@@ -45,11 +44,21 @@ struct OrchestratorView: View {
             withAnimation(reduceMotion ? nil : PanelsTheme.Motion.fade) { headerCollapsed = collapsed }
         }
         .navigationTitle(headerCollapsed ? detail?.title ?? "Orchestrator" : "")
-        .navigationBarTitleDisplayMode(.inline).panelsScreen()
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.bar, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .panelsScreen()
         .conversationOverlay(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator")
-        .toolbar { ToolbarItem(placement: .topBarTrailing) {
-            AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
-        } }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                AgentNavigationHeader(title: detail?.title ?? summary?.title ?? "Orchestrator",
+                                      eyebrow: (detail?.project ?? summary?.project ?? "") + ((detail?.settled ?? summary?.settled) == true ? " · Settled" : ""),
+                                      collapsed: headerCollapsed, signal: detail?.conversationSignal ?? summary?.conversationSignal)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
+            }
+        }
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error) { await load() }
@@ -86,16 +95,20 @@ enum AgentPageLayout {
     static let rowInset: CGFloat = 14
 }
 
-struct AgentEyebrow: View {
+/// Keeps the page context beside native Back and actions, above the full scrolling title.
+struct AgentNavigationHeader: View {
     let title: String
+    var eyebrow: String = ""
+    var collapsed = false
     var signal: ConversationSignal? = nil
+
     var body: some View {
         HStack(spacing: PanelsTheme.Space.sm) {
-            if !title.isEmpty { Text(title).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
-            Spacer()
+            Text(collapsed || eyebrow.isEmpty ? title : eyebrow)
+                .font(collapsed || eyebrow.isEmpty ? .headline : PanelsTheme.TypeScale.small)
+                .foregroundStyle(collapsed || eyebrow.isEmpty ? PanelsTheme.strong : PanelsTheme.faint)
+                .lineLimit(1)
             ConversationSignalMark(signal: signal)
-        }.frame(minHeight: 18).padding(.top, PanelsTheme.Space.sm)
-            .conversationAccessibility(label: title.isEmpty ? "Chief activity" : title, signal: signal)
-            .accessibilityHidden(title.isEmpty && signal?.working != true && signal?.messageForOwner != true)
+        }.conversationAccessibility(label: collapsed || eyebrow.isEmpty ? title : eyebrow, signal: signal)
     }
 }

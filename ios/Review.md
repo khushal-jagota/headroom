@@ -33,7 +33,8 @@ Skip uses selection feedback; crossing the swipe threshold uses a light impact.
 
 Send back is absent for briefs and proposals with no existing worker conversation.
 It replaces the buttons with an inline field and Cancel/Send back controls. The
-field takes focus. Cancel dismisses the keyboard and restores the buttons while
+field takes focus. The complete return composer and its actions sit in a bottom
+safe-area inset above the keyboard, even on long proposals. Cancel dismisses the keyboard and restores the buttons while
 keeping the draft for that ask. Swipe-to-skip is disabled while it is open. The
 mic records AAC locally after permission, then calls the existing conversation
 voice-transcription endpoint. Words append to typed guidance. Failed transcription
@@ -98,3 +99,8 @@ used sentence-case group labels, and hid Skip’s system toolbar capsule. Those
 small follow-ups received a fresh jobs-4 compile, without a second capture.
 
 See [offline recovery](Offline.md) for persistence, response-loss handling and focused verification.
+
+Saved approval and send-back operations retain the ticket title and proposal step
+label alongside delivery state and saved words. These names are saved with the
+operation, so advancing the queue or relaunching does not lose its identity. Older
+saved operations fall back to the loaded ticket title or ticket ID and field name.

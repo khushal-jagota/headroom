@@ -16,7 +16,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .other: "Other"
         }
     }
-    var needsAttention: Bool { self == .approval || self == .answer || self == .errored }
+    var needsAttention: Bool { self == .approval || self == .answer || self == .yours || self == .errored }
 }
 
 struct WorkspaceTicketGroup: Identifiable {

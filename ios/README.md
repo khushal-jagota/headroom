@@ -151,7 +151,7 @@ URL session and never sent to the live server during tests. Goal/recap saves,
 settling and backlog changes also have mocked request-contract coverage.
 
 The ticket page adds API actions for recap requests, backlog/resume, approval
-limits, proposal acceptance/return, owner completion, field/title/recap editing,
+limits, proposal acceptance/return, field/title/recap editing,
 blocker removal and pristine worker setup. Live simulator verification is read-only; ticket and Feedback writes are
 exercised only with an injected stub or URLProtocol interception.
 
@@ -271,7 +271,9 @@ retain their actual file owner, including links to files on another ticket.
 The inline list reads on expansion and page refresh, with paging and a search
 field for larger catalogs. HTML runs
 inside a sandboxed frame in a nonpersistent WKWebView, with relative file assets
-and native navigation for managed links. Folder sections show five files before
+and native navigation for managed links. HTML previews offer Phone width and Fit
+desktop. Fit desktop scales a 1024-point canvas into the available width; pinch
+zoom lets the reader inspect a fixed-width design without changing its styles. Folder sections show five files before
 expanding, with image thumbnails and Open/Share/Copy link context menus.
 Markdown uses native text, and images support pinch, pan and double-tap zoom.
 PDF uses continuous PDFKit scrolling, supported media uses AVKit, and other
@@ -315,7 +317,8 @@ The plus menu accepts files, library pictures, camera photos and a slash command
 use the existing delivery modes. Stop interrupts the running turn. The separate
 microphone remains available while working or editing a draft.
 
-Messages appear immediately with Sending, Sent, Queued or an explicit failure.
+Messages appear immediately with Sending, Queued or an explicit failure.
+Successfully delivered messages have no delivery label in the thread.
 The local message and its server row share one visual identity and position.
 Confirmed refusal and connection failures offer Retry in place. A timeout or lost
 response remains uncertain and cannot be retried blindly. Suppressed delivery
@@ -434,9 +437,9 @@ this lane did not run a simulator or write to a live server.
 
 Rows and page titles share one activity mark: an unread dot takes precedence over
 the fixed-size working spinner, matching the web. They never appear together. Reduce Motion substitutes a static
-working mark. Orchestrator activity stays beside the page title. Workspace card
-headers align at the bottom of their minimum touch area so Chief and orchestrator
-titles have the same spacing before their first group header.
+working mark. Detail-page activity sits with the context in the native navigation
+bar. The Chief Workspace heading aligns at the top of its minimum touch area,
+matching the first-content inset on orchestrator cards.
 
 Verification: the four-job iOS Simulator build and four existing conversation host
 tests passed. A stub-only, locked PanelsLaneB pass captured Workspace and the
@@ -497,3 +500,9 @@ test covers the previously untested trailing-newline draft path using the existi
 host model, without a connected host. Locked PanelsLaneA fixture captures compare
 the bottom spacing and show collapsed Steps. They do not exercise microphone
 recognition, keyboard transitions, or live-server behavior.
+
+Detail pages keep their native navigation bar material visible so Back and page
+actions share one continuous bar above the scrolling header. Yours marks stage
+ownership, separately from a conversation waiting for an answer. Its current field
+is shown for reading rather than as a required answer form. Workspace and worker
+rows give Yours the same attention emphasis as desktop.

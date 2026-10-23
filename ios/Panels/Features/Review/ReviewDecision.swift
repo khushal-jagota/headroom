@@ -104,7 +104,8 @@ import Observation
                                   editedBody: draft == proposal.body ? nil : draft,
                                   nextCeiling: ceiling, nextHolder: holder)
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
-            ticketID: ticket.id, proposal: proposal, approval: body), api: api)
+            ticketID: ticket.id, proposal: proposal, approval: body,
+            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
     }
 
     func sendBack(api: APIClient, message: String) async -> Bool {
@@ -112,7 +113,8 @@ import Observation
         guard ready, canReturn, !message.isEmpty, let ticket else { return false }
         guard let proposal else { return false }
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
-            ticketID: ticket.id, proposal: proposal, guidance: message), api: api)
+            ticketID: ticket.id, proposal: proposal, guidance: message,
+            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
     }
 
     private func enqueue(_ work: PendingWork, api: APIClient) -> Bool {

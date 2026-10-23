@@ -4,7 +4,8 @@ The ticket page reads the full ticket endpoint and worker-type manifest. The
 manifest supplies labels, step ordering, completion counts, approval limits and
 the next stage after accepting a proposal. Only the conversation's live working
 signal animates a spinner when there is no unread message. The project/type line
-keeps one mark on its trailing edge, with unread taking precedence; the title scrolls into the native navigation bar.
+and its activity mark sit between Back and actions in the native navigation bar,
+with unread taking precedence. The full title scrolls into that bar.
 
 The recap shows eight lines with a fade and expands on tap. Long-press it to copy,
 edit or request a fresh recap. Long-press the title to rename it. The action menu
@@ -12,7 +13,9 @@ contains recap, backlog/resume and copy-link actions. Blocker links open their
 tickets and offer removal in a context menu. Backlog/resume carry the record hash.
 
 The stage card shows the current work, a proposal with approval and send-back
-actions, or an owner step with an explicit Complete action. Approval opens a native
+actions, or the current field for reading on a Yours step. Yours means the current
+Stage is user-owned; it does not ask the reader to fill in a field. A pending
+conversation ask is the separate Needs your answer state. Approval opens a native
 sheet; accepting sends the displayed proposal revision and defaults to the next
 gate, without advancing twice. A reviewer-only scope change omits the ceiling.
 Editors remain open on errors. Send-back requires a nonempty note and an existing
@@ -21,7 +24,8 @@ using the existing backend/model catalogue. There are no backend changes.
 
 Steps start collapsed behind a count row matching Artifacts. Tapping the row opens
 or closes the list inline with the same disclosure behavior. Step rows push dedicated reading pages using the shared artifact
-Markdown content renderer. Managed links use the shared artifact target parser. Complex GFM tables
+Markdown content renderer. A step with a pending proposal shows that proposal
+and Awaiting approval, even before a canonical field value exists. Managed links use the shared artifact target parser. Complex GFM tables
 remain plain text. Completed fields offer Edit/Done. Managed artifact links preserve their actual ticket or manager owner.
 The artifact count row opens the shared artifact list; it is hidden when empty.
 The conversation slot remains the foundation placeholder, with no transcript or

@@ -35,7 +35,8 @@ final class ConversationOperationTests: XCTestCase {
         app.buttons["Conversation lens"].tap()
         app.buttons["Send message"].tap()
         XCTAssertTrue(app.staticTexts["Sending…"].firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Sent"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Sending…"].firstMatch.waitForNonExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["Sent"].firstMatch.exists)
         let thread = app.scrollViews.firstMatch
         thread.swipeDown()
         XCTAssertTrue(app.buttons["Latest"].waitForExistence(timeout: 5))

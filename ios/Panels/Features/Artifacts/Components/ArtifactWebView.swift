@@ -5,6 +5,7 @@ import WebKit
 struct ArtifactWebView: UIViewRepresentable {
     let source: String
     let url: URL
+    var desktopPreview = false
     let openLink: (URL) -> Void
     let failed: (String) -> Void
     let ready: () -> Void
@@ -28,8 +29,9 @@ struct ArtifactWebView: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: WKWebView, context: Context) {
-        guard context.coordinator.source != source else { return }
+        guard context.coordinator.source != source || context.coordinator.desktopPreview != desktopPreview else { return }
         context.coordinator.source = source
+        context.coordinator.desktopPreview = desktopPreview
         // JSON encoding keeps arbitrary artifact source out of the host's script syntax.
         let sourceJSON = Self.literal(source)
         let baseJSON = Self.literal(url.absoluteString)
@@ -39,6 +41,19 @@ struct ArtifactWebView: UIViewRepresentable {
         <style>html,body{margin:0;width:100%;height:100%;background:#151515}iframe{border:0;width:100%;height:100%;display:block}</style>
         </head><body><iframe id="document" sandbox="allow-scripts" title="Artifact"></iframe>
         <script>
+        const frame = document.getElementById('document');
+        const desktopWidth = \(desktopPreview ? String(ArtifactPreviewLayout.desktopWidth) : "null");
+        function fitPreview() {
+          if (desktopWidth === null) return;
+          const scale = Math.min(1, window.innerWidth / desktopWidth);
+          frame.style.width = desktopWidth + 'px';
+          frame.style.height = (window.innerHeight / scale) + 'px';
+          frame.style.transformOrigin = 'top left';
+          frame.style.transform = 'scale(' + scale + ')';
+          document.body.style.overflow = 'hidden';
+        }
+        window.addEventListener('resize', fitPreview);
+        fitPreview();
         const documentSource = new DOMParser().parseFromString(\(sourceJSON), 'text/html');
         documentSource.querySelectorAll('base').forEach(node => node.remove());
         const base = documentSource.createElement('base'); base.href = \(baseJSON);
@@ -66,6 +81,7 @@ struct ArtifactWebView: UIViewRepresentable {
     }
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var source: String?
+        var desktopPreview = false
         let openLink: (URL) -> Void
         let failed: (String) -> Void
         let ready: () -> Void
@@ -88,4 +104,8 @@ struct ArtifactWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready() }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { failed("The preview stopped. Try loading it again.") }
     }
+}
+
+private enum ArtifactPreviewLayout {
+    static let desktopWidth = 1024
 }
