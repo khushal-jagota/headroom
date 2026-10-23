@@ -12,6 +12,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+# The runner uses system Python before it installs dependencies. Import the
+# stdlib-only lifecycle contract from this exact control checkout.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from planner.environments import deployment_lifecycle  # noqa: E402
+
 RENEW_INTERVAL_SECONDS = 60.0
 POLL_INTERVAL_SECONDS = 0.05
 SHUTDOWN_GRACE_SECONDS = 2.0
@@ -31,6 +36,10 @@ class Timings:
 
 
 DEFAULT_TIMINGS = Timings()
+
+
+class _CommandComplete(Exception):
+    """A completed command cancels lock acquisition before any renewal starts."""
 
 
 def process_identity(pid: int) -> str | None:
@@ -97,7 +106,9 @@ def _shutdown(process: subprocess.Popen[bytes], timings: Timings) -> None:
         deadline = time.monotonic() + timings.shutdown_grace
         while time.monotonic() < deadline:
             process.poll()
-            while True:
+            # Popen must reap its leader before a group wait can reap descendants.
+            # Otherwise a killed writer can appear to have exited successfully.
+            while process.returncode is not None:
                 try:
                     if os.waitpid(-process.pid, os.WNOHANG)[0] == 0:
                         break
@@ -224,38 +235,17 @@ def supervise(
             or process_identity(parent_pid) != parent_identity
         )
 
-    def renew() -> bool:
-        """False means terminal evidence; failures refuse further renewals."""
-        nonlocal renewal
+    def check_renewal_active() -> None:
+        reap_adopted_children()
         if interrupted():
             raise InterruptedError
-        renewal = subprocess.Popen(
-            [sys.executable, str(LIFECYCLE_WRITER), "renew", "--path",
-             os.environ["PANELS_LIFECYCLE_PATH"], "--deployment-id",
-             os.environ["PANELS_DEPLOYMENT_ID"]],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-        )
-        # The CLI returns one bounded record, so pipe capacity cannot block its exit.
-        while renewal.poll() is None:
-            reap_adopted_children()
-            if interrupted():
-                raise InterruptedError
-            if command is not None and command.poll() is not None:
-                _shutdown(renewal, timings)
-                renewal = None
-                return False
-            time.sleep(timings.poll)
-        stdout, stderr = renewal.communicate()
-        status = renewal.returncode
-        renewal = None
-        if interrupted():
-            raise InterruptedError
-        if status:
-            raise RuntimeError(stderr.decode(errors="replace").strip() or "renewal failed")
-        payload = json.loads(stdout)
-        if payload["phase"] in TERMINAL_PHASES:
+        if command is not None and command.poll() is not None:
+            raise _CommandComplete
+
+    def emit_receipt(lifecycle: deployment_lifecycle.DeploymentLifecycle) -> bool:
+        if lifecycle.phase in TERMINAL_PHASES:
             return False
-        # Log only bounded public fields from the canonical writer's persisted record.
+        payload = lifecycle.to_public_dict()
         evidence = {
             field: payload[field]
             for field in ("deployment_id", "phase", "updated_at", "expires_at")
@@ -265,6 +255,116 @@ def supervise(
             flush=True,
         )
         return True
+
+    def run_writer(
+        arguments: list[str], descriptors: tuple[int, ...], *, recovery: bool = False,
+    ) -> tuple[bytes, bytes, int, bool]:
+        """One owned subprocess path for renewal and bounded read/sync recovery."""
+        nonlocal renewal, cancelled
+        renewal = subprocess.Popen(
+            [sys.executable, str(LIFECYCLE_WRITER), *arguments], pass_fds=descriptors,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        )
+        deadline = time.monotonic() + timings.shutdown_grace
+        stopped = False
+        timed_out = False
+        while renewal.poll() is None:
+            reap_adopted_children()
+            if recovery:
+                # Keep interruption status, but allow this bounded reconciliation.
+                if interrupted():
+                    cancelled = cancelled or signal.SIGTERM
+                timed_out = time.monotonic() >= deadline
+            else:
+                stopped = interrupted() or (command is not None and command.poll() is not None)
+            if stopped or timed_out:
+                _shutdown(renewal, timings)
+                break
+            time.sleep(timings.poll)
+        stdout, stderr = renewal.communicate()
+        status = renewal.returncode
+        renewal = None
+        if timed_out:
+            raise RuntimeError("renewal receipt recovery timed out")
+        assert status is not None
+        return stdout, stderr, status, stopped
+
+    def recover_receipt(
+        path: Path, deployment_id: str, lock_fd: int, baseline_fd: int,
+    ) -> deployment_lifecycle.DeploymentLifecycle | None:
+        stdout, stderr, status, _ = run_writer(
+            ["recover-renewal-receipt", "--path", str(path), "--deployment-id", deployment_id,
+             "--lock-fd", str(lock_fd), "--baseline-fd", str(baseline_fd)],
+            (lock_fd, baseline_fd), recovery=True,
+        )
+        if status:
+            raise RuntimeError(
+                "renewal receipt recovery failed: "
+                + (stderr.decode(errors="replace").strip() or f"exit status {status}")
+            )
+        payload = json.loads(stdout)
+        if not isinstance(payload, dict) or type(payload.get("committed")) is not bool:
+            raise ValueError("invalid renewal receipt recovery result")
+        if not payload["committed"]:
+            return None
+        return deployment_lifecycle.parse_renewal_result(payload.get("lifecycle"), deployment_id)
+
+    def renew_locked(path: Path, deployment_id: str, lock_fd: int, baseline_fd: int) -> bool:
+        check_renewal_active()
+        stdout, stderr, status, stopped = run_writer(
+            ["renew", "--path", str(path),
+             "--deployment-id", deployment_id, "--lock-fd", str(lock_fd)],
+            (lock_fd,),
+        )
+        failure: Exception | None = None
+        result: deployment_lifecycle.DeploymentLifecycle | None = None
+        expected_stop = stopped and status in (-signal.SIGTERM, -signal.SIGKILL)
+        if status and (not expected_stop or stderr.strip()):
+            failure = RuntimeError(stderr.decode(errors="replace").strip() or "renewal failed")
+        if status == 0:
+            try:
+                result = deployment_lifecycle.parse_renewal_result(
+                    json.loads(stdout), deployment_id,
+                )
+            except (RuntimeError, ValueError, KeyError) as exc:
+                failure = exc
+        if result is None:
+            try:
+                result = recover_receipt(path, deployment_id, lock_fd, baseline_fd)
+            except (RuntimeError, ValueError, KeyError, OSError) as exc:
+                failure = RuntimeError(f"{failure}; {exc}" if failure else str(exc))
+        active = emit_receipt(result) if result is not None else False
+        if interrupted():
+            if failure is not None:
+                print(
+                    f"Deployment freshness renewal failed: {failure}", file=sys.stderr, flush=True,
+                )
+            raise InterruptedError
+        if failure is not None:
+            raise failure
+        return active and not stopped
+
+    def renew() -> bool:
+        """Own the lock through receipt emission, including bounded recovery."""
+        nonlocal renewal
+        path = Path(os.environ["PANELS_LIFECYCLE_PATH"])
+        deployment_id = os.environ["PANELS_DEPLOYMENT_ID"]
+        try:
+            with deployment_lifecycle.renewal_lock(
+                path, check_active=check_renewal_active,
+            ) as lock_fd:
+                baseline_fd = deployment_lifecycle.open_renewal_baseline(path)
+                try:
+                    return renew_locked(path, deployment_id, lock_fd, baseline_fd)
+                finally:
+                    # No borrowed descriptor holder can outlive the retained lock.
+                    if renewal is not None:
+                        _shutdown(renewal, timings)
+                        renewal.communicate()
+                        renewal = None
+                    os.close(baseline_fd)
+        except _CommandComplete:
+            return False
 
     try:
         _enable_child_reaping()

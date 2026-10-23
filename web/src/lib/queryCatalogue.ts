@@ -53,8 +53,6 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
-  deploymentInterruptions: () =>
-    jsonQuery<import("./deploymentInterruptions").InterruptionSummary>(["deployment-interruptions"], "/api/deployment-interruptions"),
   recordedUsage: (days: UsageDays, timezone: string) =>
     jsonQuery<UsageSummary>(
       ["recorded-usage", { days, timezone }],

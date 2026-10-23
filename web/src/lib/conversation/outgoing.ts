@@ -46,6 +46,14 @@ export type OutgoingMessage = {
   /** What this browser called the message. It rides out with the send and comes back on
    *  the message's row, which is what lets the two be recognised as one message. */
   messageId: string;
+  /** The mounted bubble retains this identity when its words are sent again. */
+  displayMessageId?: string;
+  /** Transport acknowledged this send; preserves its UI placement before the record body.
+   * This is not authority for backend history admission. */
+  accepted?: boolean;
+  /** Viewport intent only: recalled content does not request fresh send placement.
+   * Set on recall, ignored by the storage decoder. */
+  restored?: boolean;
   /** The message as it will be sent, which is what this browser has until the record
    *  answers for it. A message on its way names no kept file, because nothing has kept
    *  anything yet — it holds what it is about to hand over. */
@@ -148,7 +156,7 @@ const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
   sent_before_this_page: null,
   waiting_for_the_agent: "waiting for the agent to be free",
-  answer_never_came_back: "the server never said whether this arrived"
+  answer_never_came_back: "no answer came"
 };
 
 /** What a message on its way says about itself, or nothing when there is nothing to say. */
@@ -314,19 +322,7 @@ export function anOutgoingMessageIsWaitingOnTheRecord(
   );
 }
 
-/** Where each message this browser is still drawing belongs.
- *
- * The thread draws these after every row the record has, so a copy left there is claiming
- * to be the newest thing in the conversation. For a send on its way that is true, and it
- * is the whole point: the message exists the moment Enter is pressed and it belongs in the
- * thread from then on.
- *
- * It stops being true the moment nothing is coming. A send nobody answered for has no row
- * on the way, so left in the thread it would sit under every later turn for as long as the
- * tab lives, and reading the conversation would never clear it. It belongs with the other
- * messages that have not landed, above the composer, where there is room to say what is
- * known and to offer something to do about it.
- */
+/** Explicit queue membership alone places a message above the composer. */
 export function outgoingMessagesByPlace(
   outgoing: readonly OutgoingMessage[],
   where: {
@@ -336,9 +332,7 @@ export function outgoingMessagesByPlace(
 ): { thread: readonly OutgoingMessage[]; composerStack: readonly OutgoingMessage[] } {
   const aboveTheComposer = (message: OutgoingMessage): boolean =>
     where.composerStackMessageIds.includes(message.messageId)
-    || where.serverHeldSenderMessageIds.has(message.messageId)
-    || message.knownFate === "waiting_for_the_agent"
-    || message.knownFate === "answer_never_came_back";
+    || where.serverHeldSenderMessageIds.has(message.messageId);
   return {
     thread: outgoing.filter((message) => !aboveTheComposer(message)),
     composerStack: outgoing.filter(aboveTheComposer)
@@ -570,9 +564,7 @@ export async function recallOutgoingMessages(conversationId: string): Promise<Ou
   includeRememberedMessagesInReservations();
   await rememberTails.get(conversationId);
   return (await outgoingMessagesStoredUnder(conversationId)).map((message) =>
-    message.knownFate === "nothing_yet"
-      ? { ...message, knownFate: "sent_before_this_page" as const }
-      : message
+    ({ ...message, restored: true, knownFate: message.knownFate === "nothing_yet" ? "sent_before_this_page" as const : message.knownFate })
   );
 }
 
@@ -750,6 +742,8 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   return {
     messageId,
     content: pieces,
+    ...(held.accepted === true ? { accepted: true } : {}),
+    ...(typeof held.displayMessageId === "string" ? { displayMessageId: held.displayMessageId } : {}),
     senderLabel,
     mode: decodedMode as PromptDeliveryMode,
     sentAtUnixMilliseconds,

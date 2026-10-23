@@ -62,7 +62,7 @@ A good **review** links the artifact and states the reviewed commit, readiness j
 
 ## needs_feedback — capture the user's judgment
 
-This is a user-owned collaborative stage. Open with the artifact, the readiness judgment, and the decisions that require user attention.
+This is a paired stage. Open with the artifact, the readiness judgment, and the decisions that require user attention.
 
 Let the user direct the review. Preserve each concern before interpretation. Ask for clarification until both parties agree on its meaning.
 
@@ -106,4 +106,4 @@ A good **Consequences** states the reviewed result, the target state, and the ve
 - Prefer direct evidence over inherited confidence.
 - Keep the artifact proportionate to the result and its risks.
 - Preserve the user's feedback as decisions, not as a loose transcript.
-- Follow `panels-worker` for ownership, proposals, and ceiling rules.
+- Follow `panels-worker` for ownership, proposals, scope, and reconciliation rules.

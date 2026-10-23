@@ -65,7 +65,7 @@
     fateNote = null,
     errorNote = null,
     connectionTrouble = false,
-    composerPlaceholder = "Message the agent...",
+    composerPlaceholder = "Steer the work",
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,
@@ -77,8 +77,8 @@
     lens = $bindable("focus"),
     conversationState = $bindable(null),
     emptyState,
-    systemNotice,
     reader = null,
+    acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
     transcriptVisible = true,
     draftKey,
@@ -97,6 +97,7 @@
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     reader?: ConversationViewReader | null;
+    acknowledgedMessageIds?: ReadonlySet<string>;
     viewAnchor?: ViewReaderAnchor | null;
     transcriptVisible?: boolean;
     draftKey: string;
@@ -167,7 +168,6 @@
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
     emptyState?: Snippet;
-    systemNotice?: Snippet;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -466,14 +466,23 @@
   </div>
 
   {#if conversationState !== "rest" && transcriptVisible}
-  {@render systemNotice?.()}
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
        reader is in, and with it everything the viewport knows about where they were. -->
-  <div class="conversation-transcript-region" aria-busy={transcriptLoading}>
+  {#if reader?.entryPhase === 'error'}
+    <div class="chat-receipt" role="status" data-conversation-entry-status="error">Unread messages did not load.
+      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryEntry()}>Retry unread messages</button>
+    </div>
+  {/if}
+  <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
+    style:visibility={reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
+    aria-busy={transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing'}>
   <ConversationViewport
     bind:viewAnchor
     {reader}
+    {acknowledgedMessageIds}
+    onStopDrawingMessage={onStopDrawingHeldPrompt}
+    onSendAgain={onSendHeldPromptAgain}
     {conversationId}
     {rows}
     visibleRows={rowsForLens}

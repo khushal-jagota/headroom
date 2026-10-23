@@ -11,6 +11,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "remove_calendar_records",
         "rename_managers",
         "notice_suppression_audit",
+        "automatic_deployment_recovery",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(
