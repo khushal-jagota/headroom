@@ -24,6 +24,13 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   const liveStream=new URLSearchParams(location.search).has('live-stream');
   const visual=new URLSearchParams(location.search).has('visual');
   let sequence=2000;
+  // Return probes reuse this finite transport. Arm only after the initial layout.
+  (window as any).__backlog=(count:number)=>{sequence+=count;};
+  const returnBodies=new Map<string,string>();
+  const returnBodyReleases:Array<()=>void>=[];
+  const returnProbe={hold:false,fail:false,markers:false,bodies:false,bodyHold:false,bodyWaiting:0,waiting:0,release:()=>{},
+    releaseBodies:()=>{returnProbe.bodyHold=false;for(const release of returnBodyReleases.splice(0))release();}};
+  (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
   (window as any).__viewCalls=calls;
   const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
@@ -90,6 +97,9 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const start=cursor!==null&&direction==='newer'?cursor.order.sequence+1:Math.max(1,end-99);
     const items=Array.from({length:end-start+1},(_,index)=>{
       const row=item(start+index);
+      if(returnProbe.markers && row.source_sequence>2000){
+        row.row_kind='token_usage';row.body={kind:'inline',value:{kind:'token_usage',input_tokens:1,output_tokens:1,cached_input_tokens:0,cost_usd:null}};
+      }
       if(hiddenUnread && unread!==null && row.source_sequence>unread && row.source_sequence<=unread+100){
         row.row_kind='token_usage';row.body={kind:'inline',value:{kind:'token_usage',input_tokens:1,output_tokens:1,cached_input_tokens:0,cost_usd:null}};
       }
@@ -101,6 +111,11 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
         const body=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:Array.from({length:row.source_sequence===2000?400:18},(_,index)=>`Late paragraph ${row.source_sequence}.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n')}]});
         row.row_kind='agent_message';
         row.body={kind:'deferred',reference:{body_id:'position:'+row.source_sequence,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
+      }
+      if(returnProbe.bodies && row.body.kind==='inline'){
+        const bodyId='return:'+row.source_sequence;
+        const body=JSON.stringify(row.body.value);returnBodies.set(bodyId,body);
+        row.body={kind:'deferred',reference:{body_id:bodyId,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
       }
       return row;
     });
@@ -132,6 +147,13 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,location.origin);
     if(url.pathname==='/api/conversation/backends')return Response.json({backends:[]});
+    if(url.pathname.endsWith('/view/body/content')){
+      const reference=JSON.parse(url.searchParams.get('reference')!);
+      if(String(reference.body_id).startsWith('return:')){
+        if(returnProbe.bodyHold){returnProbe.bodyWaiting++;await new Promise<void>(resolve=>returnBodyReleases.push(resolve));}
+        return new Response(returnBodies.get(reference.body_id));
+      }
+    }
     if(positionRace&&url.pathname.endsWith('/view/body/content')){
       const reference=JSON.parse(url.searchParams.get('reference')!);
       if(String(reference.body_id).startsWith('position:')){
@@ -147,6 +169,15 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(folds&&url.pathname.endsWith('/view/body/content'))return new Response(deferredOwner);
     if((visual||liveStream)&&url.pathname.endsWith('/view/body/content'))return new Response(JSON.parse(url.searchParams.get('reference')!).body_id==='completed:13'?deferredEndingText:liveText);
     if(url.pathname.endsWith('/view/pages')) {
+      if(returnProbe.hold){
+        returnProbe.waiting++;
+        await new Promise<void>((resolve,reject)=>{
+          const abort=()=>reject(new DOMException('Aborted','AbortError'));
+          returnProbe.release=()=>{init?.signal?.removeEventListener('abort',abort);resolve();};
+          if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});
+        });
+      }
+      if(returnProbe.fail)return Response.json({error:'Return admission failed'},{status:503});
       const cursored=url.searchParams.has('cursor');
       if(unread!==null && cursored && url.searchParams.get('direction')==='newer'){
         if(entryProbe.hold){entryProbe.waiting++;await new Promise<void>((resolve,reject)=>{const abort=()=>reject(new DOMException('Aborted','AbortError'));entryProbe.release=()=>{init?.signal?.removeEventListener('abort',abort);resolve();};if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});});}
@@ -180,6 +211,12 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const before=sequence;sequence++;status.revision=sequence;
     for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,location.origin).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:1,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
   }};
+  (window as any).__revealReturnBacklog=()=>{
+    const row=item(2001);
+    row.body={kind:'inline',value:{kind:'agent_message',to_owner:true,content:[{piece:'text',text:'Visible backlog now supplies real room below the remembered line. '.repeat(100)}]}};
+    const before=sequence;sequence++;status.revision=sequence;
+    for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,location.origin).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:1,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[row],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
+  };
   (window as any).__expireDiagnostics=()=>{
     expired=true;status.diagnostics_expired=true;
     for(const source of sources){if((source as Source).closed)continue;source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL(source.raw,location.origin)),coverage:{through_sequence:sequence},status})}));}
