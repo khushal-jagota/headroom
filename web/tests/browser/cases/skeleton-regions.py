@@ -404,11 +404,14 @@ def run(browser, urls):
         assert frame.locator('#detail').evaluate("node => node.getBoundingClientRect().top") < 500
         assert html.locator('[data-html-navigation-notice]').count() == 0
         html.locator('[data-html-back]').click()  # Fragment history.
+        successful_src = html.locator('iframe').get_attribute('src')
         frame.locator('#missing').click()
         expect(html.locator('[data-html-navigation-notice]')).to_have_text(
-            'This link cannot be opened in the artifact viewer.'
+            'file fetch failed: 404'
         )
         expect(frame.locator('h1')).to_have_text('Child')
+        assert html.locator('iframe').get_attribute('src') == successful_src
+        expect(html.locator('[data-visible-content-failed]')).to_have_count(0)
         frame.locator('#escape').click()  # Resolves inside the original site directory.
         expect(frame.locator('h1')).to_have_text('Index')
         html.locator('[data-html-back]').click()
@@ -416,7 +419,9 @@ def run(browser, urls):
         html.locator('[data-html-back]').click()
         expect(frame.locator('h1')).to_have_text('Index')
         frame.locator('#escape').click()
-        expect(html.locator('[data-html-navigation-notice]')).to_have_count(1)
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text(
+            'This link cannot be opened in the artifact viewer.'
+        )
         assert not any(path.endswith('outside.html') and '/site/' not in path for path in reads)
         generation = frame.locator('head script').first.evaluate(
             "node => JSON.parse(node.textContent.match(/const generation = ([^;]+);/)[1])"
@@ -483,7 +488,7 @@ def run(browser, urls):
         html.locator('[data-html-back]').click()
         expect(frame.locator('h1')).to_have_text('Index')
         frame.locator('#missing').click()
-        expect(html.locator('[data-html-navigation-notice]')).to_have_count(1)
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text('file fetch failed: 404')
         page.evaluate("window.__html('')")
     assert not errors, errors
     page.close()
