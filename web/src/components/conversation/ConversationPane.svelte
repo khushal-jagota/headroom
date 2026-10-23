@@ -65,7 +65,7 @@
     fateNote = null,
     errorNote = null,
     connectionTrouble = false,
-    composerPlaceholder = "Message the agent...",
+    composerPlaceholder = "Steer the work",
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,

@@ -108,7 +108,7 @@
     supportsSteer = false,
     fateNote = null,
     errorNote = null,
-    placeholder = "Message the agent...",
+    placeholder = "Steer the work",
     disabled = false,
     showRunPicker = true,
     onSend,
