@@ -70,7 +70,7 @@
 </script>
 
 {#snippet body()}
-  <span class="acp-step-title">{presentation.title}{#if presentation.summary} <span data-conversation-tool-summary>{presentation.summary}</span>{/if}</span>
+  <span class="acp-step-title">{presentation.title}{#if presentation.summary}{" "}<span data-conversation-tool-summary>{presentation.summary}</span>{/if}</span>
   {#if row.status === "completed"}
     <span class="acp-step-mark acp-mark-ok" role="img" aria-label="Completed">✓</span>
   {:else if row.status === "failed"}
