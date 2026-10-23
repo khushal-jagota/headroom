@@ -3003,3 +3003,201 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
         )
 
     _run(exercise)
+
+def test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_delivery(
+    harness: _Harness,
+) -> None:
+    from contextlib import closing
+
+    from planner.conversation.api import OwnerSendBody, SentTextPiece
+    from planner.core.authctx import RequestContext
+    from planner.core.clock import RealClock
+    from planner.tickets.api import send_to_ticket_conversation
+
+    async def exercise() -> None:
+        await _start(harness)
+        worker = Principal(PrincipalKind.ticket, "worker")
+        _link_test_ticket_to_conversation(harness.db_path, "c", ticket_id=worker.id)
+        await harness.system.send("c", text_message_content("busy"), sender_label="system")
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("displayed"),
+            sender_label="Worker",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+        )
+        displayed = (await harness.events("c"))[-1].sequence
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("not displayed"),
+            sender_label="Worker",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+        )
+        with closing(connect(str(harness.db_path))) as conn:
+            response = await send_to_ticket_conversation(
+                worker.id,
+                OwnerSendBody(
+                    conversation_id="c",
+                    sender_label="owner",
+                    content=[SentTextPiece(piece="text", text="reply")],
+                    sender_message_id="bounded-queued",
+                    owner_read_through_sequence=displayed,
+                ),
+                conn,
+                RequestContext(OWNER_PRINCIPAL),
+                RealClock(),
+                harness.system,
+                harness.message_files,
+            )
+        assert response["fate"] == "queued"
+        record = await harness.store.read_conversation("c")
+        assert record is not None and record.owner_read_through_sequence == displayed
+        await harness.complete_turn("c")
+        record = await harness.store.read_conversation("c")
+        assert record is not None and record.owner_read_through_sequence == displayed
+        assert "reply" in harness.backend("c").written_texts()[-1]
+        duplicate = await harness.system.send_with_receipt(
+            "c",
+            text_message_content("reply"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=worker,
+            sender_message_id="bounded-queued",
+            owner_read_through_sequence=displayed,
+        )
+        assert not duplicate.newly_accepted
+        assert len(harness.backend("c").writes) == 2
+
+    _run(exercise)
+
+
+def test_refused_review_reply_does_not_acknowledge_displayed_messages(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        worker = Principal(PrincipalKind.ticket, "worker")
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("displayed"),
+            sender_label="Worker",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+        )
+        harness.backend("c").spawn_fails = True
+        receipt = await harness.system.send_with_receipt(
+            "c",
+            text_message_content("reply"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=worker,
+            sender_message_id="refused-review",
+            owner_read_through_sequence=1,
+            record_refusal=True,
+        )
+        assert isinstance(receipt.fate, PromptDeliveryRefused)
+        record = await harness.store.read_conversation("c")
+        assert record is not None and record.owner_read_through_sequence == 0
+
+    _run(exercise)
+
+
+def test_uncertain_review_steer_does_not_acknowledge_displayed_messages(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _: True)
+        await _start(harness)
+        worker = Principal(PrincipalKind.ticket, "worker")
+        await harness.system.send("c", text_message_content("busy"), sender_label="system")
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("displayed"),
+            sender_label="Worker",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+        )
+        displayed = (await harness.events("c"))[-1].sequence
+        harness.backend("c").steer_outcome = BackendSteerUncertain()
+        fate = await harness.system.send(
+            "c",
+            text_message_content("reply"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=worker,
+            sender_message_id="uncertain-review",
+            mode=PromptDeliveryMode.steer,
+            owner_read_through_sequence=displayed,
+        )
+        assert isinstance(fate, PromptDeliveryUncertain)
+        record = await harness.store.read_conversation("c")
+        assert record is not None and record.owner_read_through_sequence == 0
+
+    _run(exercise)
+
+
+def test_identified_review_attachment_retry_is_one_delivery_and_keeps_original_read_bound(
+    harness: _Harness,
+) -> None:
+    import base64
+
+    from planner.conversation.api import SentFilePiece, conversation_message_content
+    from planner.conversation.contracts import AddressedPromptDeliveryReceipt
+
+    async def exercise() -> None:
+        await _start(harness)
+        worker = Principal(PrincipalKind.ticket, "worker")
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("displayed"),
+            sender_label="Worker",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+        )
+        body = SentFilePiece(
+            piece="file",
+            data=base64.b64encode(b"reply attachment").decode(),
+            media_type="text/plain",
+            file_name="reply.txt",
+        )
+
+        retry_bound = 1
+
+        async def attempt() -> AddressedPromptDeliveryReceipt:
+            content = await conversation_message_content(
+                harness.message_files,
+                "c",
+                [body],
+                sender_message_id="attachment-review",
+            )
+            return await harness.system.send_with_receipt(
+                "c",
+                content,
+                sender_label="owner",
+                sender=OWNER_PRINCIPAL,
+                recipient=worker,
+                sender_message_id="attachment-review",
+                owner_read_through_sequence=retry_bound,
+            )
+
+        receipts = await asyncio.gather(attempt(), attempt())
+        assert sum(receipt.newly_accepted for receipt in receipts) == 1
+        assert len(harness.backend("c").writes) == 1
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("arrived after the lost response"),
+            sender_label="Worker",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+        )
+        retry_bound = (await harness.events("c"))[-1].sequence
+        # A retry after a lost response materializes bytes again, then finds its receipt.
+        assert not (await attempt()).newly_accepted
+        assert len(harness.backend("c").writes) == 1
+        record = await harness.store.read_conversation("c")
+        assert record is not None and record.owner_read_through_sequence == 1
+        body.data = base64.b64encode(b"different reply attachment").decode()
+        with pytest.raises(ValueError, match="different message"):
+            await attempt()
+
+    _run(exercise)

@@ -9,6 +9,8 @@
   import { viewWindow } from "../lib/navigation/views/owner";
   import ResourceState from "../components/ResourceState.svelte";
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
+  import ReviewMessageCard from "../components/ReviewMessageCard.svelte";
+  import { reviewMessageHref } from "../lib/review/messages";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
   const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`,impact => {
@@ -31,16 +33,20 @@
   let screenElement = $state<HTMLElement | null>(null);
 
   function itemKey(item: ReviewItem): string {
-    return `${item.ticket_id}:${item.field}`;
+    return item.review_item_type === "message" ? `message:${item.conversation_id}` : `${item.ticket_id}:${item.field}`;
   }
 
-  let items = $derived(queueWindow?(review?.items ?? []).filter(item=>queueWindow?.members.some(key=>key.id===item.ticket_id)):review?.items ?? []);
+  let items = $derived(queueWindow?(review?.items ?? []).filter(item=>queueWindow?.members.some(key=>key.kind===(item.review_item_type === "message" ? 'address' : 'ticket') && key.id===(item.review_item_type === "message" ? item.address_id : item.ticket_id))):review?.items ?? []);
   let runningWorkerCount = $derived(review?.runningConversationCount ?? null);
+  let heldMessage = $state<ReviewItem | null>(null);
+  let messageBusy = $state(false);
+  let messageGeneration = $state(0);
   let currentItem = $derived.by<ReviewItem | null>(() => {
-    if (!items.length) return null;
-    const live = items.filter((item) => !skipped[itemKey(item)]);
-    return live[0] || null;
+    if (heldMessage) return items.find(item=>itemKey(item)===itemKey(heldMessage!)) ?? heldMessage;
+    return items.find(item=>!skipped[itemKey(item)]) ?? null;
   });
+  $effect(()=>{if(currentItem?.review_item_type==='message' && !heldMessage)heldMessage=currentItem;});
+
 
   $effect(()=>{
     if(queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
@@ -54,15 +60,20 @@
   }
 
   function skip(item: ReviewItem): void {
+    if(messageBusy)return;
     skipped = { ...skipped, [itemKey(item)]: true };
+    heldMessage=null;
   }
 
   function openTicket(item: ReviewItem): void {
-    window.location.hash = workspaceAddress({ kind: "ticket", id: item.ticket_id });
+    if(messageBusy)return;
+    window.location.hash = item.review_item_type === "message" ? reviewMessageHref(item) : workspaceAddress({ kind: "ticket", id: item.ticket_id });
   }
 
   // The card says a decision has left the queue — approved, sent back, or already
   // gone by the time its Ticket was read. Re-read the queue so the next ask comes up.
+  function messageResolved():void { messageGeneration+=1;heldMessage=null;messageBusy=false;void navigation.owner.recover().catch(()=>undefined); }
+
   function proposalResolved(): void {
     void navigation.owner.recover().catch(() => undefined);
   }
@@ -106,7 +117,7 @@
 
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       const button = screenElement?.querySelector<HTMLButtonElement>(
-        "[data-review-card] [data-accept]"
+        item.review_item_type === "message" ? "[data-review-card] [data-review-send]" : "[data-review-card] [data-accept]"
       );
       if (button && !button.disabled) {
         event.preventDefault();
@@ -132,6 +143,10 @@
   });
 </script>
 
+{#snippet messageKeys()}
+  <div class="review-keys"><kbd>⌘↩</kbd> send &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>O</kbd> open</div>
+{/snippet}
+
 {#snippet proposalKeys()}
   <div class="review-keys">
     <kbd>⌘↩</kbd> approve &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>O</kbd> open ticket
@@ -140,13 +155,19 @@
 
 <section class="review-screen" data-screen="review" bind:this={screenElement}>
   <ResourceState shape="block" error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
-    {#if !items.length}
+    {#if !items.length && !currentItem}
       <div class="review-empty-state" data-review-empty>
         <div class="review-empty-mark" aria-hidden="true"><span></span></div>
         <div class="review-empty-text">There is nothing to review right now.</div>
         {#if runningWorkerCount !== null}<div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>{/if}
       </div>
     {:else if currentItem}
+      {#if currentItem.review_item_type === "message"}
+        {#key `${itemKey(currentItem)}:${messageGeneration}`}
+          <ReviewMessageCard item={currentItem} onSkip={()=>skip(currentItem!)} onResolved={messageResolved}
+            onBusy={value=>messageBusy=value} onRendered={()=>{renderedBody+=1;}} footer={messageKeys}/>
+        {/key}
+      {:else}
       {@const proposal = currentItem}
       {#key reviewProposalIdentity(proposal)}
         <ReviewProposalCard
@@ -160,6 +181,7 @@
           footer={proposalKeys}
         />
       {/key}
+      {/if}
     {:else}
       <div class="review-empty-state" data-review-empty>
         <div class="review-empty-mark" aria-hidden="true"><span></span></div>

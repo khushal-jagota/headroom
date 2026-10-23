@@ -18,7 +18,7 @@ export const envelope = (batch: RevisionBatch, profile = authority()): BatchEnve
 export const continuity: Continuity = {scope:'workspace',schema_version:SCHEMA_VERSION,semantics:SUPPORTED_SEMANTICS,epoch:'e1',revision:'0'};
 export function conversation(id = 'c', read = 0, message = true, failure = true): ConversationRecord {
   return {kind:'conversation',id,value:{latest_sequence:20,owner_read_through_sequence:read,
-    latest_agent_activity_sequence:20,latest_agent_activity_at:1,error_acknowledged_through_sequence:0,
+    first_unread_owner_message_at:message ? 1 : null,latest_agent_activity_sequence:20,latest_agent_activity_at:1,error_acknowledged_through_sequence:0,
     lifecycle_summary:{latest_turn:null,turn_status_counts:{intent:0,running:0},request_status_counts:{pending:0,answering:0},attempt_status_counts:{intent:0,unknown:0}},
     attention:{current:{signal:{working:true,message_for_owner:message},awaiting_answer:true,last_turn_failed:failure},durable:{message_for_owner:message,last_turn_failed:failure}}}};
 }

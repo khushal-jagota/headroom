@@ -225,9 +225,7 @@ async def send_to_item_conversation(
     name, the files attached to it, and what the conversation is to run on.
     """
     require_above(conn, ctx.principal, authority.manager(item_id))
-    return await _send_to_manager(
-        item_id, body, conn, ctx, conversations, message_files, clk
-    )
+    return await _send_to_manager(item_id, body, conn, ctx, conversations, message_files, clk)
 
 
 async def _send_to_manager(
@@ -265,11 +263,17 @@ async def _send_to_manager(
         clk,
         ctx,
         Principal(PrincipalKind.manager, item_id),
-        partial(conversation_message_content, message_files, sent=body.content),
+        partial(
+            conversation_message_content,
+            message_files,
+            sent=body.content,
+            sender_message_id=body.sender_message_id,
+        ),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=overrides,
         mode=body.mode,
+        owner_read_through_sequence=body.owner_read_through_sequence,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
     )

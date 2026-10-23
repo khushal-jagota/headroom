@@ -22,9 +22,19 @@ One screen per part of the system:
 
 - **Removed calendar screens** — Day and date-range Sprint screens no longer exist.
   Old dated links use the unavailable-route view. A bare former Home address opens Chief.
-- **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
-  walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
-  Proposal items add their labelled recap, ask, approval, and send-back controls.
+- **Review** — one oldest-first queue holds owner-addressed proposals and unread conversations.
+  Each conversation gets one card with its complete unread run, including progress messages.
+  A proposal from the same Worker remains a separate decision. The badge counts both kinds.
+  The title and recap name the conversation. Skip and Open conversation stay above the card.
+  Mini bars separate messages. Linked artifacts appear where the message links them.
+  The reply field holds paperclip, microphone, and send controls. Mark read sits below it.
+  Opening Review does not acknowledge a message. Mark read or an accepted reply clears only
+  the messages displayed when the owner acts. Later messages remain unread.
+  A failed reply stays in place with its words and attachments. An uncertain send retains
+  its identity until the recorded outcome resolves it. The card fades out after acceptance.
+  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal
+  guard, with the draft intact. Open conversation names the exact conversation.
+  Proposal items keep their recap, ask, approval, and send-back controls.
   A proposal routed to a Manager also creates a durable manager wake. Other
   non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
   Keyboard shortcuts drive the actions that apply to the current item when the
@@ -652,6 +662,10 @@ hand-rolling the same shapes per screen. Each does one job:
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
+- **ReviewMessageCard** — the complete unread run for one conversation, read from its
+  durable watermark. It reuses message rendering, file previews, voice capture, and durable
+  composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
+  Navigation publications carry identity and recap facts, never message bodies.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given

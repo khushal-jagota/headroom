@@ -23,6 +23,9 @@ wants a reaper it is one reaper for all three.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -71,7 +74,13 @@ class ConversationMessageFiles:
         self._db_path = db_path
 
     async def keep(
-        self, conversation_id: str, contents: bytes, *, media_type: str
+        self,
+        conversation_id: str,
+        contents: bytes,
+        *,
+        media_type: str,
+        sender_message_id: str | None = None,
+        piece_index: int = 0,
     ) -> KeptMessageFile:
         """Write bytes for this conversation and return the file they were kept as.
 
@@ -84,7 +93,7 @@ class ConversationMessageFiles:
         given: what a thing is, is not something to guess from its bytes at serving time.
         """
         return await asyncio.to_thread(
-            self._keep_sync, conversation_id, contents, media_type
+            self._keep_sync, conversation_id, contents, media_type, sender_message_id, piece_index
         )
 
     async def read(self, conversation_id: str, stored_file_id: str) -> bytes:
@@ -97,9 +106,7 @@ class ConversationMessageFiles:
         Absent rather than guessed: a file written before it said, or one whose note has
         gone, is served as bytes of no stated kind rather than as something sniffed.
         """
-        return await asyncio.to_thread(
-            self._media_type_sync, conversation_id, stored_file_id
-        )
+        return await asyncio.to_thread(self._media_type_sync, conversation_id, stored_file_id)
 
     def path_of(self, conversation_id: str, stored_file_id: str) -> Path:
         """Where a kept file is, for the backends that would rather be given a path.
@@ -115,17 +122,41 @@ class ConversationMessageFiles:
     # --- inside the worker thread ---
 
     def _keep_sync(
-        self, conversation_id: str, contents: bytes, media_type: str
+        self,
+        conversation_id: str,
+        contents: bytes,
+        media_type: str,
+        sender_message_id: str | None = None,
+        piece_index: int = 0,
     ) -> KeptMessageFile:
         folder = conversation_files_root(self._db_path) / conversation_id
         folder.mkdir(parents=True, exist_ok=True)
-        stored_file_id = new_stored_file_id()
+        if sender_message_id is None:
+            stored_file_id = new_stored_file_id()
+        else:
+            identity = json.dumps(
+                [
+                    conversation_id,
+                    sender_message_id,
+                    piece_index,
+                    media_type,
+                    hashlib.sha256(contents).hexdigest(),
+                ],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            stored_file_id = STORED_FILE_ID_PREFIX + hashlib.sha256(identity.encode()).hexdigest()
         target = folder / stored_file_id
-        target.write_bytes(contents)
-        # After the bytes: a note beside a file that is not there says nothing useful.
-        (folder / f"{stored_file_id}{MEDIA_TYPE_SUFFIX}").write_text(
-            media_type, encoding="utf-8"
-        )
+        # Concurrent retries write identical bytes. Publish a complete file atomically,
+        # rather than truncate a target that another accepted send can already read.
+        temporary = folder / ("." + uuid4().hex)
+        try:
+            temporary.write_bytes(contents)
+            os.replace(temporary, target)
+            temporary.write_text(media_type, encoding="utf-8")
+            os.replace(temporary, folder / f"{stored_file_id}{MEDIA_TYPE_SUFFIX}")
+        finally:
+            temporary.unlink(missing_ok=True)
         return KeptMessageFile(
             conversation_id=conversation_id,
             stored_file_id=stored_file_id,

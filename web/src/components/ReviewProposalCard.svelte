@@ -22,7 +22,7 @@
   import { reviewProposalImpact } from "../lib/reviewNavigationImpact";
   import { ticketCommandImpact, type TicketNavigationOperation } from "../lib/ticketNavigationImpact";
   import { reviewProposalDomMatches } from "../lib/reviewDom";
-  import type { NavigationReviewItem, TicketDetail } from "../lib/types";
+  import type { NavigationReviewProposalItem, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
@@ -47,7 +47,7 @@
     onResolved,
     footer
   }: {
-    identity: NavigationReviewItem;
+    identity: NavigationReviewProposalItem;
     onRendered?: () => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
@@ -157,7 +157,7 @@
 
   function currentIdentity(): boolean {
     const effective = navigation.state.effective;
-    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => reviewProposalIdentity(item) === currentKey));
+    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'proposal' && reviewProposalIdentity(item) === currentKey));
   }
 
   async function write(path: string, options: Parameters<typeof mutateJson>[1], operation:TicketNavigationOperation): Promise<unknown> {

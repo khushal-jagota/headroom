@@ -27,7 +27,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from planner.conversation.backend_state import (
     BackendStateStore,
@@ -298,6 +298,7 @@ class OwnerSendBody(BaseModel):
     """
 
     conversation_id: str | None = None
+    owner_read_through_sequence: int | None = Field(default=None, ge=0)
     backend_key: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -1038,7 +1039,11 @@ async def _kept_message_content(
 
 
 async def conversation_message_content(
-    message_files: ConversationMessageFiles, conversation_id: str, sent: list[SentPiece]
+    message_files: ConversationMessageFiles,
+    conversation_id: str,
+    sent: list[SentPiece],
+    *,
+    sender_message_id: str | None = None,
 ) -> MessageContent:
     """The message as the record will hold it, with the bytes already kept.
 
@@ -1087,14 +1092,20 @@ async def conversation_message_content(
     pieces: list[MessagePiece] = []
     image_index = 0
     file_index = 0
-    for piece in sent:
+    for piece_index, piece in enumerate(sent):
         match piece:
             case SentTextPiece():
                 pieces.append(MessageText(text=piece.text))
             case SentImagePiece():
                 contents, media_type = validated_images[image_index]
                 image_index += 1
-                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
+                kept = await message_files.keep(
+                    conversation_id,
+                    contents,
+                    media_type=media_type,
+                    sender_message_id=sender_message_id,
+                    piece_index=piece_index,
+                )
                 pieces.append(
                     MessageImage(
                         stored_file_id=kept.stored_file_id,
@@ -1105,7 +1116,13 @@ async def conversation_message_content(
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1
-                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
+                kept = await message_files.keep(
+                    conversation_id,
+                    contents,
+                    media_type=media_type,
+                    sender_message_id=sender_message_id,
+                    piece_index=piece_index,
+                )
                 pieces.append(
                     MessageFile(
                         stored_file_id=kept.stored_file_id,

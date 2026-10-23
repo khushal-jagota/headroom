@@ -388,12 +388,25 @@ export type ReviewProposalItem = {
   waiting_since: number;
 };
 
-export type NavigationReviewItem = ReviewProposalItem & {
+export type NavigationReviewProposalItem = ReviewProposalItem & {
   proposal_field: string;
   proposal_revision: number;
 };
 
-export type ReviewItem = ReviewProposalItem;
+export type ReviewMessageItem = {
+  review_item_type: "message";
+  conversation_id: string;
+  address_id: string;
+  owner_kind: "ticket" | "manager" | "chief";
+  owner_id: string;
+  title: string;
+  waiting_since: number;
+  recap: string;
+  recap_reference: import("./navigation/contracts").ViewContentReference | null;
+};
+
+export type NavigationReviewItem = NavigationReviewProposalItem | ReviewMessageItem;
+export type ReviewItem = ReviewProposalItem | ReviewMessageItem;
 
 export type ReviewResponse = {
   items: ReviewItem[];
