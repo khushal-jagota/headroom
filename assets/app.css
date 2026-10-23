@@ -1459,7 +1459,7 @@ button.list-row:hover .list-row-title {
      inset for both of them; in a host that draws no card — the Chief of Staff — the well
      carries its own, so the transcript matches it rather than sitting a few pixels
      further out. */
-  padding: 32px var(--space-3) 12px;
+  padding: var(--space-5) var(--space-3) 12px;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
 }
