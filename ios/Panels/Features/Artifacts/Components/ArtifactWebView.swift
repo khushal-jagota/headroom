@@ -38,7 +38,7 @@ struct ArtifactWebView: UIViewRepresentable {
         let html = """
         <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src https: http: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; form-action 'none'; object-src 'none'">
-        <style>html,body{margin:0;width:100%;height:100%;background:#151515}iframe{border:0;width:100%;height:100%;display:block}</style>
+        <style>html,body{margin:0;width:100%;height:100%;background:#151515}iframe{border:0;width:100%;height:100%;display:block;background:white}</style>
         </head><body><iframe id="document" sandbox="allow-scripts" title="Artifact"></iframe>
         <script>
         const frame = document.getElementById('document');
