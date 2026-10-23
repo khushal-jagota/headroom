@@ -745,7 +745,7 @@ hand-rolling the same shapes per screen. Each does one job:
 
   The transcript retains native browser anchoring for ordinary history prepends.
   Internal motion writes sizes and scroll position in the same animation frame,
-  over 240ms with linear timing, including card state travel. Reader navigation
+  over 240ms with linear timing. Card state travel uses a separate 150ms duration. Reader navigation
   cancels automatic travel. Replies consume reserved answer room. A new streaming
   line can advance over 120ms when new text arrives and the reader already follows
   newest. A multi-line chunk advances one line per step, bounded by the height
@@ -786,7 +786,19 @@ hand-rolling the same shapes per screen. Each does one job:
   can be that line, and so can a request waiting on you. Clicking the input **peeks** it
   open: a card over the page, with the line gone because the transcript now says the same
   thing. A control takes it **opened**, the available visible height of the pane, and the same control
-  brings it back. Clicking the ticket behind it, or pressing Escape, drops it one state.
+  brings it back. A primary press outside the conversation returns it directly to rest.
+  Escape moves it back one state. Ticket and Manager surfaces share the outside-press rule,
+  including artifact controls beside the document. Presses inside the card keep menus,
+  selection, and conversation previews usable. Outside presses retain their normal action.
+
+  An open HTML artifact announces primary presses through one fixed message from its
+  sandboxed frame. The surface explicitly registers that exact frame. Only its current,
+  visible frame can return that surface to rest. Inline previews do not register.
+  Hidden, detached, fully clipped, unrelated, and offscreen frames cannot dismiss a card.
+  The frame keeps its script-only sandbox and its original document restrictions.
+  State changes measure in the mutation callback before the next paint. Resize and
+  content measurements stay coalesced in an animation frame. Rapid card reversals start
+  at the current rendered height.
 
   Three things are true of all three. Nothing moves it but a person — a request arriving
   or a turn starting never opens it, which is why the line at rest has to carry that news.

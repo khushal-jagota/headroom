@@ -22,7 +22,7 @@
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import { conversationOverlay } from "../lib/conversation/layout/overlay";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
-  import { isPrimaryPressOutsideConversation } from "../lib/conversation/dismissal";
+  import { createConversationDismissal } from "../lib/conversation/dismissal";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
@@ -208,10 +208,8 @@
     conversationState = requestedConversationId ? "opened" : initialTicketConversationState(ownership);
   });
 
-  /** A primary press outside the card dismisses it without interrupting selection. */
-  function dismissConversationOnPointerDown(event: PointerEvent): void {
-    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
-  }
+  const dismissal = createConversationDismissal(() => { conversationState = "rest"; });
+  const dismissOutsideConversation = dismissal.surface;
 
   /** The artifact this screen is showing, when the host does not keep it in an address. */
   let heldFile = $state<ManagedFileTarget | null>(null);
@@ -517,9 +515,9 @@
       </div>
     {:else if ticket.data && masthead}
       {@const detail = ticket.data}
-      <div class="ticket-page" use:conversationOverlay>
+      <div class="ticket-page" use:conversationOverlay use:dismissOutsideConversation>
       <div class="ticket-reading">
-      <main class="ticket-doc" onpointerdowncapture={dismissConversationOnPointerDown}>
+      <main class="ticket-doc">
         <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
@@ -654,6 +652,7 @@
       </main>
       {#if shownFile}
         <ArtifactPreview
+          registerArtifactFrame={dismissal.registerArtifactFrame}
           target={shownFile}
           reloadSignal={artifactReloadSignal}
           bind:element={artifactElement}
@@ -665,7 +664,6 @@
       <div
         class="conversation-layer"
         data-conversation-layer-host
-        onpointerdowncapture={dismissConversationOnPointerDown}
       >
         <div class="conversation-column">
           <LiveConversation

@@ -82,7 +82,11 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
   import ManagerFrame from "../src/components/ManagerFrame.svelte";
   import { conversationOverlay } from "../src/lib/conversation/layout/overlay";
-  import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
+  import { createConversationDismissal } from "../src/lib/conversation/dismissal";
+  import ArtifactPreview from "../src/components/ArtifactPreview.svelte";
+  const cardArtifact = new URLSearchParams(location.search).has("card-artifact");
+  let artifactClicks = $state(0);
+  (window as any).__artifactClicks = () => artifactClicks;
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import { discardHeldPrompt, promoteHeldPrompt } from "../src/lib/conversation/wire";
@@ -189,9 +193,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 
   // The Ticket layout uses the same production predicate as TicketRoute. The
   // manager below mounts its actual production workspace and handlers.
-  function dismissTicketOnPointerDown(event: PointerEvent): void {
-    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
-  }
+  const ticketDismissal = createConversationDismissal(() => { conversationState = "rest"; });
+  const dismissTicketOutside = ticketDismissal.surface;
   (window as any).__setConversationState = (state: ConversationState) => conversationState = state;
 
   (window as any).__appendConversationLine = () => {
@@ -671,19 +674,23 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 {/snippet}
 <div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled || ticketGestures}>
   {#if ticketGestures}
-    <div class="ticket-page" use:conversationOverlay>
+    <div class="ticket-page" use:conversationOverlay use:dismissTicketOutside>
     <div class="ticket-reading">
-    <main class="ticket-doc fixture-document" onpointerdowncapture={dismissTicketOnPointerDown}>
+    <main class="ticket-doc fixture-document">
       <button type="button" data-ticket-behind>Ticket content</button>
     </main>
+    {#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file", ticketId:"t_cardmotion",path:"artifact.html"}}
+      registerArtifactFrame={ticketDismissal.registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}
     </div>
-    <section class="conversation-layer" onpointerdowncapture={dismissTicketOnPointerDown}>
+    <section class="conversation-layer">
       <div class="conversation-column">{@render conversationPane()}</div>
     </section>
     </div>
   {:else}
     <ManagerFrame bind:conversationState>
       <button type="button" data-ticket-behind>Ticket content</button>
+      {#snippet readingAside(registerArtifactFrame)}{#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"}}
+        {registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}{/snippet}
       {#snippet conversation()}{@render conversationPane()}{/snippet}
     </ManagerFrame>
   {/if}
@@ -741,5 +748,6 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   );
 
 
-  return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-pane.py", import.meta.url))};
+  return {resources: [{path:"/files/tickets/t_cardmotion/artifact.html",contentType:"text/html",body:
+    '<!doctype html><html><head><script>window.addEventListener("pointerdown",event=>{if(event.isPrimary&&event.button===0)parent.postMessage({cardTimingPress:performance.timeOrigin+performance.now()},"*")},true)</script></head><body><button id="artifact-button" onclick="document.body.dataset.clicked=String(true)">Artifact control</button></body></html>'}], inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-pane.py", import.meta.url))};
 }
