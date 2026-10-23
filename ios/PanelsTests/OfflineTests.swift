@@ -1,4 +1,6 @@
 import Foundation
+import Observation
+import os
 import XCTest
 @testable import Panels
 
@@ -16,6 +18,31 @@ import XCTest
         XCTAssertNil(reopened.draft(server: "b", id: "text"))
         XCTAssertEqual(try reopened.records(server: "a", kind: "cache").count, LocalStore.cacheLimit)
         XCTAssertEqual(try reopened.record(server: "a", kind: "outbox", id: "send")?.payload, Data("same identity".utf8))
+    }
+    func testCachedReadsDoNotInvalidateOutgoingWorkButEnqueueAndRemovalDo() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let outbox = Outbox(store: store)
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = outbox.entries("a") } onChange: { changes.withLock { $0 += 1 } }
+        try store.put(server: "a", kind: "cache", id: "read", data: Data([1]))
+        try store.put(server: "a", kind: "cache", id: "read", data: Data([2]))
+        try store.remove(server: "a", kind: "cache", id: "read")
+        XCTAssertEqual(changes.withLock { $0 }, 0)
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Keep this")], senderMessageId: "stable", sentAtUnixMilliseconds: 1)
+        let work = PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message)
+        try store.put(server: "a", kind: "outbox", id: work.id, data: JSONEncoder().encode(work), draft: ("draft", ""))
+        XCTAssertEqual(changes.withLock { $0 }, 1)
+        XCTAssertEqual(outbox.entries("a").map(\.id), ["stable"])
+        withObservationTracking { _ = outbox.entries("a") } onChange: { changes.withLock { $0 += 1 } }
+        try store.remove(server: "a", kind: "outbox", id: work.id)
+        XCTAssertEqual(changes.withLock { $0 }, 2)
+        XCTAssertTrue(outbox.entries("a").isEmpty)
+        withObservationTracking { _ = store.workRevision } onChange: { changes.withLock { $0 += 1 } }
+        store.saveDraft("Keep the voice revision", server: "a", id: "voice")
+        XCTAssertEqual(changes.withLock { $0 }, 3)
+        XCTAssertEqual(store.draft(server: "a", id: "voice"), "Keep the voice revision")
     }
     func testEnqueueAndComposerClearShareDurableSave() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

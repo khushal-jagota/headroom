@@ -90,7 +90,7 @@ private struct ConversationSurface: View {
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
             }
         }
-        .onChange(of: LocalStore.shared.revision) { _, _ in model.syncOutbox() }
+        .onChange(of: LocalStore.shared.workRevision) { _, _ in model.syncOutbox() }
         .onChange(of: model.lens) { _, _ in Task { await model.refresh(using: store.client, transcript: true) } }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onDisappear { speech.cancel() }

@@ -20,7 +20,9 @@ import SwiftData
     static let cacheByteLimit = 16 * 1024 * 1024
     private var container: ModelContainer?
     private var startupError: Error?
-    private(set) var revision = 0
+    // Cached GET responses are handed to their screen by the caller. Only durable
+    // user work needs to wake draft restoration and outgoing-work observers.
+    private(set) var workRevision = 0
     var saveError: String?
 
     init(url: URL? = nil) {
@@ -49,7 +51,7 @@ import SwiftData
         }
     }
     func records(server: String, kind: String) throws -> [LocalRecord] {
-        _ = revision
+        _ = workRevision
         return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updated)]))
     }
     func record(server: String, kind: String, id: String) throws -> LocalRecord? {
@@ -75,14 +77,17 @@ import SwiftData
                     if index >= Self.cacheLimit || bytes > Self.cacheByteLimit { context.delete(row) }
                 }
             }
-            try context.save(); revision += 1; saveError = nil
+            try context.save()
+            if kind != "cache" || draft != nil { workRevision += 1 }
+            saveError = nil
         } catch { context.rollback(); saveError = "Couldn’t save on this phone: \(error.localizedDescription)"; throw error }
     }
     func remove(server: String, kind: String, id: String) throws {
         let context = try context
         do {
             if let row = try record(server: server, kind: kind, id: id) { context.delete(row) }
-            try context.save(); revision += 1
+            try context.save()
+            if kind != "cache" { workRevision += 1 }
         } catch { context.rollback(); throw error }
     }
     func draft(server: String, id: String) -> String? {
