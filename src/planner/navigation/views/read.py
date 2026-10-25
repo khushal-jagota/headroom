@@ -9,6 +9,7 @@ from typing import Any, cast, get_args
 
 from planner.navigation.contracts import SCHEMA_VERSION, Continuity, NavigationRecord
 from planner.navigation.delivery_authority import DeliveryUnavailable
+from planner.navigation.review import canonical_review_address, review_message_items
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.contracts import (
     VIEW_PROJECTION_VERSION,
@@ -30,6 +31,7 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
         "locale",
         "selected",
         "selected_conversation_id",
+        "review_conversation_ids",
         "windows",
     }:
         raise ValueError("invalid view request fields")
@@ -63,11 +65,19 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
         )
     ):
         raise ValueError("invalid selected owner")
+    review_ids = value["review_conversation_ids"]
+    if (
+        not isinstance(review_ids, list)
+        or len(review_ids) > config.maximum_requested_rows
+        or any(not isinstance(item, str) or not 0 < len(item) <= 256 for item in review_ids)
+        or len(set(review_ids)) != len(review_ids)
+    ):
+        raise ValueError("invalid Review conversation context")
     windows = value["windows"]
     if not isinstance(windows, list) or len(windows) > config.maximum_windows:
         raise ValueError("invalid view windows")
     seen: set[str] = set()
-    total = 0
+    total = len(review_ids)
     for window in windows:
         if not isinstance(window, dict) or set(window) != {
             "section",
@@ -207,8 +217,13 @@ def read_content(
     # admitting record closures instead of discovering metadata overflow afterward.
     record_bytes = config.maximum_bytes - min(128 * 1024, config.maximum_bytes // 4)
 
-    def closure(key: Key, *, settled_only: bool) -> dict[Key, Any]:
+    def closure(key: Key, *, settled_only: bool, review: bool = False) -> dict[Key, Any]:
         pending = [(key, not settled_only)]
+        if review and key[0] == "ticket":
+            pending.extend(
+                (("address", message["address_id"]), True)
+                for message in review_message_items(conn, ticket_id=key[1])
+            )
         found: dict[Key, Any] = {}
         while pending:
             item, full = pending.pop()
@@ -256,9 +271,11 @@ def read_content(
                 )
         return found
 
-    def admit(key: Key, *, required: bool = False, settled_only: bool = False) -> bool:
+    def admit(
+        key: Key, *, required: bool = False, settled_only: bool = False, review: bool = False
+    ) -> bool:
         nonlocal used
-        additional = closure(key, settled_only=settled_only)
+        additional = closure(key, settled_only=settled_only, review=review)
         # A promotion replaces one key. Charge its byte delta and new dependencies
         # together, and publish none of them when the complete closure does not fit.
         size = sum(
@@ -297,6 +314,17 @@ def read_content(
         if address is None:
             raise DeliveryUnavailable("selected conversation is not addressed to this owner")
         admit(("address", address[0]), required=True)
+    review_context = []
+    for conversation_id in value["review_conversation_ids"]:
+        address_id = canonical_review_address(conn, conversation_id)
+        if address_id is not None:
+            admit(("address", address_id), required=True)
+        review_context.append(
+            {
+                "conversation_id": conversation_id,
+                "canonical_address_id": address_id,
+            }
+        )
     windows: list[Any] = []
     pending_windows: list[Any] = []
     for window in value["windows"]:
@@ -361,14 +389,22 @@ def read_content(
     for item in pending_windows:
         rows, accepted = item[6], item[7]
         for row in rows[:1]:
-            if admit((row[3], row[4]), settled_only=item[0]["section"] == "settled"):
+            if admit(
+                (row[3], row[4]),
+                settled_only=item[0]["section"] == "settled",
+                review=item[0]["section"] == "review",
+            ):
                 accepted.append(row)
     for position in range(1, config.maximum_window_rows):
         for item in pending_windows:
             rows, accepted = item[6], item[7]
             if position < len(rows) and len(accepted) == position:
                 row = rows[position]
-                if admit((row[3], row[4]), settled_only=item[0]["section"] == "settled"):
+                if admit(
+                    (row[3], row[4]),
+                    settled_only=item[0]["section"] == "settled",
+                    review=item[0]["section"] == "review",
+                ):
                     accepted.append(row)
     for window, key, binding, base, total, backward, _rows, accepted in pending_windows:
         if backward:
@@ -416,6 +452,7 @@ def read_content(
             "records": [records[key] for key in sorted(records)],
             "windows": windows,
             "counts": counts,
+            "review_context": review_context,
         },
     )
 

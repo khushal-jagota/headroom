@@ -29,7 +29,7 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
 )
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, MessageText, text_message_content
 from planner.conversation.snapshot import SubprocessBackendProbeEnvironment
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
@@ -44,14 +44,18 @@ class ScriptedChild:
         self.sink = sink
         self.token: TurnToken | None = None
         self.answers: dict[str, tuple[UserInputAnswer, ...]] = {}
+        self.delivered_text: list[str] = []
 
     async def start(self, *args: Any, **kwargs: Any) -> None:
         pass
 
     async def write_prompt(
-        self, turn_token: TurnToken, *args: Any, **kwargs: Any,
+        self, turn_token: TurnToken, content: MessageContent, *args: Any, **kwargs: Any,
     ) -> BackendPromptAccepted:
         self.token = turn_token
+        self.delivered_text.append("\n".join(
+            piece.text for piece in content if isinstance(piece, MessageText)
+        ))
         return BackendPromptAccepted(composed_content_delivered=True)
 
     async def steer(self, *args: Any, **kwargs: Any) -> BackendSteerAccepted:
@@ -124,6 +128,7 @@ def build_app(config: Config) -> FastAPI:
         create_schema(conn)
         seed_test_model_catalogue(conn)
     children: dict[str, ScriptedChild] = {}
+    delivered_text: dict[str, list[str]] = {}
 
     def make_child(
         *,
@@ -132,6 +137,7 @@ def build_app(config: Config) -> FastAPI:
         message_files: Any,
     ) -> ScriptedChild:
         child = ScriptedChild(event_sink)
+        child.delivered_text = delivered_text.setdefault(resolved_start.conversation_id, [])
         children[resolved_start.conversation_id] = child
         return child
 
@@ -207,6 +213,10 @@ def build_app(config: Config) -> FastAPI:
             request_id: {answer.question_id: {"answers": list(answer.answers)} for answer in values}
             for request_id, values in children[conversation_id].answers.items()
         }
+
+    @app.get("/api/test/signals/{conversation_id}/delivered")
+    async def delivered(conversation_id: str) -> dict[str, list[str]]:
+        return {"texts": delivered_text[conversation_id]}
 
     return app
 

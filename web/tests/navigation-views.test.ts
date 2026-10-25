@@ -9,10 +9,10 @@ import {authority,continuity,conversation} from './support/navigation/fixtures';
 
 function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapshot {
   const source=conversation('c');
-  return {event:'snapshot',wire_version:3,projection_version:5,view_id:`view-${request.scope_generation}`,
+  return {event:'snapshot',wire_version:3,projection_version:6,view_id:`view-${request.scope_generation}`,
     scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:{...continuity,revision},
     content_version:name,mode:'current',authority:authority(),proof:null,
-    content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{first_unread_owner_message_at:source.value.first_unread_owner_message_at,attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
+    content:{review_context:[],records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{first_unread_owner_message_at:source.value.first_unread_owner_message_at,attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
 }
 function fixture() {
   const connections:{request:ViewRequest;send:(frame:ViewFrame)=>void;error:()=>void;signal:AbortSignal;closed:boolean}[]=[];
@@ -40,11 +40,11 @@ describe('bounded navigation owner',()=>{
       let revision=0;
       for(const total of [9,0,null,6]) {
         const previous=owner.getState().publication!;
-        source.send({event:'patch',wire_version:3,projection_version:5,view_id:initial.view_id,
+        source.send({event:'patch',wire_version:3,projection_version:6,view_id:initial.view_id,
           scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
           coverage:{...continuity,revision:String(++revision)},previous_coverage:previous.continuity,
           content_version:`count-${revision}`,previous_content_version:previous.view!.contentVersion,
-          upserts:[],evictions:[],windows:[],counts:{...initial.content.counts,running_conversations:total}});
+          upserts:[],evictions:[],windows:[],review_context:[],counts:{...initial.content.counts,running_conversations:total}});
         expect(count()).toBe(total);
         expect(navigationReviewPresentation(owner.getState().effective!).runningConversationCount).toBe(total);
         expect(owner.getState().publication!.records).toEqual(initial.content.records);
@@ -72,7 +72,7 @@ describe('bounded navigation owner',()=>{
       source.send(checkpoint);
       expect(notifications).toBe(before);expect(owner.getState().publication!.continuity.revision).toBe('1');
       expect(await owner.waitForVisibility(fence,{requiredObservers:[observer],timeoutMs:100})).toEqual({status:'included',reason:null});
-      source.send({...checkpoint,event:'patch',previous_coverage:checkpoint.coverage,coverage:{...continuity,revision:'2'},content_version:'two',previous_content_version:'one',upserts:[{kind:'project',id:'p',value:{name:'two'}}],evictions:[],windows:[],counts:initial.content.counts});
+      source.send({...checkpoint,event:'patch',previous_coverage:checkpoint.coverage,coverage:{...continuity,revision:'2'},content_version:'two',previous_content_version:'one',upserts:[{kind:'project',id:'p',value:{name:'two'}}],evictions:[],windows:[],review_context:[],counts:initial.content.counts});
       let resolved=false;const pending=owner.waitForVisibility({...fence,revision:'2'},{requiredObservers:[observer],timeoutMs:100}).then(value=>{resolved=true;return value;});
       await flush();expect(resolved).toBe(false);
       const next=owner.getState().publication!;const observed=observer.observeSelectors(next,owner.getState().generation);observer.acknowledgeRender(next,observed);
@@ -119,31 +119,36 @@ describe('bounded navigation owner',()=>{
       expect((await pending).status).toBe('included');
     }finally{owner.dispose();}
   });
-  it('accepts only projection 5 and replaces lean/full records under one key',async()=>{
+  it('accepts only projection 6 and replaces lean/full records under one key',async()=>{
     const {owner,connections}=fixture();
     const presentationFor=createNavigationPresentationCache();
     try {
-      expect(defaultViewRequest().projection_version).toBe(5);
+      expect(defaultViewRequest().projection_version).toBe(6);
       const started=owner.start();
       const initial=snapshot(connections[0].request);
       const lean={kind:'manager' as const,id:'settled',value:{title:'Settled',created_at:1,updated_at:1,settled:true as const,conversation_id:'c'}};
       initial.content.records.push(lean);
+      initial.content.review_context=[{conversation_id:'gone',canonical_address_id:null}];
+      expect(()=>parseFrame({...initial,content:{...initial.content,review_context:[...initial.content.review_context,...initial.content.review_context]}})).toThrow('Duplicate review context');
+      expect(()=>parseFrame({...initial,content:{...initial.content,review_context:[{conversation_id:'c',canonical_address_id:'missing'}]}})).toThrow('Missing review context dependency');
       expect(()=>parseFrame({...initial,projection_version:3})).toThrow();
       expect(()=>applyFrame(undefined,{...initial,projection_version:3} as unknown as ViewFrame)).toThrow('projection version');
       connections[0].send(parseFrame(initial));await started;
       const first=presentationFor(owner.getState().effective!);
+      expect(owner.getState().publication!.view!.reviewContext).toEqual(initial.content.review_context);
       expect(first.settledManagers.map(item=>item.id)).toEqual(['settled']);
       expect(first.rawManagersById.has('settled')).toBe(false);
       expect(first.managersById.has('settled')).toBe(false);
       expect(first.settledManagers[0]).not.toHaveProperty('recap');
       expect(first.settledManagers[0].updated_at).toBe(1);
       const full={...lean,value:{...lean.value,recap:'Retained for selection',recap_preview:'Retained',project_id:'p',recap_reference:null}};
-      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:5,view_id:initial.view_id,
+      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:6,view_id:initial.view_id,
         scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
         coverage:{...continuity,revision:'1'},previous_coverage:initial.coverage,content_version:'full',previous_content_version:initial.content_version,
-        upserts:[full],evictions:[],windows:[],counts:initial.content.counts};
+        upserts:[full],evictions:[],windows:[],review_context:[],counts:initial.content.counts};
       connections[0].send(parseFrame(patch));
       const promoted=presentationFor(owner.getState().effective!);
+      expect(owner.getState().publication!.view!.reviewContext).toEqual([]);
       expect(promoted.rawManagersById.get('settled')?.value.recap).toBe('Retained for selection');
       expect(promoted.managersById.get('settled')?.project).toBe('one');
       expect(promoted.settledManagers).toHaveLength(0);
@@ -163,6 +168,17 @@ describe('bounded navigation owner',()=>{
       expect(request.windows.reduce((total,row)=>total+row.limit,0)).toBeLessThanOrEqual(256);
       expect(request.windows.filter(row=>row.section==='children').every(row=>row.limit===30)).toBe(true);
       expect(JSON.stringify(windows)).toBe(before);expect(defaultViewRequest().windows).toHaveLength(3);
+      owner.setDemand('held-review',{windows:[],review_conversation_ids:['b','a','b']});
+      const held=owner.getRequest();
+      expect(held.review_conversation_ids).toEqual(['a','b']);
+      expect(held.windows.reduce((total,row)=>total+row.limit,0)+held.review_conversation_ids.length).toBeLessThanOrEqual(256);
+      const many=Array.from({length:197},(_,index)=>`held-${index}`);
+      owner.setDemand('held-review',{windows:[],review_conversation_ids:many});
+      const bounded=owner.getRequest();
+      expect(bounded.review_conversation_ids).toEqual(many.slice().sort());
+      expect(bounded.windows.reduce((total,row)=>total+row.limit,0)+bounded.review_conversation_ids.length).toBeLessThanOrEqual(256);
+      expect(bounded.windows.map(window=>window.section)).toEqual(held.windows.map(window=>window.section));
+      owner.setDemand('held-review',undefined);
       owner.setDemand('rail',undefined);
       const ordinary={kind:'manager' as const,id:'ordinary'};
       const full=[viewWindow('children',ordinary,{child_filter:'active',limit:0}),...WORK_ITEM_TICKET_GROUPS.filter(g=>g.key!=='awaiting_reply').map(g=>viewWindow('children',ordinary,{child_filter:'active',group:g.key,limit:60})),...(['backlogged','done'] as const).map(child_filter=>viewWindow('children',ordinary,{child_filter,limit:60})),...Array.from({length:60},(_,i)=>viewWindow('rail_tickets',{kind:'manager',id:`parent${i}`},{limit:60})),viewWindow('settled',null,{limit:60}),...Array.from({length:60},(_,i)=>viewWindow('unread',{kind:'manager',id:`settled${i}`},{limit:60}))];

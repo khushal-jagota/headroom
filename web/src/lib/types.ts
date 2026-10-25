@@ -380,33 +380,11 @@ export type ManagerArtifact = {
   children: ManagerArtifact[];
 };
 
-export type ReviewProposalItem = {
-  review_item_type: "proposal";
-  ticket_id: string;
-  field: string;
-  title: string;
-  waiting_since: number;
-};
-
-export type NavigationReviewProposalItem = ReviewProposalItem & {
-  proposal_field: string;
-  proposal_revision: number;
-};
-
-export type ReviewMessageItem = {
-  review_item_type: "message";
-  conversation_id: string;
-  address_id: string;
-  owner_kind: "ticket" | "manager" | "chief";
-  owner_id: string;
-  title: string;
-  waiting_since: number;
-  recap: string;
-  recap_reference: import("./navigation/contracts").ViewContentReference | null;
-};
-
-export type NavigationReviewItem = NavigationReviewProposalItem | ReviewMessageItem;
-export type ReviewItem = ReviewProposalItem | ReviewMessageItem;
+export type {
+  ReviewProposalItem, NavigationReviewProposalItem, ReviewMessageItem,
+  ReviewTicketItem, NavigationReviewTicketItem, NavigationReviewItem, ReviewItem,
+} from "./navigation/contracts";
+import type { ReviewItem } from "./navigation/contracts";
 
 export type ReviewResponse = {
   items: ReviewItem[];
