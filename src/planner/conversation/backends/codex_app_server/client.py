@@ -99,6 +99,8 @@ STANDARD_ERROR_SETTLE_SECONDS = 0.02
 class CodexAppServerError(Exception):
     """Something on the codex wire could not be done. Always say which."""
 
+    _receive_ordinal: int | None = None
+
 
 class CodexChildWouldNotStart(CodexAppServerError):
     """The ``codex app-server`` process would not spawn."""
@@ -181,6 +183,7 @@ class CodexAppServerClient:
         # it takes this count when it starts and asks for what arrived after it.
         self._standard_error_bytes_ever = 0
         self._wire_broken = False
+        self._receive_ordinal = 0
 
     # --- the process --------------------------------------------------------------------
 
@@ -329,7 +332,8 @@ class CodexAppServerClient:
             message["params"] = dict(params)
         try:
             await self._write(message)
-        except CodexWireFailed:
+        except CodexWireFailed as failed:
+            failed._receive_ordinal = self._next_receive_ordinal()
             self._pending.pop(request_id, None)
             if not answer.done():
                 answer.cancel()
@@ -345,6 +349,27 @@ class CodexAppServerClient:
         timeout_seconds: float | None = None,
     ) -> Any:
         """Wait for one begun request's answer and unwrap it."""
+        envelope = await self._finish_request_envelope(
+            method, answer, poison_wire_on_timeout=poison_wire_on_timeout,
+            timeout_seconds=timeout_seconds,
+        )
+        return envelope.get("result")
+
+    async def _catalog_app_list(
+        self, params: Mapping[str, Any], *, timeout_seconds: float
+    ) -> tuple[Any, int]:
+        """Keep wire order private to the catalog, without changing request results."""
+        answer = await self.begin_request("app/list", params)
+        envelope = await self._finish_request_envelope(
+            "app/list", answer, poison_wire_on_timeout=False,
+            timeout_seconds=timeout_seconds,
+        )
+        return envelope.get("result"), envelope["_catalog_receive_ordinal"]
+
+    async def _finish_request_envelope(
+        self, method: str, answer: asyncio.Future[dict[str, Any]], *,
+        poison_wire_on_timeout: bool, timeout_seconds: float | None,
+    ) -> dict[str, Any]:
         try:
             envelope = await asyncio.wait_for(
                 answer,
@@ -354,22 +379,26 @@ class CodexAppServerClient:
             self._remove_pending_answer(answer)
             if poison_wire_on_timeout:
                 self._wire_broken = True
-            raise CodexWireFailed(
+            failed = CodexWireFailed(
                 f"{method} was not answered", request_may_have_been_written=True
-            ) from never_answered
+            )
+            failed._receive_ordinal = self._next_receive_ordinal()
+            raise failed from never_answered
         except asyncio.CancelledError:
             raise
         except CodexWireFailed:
             raise
         error = envelope.get("error")
         if error is not None:
-            raise CodexRequestRejected(
+            rejected = CodexRequestRejected(
                 method,
                 error.get("code") if isinstance(error, dict) else None,
                 str(error.get("message")) if isinstance(error, dict) else str(error),
                 error.get("data") if isinstance(error, dict) else None,
             )
-        return envelope.get("result")
+            rejected._receive_ordinal = envelope["_catalog_receive_ordinal"]
+            raise rejected
+        return envelope
 
     def _remove_pending_answer(self, answer: asyncio.Future[dict[str, Any]]) -> None:
         for request_id, pending in tuple(self._pending.items()):
@@ -437,6 +466,7 @@ class CodexAppServerClient:
 
     async def _route(self, message: dict[str, Any]) -> None:
         """Say what a message is from what it carries, since nothing tags it."""
+        ordinal = self._next_receive_ordinal()
         method = message.get("method")
         if isinstance(method, str):
             if "id" in message:
@@ -451,9 +481,13 @@ class CodexAppServerClient:
                 LOGGER.debug("codex %s: an answer arrived for nothing", self._description)
                 return
             if not answer.done():
-                answer.set_result(message)
+                answer.set_result({**message, "_catalog_receive_ordinal": ordinal})
             return
         LOGGER.warning("codex %s: a message was none of the three shapes", self._description)
+
+    def _next_receive_ordinal(self) -> int:
+        self._receive_ordinal += 1
+        return self._receive_ordinal
 
     async def _on_notification(self, method: str, params: Any) -> None:
         model = self._consumed_notifications.get(method)
@@ -530,9 +564,9 @@ class CodexAppServerClient:
     def _fail_everything_pending(self, why: str) -> None:
         for answer in list(self._pending.values()):
             if not answer.done():
-                answer.set_exception(
-                    CodexWireFailed(why, request_may_have_been_written=True)
-                )
+                failed = CodexWireFailed(why, request_may_have_been_written=True)
+                failed._receive_ordinal = self._next_receive_ordinal()
+                answer.set_exception(failed)
         self._pending.clear()
 
 

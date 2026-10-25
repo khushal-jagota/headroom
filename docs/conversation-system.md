@@ -1098,12 +1098,22 @@ the current one ends. The held row says it is waiting because a command runs as 
 turn. Hermes and Claude take a steered command inside the running turn, and keep their
 behaviour.
 
-Codex refreshes the complete catalog after skill or app change notifications. Refreshes
-run beside the app-server reader and merge repeated notifications. Each source is read
-independently. A failed source contributes nothing to the new snapshot, while fresh
-sibling sources remain available. Apps appear only when both app reads succeed. Source
-errors name the failed source in the log. Every refresh publishes its truthful new
-snapshot, including a snapshot that contains only native commands.
+Codex reads every source at startup and after a skill change. An app notification supplies
+its own app snapshot, so its refresh does not request `app/list` again. Both refresh paths
+read skills, installed callability, and plugins. Equal app metadata can accompany changed
+callability. Refreshes run beside the reader, coalesce repeated input, and preserve input
+that arrives during a pass. Each pending pass observes the same coalescence interval.
+
+The latest app observation wins in the client's receive order. A complete paginated read
+uses its first page as its freshness boundary. A failed read uses the failed response or
+the timeout position. An older notification cannot restore apps after a newer failure.
+A later notification can restore them. Failed sources contribute nothing, fresh sibling
+sources remain available, and source errors name the source in the log.
+
+The first snapshot publishes even when it is empty. Later snapshots publish only when
+visible entries change. A fresh snapshot still replaces invocation paths when its entries
+are equal. A failed publication leaves the previous snapshot and publication marker intact.
+A relay reconnect keeps this marker with the surviving child. A new child starts unpublished.
 
 Codex resolves a selected token against that complete snapshot when the prompt starts.
 Skills use Codex skill input. Apps and plugins use exact mention paths. Exact protocol

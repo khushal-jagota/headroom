@@ -221,6 +221,14 @@ class _CatalogSnapshot:
         return next((invocation for key, invocation in self.invocations if key == token), None)
 
 
+@dataclass(frozen=True, slots=True)
+class _AppObservation:
+    """The latest app snapshot or unavailability, in the client's receive order."""
+
+    ordinal: int
+    apps: tuple[bindings.AppInfo, ...] | None
+
+
 EMPTY_CATALOG_SNAPSHOT = _CatalogSnapshot()
 
 CODEX_BUILT_IN_CATALOG_ENTRIES: tuple[ComposerCatalogEntry, ...] = (
@@ -350,7 +358,12 @@ class CodexAppServerBackendChild:
         self._standard_error_the_next_turn_starts_from = 0
         self._asks_raised = 0
         self._catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
-        self._catalog_refresh_requested = False
+        self._published_catalog_entries: tuple[ComposerCatalogEntry, ...] | None = None
+        self._catalog_full_generation = 0
+        self._catalog_app_generation = 0
+        self._catalog_full_completed = 0
+        self._catalog_app_completed = 0
+        self._app_observation = _AppObservation(-1, None)
         self._catalog_refresh_task: asyncio.Task[None] | None = None
         self._catalog_refresh_lock = asyncio.Lock()
 
@@ -752,16 +765,30 @@ class CodexAppServerBackendChild:
 
     # --- the composer catalogue ----------------------------------------------------------
 
-    async def _refresh_catalog(self) -> None:
-        """Publish a fresh truthful snapshot, even when one source is unavailable."""
+    async def _refresh_catalog(self, *, full_refresh: bool = True) -> None:
+        """Install fresh invocation data, and publish only a changed visible catalog."""
         async with self._catalog_refresh_lock:
-            snapshot = await self._read_catalog_snapshot()
-            await self._sink.composer_catalog_reported(snapshot.entries)
+            full_generation = self._catalog_full_generation
+            app_generation = self._catalog_app_generation
+            # A full invalidation that arrived before the lock takes precedence.
+            full_refresh = full_refresh or full_generation > self._catalog_full_completed
+            snapshot = (
+                await self._read_catalog_snapshot() if full_refresh
+                else await self._read_catalog_snapshot(query_apps=False)
+            )
+            if self._published_catalog_entries != snapshot.entries:
+                await self._sink.composer_catalog_reported(snapshot.entries)
+                self._published_catalog_entries = snapshot.entries
             self._catalog_snapshot = snapshot
+            self._catalog_full_completed = full_generation
+            self._catalog_app_completed = app_generation
 
-    def _request_catalog_refresh(self) -> None:
-        """Coalesce invalidations without making the app-server reader wait for requests."""
-        self._catalog_refresh_requested = True
+    def _request_catalog_refresh(self, *, apps_only: bool = False) -> None:
+        """Record input without making the app-server reader await source requests."""
+        if apps_only:
+            self._catalog_app_generation += 1
+        else:
+            self._catalog_full_generation += 1
         if self._catalog_refresh_task is not None and not self._catalog_refresh_task.done():
             return
         self._catalog_refresh_task = asyncio.create_task(
@@ -769,25 +796,40 @@ class CodexAppServerBackendChild:
             name=f"planner.conversation.codex.catalog.{self._resolved_start.conversation_id}",
         )
 
+    def _catalog_work_pending(self) -> bool:
+        return (
+            self._catalog_full_generation > self._catalog_full_completed
+            or self._catalog_app_generation > self._catalog_app_completed
+        )
+
     async def _run_catalog_refreshes(self) -> None:
         try:
-            await asyncio.sleep(CATALOG_REFRESH_COALESCE_SECONDS)
-            while self._catalog_refresh_requested:
-                self._catalog_refresh_requested = False
-                await self._refresh_catalog()
+            while self._catalog_work_pending():
+                await asyncio.sleep(CATALOG_REFRESH_COALESCE_SECONDS)
+                await self._refresh_catalog(full_refresh=False)
         finally:
             self._catalog_refresh_task = None
 
-    async def _read_catalog_snapshot(self) -> _CatalogSnapshot:
+    def _observe_apps(self, ordinal: int, apps: tuple[bindings.AppInfo, ...] | None) -> None:
+        if ordinal > self._app_observation.ordinal:
+            self._app_observation = _AppObservation(ordinal, apps)
+
+    async def _read_catalog_snapshot(self, *, query_apps: bool = True) -> _CatalogSnapshot:
         thread_id = self._bound_thread()
         workspace = str(self._resolved_start.workspace_folder)
-        skills, installed_apps, apps, plugins = await asyncio.gather(
+        # Read all independent sources concurrently. App-only passes reuse the winning
+        # observation, but always reread installed callability and sibling sources.
+        async def observe_apps() -> None:
+            if query_apps:
+                await self._read_all_apps_or_none(thread_id)
+
+        skills, installed_apps, plugins, _ = await asyncio.gather(
             self._read_skills(workspace),
             self._read_installed_apps(thread_id),
-            self._read_all_apps_or_none(thread_id),
             self._read_plugins(workspace),
+            observe_apps(),
         )
-        return _catalog_snapshot(skills, installed_apps, apps, plugins)
+        return _catalog_snapshot(skills, installed_apps, self._app_observation.apps, plugins)
 
     async def _read_skills(self, workspace: str) -> bindings.SkillsListResponse | None:
         try:
@@ -818,12 +860,16 @@ class CodexAppServerBackendChild:
             self._log_catalog_source_failure("app/installed", failed)
             return None
 
-    async def _read_all_apps_or_none(self, thread_id: str) -> tuple[bindings.AppInfo, ...] | None:
+    async def _read_all_apps_or_none(self, thread_id: str) -> None:
         try:
-            return await self._read_all_apps(thread_id)
-        except (CodexAppServerError, ValidationError) as failed:
+            apps, ordinal = await self._read_all_apps(thread_id)
+        except CodexAppServerError as failed:
             self._log_catalog_source_failure("app/list", failed)
-            return None
+            # The client or page decoder stamps failure where it occurs, never here.
+            assert failed._receive_ordinal is not None
+            self._observe_apps(failed._receive_ordinal, None)
+            return
+        self._observe_apps(ordinal, apps)
 
     async def _read_plugins(self, workspace: str) -> bindings.PluginInstalledResponse | None:
         try:
@@ -860,21 +906,35 @@ class CodexAppServerBackendChild:
             timeout_seconds=CATALOG_REQUEST_TIMEOUT_SECONDS,
         )
 
-    async def _read_all_apps(self, thread_id: str) -> tuple[bindings.AppInfo, ...]:
+    async def _read_all_apps(
+        self, thread_id: str
+    ) -> tuple[tuple[bindings.AppInfo, ...], int]:
         cursor: str | None = None
         all_apps: list[bindings.AppInfo] = []
         seen_cursors: set[str] = set()
+        first_page_ordinal: int | None = None
         while True:
-            result = await self._catalog_request(
-                "app/list", bindings.AppsListParams(cursor=cursor, threadId=thread_id)
+            result, ordinal = await self._client._catalog_app_list(
+                _wire(bindings.AppsListParams(cursor=cursor, threadId=thread_id)),
+                timeout_seconds=CATALOG_REQUEST_TIMEOUT_SECONDS,
             )
-            page = bindings.AppsListResponse.model_validate(result)
+            try:
+                page = bindings.AppsListResponse.model_validate(result)
+            except ValidationError as malformed:
+                failed = CodexAppServerError(str(malformed))
+                failed._receive_ordinal = ordinal
+                raise failed from malformed
+            if first_page_ordinal is None:
+                first_page_ordinal = ordinal
             all_apps.extend(page.data)
             cursor = page.nextCursor
             if cursor is None:
-                return tuple(all_apps)
+                # Later pages cannot establish the freshness of earlier page contents.
+                return tuple(all_apps), first_page_ordinal
             if cursor in seen_cursors:
-                raise CodexAppServerError("app/list repeated a pagination cursor")
+                failed = CodexAppServerError("app/list repeated a pagination cursor")
+                failed._receive_ordinal = ordinal
+                raise failed
             seen_cursors.add(cursor)
 
     def _catalog_invocation(self, content: MessageContent) -> _CatalogInvocation | None:
@@ -1344,8 +1404,11 @@ class CodexAppServerBackendChild:
                 await self._on_item_completed(notification)
             case bindings.ErrorNotification():
                 self._on_error(notification)
-            case bindings.SkillsChangedNotification() | bindings.AppListUpdatedNotification():
+            case bindings.SkillsChangedNotification():
                 self._request_catalog_refresh()
+            case bindings.AppListUpdatedNotification():
+                self._observe_apps(self._client._receive_ordinal, tuple(notification.data))
+                self._request_catalog_refresh(apps_only=True)
             case _:
                 LOGGER.debug("codex sent %s, which nothing here reads", method)
 

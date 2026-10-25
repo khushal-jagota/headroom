@@ -646,6 +646,197 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
     asyncio.run(run())
 
 
+def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Actual adapter admission feeds the ordinary sink, spool, and both replay passes.
+
+    Source parsing/order belongs to the client bench. This connected case replaces
+    only snapshot reads, so it isolates duplicate admission at the durable boundary.
+    """
+    from tests.support.conversation_codex_app_server_bench import (
+        _scripted_child,
+    )
+
+    from planner.conversation.backends.codex_app_server.adapter import _CatalogSnapshot
+    from planner.executor import mac as mac_module
+    from planner.tickets import data
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, with_worker_ticket=True)
+        first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
+        try:
+            registered = next(iter(harness.mac.registry.children.values()))
+            assert registered.ticket_id is not None
+            assert harness.native.sink is not None and harness.native.turn is not None
+            sink, turn = harness.native.sink, harness.native.turn
+            generation = harness.mac.identity.connection_generation
+            snapshot = _CatalogSnapshot()
+            pass_number = 0
+            produced: dict[int, list[QueuedEnvelope]] = {0: [], 1: [], 2: []}
+            accepted: list[tuple[QueuedEnvelope, AcceptanceReceipt]] = []
+            retained_at_ready: list[QueuedEnvelope] = []
+            request = harness.mac._request
+            accept = harness.endpoint._accept_envelope
+            send = harness.endpoint._send
+
+            async def read_snapshot() -> _CatalogSnapshot:
+                return snapshot
+
+            # Reuse the bench constructor without starting another process. Its
+            # real adapter publishes into the registry's ordinary backend sink.
+            workspace = tmp_path / "catalog-producer"
+            workspace.mkdir()
+            async with _scripted_child(workspace, script={}) as bench:
+                adapter = bench.child
+                adapter._sink = sink
+                monkeypatch.setattr(adapter, "_read_catalog_snapshot", read_snapshot)
+
+                async def publish_change(token: str) -> None:
+                    nonlocal snapshot
+                    snapshot = _CatalogSnapshot(
+                        entries=(
+                            ComposerCatalogEntry(
+                                ComposerCatalogEntryKind.command, token, token, "Real change"
+                            ),
+                        )
+                    )
+                    await adapter._refresh_catalog()
+                    produced[pass_number].append(harness.mac.spool.pending()[-1])
+                    await sink.agent_message_delta(turn, f"retained pass {pass_number}")
+                    produced[pass_number].append(harness.mac.spool.pending()[-1])
+
+                async def observe_request(
+                    kind: WireMessageKind, payload: JsonObject
+                ) -> WireMessage:
+                    nonlocal pass_number
+                    response = await request(kind, payload)
+                    if (
+                        harness.mac.identity.connection_generation > generation
+                        and kind is WireMessageKind.reconcile_inventory
+                        and not payload["children"]
+                        and not payload["retained_command_outcomes"]
+                        and pass_number < 2
+                    ):
+                        pass_number += 1
+                        if pass_number == 1:
+                            first_inventory.set()
+                            await release_inventory.wait()
+                    return response
+
+                async def observe_accept(
+                    envelope: QueuedEnvelope, identity: ExecutorIdentity
+                ) -> AcceptanceReceipt:
+                    receipt = await accept(envelope, identity)
+                    accepted.append((envelope, receipt))
+                    return receipt
+
+                async def produce_during_replay(message: WireMessage) -> None:
+                    if (
+                        message.kind is WireMessageKind.receipt
+                        and pass_number in (1, 2)
+                        and not produced[pass_number]
+                    ):
+                        await publish_change(f"/changed_in_pass_{pass_number}")
+                    if message.kind is WireMessageKind.reconciliation_ready:
+                        assert pass_number == 2
+                        retained_at_ready.extend(harness.mac.spool.pending())
+                    await send(message)
+
+                monkeypatch.setattr(harness.mac, "_request", observe_request)
+                monkeypatch.setattr(harness.endpoint, "_accept_envelope", observe_accept)
+                monkeypatch.setattr(harness.endpoint, "_send", produce_during_replay)
+                assert harness.endpoint.writer is not None
+                harness.endpoint.writer.close()
+                await asyncio.wait_for(first_inventory.wait(), 5)
+                assert not harness.endpoint.ready
+                assert not harness.mac.spool.pending()
+                await adapter._refresh_catalog()  # Initial empty publication is real work.
+                initial = harness.mac.spool.pending()
+                assert len(initial) == 1
+                produced[0].extend(initial)
+                for _ in range(300):
+                    await adapter._refresh_catalog()
+                # Equality creates no durable sequence ahead of the canonical write
+                # or the replay prefix. No queue reset/filter supplies this result.
+                assert harness.mac.spool.pending() == initial
+                monkeypatch.setattr(mac_module, "CLI_RESULT_TIMEOUT_SECONDS", 0.02)
+                response = await harness.mac.handle_ipc(
+                    IpcRequest(
+                        "equal_catalog_reconnect_recap",
+                        IpcOperation.write,
+                        registered.reference.child_id,
+                        registered.capability,
+                        {
+                            "operation": "ticket.edit",
+                            "arguments": {
+                                "ticket_id": registered.ticket_id,
+                                "body": {"recap": "Catalog duplicates do not precede this write"},
+                            },
+                        },
+                    )
+                )
+                assert response.queued is not None and response.error is None
+                write = harness.mac.spool.pending()[-1]
+                assert write.submission_id == response.queued.submission_id
+                assert write.sequence == initial[0].sequence + 1
+                assert len(harness.mac.spool.pending()) == 2
+                release_inventory.set()
+                await eventually(
+                    lambda: harness.mac.state is ConnectionState.ready and bool(retained_at_ready),
+                    "Catalog replay did not complete both phases",
+                )
+                assert produced[1] and produced[2]
+                assert {row.submission_id for row in produced[2]} <= {
+                    row.submission_id for row in retained_at_ready
+                }
+                await eventually(
+                    lambda: not harness.mac.spool.pending(), "Retained work did not drain"
+                )
+                sequences = [row.sequence for row, _ in accepted]
+                expected = [*produced[0], write, *produced[1], *produced[2]]
+                assert sequences == [row.sequence for row in expected]
+                assert len(sequences) == len(set(sequences))
+                assert all(
+                    receipt.disposition is ReceiptDisposition.accepted for _, receipt in accepted
+                )
+                receipt = harness.endpoint.store.lookup_receipt(
+                    write.sender_id, write.submission_id
+                )
+                assert receipt is not None and receipt.disposition is ReceiptDisposition.accepted
+                connection = connect(harness.endpoint.db_path)
+                try:
+                    assert data.read_ticket(connection, registered.ticket_id).recap == (
+                        "Catalog duplicates do not precede this write"
+                    )
+                finally:
+                    connection.close()
+                # The same producer retains its marker over the real relay reconnect.
+                before = len(accepted)
+                await adapter._refresh_catalog()
+                assert not harness.mac.spool.pending() and len(accepted) == before
+                assert harness.native.start_count == harness.native.prompt_count == 1
+                assert next(iter(harness.mac.registry.children.values())) is registered
+                # A new adapter constructor starts unpublished even for equal entries.
+                new_workspace = tmp_path / "new-catalog-producer"
+                new_workspace.mkdir()
+                async with _scripted_child(new_workspace, script={}) as replacement:
+                    replacement.child._sink = sink
+                    monkeypatch.setattr(replacement.child, "_read_catalog_snapshot", read_snapshot)
+                    await replacement.child._refresh_catalog()
+                    assert len(harness.mac.spool.pending()) == 1
+                    await eventually(
+                        lambda: not harness.mac.spool.pending(),
+                        "New producer publication did not drain",
+                    )
+                assert len(accepted) == before + 1
+        finally:
+            release_inventory.set()
+            await harness.close()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("receipt_failure", ["disconnect", "unexpected", "silent"])
 def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     tmp_path: Path,

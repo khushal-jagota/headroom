@@ -1,10 +1,11 @@
-"""Codex app-server protocol bindings. Generated — do not edit.
+"""Codex app-server turn protocol bindings. Generated — do not edit.
 
 Regenerate with:
-    python -m planner.conversation.backends.codex_app_server.generate_bindings
+    python -m planner.conversation.backends.codex_app_server.generate_bindings --bundle turn
 
 The pin these models were generated under:
 
+    bundle                 turn
     codex binary version   codex-cli 0.153.3
     upstream openai/codex  rust-v0.153.3 = b1a547b1f73ce86205d9222ac19cff334b3b7a2e
     schema obtained by     codex app-server generate-json-schema --out <dir>
