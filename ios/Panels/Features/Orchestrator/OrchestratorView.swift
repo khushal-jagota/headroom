@@ -2,6 +2,7 @@ import SwiftUI
 
 struct OrchestratorView: View {
     let managerID: String
+    var openConversationID: String?
     @Environment(AppStore.self) private var store
     @State private var detail: ManagerDetail?
     @State private var error: String?
@@ -43,7 +44,7 @@ struct OrchestratorView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
-        .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }

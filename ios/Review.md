@@ -67,11 +67,20 @@ A refused or uncertain reply keeps its words and attachments. Receipt reconcilia
 and held-prompt checks avoid sending an accepted reply twice. An explicit retry after
 a terminal refusal receives a new identity while retaining the original read boundary.
 
-Mark read acknowledges only the displayed run and does not send a reply. Open
-conversation opens the exact conversation named by the card. An older conversation
-whose owner has moved on is read-only. Message cards use the existing Review fade,
-swipe threshold and feedback. Mark read uses the filled action styling; Open
-conversation uses the raised action styling.
+Mark read acknowledges only the displayed run and does not send a reply. Both
+Mark read and Open conversation use the existing secondary action style. Open
+conversation follows a link through the owning Ticket, Orchestrator or Chief page
+and opens that page's normal conversation. Back or a left-edge swipe returns to
+that owner page. An older conversation whose owner has moved on remains read-only
+inside the same conversation page. Message cards retain their Review fade, swipe
+threshold and feedback.
+
+Reply uses the normal composer's one-line resting shape and expands with text or
+attachments. Clearing the draft collapses it without dropping keyboard focus.
+Recording dismisses the keyboard. Error messages, attachments and reply delivery
+notes appear inside the input's border, including their retry controls. Review's
+reply draft and send/read boundary remain separate from an ordinary conversation
+message.
 
 Deployment status lives in More's main list, in a Panels server row that opens
 VPS. There is no floating deployment capsule. A small dot on More appears while
@@ -131,7 +140,7 @@ refusal/relaunch/retry with attachments, historical send prevention, and recover
 sender attribution. The existing offline simulator host also supports
 `PANELS_REVIEW_MESSAGES=1`. Its one connected test exercises SwiftUI card controls,
 reply refusal and relaunch, queued acceptance, a message arriving after display,
-Mark read, exact historical navigation, Skip and revisit. Run it on an already
+Mark read, shared historical conversation navigation, Skip and revisit. Run it on an already
 booted PanelsLaneA under its lock; `PANELS_OFFLINE_BUNDLE` selects the task bundle.
 This proof uses loopback writes. The optional live test requires
 `TEST_RUNNER_PANELS_LIVE_READ_ONLY=1` and only reads Workspace, Review and Conversation.
@@ -150,3 +159,15 @@ Run with `PANELS_REVIEW_COMPLETION=1`,
 `PANELS_OFFLINE_OUTPUT` directory using `python3 ios/scripts/test-offline-simulator.py`.
 The completion mode takes `/tmp/panels-PanelsLaneB.lock` and requires that lane to
 be already booted; it does not operate simulator lifecycle.
+
+Review conversation-link verification reuses that same stub and UI host in
+`ReviewMessagesTests/testReviewConversationLinkAndComposer`. It exercises Ticket
+and Orchestrator links, cancelled and completed left-edge swipes, chevron return,
+normal draft retention and separate Review drafts. It also measures the shared
+48-point resting height, expansion with text, collapse after clearing text without
+losing keyboard focus, keyboard dismissal on recording, and feedback containment
+in both Review and Conversation. These are SwiftUI layout and navigation risks
+that the model tests cannot prove. The one added connected case took 135.9 seconds
+on the temporary iPhone 17 Pro simulator; it reuses the existing server and test
+host. Speech silence is a debug fixture, not microphone or provider evidence.
+Before and after captures remain outside the source worktree.

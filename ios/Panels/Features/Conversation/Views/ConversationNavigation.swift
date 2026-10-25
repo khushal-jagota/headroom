@@ -16,10 +16,13 @@ struct ConversationNavigation: ViewModifier {
     let owner: ConversationOwner
     let conversationID: String?
     var title = "Conversation"
+    var openConversationID: String?
     var refreshError: String?
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
     @State private var opened = false
+    @State private var followedLink = false
+    @State private var linkedConversationID: String?
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
@@ -34,14 +37,27 @@ struct ConversationNavigation: ViewModifier {
                     .toolbar(.hidden, for: .navigationBar)
                     .toolbar(.hidden, for: .tabBar)
             }
-            .onChange(of: opened) { _, _ in Haptics.light() }
+            .task {
+                guard openConversationID != nil, !followedLink else { return }
+                followedLink = true
+                linkedConversationID = openConversationID
+                opened = true
+            }
+            .onChange(of: opened) { _, isOpen in
+                Haptics.light()
+                if !isOpen, linkedConversationID != nil {
+                    linkedConversationID = nil
+                    model = ConversationModel()
+                }
+            }
             .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 
     private func surface(isPage: Bool) -> some View {
-        ConversationSurface(owner: owner, conversationID: conversationID, title: title,
+        ConversationSurface(owner: owner, conversationID: isPage ? linkedConversationID ?? conversationID : conversationID, title: title,
                             isPage: isPage, active: isPage || !opened, open: { opened = true },
-                            model: model, speech: speech, refreshError: refreshError, retry: retry)
+                            model: model, speech: speech, refreshError: refreshError, retry: retry,
+                            checksCurrentConversation: isPage && linkedConversationID != nil)
     }
 }
 
@@ -59,6 +75,9 @@ private struct ConversationSurface: View {
     let speech: ConversationSpeech
     var refreshError: String?
     var retry: (() async -> Void)?
+    var checksCurrentConversation = false
+    @State private var currentConversationConfirmed = false
+    private var readOnly: Bool { checksCurrentConversation && !currentConversationConfirmed }
     @State private var changingQueue = false
 
     var body: some View {
@@ -71,7 +90,15 @@ private struct ConversationSurface: View {
                 model.conversationID = saved?.conversationId
             }
             model.restore(owner: owner, api: store.client)
-            if owner == .chief, model.conversationID == nil { model.conversationID = try? await store.client.chiefConversation().conversationId }
+            if owner == .chief, model.conversationID == nil {
+                let currentID = try? await store.client.chiefConversation().conversationId
+                guard !Task.isCancelled else { return }
+                model.conversationID = currentID
+            }
+            if checksCurrentConversation {
+                do { currentConversationConfirmed = try await store.client.currentConversation(owner) == conversationID }
+                catch { currentConversationConfirmed = false; model.error = error.localizedDescription }
+            }
             while !Task.isCancelled {
                 await model.refresh(using: store.client, transcript: true)
                 let api = store.client
@@ -101,9 +128,14 @@ private struct ConversationSurface: View {
         VStack(spacing: 0) {
             header
             if isPage {
-                ConversationThread(model: model, owner: owner)
+                ConversationThread(model: model, owner: owner, readOnly: readOnly)
             }
-            bottom.fixedSize(horizontal: false, vertical: true)
+            if readOnly {
+                Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)
+                    .foregroundStyle(PanelsTheme.faint).padding()
+            } else {
+                bottom.fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.top, isPage ? 0 : ConversationLayout.surfaceTopPadding)
         .background((isPage ? PanelsTheme.surface : PanelsTheme.raised).ignoresSafeArea(edges: isPage ? .all : .bottom))
@@ -397,8 +429,8 @@ struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
-        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, refreshError: refreshError, retry: retry))
+    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
+        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry))
     }
 }
 
