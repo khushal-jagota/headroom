@@ -99,7 +99,16 @@
   {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind !== "external-link" && resolved.previewHref}
     {@render nameLink(resolved.previewHref)}
   {/if}
-  {#if !visible && !inline}
+  {#if resolved.kind === "html" && !error}
+    <!-- Drawn before the preview comes into view, so the box it will occupy is already
+         there at first paint. Nothing is fetched until `visible`. -->
+    <article class="file-preview-document">
+      <div class="file-preview-document-header">
+        {@render openLink(resolved.previewHref ?? resolved.href)}
+      </div>
+      <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={visible} />
+    </article>
+  {:else if !visible && !inline}
     <span aria-hidden="true"></span>
   {:else if showsMedia && resolved.kind === "image"}
     <img
@@ -134,13 +143,6 @@
       src={resolved.href}
       title={resolved.label}
     ></iframe>
-  {:else if resolved.kind === "html"}
-    <article class="file-preview-document">
-      <div class="file-preview-document-header">
-        {@render openLink(resolved.previewHref ?? resolved.href)}
-      </div>
-      <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={visible} />
-    </article>
   {:else if resolved.kind === "markdown" && expansion.expandable}
     <article class="file-preview-document">
       <div class="file-preview-document-header">

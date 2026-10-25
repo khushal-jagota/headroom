@@ -15,6 +15,10 @@ export function resolveManagedHtmlNavigation(raw: string, currentHref: string, r
   } catch { return null; }
 }
 
+/** The frame reports that it drew its parsed document. An artifact that keeps drawing
+ * from its own script can still change after this. */
+export const MANAGED_HTML_PAINTED = "panels-html-painted";
+
 /** Runs before authored scripts. The parent treats every message field as untrusted. */
 export function managedHtmlBridge(generation: string): string {
   return `(() => {
@@ -32,6 +36,10 @@ export function managedHtmlBridge(generation: string): string {
     };
     window.addEventListener('click', intercept, true);
     window.addEventListener('auxclick', intercept, true);
+    const painted = () => requestAnimationFrame(() => requestAnimationFrame(() =>
+      send({type:${JSON.stringify(MANAGED_HTML_PAINTED)}, generation}, '*')));
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', painted, {once:true});
+    else painted();
     window.addEventListener('message', event => {
       if (event.source !== parent || event.data?.type !== 'panels-html-fragment' || event.data.generation !== generation) return;
       let fragment;

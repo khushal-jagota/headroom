@@ -490,5 +490,106 @@ def run(browser, urls):
         frame.locator('#missing').click()
         expect(html.locator('[data-html-navigation-notice]')).to_have_text('file fetch failed: 404')
         page.evaluate("window.__html('')")
+
+    # --- The embedded preview holds one box from first paint --------------------
+    # Risk: the box changes size between mount, skeleton, drawn frame and settled
+    # state, so the text under the preview moves. The cases above prove frame
+    # identity, navigation and failure retention. None of them measures the box.
+    # The artifact below queues its animation frames, so the bridge's paint report
+    # arrives only when this test releases it.
+    page.evaluate("""() => {
+      const originalFetch = window.fetch;
+      window.__heldPending = 0;
+      window.fetch = (...args) => {
+        if (String(args[0]).endsWith('/held.html')) {
+          window.__heldPending += 1;
+          return new Promise(resolve => {
+            window.__releaseHeld = body => {
+              window.__heldPending -= 1;
+              resolve(new Response(body, {headers: {'Content-Type': 'text/html'}}));
+            };
+          });
+        }
+        return originalFetch(...args);
+      };
+      window.__frameBox = () => {
+        const region = document.querySelector('[data-html-fixture] [data-shape="frame"]');
+        return {height: Math.round(region.getBoundingClientRect().height),
+          busy: region.getAttribute('aria-busy'),
+          skeletons: region.querySelectorAll('.skeleton--frame').length,
+          below: Math.round(document.querySelector('header').getBoundingClientRect().top)};
+      };
+      window.__mountHeld = path => {
+        window.__html('');
+        window.__releaseHeld = null;
+        window.__html('embedded', path);
+        document.querySelector('[data-html-fixture]').style.height = 'auto';
+        window.__skeletonMounts = 0;
+        const counter = new MutationObserver(records => records.forEach(record =>
+          record.addedNodes.forEach(node => {
+            if (node.classList?.contains('skeleton--frame')) window.__skeletonMounts++;
+          })));
+        counter.observe(document.querySelector('[data-html-fixture]'),
+          {subtree: true, childList: true});
+        return window.__frameBox();
+      };
+    }""")
+    held = (
+        "<!doctype html><html><head><script>window.__queued=[];"
+        "window.requestAnimationFrame=callback=>{window.__queued.push(callback);return 0;};"
+        "window.__paint=()=>window.__queued.splice(0).forEach(callback=>callback(0));"
+        "</script></head><body><h1>Held artifact</h1></body></html>"
+    )
+    first = page.evaluate("path => window.__mountHeld(path)", 'site/held.html')
+    # 18rem, reserved by CSS before the preview is admitted and before any fetch.
+    assert first['height'] == 288 and first['skeletons'] == 0, first
+    settled = first['below']
+    page.wait_for_function("() => window.__frameBox().busy === 'true'")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 0, 'below': settled}
+    page.wait_for_function("() => window.__frameBox().skeletons === 1")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 1, 'below': settled}
+    html = page.locator('[data-html-fixture]')
+    frame = html.frame_locator('[data-file-preview-html]')
+    page.wait_for_function("() => window.__heldPending > 0")
+    page.evaluate("body => window.__releaseHeld(body)", held)
+    expect(frame.locator('h1')).to_have_text('Held artifact')
+    # The artifact is drawn and unreported. Blob creation alone does not reveal it.
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 1, 'below': settled}
+    frame.locator('body').evaluate("() => {window.__paint(); window.__paint();}")
+    page.wait_for_function("() => window.__frameBox().busy === 'false'")
+    # Both layers exist for the crossfade, and the box never moved.
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 1, 'below': settled}
+    page.wait_for_function("() => window.__frameBox().skeletons === 0")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+
+    # An artifact that never reports still reveals, because the limit always fires.
+    page.evaluate("path => window.__mountHeld(path)", 'site/held.html')
+    page.wait_for_function("() => window.__heldPending > 0")
+    page.evaluate("body => window.__releaseHeld(body)", held)
+    expect(frame.locator('h1')).to_have_text('Held artifact')
+    page.wait_for_function("() => window.__frameBox().busy === 'false'", timeout=4000)
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 1, 'below': settled}
+
+    # A file that arrives inside the grace draws no skeleton at all.
+    assert page.evaluate("path => window.__mountHeld(path)", 'site/index.html')['height'] == 288
+    expect(frame.locator('h1')).to_have_text('Index')
+    page.wait_for_function("() => window.__frameBox().busy === 'false'")
+    assert page.evaluate("window.__skeletonMounts") == 0
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+
+    # A missing file keeps the box and puts its message inside it.
+    assert page.evaluate("path => window.__mountHeld(path)", 'site/missing.html')['height'] == 288
+    expect(html.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 404')
+    assert html.locator('[data-html-navigation-notice]').count() == 0
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+    page.evaluate("window.__html('')")
     assert not errors, errors
     page.close()
