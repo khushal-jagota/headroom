@@ -113,7 +113,7 @@ import Observation
         if needed { await read(key, from: api, fetch: fetch, apply: apply) }
     }
 
-    private func readVersioned<T: Codable & Sendable>(_ label: String, path: String, api: APIClient, probe: ResourceVersions?, force: Bool, apply: @MainActor @Sendable (T) -> Void) async {
+    private func readVersioned<T: Decodable & Sendable>(_ label: String, path: String, api: APIClient, probe: ResourceVersions?, force: Bool, apply: @MainActor @Sendable (T) -> Void) async {
         if !force, errors[label] == nil, resourceVersions.isCurrent(path, probe: probe) { return }
         do {
             let result: ResourceBody<T> = try await api.resourceBody(path)

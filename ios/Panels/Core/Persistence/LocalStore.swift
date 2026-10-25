@@ -74,6 +74,7 @@ import SwiftData
         guard let cacheWriter else { throw startupError ?? CocoaError(.fileWriteUnknown) }
         do {
             try await cacheWriter.put(server: server, id: id, data: data, updated: updated)
+            saveError = nil
         } catch {
             saveError = "Couldn’t save on this phone: \(error.localizedDescription)"
             throw error

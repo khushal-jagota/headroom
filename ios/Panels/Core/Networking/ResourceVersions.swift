@@ -31,13 +31,18 @@ extension APIClient {
         let encoded = String(decoding: try JSONEncoder().encode(keys), as: UTF8.self)
         return try await get("/api/resource-versions", query: [.init(name: "keys", value: encoded)])
     }
-    func resourceBody<T: Codable & Sendable>(_ key: String) async throws -> ResourceBody<T> {
-        let result: ResourceBody<T> = try await get("/api/resource-body", query: [.init(name: "key", value: key)])
+    func resourceBody<T: Decodable & Sendable>(_ key: String) async throws -> ResourceBody<T> {
+        let (data, _) = try await responseData("/api/resource-body", query: [.init(name: "key", value: key)])
+        let result = try Self.decoder().decode(ResourceBody<T>.self, from: data)
         guard result.key == key else { throw URLError(.badServerResponse) }
         if Self.cacheable(key) {
-            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
-            let data = try encoder.encode(result.body)
-            try? await LocalStore.shared.cacheResponse(server: LocalStore.server(baseURL), id: try url(key).absoluteString, data: data)
+            // Preserve the full wire body, including fields this app does not
+            // decode yet, exactly as an ordinary cached GET does.
+            let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if let body = envelope?["body"] {
+                let cached = try JSONSerialization.data(withJSONObject: body, options: .fragmentsAllowed)
+                try? await LocalStore.shared.cacheResponse(server: LocalStore.server(baseURL), id: try url(key).absoluteString, data: cached)
+            }
         }
         return result
     }

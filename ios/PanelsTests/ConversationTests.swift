@@ -140,7 +140,7 @@ import XCTest
         model.expandedBodies["reply"] = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"agent_message","content":[{"piece":"text","text":"Expanded"}]}"#.utf8))
         XCTAssertEqual(model.rows.first?.text, "Expanded")
     }
-    func testLiveReferenceReusesOnlyIdenticalBytesAndRefreshWaitsForInFlightRead() async throws {
+    func testLiveReferenceReusesOnlyIdenticalBytesAndCoalescesRefreshDuringInFlightRead() async throws {
         let model = ConversationModel(); model.conversationID = "conv_1"; model.lens = .full
         let service = ConversationStub(fate: "started")
         let reference: [String: Any] = ["body_id": "live", "version": "v1", "byte_count": 10, "media_type": "text/markdown"]
@@ -154,15 +154,17 @@ import XCTest
         await model.refresh(using: service, transcript: true)
         let grownReads = await service.liveReads
         XCTAssertEqual(grownReads, 2)
+        let beforeOverlap = await service.requestedLenses.count
         await service.holdNextSnapshot()
         let first = Task { await model.refresh(using: service, transcript: true) }
         while !(await service.snapshotHeld) { await Task.yield() }
         model.lens = .focus
-        let second = Task { await model.refresh(using: service, transcript: true) }
+        for _ in 0..<3 { await model.refresh(using: service, transcript: true) }
         await service.releaseSnapshot()
-        await first.value; await second.value
+        await first.value
         let lenses = await service.requestedLenses
         XCTAssertEqual(lenses.suffix(2), [.full, .focus])
+        XCTAssertEqual(lenses.count, beforeOverlap + 2)
     }
     func testSendKeepsUncertainMessageAndDoesNotRetry() async {
         let model = ConversationModel()

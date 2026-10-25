@@ -105,7 +105,7 @@ struct ConversationSend: Codable, Sendable {
     let senderMessageId: String
     let sentAtUnixMilliseconds: Int64
     var ownerReadThroughSequence: Int? = nil
-    struct Piece: Equatable, Codable, Sendable {
+    struct Piece: Codable, Sendable {
         var piece = "text"
         var text: String? = nil
         var data: String? = nil

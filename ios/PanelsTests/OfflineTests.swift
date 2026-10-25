@@ -28,7 +28,9 @@ import XCTest
         let revision = store.workRevision
         try await store.cacheResponse(server: "a", id: "same", data: Data([1]), updated: Date(timeIntervalSince1970: 1))
         XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([1]))
+        store.saveError = "Couldn’t save on this phone: temporary failure"
         try await store.cacheResponse(server: "a", id: "same", data: Data([1]), updated: Date(timeIntervalSince1970: 3))
+        XCTAssertNil(store.saveError)
         XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.updated, Date(timeIntervalSince1970: 3))
         try await store.cacheResponse(server: "a", id: "same", data: Data([2]), updated: Date(timeIntervalSince1970: 4))
         XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([2]))

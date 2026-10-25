@@ -17,6 +17,8 @@ import XCTest
         await store.refresh()
         XCTAssertTrue(store.errors.isEmpty)
         XCTAssertEqual(store.chief?.label, "Chief 1")
+        let cached = try XCTUnwrap(LocalStore.shared.record(server: "https://refresh.invalid", kind: "cache", id: "https://refresh.invalid/api/workers/chief-of-staff/settings")?.payload)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: cached) as? [String: Any])?["future_field"] as? String, "preserved")
         RefreshProtocol.state.withLock { $0.paths = [] }
         await store.refresh(changesOnly: true)
         var paths = RefreshProtocol.state.withLock { $0.paths }
@@ -82,7 +84,7 @@ private struct RefreshFixture {
         switch key {
         case "/api/managers", "/api/tickets": return try Data(contentsOf: fixtures.appendingPathComponent(String(key.dropFirst(5)) + ".json"))
         case "/api/review": body = ["items": [], "running_worker_count": 0]
-        case "/api/workers/chief-of-staff/settings": body = ["employee_id": "chief", "label": "Chief " + revision, "recap": "", "skill": ["name": "chief", "description": "", "markdown_body": ""], "launch_defaults": ["employee_backend": "codex"]] as [String: Any]
+        case "/api/workers/chief-of-staff/settings": body = ["future_field": "preserved", "employee_id": "chief", "label": "Chief " + revision, "recap": "", "skill": ["name": "chief", "description": "", "markdown_body": ""], "launch_defaults": ["employee_backend": "codex"]] as [String: Any]
         case "/api/deployment-status": body = ["state": "idle"]
         default: throw URLError(.unsupportedURL)
         }
