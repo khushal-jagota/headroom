@@ -69,7 +69,7 @@ struct ReviewView: View {
                         Image(systemName: work.state == .sent ? "checkmark" : work.state == .changed ? "exclamationmark.circle" : "clock")
                         VStack(alignment: .leading) {
                             Text(work.ticketTitle ?? store.tickets.first { $0.id == work.ticketID }?.title ?? work.ticketID ?? "Ticket")
-                                .font(.subheadline.weight(.semibold))
+                                .font(PanelsTheme.TypeScale.savedDecisionTitle)
                             Text([work.displayText, work.proposalFieldLabel ?? work.proposal?.field.capitalized].compactMap { $0 }.joined(separator: " · "))
                                 .font(.subheadline)
                             Text(work.note).font(.caption).foregroundStyle(PanelsTheme.faint)
@@ -283,7 +283,7 @@ private struct ReviewProposalView: View {
     private var proposalCard: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
             Button { openApproval() } label: {
-                (Text(fieldLabel).fontWeight(.semibold).foregroundStyle(PanelsTheme.strong) + Text(" — for \(reviewer) to approve").foregroundStyle(PanelsTheme.muted))
+                (Text(fieldLabel).font(PanelsTheme.TypeScale.heading).foregroundStyle(PanelsTheme.strong) + Text(" — for \(reviewer) to approve").foregroundStyle(PanelsTheme.muted))
                     .font(.title3).frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.plain).accessibilityLabel("\(fieldLabel), for \(reviewer) to approve")
                 .accessibilityHint("Opens approval options").disabled(!decision.ready)
@@ -502,5 +502,5 @@ private struct ReviewReturnComposer: View {
 }
 
 private extension Text {
-    func reviewEyebrow() -> some View { self.font(.caption2.weight(.semibold)).foregroundStyle(PanelsTheme.faint).accessibilityAddTraits(.isHeader) }
+    func reviewEyebrow() -> some View { self.font(PanelsTheme.TypeScale.reviewEyebrow).foregroundStyle(PanelsTheme.faint).accessibilityAddTraits(.isHeader) }
 }

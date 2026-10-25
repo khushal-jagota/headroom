@@ -53,11 +53,11 @@ struct ReviewMessageView: View {
                         .shadow(color: .black.opacity(0.12), radius: 20, y: 8)
                         (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
                             Button("Mark read") { Haptics.light(); Task { if await decision.markRead() { Haptics.success(); leave(resolved: true) } else { ReviewStyle.error() } } }
-                                .buttonStyle(ReviewActionStyle()).accessibilityIdentifier("review.markRead")
+                                .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.markRead")
                                 .disabled(decision.through == 0 || decision.busy || decision.pending || capturing || leaving)
                             if let owner = item.owner, let id = item.conversationId {
                                 NavigationLink(value: AppRoute.conversation(owner: owner, id: id)) { Text("Open conversation") }
-                                    .buttonStyle(ReviewActionStyle()).accessibilityIdentifier("review.openConversation")
+                                    .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.openConversation")
                             }
                         }
                     } else if decision.error == nil { ScreenLoadingView(title: "messages") }
@@ -197,7 +197,7 @@ private struct ReviewInlineArtifact: View {
                 NavigationLink(value: AppRoute.artifact(owner: target.owner, path: target.path, title: target.title)) { Text("Open artifact") }
             } else if let error { Text(error).foregroundStyle(PanelsTheme.error); Button("Retry") { Task { await load() } } }
             else { RingSpinner() }
-        } label: { Text(target.title).font(.subheadline) }
+        } label: { Text(target.title).font(PanelsTheme.TypeScale.artifactLink) }
             .task { await load() }
     }
     private func load() async {

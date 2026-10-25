@@ -32,7 +32,7 @@ struct IdeasView: View {
         .listStyle(.plain)
         .contentMargins(.horizontal, PanelsTheme.Space.xl)
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle("Ideas")
+        .panelsNavigationTitle("Ideas")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if model.hasLoaded {
@@ -52,7 +52,7 @@ struct IdeasView: View {
     private var captureForm: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
             TextField("Capture an idea…", text: $model.title)
-                .font(PanelsTheme.TypeScale.heading)
+                .font(PanelsTheme.TypeScale.captureTitle)
                 .focused($titleFocused)
                 .submitLabel(.send)
                 .onSubmit(capture)
@@ -78,7 +78,7 @@ struct IdeasView: View {
                         if model.isCapturing { RingSpinner(size: .small) }
                         Text(model.isCapturing ? "Capturing…" : "Capture")
                     }
-                    .font(PanelsTheme.TypeScale.body.weight(.semibold))
+                    .font(PanelsTheme.TypeScale.primaryAction)
                     .padding(.horizontal, PanelsTheme.Space.lg).padding(.vertical, PanelsTheme.Space.md)
                 }
                 .buttonStyle(.borderedProminent)
@@ -98,7 +98,7 @@ struct IdeasView: View {
             model.projectID = id
         } label: {
             Text(name)
-                .font(PanelsTheme.TypeScale.small.weight(.medium))
+                .font(PanelsTheme.TypeScale.small)
                 .padding(.horizontal, PanelsTheme.Space.md)
                 .frame(minHeight: 44)
                 .foregroundStyle(model.projectID == id ? PanelsTheme.accentText : PanelsTheme.muted)
@@ -147,7 +147,7 @@ private struct IdeaRow: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-            Text(idea.title).font(PanelsTheme.TypeScale.body.weight(.medium)).foregroundStyle(PanelsTheme.text)
+            Text(idea.title).font(PanelsTheme.TypeScale.itemTitle).foregroundStyle(PanelsTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
             if let project = idea.project {
                 Text(project).font(PanelsTheme.TypeScale.caption)

@@ -30,7 +30,7 @@ struct FeedbackView: View {
             .padding(PanelsTheme.Space.lg)
         }
         .panelsScreen()
-        .navigationTitle("Feedback")
+        .panelsNavigationTitle("Feedback")
         .navigationBarTitleDisplayMode(.large)
         .panelsRefreshable { await model.load(using: store.client) }
         .task(id: store.revision) { await model.load(using: store.client) }
@@ -67,7 +67,7 @@ struct FeedbackView: View {
                                             Circle().fill(PanelsTheme.accent).frame(width: 6, height: 6)
                                                 .accessibilityLabel("Unread message")
                                         }
-                                        Text(ticket.title).font(PanelsTheme.TypeScale.heading)
+                                        Text(ticket.title).font(PanelsTheme.TypeScale.feedbackGroupTitle)
                                         Spacer(minLength: 0)
                                         Image(systemName: "chevron.right").font(PanelsTheme.TypeScale.small)
                                     }
@@ -92,7 +92,7 @@ struct FeedbackView: View {
 
     private func noteRow(_ note: FeedbackNote, action: FeedbackAction) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-            Text(note.text).font(PanelsTheme.TypeScale.body).textSelection(.enabled)
+            Text(note.text).font(PanelsTheme.TypeScale.feedbackText).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: PanelsTheme.Space.md) {

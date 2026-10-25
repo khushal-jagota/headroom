@@ -37,7 +37,7 @@ struct WorkspaceCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     if !chief {
                         HStack {
-                            Text(project ?? "").panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.faint)
+                            Text(project ?? "").panelsProjectLabel().foregroundStyle(PanelsTheme.faint)
                                 .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)

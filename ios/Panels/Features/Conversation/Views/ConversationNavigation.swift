@@ -344,7 +344,7 @@ struct ConversationThread: View {
                                 Text("Latest")
                                 Image(systemName: "arrow.down")
                             }
-                            .font(PanelsTheme.TypeScale.small.weight(.medium))
+                            .font(PanelsTheme.TypeScale.latestAction)
                             .foregroundStyle(PanelsTheme.text)
                             .padding(.horizontal, 14).frame(height: 44)
                             .background(PanelsTheme.raised, in: Capsule())
@@ -455,7 +455,7 @@ struct ConversationSmokeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("Chief of Staff").font(.title.weight(.semibold))
+                    Text("Chief of Staff").font(PanelsTheme.TypeScale.detailTitle)
                     Text("Keep the whole operation in view.").foregroundStyle(PanelsTheme.faint)
                     ForEach(0..<12) { Text("Worker \($0 + 1)").frame(maxWidth: .infinity, minHeight: 50, alignment: .leading); Divider() }
                     NavigationLink("Worker details") {

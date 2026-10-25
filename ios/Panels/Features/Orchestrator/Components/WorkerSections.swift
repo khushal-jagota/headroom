@@ -38,7 +38,7 @@ struct WorkerDisclosure<Content: View>: View {
                 withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded.toggle() }
             } label: {
                 (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
-                    Text(title).font(PanelsTheme.TypeScale.small.weight(.semibold)).multilineTextAlignment(.leading)
+                    Text(title).font(PanelsTheme.TypeScale.sectionLabel).multilineTextAlignment(.leading)
                     if !typeSize.isAccessibilitySize { Spacer(minLength: PanelsTheme.Space.sm) }
                     Text(!expanded && unreadCount > 0 ? "\(unreadCount) unread" : count.formatted()).font(PanelsTheme.TypeScale.small).monospacedDigit().foregroundStyle(PanelsTheme.faint)
                 }

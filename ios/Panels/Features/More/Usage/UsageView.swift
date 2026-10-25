@@ -27,7 +27,7 @@ struct UsageView: View {
             if metric == "Limits" { limits } else { recorded }
             if let error { Section { LoadErrorView(message: error) { await refresh() } } }
         }
-        .navigationTitle("Usage").panelsScreen()
+        .panelsNavigationTitle("Usage", role: .usage).panelsScreen()
         .task(id: "\(store.baseURL):\(metric):\(days):\(store.revision)") { await load() }
         .panelsRefreshable { await refresh() }
         .toolbar {
@@ -54,9 +54,9 @@ struct UsageView: View {
                     ForEach(Array(usage.windows.enumerated()), id: \.offset) { _, window in
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                             HStack {
-                                Text(window.kind == "five_hour" ? "5 hours" : "7 days")
+                                Text(window.kind == "five_hour" ? "5 hours" : "7 days").font(PanelsTheme.TypeScale.allowanceLabel)
                                 Spacer()
-                                Text("\(window.usedPercent.formatted(.number.precision(.fractionLength(0))))% used").monospacedDigit()
+                                Text("\(window.usedPercent.formatted(.number.precision(.fractionLength(0))))% used").font(PanelsTheme.TypeScale.allowanceValue).monospacedDigit()
                             }
                             ProgressView(value: UsagePresentation.fraction(window.usedPercent)).tint(PanelsTheme.accent)
                             if let model = window.modelId { Text(model).font(PanelsTheme.TypeScale.small) }
@@ -74,7 +74,7 @@ struct UsageView: View {
                     Text(backend.installed ? "No recorded allowance" : "Not installed").foregroundStyle(PanelsTheme.muted)
                 }
                 ForEach(backend.diagnoses, id: \.self) { Text($0).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
-            } header: { Text(backend.backendKey.capitalized) }
+            } header: { Text(backend.backendKey.capitalized).panelsSectionHeading(.usage) }
             .listRowBackground(PanelsTheme.raised)
         }
     }
@@ -106,7 +106,7 @@ struct UsageView: View {
                 }
             }.listRowBackground(PanelsTheme.raised)
             if let totals = selectedMetrics {
-                Section(metric == "Cost" ? "Cost Detail" : "Token Detail") {
+                Section {
                     if metric == "Cost" {
                         LabeledContent("Estimated", value: UsagePresentation.cost(totals.estimatedCostUsd))
                         LabeledContent("Provider reported", value: UsagePresentation.cost(totals.providerReportedCostUsd))
@@ -118,10 +118,10 @@ struct UsageView: View {
                         LabeledContent("Cache write", value: UsagePresentation.number(totals.cacheCreationTokens))
                         LabeledContent("Output", value: UsagePresentation.number(totals.outputTokens))
                     }
-                }.listRowBackground(PanelsTheme.raised)
+                } header: { Text(metric == "Cost" ? "Cost Detail" : "Token Detail").panelsSectionHeading(.usage) }.listRowBackground(PanelsTheme.raised)
             }
             if let summary {
-                Section("Sources") {
+                Section {
                     ForEach(summary.sources.filter { provider == "All" || $0.provider == provider.lowercased() }, id: \.provider) { source in
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                             LabeledContent(source.provider.capitalized, value: source.state.capitalized)
@@ -131,7 +131,7 @@ struct UsageView: View {
                     if let observed = summary.observedAt, let date = UsagePresentation.date(observed) {
                         Text("Last read \(date.formatted(date: .abbreviated, time: .shortened))").font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
                     }
-                }.listRowBackground(PanelsTheme.raised)
+                } header: { Text("Sources").panelsSectionHeading(.usage) }.listRowBackground(PanelsTheme.raised)
             }
         }
     }

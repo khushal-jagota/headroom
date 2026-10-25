@@ -92,7 +92,7 @@ struct TicketView: View {
     private func masthead(_ detail: TicketDetail) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
             if renaming {
-                TextField("Title", text: $titleDraft, axis: .vertical).font(.title.weight(.semibold))
+                TextField("Title", text: $titleDraft, axis: .vertical).font(PanelsTheme.TypeScale.detailTitle)
                 Button("Save title") {
                     Task { await perform { try await store.client.renameTicket(ticketID, title: titleDraft); renaming = false; return nil } }
                 }.disabled(busy || titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -128,7 +128,7 @@ struct TicketView: View {
             if detail.isBacklogged {
                 HStack {
                     Text("Backlogged. Automatic work is paused.").foregroundStyle(PanelsTheme.faint)
-                    Button("Resume") { changeBacklog(detail) }.fontWeight(.semibold).disabled(busy)
+                    Button("Resume") { changeBacklog(detail) }.font(PanelsTheme.TypeScale.sectionLabel).disabled(busy)
                 }.font(PanelsTheme.TypeScale.small)
             }
             if let actionNote {
