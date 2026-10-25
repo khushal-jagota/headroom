@@ -1111,7 +1111,9 @@ def test_review_owner_state_reversals_preserve_unread_discovery(tmp_path: Path) 
                 _, content = read_content(conn, query, current=current)
                 assert content["counts"]["review"] == content["windows"][0]["total"] == total
                 assert content["counts"]["unread"] == 3
-            unread = {**query, "windows": [{**query["windows"][0], "section": "unread"}]}
+            unread: ViewRequest = {
+                **query, "windows": [{**query["windows"][0], "section": "unread"}]
+            }
             _, content = read_content(conn, unread, current=True)
             assert len(content["windows"][0]["members"]) == 3
 
