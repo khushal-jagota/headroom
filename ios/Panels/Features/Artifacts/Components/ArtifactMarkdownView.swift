@@ -26,7 +26,7 @@ struct ArtifactMarkdownContent: View {
                                 .padding(PanelsTheme.Space.lg)
                         }.background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
                     case .heading(let level):
-                        inline(block.text).font(level == 1 ? PanelsTheme.TypeScale.title : PanelsTheme.TypeScale.heading)
+                        inline(block.text, font: PanelsTheme.TypeScale.markdownHeading(level))
                             .foregroundStyle(PanelsTheme.strong).padding(.top, PanelsTheme.Space.sm)
                             .accessibilityAddTraits(.isHeader)
                     case .quote:
@@ -39,9 +39,9 @@ struct ArtifactMarkdownContent: View {
                 }
             }
     }
-    private func inline(_ source: String) -> some View {
+    private func inline(_ source: String, font: Font = PanelsTheme.TypeScale.body) -> some View {
         Text((try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: baseURL)) ?? AttributedString(source))
-            .font(PanelsTheme.TypeScale.body).textSelection(.enabled).lineSpacing(4)
+            .font(font).textSelection(.enabled).lineSpacing(4)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

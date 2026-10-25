@@ -33,7 +33,7 @@ struct SettingsView: View {
                 }.foregroundStyle(PanelsTheme.text)
             }.listRowBackground(PanelsTheme.raised)
         }
-        .navigationTitle("Settings").panelsScreen()
+        .panelsNavigationTitle("Settings").panelsScreen()
         .task(id: "\(store.baseURL):\(section):\(store.revision)") { await load() }
         .panelsRefreshable { await load() }
         .onChange(of: section) { _, _ in Haptics.selection() }
@@ -47,15 +47,15 @@ struct SettingsView: View {
     private var configuration: some View {
         Group {
             if let workers {
-                Section("Agents") {
+                Section {
                     NavigationLink {
                         SettingsAgentDetail(title: workers.chiefOfStaff.label, configuration: workers.chiefOfStaff.launchDefaults, skill: workers.chiefOfStaff.skill)
                     } label: { Text(workers.chiefOfStaff.label) }
                     ForEach(skills.filter { ["panels-manager", "panels-worker"].contains($0.name) }, id: \.name) { skill in
                         NavigationLink(skill.name == "panels-manager" ? "Manager" : "Worker skill") { SettingsSkillDetail(skill: skill) }
                     }
-                }.listRowBackground(PanelsTheme.raised)
-                Section("Workers") {
+                } header: { Text("Agents").panelsSectionHeading(.configuration) }.listRowBackground(PanelsTheme.raised)
+                Section {
                     ForEach(workers.workers.sorted { $0.label < $1.label }) { worker in
                         NavigationLink {
                             SettingsAgentDetail(title: worker.label, configuration: worker.launchDefaults, skill: skills.first { $0.name == worker.specialistSkillName })
@@ -67,7 +67,7 @@ struct SettingsView: View {
                             }
                         }
                     }
-                }.listRowBackground(PanelsTheme.raised)
+                } header: { Text("Workers").panelsSectionHeading(.configuration) }.listRowBackground(PanelsTheme.raised)
             }
         }
     }
@@ -86,10 +86,10 @@ struct SettingsView: View {
                                     LabeledContent("Worker", value: schedule.workerType.replacingOccurrences(of: "_", with: " ").capitalized)
                                 }.listRowBackground(PanelsTheme.raised)
                                 if !schedule.kickoffNote.isEmpty { Section("Kickoff Note") { Text(schedule.kickoffNote).textSelection(.enabled) }.listRowBackground(PanelsTheme.raised) }
-                            }.navigationTitle(schedule.title).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
+                            }.panelsNavigationTitle(schedule.title).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
                         } label: {
                             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                                Text(schedule.title)
+                                Text(schedule.title).font(PanelsTheme.TypeScale.itemTitle)
                                 Text("\(schedule.localTime) · \(schedule.enabled ? "Enabled" : "Disabled")")
                                     .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                             }
@@ -105,11 +105,11 @@ struct SettingsView: View {
             NotificationDeviceSettings()
             if let notifications {
                 ForEach(notifications.subjects, id: \.key) { subject in
-                    Section(subject.label) {
+                    Section {
                         ForEach(subject.types) { preference in
                             HStack(alignment: .top, spacing: PanelsTheme.Space.md) {
                                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                                    Text(preference.label)
+                                    Text(preference.label).font(PanelsTheme.TypeScale.itemTitle)
                                     Text(preference.description).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                                 }
                                 Spacer(minLength: 0)
@@ -117,7 +117,7 @@ struct SettingsView: View {
                                     .foregroundStyle(preference.enabled ? PanelsTheme.accent : PanelsTheme.faint)
                             }.accessibilityElement(children: .combine)
                         }
-                    }.listRowBackground(PanelsTheme.raised)
+                    } header: { Text(subject.label).panelsSectionHeading(.notification) }.listRowBackground(PanelsTheme.raised)
                 }
             }
         }
@@ -151,18 +151,18 @@ private struct SettingsAgentDetail: View {
     let skill: ManagedSkill?
     var body: some View {
         List {
-            Section("Launch Defaults") {
+            Section {
                 LabeledContent("Backend", value: configuration.employeeBackend.capitalized)
                 LabeledContent("Model", value: configuration.employeeLaunchModel ?? "Backend default")
                 LabeledContent("Reasoning", value: configuration.employeeLaunchReasoningEffort?.capitalized ?? "Backend default")
-            }.listRowBackground(PanelsTheme.raised)
+            } header: { Text("Launch Defaults").panelsSectionHeading(.configuration) }.listRowBackground(PanelsTheme.raised)
             if let skill {
                 Section { NavigationLink("Role skill") { SettingsSkillDetail(skill: skill) } }
                     .listRowBackground(PanelsTheme.raised)
             }
             Section { Text("Manage configuration on the web.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
                 .listRowBackground(PanelsTheme.raised)
-        }.navigationTitle(title).panelsScreen().onAppear { Haptics.light() }
+        }.panelsNavigationTitle(title).panelsScreen().onAppear { Haptics.light() }
     }
 }
 private struct SettingsSkillDetail: View {
@@ -170,10 +170,10 @@ private struct SettingsSkillDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
-                Text(skill.description).font(PanelsTheme.TypeScale.heading)
+                Text(skill.description).font(PanelsTheme.TypeScale.configurationHeading)
                 Text(skill.markdownBody).font(PanelsTheme.TypeScale.body).textSelection(.enabled)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.lg)
-        }.navigationTitle(skill.name).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
+        }.panelsNavigationTitle(skill.name).navigationBarTitleDisplayMode(.inline).panelsScreen().onAppear { Haptics.light() }
     }
 }
 
@@ -193,7 +193,7 @@ struct ServerAddressSheet: View {
                         .textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     if let error { Text(error).foregroundStyle(PanelsTheme.error) }
                 }.listRowBackground(PanelsTheme.raised)
-            }.navigationTitle("Server").navigationBarTitleDisplayMode(.inline).panelsScreen()
+            }.panelsNavigationTitle("Server").navigationBarTitleDisplayMode(.inline).panelsScreen()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { Haptics.light(); dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {

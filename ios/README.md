@@ -43,6 +43,22 @@ its text; a changed byte count, version or body identity reads it again. Image
 artifacts load their image once per successful document load, outside the view
 body. A failed reload retains the previous document and image.
 
+## Typography
+
+Shared text roles in `Core/Theme/Theme.swift` follow the mobile web's weights.
+Review titles and completion text use medium (500); ticket and manager titles
+use semibold (600). Proposal decisions use medium, while message actions and
+message prose remain regular. Feedback text and notification labels use medium. Ideas capture and configuration headings use medium;
+artifact filenames remain regular. Section headings follow their web surface:
+regular for navigation and VPS, medium for configuration and Usage.
+
+`panelsNavigationTitle` sets the weight on each native navigation item. Usage
+keeps its semibold heading; other utility pages use medium. This retains native
+navigation geometry and restores the destination's style on back navigation.
+Font sizes and Dynamic Type remain native. Markdown headings retain their
+existing rendered body size, with the web's bold h1/h4–h6 and semibold h2/h3;
+the inline renderer accepts the shared font so its body default cannot mask it.
+
 ## Build and run headless
 
 Use Xcode 16 or newer with an installed iOS 18+ simulator runtime. The committed

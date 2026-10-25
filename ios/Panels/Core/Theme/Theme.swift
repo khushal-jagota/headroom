@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Mirrors assets/tokens.css. Typography uses Dynamic Type; motion never bounces.
 enum PanelsTheme {
@@ -24,6 +25,52 @@ enum PanelsTheme {
         static let body = Font.body
         static let heading = Font.title3.weight(.semibold)
         static let title = Font.largeTitle.weight(.semibold)
+
+        // Web role weights; keep the native sizes and Dynamic Type curves.
+        // TicketRoute / ManagerHeader: 600. Review title and empty state: 500.
+        static let detailTitle = Font.title.weight(.semibold)
+        static let reviewTitle = Font.title.weight(.medium)
+        static let reviewCompletion = Font.title.weight(.medium)
+        static let captureTitle = Font.title3.weight(.medium)
+        static let itemTitle = Font.body.weight(.medium)
+        static let primaryAction = Font.body.weight(.semibold)
+        static let reviewAction = Font.body.weight(.medium)
+        static let sectionLabel = Font.footnote.weight(.semibold)
+        static let reviewEyebrow = Font.caption2.weight(.semibold)
+        static let savedDecisionTitle = Font.subheadline.weight(.semibold)
+        static let latestAction = Font.footnote.weight(.semibold)
+        static let artifactTitle = Font.subheadline
+        static let artifactLink = Font.subheadline.weight(.semibold)
+        static let feedbackText = Font.body.weight(.medium)
+        static let feedbackGroupTitle = Font.title3.weight(.medium)
+        static let configurationHeading = Font.title3.weight(.medium)
+        static let allowanceLabel = Font.body.weight(.medium)
+        static let allowanceValue = Font.body.weight(.semibold)
+        // The renderer's inline body font has always determined heading size.
+        // Preserve that size while matching the web's h2/h3 600 and other headings 700.
+        static func markdownHeading(_ level: Int) -> Font {
+            Font.body.weight(level == 2 || level == 3 ? .semibold : .bold)
+        }
+
+        enum SectionRole {
+            case navigation, configuration, monitor, usage, notification
+            var weight: Font.Weight {
+                switch self {
+                case .navigation, .monitor: .regular
+                case .configuration, .usage, .notification: .medium
+                }
+            }
+        }
+
+        enum NavigationTitleRole {
+            case page, usage
+            var weight: UIFont.Weight {
+                switch self {
+                case .page: .medium // Ideas, Feedback, VPS and configuration headings: 500.
+                case .usage: .semibold // UsageHeader h1: 600.
+                }
+            }
+        }
     }
     enum Spinner {
         static let stroke: CGFloat = 2
@@ -79,4 +126,66 @@ extension View {
         modifier(PanelsScaledFont(size: size, relativeTo: style, weight: weight))
     }
 
+}
+
+/// Set fonts on the owning navigation item, so pushing or popping another page
+/// restores that page's own typography. Native title size, position and collapse stay native.
+private struct PanelsNavigationTypography: UIViewControllerRepresentable {
+    let role: PanelsTheme.TypeScale.NavigationTitleRole
+
+    func makeUIViewController(context: Context) -> Controller { Controller(role: role) }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.role = role
+        controller.applyFonts()
+    }
+
+    final class Controller: UIViewController {
+        var role: PanelsTheme.TypeScale.NavigationTitleRole
+        init(role: PanelsTheme.TypeScale.NavigationTitleRole) {
+            self.role = role
+            super.init(nibName: nil, bundle: nil)
+            registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: Controller, _: UITraitCollection) in
+                controller.applyFonts()
+            }
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func loadView() { view = UIView(); view.isUserInteractionEnabled = false }
+        override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); applyFonts() }
+        override func didMove(toParent parent: UIViewController?) { super.didMove(toParent: parent); applyFonts() }
+
+        func applyFonts() {
+            var owner: UIViewController = self
+            while let parent = owner.parent, !(parent is UINavigationController) { owner = parent }
+            guard let bar = owner.navigationController?.navigationBar else { return }
+            func appearance(_ original: UINavigationBarAppearance) -> UINavigationBarAppearance {
+                let copy = original.copy() as! UINavigationBarAppearance
+                func font(_ style: UIFont.TextStyle) -> UIFont {
+                    let base = UIFont.preferredFont(forTextStyle: style, compatibleWith: traitCollection)
+                    return UIFont.systemFont(ofSize: base.pointSize, weight: role.weight)
+                }
+                copy.titleTextAttributes[.font] = font(.headline)
+                copy.largeTitleTextAttributes[.font] = font(.largeTitle)
+                return copy
+            }
+            let item = owner.navigationItem
+            item.standardAppearance = appearance(bar.standardAppearance)
+            item.scrollEdgeAppearance = appearance(bar.scrollEdgeAppearance ?? bar.standardAppearance)
+            item.compactAppearance = appearance(bar.compactAppearance ?? bar.standardAppearance)
+            item.compactScrollEdgeAppearance = appearance(bar.compactScrollEdgeAppearance ?? bar.standardAppearance)
+        }
+    }
+}
+
+extension View {
+    func panelsProjectLabel() -> some View {
+        panelsScaledFont(size: 13, weight: .medium)
+    }
+
+    func panelsSectionHeading(_ role: PanelsTheme.TypeScale.SectionRole) -> some View {
+        fontWeight(role.weight)
+    }
+
+    func panelsNavigationTitle(_ title: String, role: PanelsTheme.TypeScale.NavigationTitleRole = .page) -> some View {
+        navigationTitle(title).background(PanelsNavigationTypography(role: role))
+    }
 }

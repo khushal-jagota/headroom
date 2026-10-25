@@ -21,18 +21,18 @@ struct MoreView: View {
                     .accessibilityElement(children: .combine)
                 }
             }.listRowBackground(PanelsTheme.raised)
-            Section("Work") {
+            Section {
                 destination("Ideas", symbol: "lightbulb", route: .ideas)
                 destination("Feedback", symbol: "bubble.left", route: .feedback)
-            }
-            Section("System") {
+            } header: { Text("Work").panelsSectionHeading(.navigation) }
+            Section {
                 destination("Usage", symbol: "chart.bar", route: .usage)
                 destination("VPS", symbol: "server.rack", route: .vps)
                 destination("Settings", symbol: "gearshape", route: .settings)
-            }
+            } header: { Text("System").panelsSectionHeading(.navigation) }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("More")
+        .panelsNavigationTitle("More")
         .navigationBarTitleDisplayMode(.inline)
         .panelsScreen()
     }

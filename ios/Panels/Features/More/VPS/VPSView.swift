@@ -35,7 +35,7 @@ struct VPSView: View {
                             .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
                     }.listRowBackground(PanelsTheme.raised)
                     instruments(sample)
-                    Section("CPU History") {
+                    Section {
                         Picker("Window", selection: $window) { ForEach(VPSWindow.allCases, id: \.self) { Text($0.rawValue) } }.accessibleSegmentedPicker()
                         if let historyError { LoadErrorView(message: historyError) { await loadHistory() } }
                         if let history, !history.points.isEmpty {
@@ -47,14 +47,14 @@ struct VPSView: View {
                                 }
                             }.chartYScale(domain: 0...100).frame(height: 120).accessibilityLabel("Machine CPU history, percent of total capacity")
                         } else if historyError == nil { Text(history == nil ? "Reading history…" : "No samples in this window").foregroundStyle(PanelsTheme.muted) }
-                    }.listRowBackground(PanelsTheme.raised)
-                    Section("Services") {
+                    } header: { Text("CPU History").panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
+                    Section {
                         ForEach(sample.services) { service in
                             workload(name: service.name, detail: "\(service.processCount) processes · \(service.state ?? "Unknown")", cpu: service.metrics["cpu_percent"]?.value, memory: service.metrics["memory_bytes"]?.value, cores: sample.coreCount)
                         }
                         if sample.services.isEmpty { Text("No service readings").foregroundStyle(PanelsTheme.muted) }
-                    }.listRowBackground(PanelsTheme.raised)
-                    Section("Processes · \(totalProcesses)") {
+                    } header: { Text("Services").panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
+                    Section {
                         if let processError { LoadErrorView(message: processError) { await loadProcesses(reset: true) } }
                         ForEach(processes) { process in
                             workload(name: process.name, detail: "PID \(process.identity.pid)", cpu: process.metrics["cpu_percent"]?.value, memory: process.metrics["rss_bytes"]?.value, cores: sample.coreCount)
@@ -64,13 +64,13 @@ struct VPSView: View {
                                 if loadingProcesses { RingSpinner() } else { Text("Load more processes") }
                             }.disabled(loadingProcesses)
                         }
-                    }.listRowBackground(PanelsTheme.raised)
+                    } header: { Text("Processes · \(totalProcesses)").panelsSectionHeading(.monitor) }.listRowBackground(PanelsTheme.raised)
                 } else {
                     ContentUnavailableView("No machine readings", systemImage: "server.rack", description: Text(latest.collection.reason ?? "The server has not collected a sample."))
                 }
             } else if error == nil { RingSpinner("Reading the machine…") }
         }
-        .navigationTitle("VPS").panelsScreen()
+        .panelsNavigationTitle("VPS").panelsScreen()
         .task(id: "\(store.baseURL):\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
             await load()
@@ -85,7 +85,7 @@ struct VPSView: View {
         .panelsRefreshable { await load(); await loadHistory() }
     }
     private func instruments(_ sample: VPSSample) -> some View {
-        Section("Machine") {
+        Section {
             LabeledContent("CPU", value: VPSPresentation.percent(sample.value("cpu_percent")))
             LabeledContent("Memory", value: VPSPresentation.bytes(VPSPresentation.used(total: sample.value("memory_total_bytes"), available: sample.value("memory_available_bytes"))))
             LabeledContent("Available memory", value: VPSPresentation.bytes(sample.value("memory_available_bytes")))
@@ -95,7 +95,7 @@ struct VPSView: View {
             LabeledContent("Network in", value: rate(sample.value("network.receive_bytes_per_second")))
             LabeledContent("Network out", value: rate(sample.value("network.transmit_bytes_per_second")))
             LabeledContent("Disk available", value: VPSPresentation.bytes(sample.value("filesystem.available_bytes")))
-        }.monospacedDigit().listRowBackground(PanelsTheme.raised)
+        } header: { Text("Machine").panelsSectionHeading(.monitor) }.monospacedDigit().listRowBackground(PanelsTheme.raised)
     }
     private func rate(_ value: Double?) -> String { value == nil ? "—" : VPSPresentation.bytes(value) + "/s" }
     private func workload(name: String, detail: String, cpu: Double?, memory: Double?, cores: Int) -> some View {
