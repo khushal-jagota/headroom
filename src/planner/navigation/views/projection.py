@@ -7,7 +7,11 @@ import sqlite3
 from typing import Any, cast
 
 from planner.navigation.contracts import SCHEMA_VERSION, NavigationRecord, RecordKey
-from planner.navigation.review import canonical_review_address
+from planner.navigation.review import (
+    canonical_review_address,
+    review_message_items,
+)
+from planner.navigation.review_logic import message_owner_is_live
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.logic import GROUPS, compact, digest, group, project, section_key
 from planner.navigation.views.ordering import ORDERING_GENERATION, sort_key
@@ -85,6 +89,7 @@ def _members(
     result: set[Member] = set()
     parent = (str(metadata[4]), str(metadata[5]))
     attention = _attention(conn, value.get("conversation_id"))
+    messages = review_message_items(conn, ticket_id=identity) if kind == "ticket" else []
     for profile in ("current", "durable"):
         signal = (
             None
@@ -194,17 +199,25 @@ def _members(
                             8, "big"
                         ) + title
                         add("rail_tickets", parent, grouping, rank=rank, title_key=ordered_title)
-                if metadata[11]:
+                if metadata[11] or messages:
+                    waiting = [int(message["waiting_since"]) for message in messages]
+                    if metadata[11]:
+                        waiting.append(int(value["proposal_created_at"]))
                     add(
                         "review",
                         None,
-                        rank=int(value["proposal_created_at"]),
-                        title_key=b"proposal",
+                        rank=min(waiting),
+                        title_key=b"ticket",
                         id_key=identity.encode(),
                     )
             elif kind == "address" and metadata[12]:
                 conversation_id = str(value["conversation_id"])
-                if canonical_review_address(conn, conversation_id) == identity:
+                owner_value = record(conn, (value["owner_kind"], value["owner_id"])) or {}
+                if (
+                    value["owner_kind"] != "ticket"
+                    and message_owner_is_live(value["owner_kind"], owner_value)
+                    and canonical_review_address(conn, conversation_id) == identity
+                ):
                     conversation = record(conn, ("conversation", conversation_id))
                     assert conversation is not None
                     add(
@@ -328,6 +341,18 @@ def update(
                 (conversation_id,),
             )
         )
+    # A Ticket card depends on historical addresses as well as its current pointer.
+    # Old index rows retain owners when an address moves or disappears.
+    for key in list(affected):
+        if key[0] != "address":
+            continue
+        value = record(conn, key)
+        old_owner = conn.execute(
+            "SELECT owner_kind,owner_id FROM navigation_view_index WHERE kind=? AND id=?", key
+        ).fetchone()
+        for owner in (old_owner, (value["owner_kind"], value["owner_id"]) if value else None):
+            if owner and owner[0] == "ticket":
+                affected.add(("ticket", str(owner[1])))
     sections: set[str] = set()
     pointer_ids: set[str] = {identity for kind, identity in changed if kind == "conversation"}
     globals_changed = False
@@ -365,6 +390,10 @@ def update(
             )
         }
         new_members = set() if new is None else _members(conn, key, value, new, config)  # type: ignore[arg-type]
+        # Republish card dependencies even when a constituent leaves its rank unchanged.
+        review_section = section_key("review", None)
+        if any(member[0] == review_section for member in old_members | new_members):
+            sections.add(review_section)
         for member in old_members - new_members:
             conn.execute(
                 "DELETE FROM navigation_view_memberships WHERE section_key=? AND "
@@ -379,7 +408,7 @@ def update(
             )
             _delta(conn, "navigation_view_counts", member[:3], 1)
             sections.add(member[0])
-        for name, column in (("out_claims", 10), ("review", 11), ("settled", 13)):
+        for name, column in (("out_claims", 10), ("settled", 13)):
             difference = (new[column] if new else 0) - (old[column] if old else 0)
             _delta(conn, "navigation_view_globals", (name,), difference)
             globals_changed |= difference != 0
@@ -403,7 +432,6 @@ def update(
         ).fetchone()[0]
         unread_delta = int(bool(unread)) - int(bool(old_unread))
         _delta(conn, "navigation_view_globals", ("unread",), unread_delta)
-        _delta(conn, "navigation_view_globals", ("review",), unread_delta)
         globals_changed |= unread_delta != 0
         if unread:
             conn.execute(
@@ -443,6 +471,20 @@ def update(
                 "DELETE FROM navigation_view_current_conversations WHERE conversation_id=?",
                 (identity,),
             )
+    # Review counts cards. Ordinary unread counts distinct conversations independently.
+    review_count = conn.execute(
+        "SELECT value FROM navigation_view_counts WHERE section_key=? AND profile='current' "
+        "AND locale=?",
+        (section_key("review", None), config.locales[0]),
+    ).fetchone()
+    review_total = int(review_count[0]) if review_count else 0
+    previous_review = conn.execute(
+        "SELECT value FROM navigation_view_globals WHERE name='review'"
+    ).fetchone()
+    globals_changed |= previous_review is None or previous_review[0] != review_total
+    conn.execute(
+        "INSERT OR REPLACE INTO navigation_view_globals VALUES('review',?)", (review_total,)
+    )
     conn.execute(
         "INSERT OR REPLACE INTO navigation_view_changes VALUES(?,?)",
         (

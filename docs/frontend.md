@@ -22,28 +22,29 @@ One screen per part of the system:
 
 - **Removed calendar screens** — Day and date-range Sprint screens no longer exist.
   Old dated links use the unavailable-route view. A bare former Home address opens Chief.
-- **Review** — one oldest-first queue holds owner-addressed proposals and unread conversations.
-  Each conversation gets one card with its complete unread run, including progress messages.
-  A proposal from the same Worker remains a separate decision. The badge counts both kinds.
-  The title and recap name the conversation. Skip and Open conversation stay above the card.
-  Mini bars separate messages. Linked artifacts appear where the message links them.
+- **Review** — one oldest-first queue holds owner-addressed proposals and eligible unread conversations.
+  A Ticket gets one card with its proposal and unread conversation sections. Each card counts once.
+  Manager and Chief conversation cards keep their existing identities.
+  Ticket messages qualify while the Ticket is neither done nor backlogged.
+  Manager messages qualify while that Manager is not settled. Chief always remains live.
+  A settled Manager does not exclude its live Tickets. Each Ticket uses its own state.
+  Proposal eligibility stays unchanged. Ordinary unread discovery still includes excluded Review messages.
+  A live Worker's progress messages remain eligible, even while the Worker continues work.
+  Existing messages use their owner's current state. State reversals restore eligible rows.
+  Each Ticket card takes the earliest timestamp among its proposal and unread conversations.
+  This deliberately moves a new proposal to its older unread message's queue position.
+  Grouping happens before pagination and counts. Proposal identity retains its original timestamp and revision.
+  One Ticket title and recap introduce its proposal and conversation sections.
+  Each conversation keeps its exact address and complete unread run. Mini bars separate messages.
+  Linked artifacts appear where the message links them.
   The reply field holds paperclip, microphone, and send controls. Mark read sits below it.
   Opening Review does not acknowledge a message. Mark read or an accepted reply clears only
   the messages displayed when the owner acts. Later messages remain unread.
-  A failed reply stays in place with its words and attachments. An uncertain send retains
-  its identity until the recorded outcome resolves it. The card fades out after acceptance.
-  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal
-  guard, with the draft intact. Open conversation names the exact conversation.
-  Proposal items keep their recap, ask, approval, and send-back controls.
-  A proposal routed to a Manager also creates a durable manager wake. Other
-  non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
-  Keyboard shortcuts drive the actions that apply to the current item when the
-  cursor is not in a text field, and each item fades in as it arrives. A proposal's
-  approve button sends the next ceiling and owner holder together. Send-back
-  stores the owner's exact attributed comment for the next worker-step prompt while
-  clearing the proposal and returning the Ticket to its resting control status.
-  A reply in the Ticket conversation leaves the proposal in
-  Review until a decision.
+  A failed reply keeps its words and attachments. An uncertain send retains its identity until its recorded outcome resolves it.
+  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal guard and draft.
+  Open conversation names the exact conversation. Approval and send-back act only on the proposal.
+  Each action leaves the card's other pending parts intact.
+  Other proposal controls, keyboard shortcuts, and approval routing retain their existing behavior.
 - **Workspace** — an adjustable rail of manager cards beside the selected conversation
   or Worker. Chief leads, keeps its portrait, and never settles. Ordinary managers
   have Project and Settle above the title. Only the owner settles or reopens one.
@@ -657,12 +658,12 @@ hand-rolling the same shapes per screen. Each does one job:
   routing. A Ticket reviewer is labelled Worker, distinct from its assigned Manager.
   A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
-- **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
+- **ReviewProposalCard** — one waiting proposal, also embedded inside a combined Ticket card: the ticket's title and recap,
   the approval control and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
-- **ReviewMessageCard** — the complete unread run for one conversation, read from its
+- **ReviewMessageCard** — the complete unread run for one conversation, standalone or embedded in a Ticket card, read from its
   durable watermark. It reuses message rendering, file previews, voice capture, and durable
   composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
   Navigation publications carry identity and recap facts, never message bodies.

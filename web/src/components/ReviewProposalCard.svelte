@@ -45,9 +45,11 @@
     title = null,
     onSkip,
     onResolved,
-    footer
+    footer,
+    embedded = false
   }: {
     identity: NavigationReviewProposalItem;
+    embedded?: boolean;
     onRendered?: () => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
@@ -157,7 +159,7 @@
 
   function currentIdentity(): boolean {
     const effective = navigation.state.effective;
-    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'proposal' && reviewProposalIdentity(item) === currentKey));
+    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'ticket' && item.proposal !== null && reviewProposalIdentity(item.proposal) === currentKey));
   }
 
   async function write(path: string, options: Parameters<typeof mutateJson>[1], operation:TicketNavigationOperation): Promise<unknown> {
@@ -288,6 +290,7 @@
       data-ticket-id={ticketId}
       data-field={field}
     >
+      {#if !embedded}
       <div class="review-ticket-decision-line review-arrive review-arrive--1">
         {#if onSkip}
           <button data-skip="" onclick={onSkip}>Skip &rsaquo;</button>
@@ -312,6 +315,7 @@
         </div>
       </div>
 
+      {/if}
       <div class="review-arrive review-arrive--3">
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}

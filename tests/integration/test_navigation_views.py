@@ -52,11 +52,12 @@ def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
     }
     return request(
         {
-            "projection_version": 5,
+            "projection_version": 6,
             "scope_generation": 1,
             "locale": "en-US",
             "selected": None if selected is None else {"kind": "ticket", "id": selected},
             "selected_conversation_id": None,
+            "review_conversation_ids": [],
             "windows": [window],
         }
     )
@@ -513,7 +514,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         assert footprint == {"globals": False, "keys": [], "sections": []}
         common = {
             "wire_version": 3,
-            "projection_version": 5,
+            "projection_version": 6,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -670,7 +671,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         runtime = ScopedDeliveryRuntime(host.delivery)
         query = descriptor(selected="t")
         current, access = asyncio.run(runtime.snapshot(query))
-        assert current["projection_version"] == 5
+        assert current["projection_version"] == 6
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
@@ -681,7 +682,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
             asyncio.run(runtime.snapshot(query, captured=captured))
         degraded, _ = asyncio.run(runtime.snapshot(query))
         assert degraded["mode"] == "degraded"
-        assert degraded["projection_version"] == 5
+        assert degraded["projection_version"] == 6
         assert degraded["authority"]["permit"] is None
         assert degraded["content"]["counts"]["running_conversations"] is None
         assert degraded["content"]["counts"]["unread"] == 1
@@ -993,19 +994,18 @@ def test_mixed_review_window_preserves_order_count_and_unread_boundary(tmp_path:
             {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
         ]
         listed = _review_items(conn)
-        assert len(listed) == 33
-        assert listed[0]["conversation_id"] == "unread"
+        assert len(listed) == 32
+        assert listed[0]["messages"][0]["conversation_id"] == "unread"
         assert listed[0]["waiting_since"] == 5
         for current in (True, False):
             _, content = read_content(conn, query, current=current)
             window = content["windows"][0]
-            assert window["total"] == content["counts"]["review"] == 33
+            assert window["total"] == content["counts"]["review"] == 32
             assert len(window["members"]) == 30
-            assert window["members"][0] == {"kind": "address", "id": listed[0]["address_id"]}
+            assert window["members"][0] == {"kind": "ticket", "id": "decision-00"}
             query["windows"][0]["anchor"] = window["next"]
             _, tail = read_content(conn, query, current=current)
             assert [key["id"] for key in tail["windows"][0]["members"]] == [
-                "decision-29",
                 "decision-30",
                 "decision-31",
             ]
@@ -1016,14 +1016,13 @@ def test_mixed_review_window_preserves_order_count_and_unread_boundary(tmp_path:
         )
         conn.commit()
         listed = _review_items(conn)
-        message = next(item for item in listed if item["review_item_type"] == "message")
-        assert message["waiting_since"] == 25
-        # Equal timestamps use item kind, so the message precedes decision-15.
-        assert listed[15] == message
-        assert listed[16]["ticket_id"] == "decision-15"
+        card = next(item for item in listed if item["ticket_id"] == "decision-00")
+        assert card["messages"][0]["waiting_since"] == 25
+        assert card["waiting_since"] == 10
+        assert listed[0] == card
         _, partial = read_content(conn, query, current=True)
-        assert partial["counts"]["review"] == 33
-        assert partial["windows"][0]["members"][15]["kind"] == "address"
+        assert partial["counts"]["review"] == 32
+        assert partial["windows"][0]["members"][0] == {"kind": "ticket", "id": "decision-00"}
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE conversations SET owner_read_through_sequence=2 WHERE conversation_id='unread'"
@@ -1057,15 +1056,13 @@ def test_review_canonical_address_transfers_and_retains_historical_conversation(
         def check(owner: str) -> None:
             items = _review_items(conn)
             assert len(items) == 1
-            assert items[0]["owner_id"] == owner
-            assert items[0]["recap"] == "Owner recap"
+            assert items[0]["ticket_id"] == owner
+            assert items[0]["messages"][0]["recap"] == "Owner recap"
             for current in (True, False):
                 _, content = read_content(conn, query, current=current)
                 assert content["counts"]["review"] == content["counts"]["unread"] == 1
                 assert content["windows"][0]["total"] == 1
-                assert content["windows"][0]["members"] == [
-                    {"kind": "address", "id": items[0]["address_id"]}
-                ]
+                assert content["windows"][0]["members"] == [{"kind": "ticket", "id": owner}]
                 assert any(
                     row["kind"] == "ticket" and row["id"] == owner for row in content["records"]
                 )
@@ -1079,3 +1076,199 @@ def test_review_canonical_address_transfers_and_retains_historical_conversation(
         conn.execute("UPDATE tickets SET conversation_id='new' WHERE id='b'")
         conn.commit()
         check("a")
+
+
+def test_review_owner_state_reversals_preserve_unread_discovery(tmp_path: Path) -> None:
+    """Review state gates must not consume messages or hide live children of settled Managers."""
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        for conversation in ("worker", "manager", "chief"):
+            add_conversation(conn, conversation)
+        conn.execute("BEGIN")
+        add_parent(conn, "m")
+        add_ticket(conn, "t", "m")
+        conn.execute("UPDATE tickets SET conversation_id='worker' WHERE id='t'")
+        conn.execute("INSERT INTO agents VALUES('manager_m','manager')")
+        conn.execute("INSERT INTO agents VALUES('chief_of_staff','chief')")
+        for conversation in ("worker", "manager", "chief"):
+            conn.execute(
+                "INSERT INTO conversation_events VALUES(?,1,'message_to_owner','{}',1)",
+                (conversation,),
+            )
+        conn.commit()
+        query = descriptor()
+        query["windows"] = [
+            {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+        ]
+
+        def check(total: int, ticket: bool, manager: bool) -> None:
+            items = _review_items(conn)
+            assert len(items) == total
+            assert any(item["review_item_type"] == "ticket" for item in items) is ticket
+            assert any(item.get("owner_kind") == "manager" for item in items) is manager
+            assert any(item.get("owner_kind") == "chief" for item in items)
+            for current in (True, False):
+                _, content = read_content(conn, query, current=current)
+                assert content["counts"]["review"] == content["windows"][0]["total"] == total
+                assert content["counts"]["unread"] == 3
+            unread = {**query, "windows": [{**query["windows"][0], "section": "unread"}]}
+            _, content = read_content(conn, unread, current=True)
+            assert len(content["windows"][0]["members"]) == 3
+
+        check(3, True, True)
+        for statement, expected in (
+            ("UPDATE managers SET settled=1 WHERE id='m'", (2, True, False)),
+            ("UPDATE tickets SET is_backlogged=1 WHERE id='t'", (1, False, False)),
+            ("UPDATE tickets SET is_backlogged=0 WHERE id='t'", (2, True, False)),
+            ("UPDATE tickets SET stage='done' WHERE id='t'", (1, False, False)),
+            ("UPDATE tickets SET stage='needs_implementation' WHERE id='t'", (2, True, False)),
+            ("UPDATE managers SET settled=0 WHERE id='m'", (3, True, True)),
+        ):
+            conn.execute("BEGIN")
+            conn.execute(statement)
+            conn.commit()
+            check(*expected)
+
+
+def test_review_ticket_closure_tracks_historical_constituents_without_rank_change(
+    tmp_path: Path,
+) -> None:
+    """A new historical unread conversation needs delivery when the oldest rank stays fixed."""
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        for conversation in ("old", "current"):
+            add_conversation(conn, conversation)
+        conn.execute("BEGIN")
+        add_ticket(conn, "t")
+        conn.execute("UPDATE tickets SET conversation_id='current' WHERE id='t'")
+        conn.execute("INSERT INTO ticket_conversations VALUES('old','t')")
+        conn.execute(
+            "INSERT INTO conversation_events VALUES('current',1,'message_to_owner','{}',1)"
+        )
+        conn.commit()
+        query = descriptor()
+        query["windows"] = [
+            {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+        ]
+        _, before = read_content(conn, query, current=True)
+        conn.execute("BEGIN")
+        conn.execute("INSERT INTO conversation_events VALUES('old',1,'message_to_owner','{}',2)")
+        conn.commit()
+        _, after = read_content(conn, query, current=True)
+        assert (
+            before["windows"][0]["members"]
+            == after["windows"][0]["members"]
+            == [{"kind": "ticket", "id": "t"}]
+        )
+        assert after["counts"]["review"] == 1
+        assert after["counts"]["unread"] == 2
+        addresses = [row for row in after["records"] if row["kind"] == "address"]
+        assert {row["value"]["conversation_id"] for row in addresses} == {"old", "current"}
+        footprint = json.loads(
+            conn.execute(
+                "SELECT footprint FROM navigation_view_changes ORDER BY revision DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+        assert section_key("review", None) in footprint["sections"]
+        assert len(_review_items(conn)[0]["messages"]) == 2
+        assert _review_items(conn)[0]["waiting_since"] == 1
+        # Review seeds both historical and current address closures as one admission.
+        # Each budget misses the complete card by one record or one byte of capacity.
+        record_bytes = sum(len(compact(row).encode()) for row in after["records"])
+        for budget in (
+            replace(DEFAULT_CONFIG, maximum_records=len(after["records"]) - 1),
+            replace(DEFAULT_CONFIG, maximum_bytes=(record_bytes * 4 - 5) // 3),
+        ):
+            _, refused = read_content(conn, query, current=True, config=budget)
+            assert refused["windows"][0]["members"] == []
+            assert refused["windows"][0]["total"] == refused["counts"]["review"] == 1
+            assert [(row["kind"], row["id"]) for row in refused["records"]] == [("chief", "chief")]
+        _, restored = read_content(conn, query, current=True)
+        assert restored == after
+
+
+def test_review_held_context_follows_excluded_canonical_owner_and_survives_read(
+    tmp_path: Path,
+) -> None:
+    """An absent queue row cannot conceal a changed reply destination or unread outcome."""
+    from planner.navigation.delivery_authority import DeliveryUnavailable
+
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        for conversation in ("old", "new"):
+            add_conversation(conn, conversation)
+        conn.execute("BEGIN")
+        add_ticket(conn, "a")
+        add_ticket(conn, "b")
+        conn.execute("UPDATE tickets SET conversation_id='old'")
+        conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id='b'")
+        conn.execute("INSERT INTO ticket_conversations VALUES('old','a')")
+        conn.execute("INSERT INTO conversation_events VALUES('old',1,'message_to_owner','{}',1)")
+        conn.commit()
+        query = descriptor()
+        query["review_conversation_ids"] = ["old"]
+        query["windows"] = [
+            {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
+        ]
+
+        def context_owner(content: ViewContent) -> str:
+            context = content["review_context"]
+            assert len(context) == 1 and context[0]["conversation_id"] == "old"
+            address = next(
+                row
+                for row in content["records"]
+                if (row["kind"] == "address" and row["id"] == context[0]["canonical_address_id"])
+            )
+            assert address["value"]["conversation_id"] == "old"
+            return str(address["value"]["owner_id"])
+
+        _, before = read_content(conn, query, current=True)
+        assert context_owner(before) == "a"
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET conversation_id='new' WHERE id='a'")
+        conn.commit()
+        _, excluded = read_content(conn, query, current=True)
+        assert excluded["windows"][0]["members"] == []
+        assert excluded["counts"]["review"] == 0
+        assert excluded["counts"]["unread"] == 1
+        assert context_owner(excluded) == "b"
+        with pytest.raises(DeliveryUnavailable, match="exceeds its budget"):
+            read_content(
+                conn, query, current=True, config=replace(DEFAULT_CONFIG, maximum_records=1)
+            )
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE conversations SET owner_read_through_sequence=1 WHERE conversation_id='old'"
+        )
+        conn.commit()
+        _, cleared = read_content(conn, query, current=True)
+        assert context_owner(cleared) == "b"
+        assert cleared["counts"]["unread"] == 0
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM tickets WHERE id IN ('a','b')")
+        conn.commit()
+        _, deleted = read_content(conn, query, current=True)
+        assert deleted["review_context"] == [
+            {"conversation_id": "old", "canonical_address_id": None}
+        ]
+        assert not any(row["kind"] == "address" for row in deleted["records"])
+        common = {
+            "wire_version": 3,
+            "projection_version": 6,
+            "view_id": "view",
+            "scope_generation": 1,
+            "ordering_generation": "order",
+            "authority": {},
+            "coverage": {},
+        }
+        frame = difference(
+            cast(ViewSnapshot, {**common, "content_version": digest(cleared), "content": cleared}),
+            cast(ViewSnapshot, {**common, "content_version": digest(deleted), "content": deleted}),
+        )
+        assert frame["event"] == "patch"
+        assert frame["review_context"] == deleted["review_context"]
+        for ids in ([""], ["old", "old"], ["x" * 257], [str(i) for i in range(257)]):
+            with pytest.raises(ValueError, match="invalid Review conversation context"):
+                request({**query, "review_conversation_ids": ids})
+        with pytest.raises(ValueError, match="exceeds row budget"):
+            request(query, config=replace(DEFAULT_CONFIG, maximum_requested_rows=30))

@@ -538,7 +538,7 @@ describe('shared Review and runtime counts',()=>{
       let view=knowledge.accept(adapter.getPublication()!);
       expect(navigationWorkingAgentCount(view)).toBe(0);
       expect(navigationReviewPresentation(view)).toMatchObject({runningConversationCount:0,exactOutClaimCount:2,
-        items:[{review_item_type:'message',conversation_id:'historical'},{ticket_id:'earliest',field:'implementation',proposal_field:'plan'},{ticket_id:'a'},{ticket_id:'c'}]});
+        items:[{review_item_type:'ticket',ticket_id:'a',messages:[{conversation_id:'historical'}]},{ticket_id:'earliest',proposal:{field:'implementation',proposal_field:'plan'}},{ticket_id:'c'}]});
       const active=conversation('conversation',0,false);active.value.attention.current!.signal.working=true;
       const historical=conversation('historical');historical.value.attention.current!.signal.working=true;
       adapter.publishBatch(envelope({...continuity,base_revision:'0',revision:'1',upserts:[active,historical,conversation('manager-current')],deletes:[]}),encodeCursor({...continuity,revision:'1'}),'counts-batch');
@@ -550,7 +550,7 @@ describe('shared Review and runtime counts',()=>{
       expect(navigationWorkingAgentCount(lost)).toBeNull();
       expect(navigationReviewPresentation(lost)).toMatchObject({runningConversationCount:null,exactOutClaimCount:2});
       // Backlogged b stays outside Review but still contributes its outclaim.
-      expect(navigationReviewPresentation(lost).items.map(item=>item.review_item_type==='proposal' ? item.ticket_id : item.conversation_id)).toEqual(['historical','earliest','a','c']);
+      expect(navigationReviewPresentation(lost).items.map(item=>item.review_item_type==='ticket' ? item.ticket_id : item.conversation_id)).toEqual(['a','earliest','c']);
       const missing={...view,conversations:new Map([...view.conversations].filter(([id])=>id!=='conversation'))};
       expect(navigationWorkingAgentCount(missing)).toBeNull();
       expect(navigationReviewPresentation(missing).runningConversationCount).toBeNull();
@@ -565,7 +565,7 @@ describe('shared Review and runtime counts',()=>{
       expect(navigationWorkingAgentCount(empty)).toBe(0);
       expect(navigationReviewPresentation(empty).runningConversationCount).toBe(0);
       // Identity is stricter than same-field membership; a newer body cannot wear an older stamp.
-      const item=navigationReviewPresentation(view).items.find(item=>item.review_item_type==='proposal')!;
+      const item=navigationReviewPresentation(view).items.find(item=>item.review_item_type==='ticket')!.proposal!;
       const detail={id:item.ticket_id,pending_proposal:{field:'plan',created_at:1,revision:2,body:'replacement',proposed_by:'agent'}};
       expect(reviewProposalDetailMatches(item,detail)).toBe(false);
     } finally {adapter.destroy();}
