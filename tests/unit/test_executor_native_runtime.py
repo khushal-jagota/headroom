@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -36,6 +36,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, ExecutorPaths
 from planner.executor.contracts import (
+    AcceptanceReceipt,
     AuthorizedAction,
     ChildCommand,
     ChildOperation,
@@ -53,6 +54,7 @@ from planner.executor.contracts import (
     QueuedEnvelope,
     Quiescence,
     QuiesceRequest,
+    ReceiptDisposition,
     ReconciliationResult,
     SshAuthenticationMode,
     WireMessage,
@@ -68,6 +70,7 @@ class ScriptedChild:
     def __init__(self) -> None:
         self.answers: list[tuple[str, str]] = []
         self.starts = 0
+        self.prompts = 0
         self.sink: BackendEventSink | None = None
 
     async def start(
@@ -79,6 +82,7 @@ class ScriptedChild:
     async def write_prompt(
         self, turn: TurnToken, content: MessageContent, **kwargs: object
     ) -> BackendPromptAccepted:
+        self.prompts += 1
         return BackendPromptAccepted(True)
 
     async def steer(self, turn: TurnToken, content: MessageContent, **kwargs: object) -> None:
@@ -90,6 +94,212 @@ class ScriptedChild:
 
     async def stop(self) -> None:
         return None
+
+
+@pytest.fixture
+def native_registry(
+    tmp_path: Path,
+) -> Iterator[tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand]]:
+    spool = FilesystemSpool(tmp_path / "spool")
+    native = ScriptedChild()
+    reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
+
+    def factory(
+        resolved: ResolvedConversationStart, capability: str, child: ChildReference
+    ) -> BackendChildFactory:
+        def create(**kwargs: object) -> BackendChild:
+            native.sink = cast(BackendEventSink, kwargs["event_sink"])
+            return cast(BackendChild, native)
+
+        return cast(BackendChildFactory, create)
+
+    registry = NativeChildRegistry(
+        incarnation=reference.executor_incarnation,
+        spool=spool,
+        factory=factory,
+        message_files=ConversationMessageFiles(tmp_path / "unused"),
+    )
+    resolved = ResolvedConversationStart(
+        "c_one",
+        ConversationBackendKey.codex,
+        "test",
+        None,
+        None,
+        tmp_path,
+        ConversationAccess.full,
+    )
+    start = ChildCommand(
+        "start",
+        reference,
+        ChildOperation.start,
+        None,
+        {"resolved_start": encode_value(resolved)},
+    )
+    try:
+        yield registry, spool, native, start
+    finally:
+        spool.close()
+
+
+def acknowledge_pending(spool: FilesystemSpool) -> None:
+    for row in spool.pending():
+        spool.acknowledge(
+            AcceptanceReceipt(
+                row.sender_id,
+                row.submission_id,
+                row.payload_sha256,
+                ReceiptDisposition.accepted,
+                {},
+                1,
+            )
+        )
+
+
+@pytest.mark.parametrize("boundary", ["incarnation", "start", "prompt", "prompt_lock"])
+def test_pre_dispatch_refusal_never_calls_native(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    boundary: str,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        command = start
+        if boundary == "incarnation":
+            command = replace(start, child=replace(start.child, executor_incarnation=str(uuid4())))
+        if boundary.startswith("prompt"):
+            assert (
+                await registry.execute_command(start)
+            ).disposition == CommandDisposition.succeeded
+            command = ChildCommand(
+                "prompt",
+                start.child,
+                ChildOperation.write_prompt,
+                TurnToken("c_one", 1),
+                {
+                    "content": encode_value(text_message_content("go")),
+                    "sender_content": encode_value(text_message_content("go")),
+                    "sender_label": "Owner",
+                    "mode": PromptDeliveryMode.queue.value,
+                },
+            )
+        if boundary == "prompt_lock":
+            child = registry.children[start.child.child_id]
+            await child.lock.acquire()
+            try:
+                task = asyncio.create_task(registry.execute_command(command))
+                # Let execute_command create its task, then let that task wait on the lock.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                assert not task.done()
+                assert not (await registry.quiesce()).ready
+            finally:
+                child.lock.release()
+            outcome = await task
+        else:
+            if boundary == "prompt":
+                registry.admission_stopped = True
+            else:
+                await registry.quiesce()
+            outcome = await registry.execute_command(command)
+        assert outcome.disposition == CommandDisposition.refused
+        assert native.prompts == 0
+        assert native.starts == (1 if boundary.startswith("prompt") else 0)
+        if not boundary.startswith("prompt"):
+            assert native.sink is None  # Native construction never occurred.
+        else:
+            # Closed admission did not install a new active turn.
+            assert all(child.active_turn is None for child in registry.children.values())
+        assert registry.outcomes[command.command_id] == outcome
+        assert spool.pending()[-1].payload == encode_value(outcome)
+        blocked = await registry.quiesce()
+        assert blocked.uncertain_operation_count == 0
+        assert blocked.unsent_entry_count > 0
+        assert not blocked.ready
+        acknowledge_pending(spool)
+        assert (await registry.quiesce()).ready
+
+    asyncio.run(run())
+
+
+def test_refusal_publication_and_receipts_block_exit_and_duplicates_keep_first_outcome(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        await registry.quiesce()
+        entered = asyncio.Event()
+        released = asyncio.Event()
+        publish = registry._publish_outcome
+
+        async def paused_publish(outcome: CommandOutcome) -> None:
+            entered.set()
+            await released.wait()
+            await publish(outcome)
+
+        monkeypatch.setattr(registry, "_publish_outcome", paused_publish)
+        task = asyncio.create_task(registry.execute_command(start))
+        await entered.wait()
+        assert registry.outcomes[start.command_id].disposition == CommandDisposition.refused
+        assert spool.pending_count() == 0
+        blocked = await registry.quiesce()
+        assert blocked.uncertain_operation_count > 0
+        assert not blocked.ready
+        released.set()
+        first = await task
+        entries = spool.pending()
+        assert await registry.execute_command(start) == first
+        assert spool.pending() == entries
+        with pytest.raises(ValueError, match="different content"):
+            await registry.execute_command(replace(start, arguments={}))
+        assert not (await registry.quiesce()).ready
+        registry.confirm_command(start.command_id)
+        acknowledge_pending(spool)
+        assert (await registry.quiesce()).ready
+        assert await registry.execute_command(start) == first
+        assert spool.pending_count() == 0
+        assert native.starts == 0 and native.sink is None
+
+    asyncio.run(run())
+
+
+def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and_drain(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+
+        async def failing_start(
+            resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        ) -> None:
+            native.starts += 1
+            raise ValueError("executor is quiescing")
+
+        monkeypatch.setattr(native, "start", failing_start)
+        outcome = await registry.execute_command(start)
+        assert outcome.disposition == CommandDisposition.uncertain
+        assert outcome.result == {
+            "error_type": "ValueError",
+            "error_message": "executor is quiescing",
+        }
+        assert native.starts == 1
+        assert spool.pending()[-1].payload == encode_value(outcome)
+        registry.confirm_command(start.command_id)
+        acknowledge_pending(spool)
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, start.child.executor_incarnation, 1
+        )
+        assert registry.inventory(identity).retained_command_outcomes == ()
+        blocked = await registry.quiesce()
+        assert blocked.active_turn_count == 0
+        assert blocked.pending_callback_count == 0
+        assert blocked.unsent_entry_count == 0
+        assert blocked.uncertain_operation_count == 1
+        assert not blocked.ready
+        assert await registry.execute_command(start) == outcome
+        assert native.starts == 1
+
+    asyncio.run(run())
 
 
 def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_path: Path) -> None:

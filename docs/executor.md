@@ -203,6 +203,17 @@ before it waits for the journal to drain. Final native events remain admitted
 and every unaccepted entry still blocks exit. Quiescence rechecks the process
 identity after awaited shutdown work.
 
+Commands for another executor incarnation receive a definitive refusal before
+native execution. After admission closes, new starts and prompts also receive
+refusals before native execution. A prompt waits for its child's current operation,
+then checks admission again. These outcomes retain their ordinary journal entries,
+receipts, and duplicate protection. Unaccepted entries still prevent exit.
+
+A missing child or an unknown native effect remains uncertain. Confirmation of
+an outcome and receipt of its journal entry do not resolve that uncertainty.
+Error text alone cannot prove that dispatch never occurred. Historical uncertain
+outcomes retain their original meaning; this correction does not rewrite them.
+
 A committed controlled exit returns zero. The LaunchAgent keeps successful intentional exits stopped. The operator must
 check process evidence before service removal. An old receipt cannot authorize
 action against a replacement process. Missing or changed process evidence refuses cutover.
