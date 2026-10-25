@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,9 +17,69 @@ from playwright.sync_api import (
     expect,
 )
 from tests.e2e.harness import REPO_ROOT, JsonObject, ServerHandle
-from tests.support.connected_rows import _post, _propose
+from tests.support.connected_rows import _bind, _message, _post, _propose
+from tests.support.server_fixtures import rail_server as rail_server
+
+from planner.core.contracts import CHIEF_PRINCIPAL
 
 WAIT_MS = 10_000
+
+
+def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None) -> None:
+    """Production hosts must retain sandbox state while conversation covers it."""
+    artifact = page.locator("[data-ticket-artifact]")
+    iframe = artifact.locator("iframe[data-file-preview-html]")
+    frame = artifact.frame_locator("iframe[data-file-preview-html]")
+    pane = page.locator("[data-conversation-pane]")
+    draft = pane.locator("[data-conversation-input]")
+    if pane.get_attribute("data-conversation-state") == "opened":
+        page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
+    expect(pane).to_have_attribute("data-conversation-state", "rest", timeout=WAIT_MS)
+    draft.fill("Keep this draft through full conversation")
+    expect(pane).to_have_attribute("data-conversation-state", "rest")
+    frame.locator("[data-retained-form]").fill("Keep this artifact value")
+    frame.locator("[data-bottom-control]").click(timeout=WAIT_MS)
+    expect(frame.locator("[data-bottom-control]")).to_have_text("Bottom control works")
+    frame.locator("[data-retained-selection]").evaluate(
+        "node => { const range = document.createRange(); range.selectNodeContents(node); "
+        "const selection = getSelection(); selection.removeAllRanges(); "
+        "selection.addRange(range); }"
+    )
+    before = frame.locator("body").evaluate(
+        "node => ({scroll: document.scrollingElement.scrollTop, "
+        "selection: getSelection().toString()})"
+    )
+    assert before["scroll"] > 0
+    iframe.evaluate("node => window.__retainedArtifactFrame = node")
+    source = iframe.get_attribute("src")
+    reader_bounds = artifact.bounding_box()
+    assert reader_bounds is not None
+    reader_height = reader_bounds["height"]
+    bounds = page.locator(".conversation-layer").bounding_box()
+    assert bounds is not None
+    assert reader_bounds["y"] + reader_height <= bounds["y"] + 1
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / f"{label}-dock.png"), full_page=True)
+    page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
+    expect(pane).to_have_attribute("data-conversation-state", "opened", timeout=WAIT_MS)
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / f"{label}-full.png"), full_page=True)
+    page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
+    expect(pane).to_have_attribute("data-conversation-state", "rest", timeout=WAIT_MS)
+    expect(draft).to_have_value("Keep this draft through full conversation")
+    assert iframe.evaluate("node => node === window.__retainedArtifactFrame")
+    assert iframe.get_attribute("src") == source
+    expect(frame.locator("[data-retained-form]")).to_have_value("Keep this artifact value")
+    expect(frame.locator("[data-bottom-control]")).to_have_text("Bottom control works")
+    after = frame.locator("body").evaluate(
+        "node => ({scroll: document.scrollingElement.scrollTop, "
+        "selection: getSelection().toString()})"
+    )
+    assert after == before
+    returned_bounds = artifact.bounding_box()
+    assert returned_bounds is not None
+    assert returned_bounds["height"] == reader_height
+    draft.fill("")
 
 
 def _ticket_files_dir(server: ServerHandle, ticket_id: str) -> Path:
@@ -83,7 +144,7 @@ def _open_ticket_field(page: Page, field: str) -> None:
 
 
 def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
-    server: ServerHandle,
+    rail_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
@@ -94,6 +155,8 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     sibling URL resolution, child navigation, or changed content in the open frame.
     The same browser and server exercise both hosts against the shipped bundle.
     """
+    server = rail_server
+    started_at = time.monotonic()
     ticket_id = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "HTML artifact"
     )["id"]
@@ -132,9 +195,15 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         '<output data-artifact-action-count>0</output>'
         '<script>let actionCount = 0; function localAction(event) { event.preventDefault(); '
         'document.querySelector("[data-artifact-action-count]").textContent = ++actionCount; }'
-        '</script></body></html>',
+        '</script><input data-retained-form aria-label="Artifact form">'
+        '<div style="height: 1600px"></div>'
+        '<p data-retained-selection>Retain this selection</p>'
+        '<button data-bottom-control onclick="this.textContent=\'Bottom control works\'">'
+        'Bottom control</button>'
+        '</body></html>',
         encoding="utf-8",
     )
+    retained_document = document.read_text(encoding="utf-8")
     _settle_success(
         server,
         ticket_id,
@@ -212,6 +281,13 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     )
     frame.get_by_role("button", name="Try interaction").click(timeout=WAIT_MS)
     frame.get_by_role("button", name="Clicked").wait_for(timeout=WAIT_MS)
+
+    # The browser, production route, served file and sandbox must agree on identity.
+    # A fixture-only DOM check cannot prove this connected retention boundary.
+    for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
+        page.set_viewport_size({"width": width, "height": height})
+        _prove_dock_artifact_retention(page, f"ticket-{layout}", evidence)
+    page.set_viewport_size({"width": 1440, "height": 1000})
 
     # Authored action anchors keep their handlers and never enter viewer navigation.
     original_frame_src = iframe.get_attribute("src")
@@ -339,6 +415,67 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         expect(page.get_by_text(retired_text, exact=True)).to_have_count(0)
     if evidence:
         page.screenshot(path=str(Path(evidence) / "combined-chief-ui.png"), full_page=True)
+
+    # Reuse this server and browser for the other hosts. No new provider run occurs.
+    document.write_text(retained_document, encoding="utf-8")
+    artifact_link = f"[Dock artifact](/files/tickets/{ticket_id}/previews/index.html)"
+    project = _post(server, "/api/projects", {"name": "Dock artifact proof"})
+    manager = _post(server, "/api/managers", {
+        "title": "Dock manager", "project_id": project["id"],
+    })
+    response = context.request.patch(
+        server.base + f"/api/managers/{manager['id']}", data={"goal": artifact_link}
+    )
+    assert response.ok, response.text()
+    page.goto(f"{server.base}/#/workspace/manager/{manager['id']}")
+    page.locator("[data-goal-band]").wait_for(timeout=WAIT_MS)
+    page.locator("[data-goal-band]").evaluate("node => { node.open = true; }")
+    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
+        page.set_viewport_size({"width": width, "height": height})
+        page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
+            "heading", name="Initial artifact"
+        ).wait_for(timeout=WAIT_MS)
+        _prove_dock_artifact_retention(page, f"manager-{layout}", evidence)
+
+    chief_conversation = "dock-chief-artifact-proof"
+    _post(server, f"/api/test/signals/{chief_conversation}/start", {})
+    _bind(server, "agent", "chief_of_staff", chief_conversation)
+    _message(
+        server, chief_conversation, CHIEF_PRINCIPAL,
+        "# The artifact is ready\n\n" + artifact_link
+        + "\n\n- Inspect the bottom control\n- Keep the form value",
+    )
+    page.goto(f"{server.base}/#/workspace/chief-of-staff")
+    expect(page.locator("[data-conversation-unread-preview]")).to_contain_text(
+        "The artifact is ready", timeout=WAIT_MS
+    )
+    expect(page.locator("[data-conversation-rest-line]")).to_have_text("Working", timeout=WAIT_MS)
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / "chief-working-unread.png"), full_page=True)
+    _post(server, f"/api/test/signals/{chief_conversation}/finish", {})
+    expect(page.locator("[data-conversation-rest-line]")).to_have_text(
+        "Chief idle", timeout=WAIT_MS
+    )
+    expect(page.locator("[data-conversation-unread-preview]")).to_contain_text("Dock artifact")
+    page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
+    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
+        page.set_viewport_size({"width": width, "height": height})
+        page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
+            "heading", name="Initial artifact"
+        ).wait_for(timeout=WAIT_MS)
+        _prove_dock_artifact_retention(page, f"chief-{layout}", evidence)
+    if evidence:
+        (Path(evidence) / "dock-connected-proof.json").write_text(json.dumps({
+            "hosts": ["Ticket", "Manager", "Chief"],
+            "viewports": ["1440x1000", "390x844"],
+            "retained": [
+                "iframe identity", "iframe source", "form value", "scroll", "selection", "draft",
+            ],
+            "bottom_control_accessible": True,
+            "elapsed_seconds": round(time.monotonic() - started_at, 3),
+        }, indent=2) + "\n", encoding="utf-8")
 
 
 def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(

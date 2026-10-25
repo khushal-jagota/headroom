@@ -1085,7 +1085,7 @@ def run(browser, urls):
     page.wait_for_function(
         "() => [...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))"
     )
-    composer.click()
+    page.locator("[data-conversation-expand]").click()
     page.locator(".chat-overflow > .chat-overflow-btn").click()
     page.locator("[data-conversation-new-arm]").click()
     page.locator("[data-conversation-new-confirm]").click()
@@ -1104,6 +1104,7 @@ def run(browser, urls):
     proposal = page.locator(
         '[data-approval-block][data-field="success_condition"] [contenteditable]'
     )
+    page.locator("[data-conversation-collapse]").click()
     proposal.click()
     proposal.fill("Edited pending result")
     proposal.press("Tab")
@@ -1149,6 +1150,7 @@ def run(browser, urls):
     expect(saved).to_have_text("Draft survives a closed stage")
     page.evaluate("window.__showTicket('t_personal')")
     page.locator('[data-ticket-id="t_personal"]').wait_for()
+    page.locator("[data-conversation-collapse]").click()
     personal_outcome = page.locator(
         '[data-worker-live-card] [data-field="outcome"] [contenteditable]'
     )
@@ -1385,6 +1387,7 @@ def run(browser, urls):
     page.get_by_role("button", name="Conversation options").click()
     expect(page.locator("[data-conversation-history]")).to_have_count(0)
     page.keyboard.press("Escape")
+    page.locator("[data-conversation-collapse]").click()
     page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
     page.locator('[data-stage-fold] [data-field="brief"]').evaluate(
         "(element) => element.open = true"
@@ -1457,8 +1460,6 @@ def run(browser, urls):
     )
     viewer.get_by_role("button", name="Close", exact=True).click()
     if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
-        page.locator("[data-conversation-input]").click()
-    if page.locator('[data-conversation-pane][data-conversation-state="peeked"]').count():
         page.locator("[data-conversation-expand]").click()
     expect(page.locator("[data-conversation-pane]")).to_have_attribute(
         "data-conversation-state", "opened"
@@ -1469,7 +1470,7 @@ def run(browser, urls):
         "src", "/files/managers/si_artifacts/artifacts/plan.wav"
     )
     expect(page.locator("[data-conversation-pane]")).to_have_attribute(
-        "data-conversation-state", "peeked"
+        "data-conversation-state", "rest"
     )
     assert page.url == original_url
     print(f"Artifact link browser coverage: {time.monotonic() - artifact_started:.2f}s", flush=True)

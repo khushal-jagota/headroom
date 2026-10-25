@@ -9,7 +9,7 @@
    * Ink remains for knockout marks and the retired Day card. */
   --surface-1: #151515;
   --surface-2: #1c1c1c;
-  --surface-recessed: #111111;
+  --surface-recessed: #0d0d0d;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;

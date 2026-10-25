@@ -20,7 +20,7 @@
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
-  import { conversationOverlay } from "../lib/conversation/layout/overlay";
+  import { conversationDock } from "../lib/conversation/layout/dock";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import { createConversationDismissal } from "../lib/conversation/dismissal";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -243,7 +243,7 @@
     }
     if (onOpenFile) onOpenFile(file);
     else heldFile = file;
-    if (file && conversationState === "opened") conversationState = "peeked";
+    if (file && conversationState === "opened") conversationState = "rest";
     if (!file) {
       const restoreFocus = whatHadFocus;
       whatHadFocus = null;
@@ -515,7 +515,7 @@
       </div>
     {:else if ticket.data && masthead}
       {@const detail = ticket.data}
-      <div class="ticket-page" use:conversationOverlay use:dismissOutsideConversation>
+      <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
         <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>

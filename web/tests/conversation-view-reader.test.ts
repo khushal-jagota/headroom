@@ -353,7 +353,7 @@ it.each(['HTTP 503', 'active transport cancellation'])('offers retry after %s an
 it('replaces hidden-only unread pages within bounds', async () => {
   const visible = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 12 }]).page;
   const hidden = { ...visible, items: visible.items.map(item => ({ ...item, row_kind: 'token_usage' })), newer: {
-    projection_version: 1, lens: 'focus', scope: visible.scope, order: { sequence: 11, slot: 0 }
+    projection_version: snapshot().page.projection_version, lens: 'focus', scope: visible.scope, order: { sequence: 11, slot: 0 }
   }};
   const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(hidden))).mockResolvedValueOnce(new Response(JSON.stringify(visible)));
   vi.stubGlobal('fetch', fetch);

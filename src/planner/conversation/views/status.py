@@ -97,7 +97,11 @@ def _rest_event(
         "SELECT rest_summary FROM conversation_view_rows WHERE conversation_id=? AND sequence=?",
         (conversation_id, sequence),
     ).fetchone()
-    return json.loads(row[0]) if row and row[0] else None
+    if not row or not row[0]:
+        return None
+    summary = json.loads(row[0])
+    summary.pop("_owner_message_preview", None)
+    return summary if summary else None
 
 
 def _request(
@@ -212,7 +216,7 @@ def read_status(
         }
         progress = json.loads(state["plan_summary"])
     owner_message = conn.execute(
-        "SELECT sequence FROM conversation_view_rows WHERE conversation_id=? AND "
+        "SELECT sequence,rest_summary FROM conversation_view_rows WHERE conversation_id=? AND "
         "row_kind='agent_message' "
         "AND focus_visible=1 AND removed=0 ORDER BY sequence DESC LIMIT 1",
         (conversation_id,),
@@ -235,6 +239,11 @@ def read_status(
         "latest_tool": latest_tool,
         "permission_title_excerpt": permission_title,
         "latest_owner_message_sequence": owner_message[0] if owner_message else 0,
+        "latest_owner_message_preview": (
+            json.loads(owner_message[1]).get("_owner_message_preview")
+            if owner_message and owner_message[1]
+            else None
+        ),
         "last_boundary_failed": failed,
         "plan_progress": progress,
     }

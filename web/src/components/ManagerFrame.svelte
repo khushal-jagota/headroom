@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { conversationOverlay } from "../lib/conversation/layout/overlay";
+  import { conversationDock } from "../lib/conversation/layout/dock";
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
   import { createConversationDismissal } from "../lib/conversation/dismissal";
@@ -27,7 +27,7 @@
 
 </script>
 
-<div use:conversationOverlay use:dismissOutsideConversation class={`manager-page ${className}`} {...attributes}>
+<div use:conversationDock use:dismissOutsideConversation class={`manager-page ${className}`} {...attributes}>
   <div class="manager-reading">
     <!-- Links keep their keyboard behavior. The host only redirects plain file clicks. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
