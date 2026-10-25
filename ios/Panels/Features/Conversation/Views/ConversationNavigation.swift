@@ -31,10 +31,10 @@ struct ConversationNavigation: ViewModifier {
             }
             .navigationDestination(isPresented: $opened) {
                 surface(isPage: true)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar(.visible, for: .navigationBar)
+                    .toolbar(.hidden, for: .navigationBar)
                     .toolbar(.hidden, for: .tabBar)
             }
+            .onChange(of: opened) { _, _ in Haptics.light() }
             .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 
@@ -105,8 +105,8 @@ private struct ConversationSurface: View {
             }
             bottom.fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.top, ConversationLayout.surfaceTopPadding)
-        .background(PanelsTheme.raised.ignoresSafeArea(edges: .bottom))
+        .padding(.top, isPage ? 0 : ConversationLayout.surfaceTopPadding)
+        .background((isPage ? PanelsTheme.surface : PanelsTheme.raised).ignoresSafeArea(edges: isPage ? .all : .bottom))
         .foregroundStyle(PanelsTheme.text)
         .tint(PanelsTheme.accent)
         .preferredColorScheme(.dark)
@@ -115,15 +115,22 @@ private struct ConversationSurface: View {
     private var header: some View {
         HStack(spacing: 0) {
             if isPage {
-                Text(title).font(PanelsTheme.TypeScale.small).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 20)
-                Button(model.lens.rawValue.capitalized) {
-                    model.lens = model.lens == .focus ? .full : .focus
-                    Haptics.selection()
+                AgentPageControls {
+                    Menu {
+                        Picker("Conversation lens", selection: $model.lens) {
+                            ForEach(ConversationLens.allCases, id: \.self) { lens in
+                                Text(lens.rawValue.capitalized).tag(lens)
+                            }
+                        }
+                        .onChange(of: model.lens) { _, _ in Haptics.selection() }
+                    } label: {
+                        Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Conversation actions")
+                    .accessibilityIdentifier("conversation-actions")
+                    .accessibilityValue(model.lens.rawValue.capitalized)
                 }
-                .font(PanelsTheme.TypeScale.small)
-                .frame(width: 60, height: ConversationLayout.lineHeight)
-                .accessibilityLabel("Conversation lens")
+                .padding(.horizontal, AgentPageLayout.gutter)
             } else {
                 Button(action: open) {
                     HStack(spacing: 8) {

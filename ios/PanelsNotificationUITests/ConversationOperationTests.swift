@@ -26,7 +26,7 @@ final class ConversationOperationTests: XCTestCase {
         app.buttons["Choose model"].tap(); app.buttons["Cancel"].tap()
         let originalPosition = worker.frame.minY
         line.tap()
-        let close = app.navigationBars.buttons.firstMatch
+        let close = app.buttons["detail-back"]
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         XCTAssertFalse(line.exists, "Conversation page must not repeat the resting line")
         XCTAssertEqual(input.value as? String, "Keep this draft")
@@ -41,7 +41,8 @@ final class ConversationOperationTests: XCTestCase {
         app.buttons["Choose model"].tap()
         XCTAssertTrue(app.navigationBars["Model"].waitForExistence(timeout: 5))
         app.buttons["Cancel"].tap()
-        app.buttons["Conversation lens"].tap()
+        app.buttons["conversation-actions"].tap()
+        app.buttons["Full"].tap()
         app.buttons["Send message"].tap()
         XCTAssertTrue(app.staticTexts["Sending…"].firstMatch.waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Sending…"].firstMatch.waitForNonExistence(timeout: 8))
@@ -160,12 +161,16 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
         let app = XCUIApplication()
         app.launchArguments = ["--conversation-smoke", "--conversation-stub", base, "--conversation-detail-pages"]
-        app.launch()
-        for (name, title) in [
-            ("Ticket", "Make the conversation experience feel settled"),
-            ("Orchestrator", "The left sidebar and shell design"),
-            ("Chief", "Chief of Staff")
+        try await proof(base, "header-fixture")
+        for (name, title, appearance) in [
+            ("Ticket", "Make the conversation experience feel settled", "light"),
+            ("Orchestrator", "The left sidebar and shell design", "light"),
+            ("Ticket", "Make the conversation experience feel settled", "dark"),
+            ("Orchestrator", "The left sidebar and shell design", "dark"),
+            ("Chief", "Chief of Staff", "dark")
         ] {
+            try await proof(base, "appearance/" + appearance)
+            app.launch()
             let link = app.buttons["\(name) fixture"]
             XCTAssertTrue(link.waitForExistence(timeout: 8)); link.tap()
             let back = app.buttons["detail-back"]
@@ -173,23 +178,39 @@ final class ConversationOperationTests: XCTestCase {
             XCTAssertTrue(line.waitForExistence(timeout: 8))
             let page = app.scrollViews.firstMatch
             let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
-            input.tap()
-            input.typeText("Retained draft")
+            let referenceBack = back.frame
+            let referenceMenu = app.buttons[name == "Ticket" ? "ticket-actions" : "agent-page-menu"].frame
+            capture(app, "after-\(name)-\(appearance)-detail")
+            if input.value as? String != "Retained draft" {
+                input.tap()
+                input.typeText("Retained draft")
+            }
             app.buttons["Choose model"].tap(); app.buttons["Cancel"].tap()
             page.swipeUp(velocity: .slow)
             let anchor = try XCTUnwrap(page.staticTexts.allElementsBoundByIndex.first(where: { $0.isHittable }))
             let originalY = anchor.frame.minY
-            try await proof(base, "start/\(name.lowercased())-push-back")
             line.tap()
-            XCTAssertTrue(app.buttons["Conversation lens"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.staticTexts[title].exists)
-            XCTAssertEqual(app.navigationBars.count, 1)
+            let actions = app.buttons["conversation-actions"]
+            XCTAssertTrue(actions.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.staticTexts[title].exists)
+            XCTAssertFalse(app.buttons["Conversation lens"].exists)
+            XCTAssertEqual(app.navigationBars.count, 0)
+            assertFrame(back.frame, equals: referenceBack, context: "Shared Back control")
+            assertFrame(actions.frame, equals: referenceMenu, context: "Shared actions control")
+            XCTAssertTrue(app.staticTexts["Keep this message visible."].firstMatch.waitForExistence(timeout: 5))
+            capture(app, "after-\(name)-\(appearance)-conversation")
+            actions.tap()
+            XCTAssertTrue(app.buttons["Focus"].waitForExistence(timeout: 3))
+            app.buttons["Full"].tap()
+            XCTAssertEqual(actions.value as? String, "Full")
+            actions.tap(); app.buttons["Focus"].tap()
+            XCTAssertEqual(actions.value as? String, "Focus")
             XCTAssertFalse(line.exists)
             XCTAssertEqual(input.value as? String, "Retained draft")
             capture(app, "\(name)-pushed")
             let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.002, dy: 0.5))
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.5)), withVelocity: .slow, thenHoldForDuration: 0.5)
-            XCTAssertTrue(app.buttons["Conversation lens"].exists, "Short edge swipe must cancel")
+            XCTAssertTrue(app.buttons["conversation-actions"].exists, "Short edge swipe must cancel")
             XCTAssertEqual(input.value as? String, "Retained draft")
             capture(app, "\(name)-cancelled-back")
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)), withVelocity: .slow, thenHoldForDuration: 0.1)
@@ -198,17 +219,15 @@ final class ConversationOperationTests: XCTestCase {
             XCTAssertEqual(input.value as? String, "Retained draft")
             XCTAssertEqual(anchor.frame.minY, originalY, accuracy: 1)
             capture(app, "\(name)-returned")
-            try await proof(base, "stop")
-            // Exercise the standard back button too, and clear only this fixture draft.
+            // Exercise the quiet Back button too, retaining the fixture draft.
             line.tap()
-            XCTAssertTrue(app.buttons["Conversation lens"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 5))
             // Retain the isolated fixture draft; text deletion is not this review's gate.
             XCTAssertEqual(input.value as? String, "Retained draft")
-            app.navigationBars.buttons.firstMatch.tap()
+            back.tap()
             XCTAssertTrue(line.waitForExistence(timeout: 5))
             page.swipeDown(velocity: .fast)
             if !back.isHittable { page.swipeDown(velocity: .fast) }
-            try await proof(base, "start/\(name.lowercased())-quiet-edge-back")
             let quietEdge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
             // An ordinary horizontal content drag must not start a pop.
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.45)).press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.45)))
@@ -221,12 +240,12 @@ final class ConversationOperationTests: XCTestCase {
             let returned = link.waitForExistence(timeout: 2)
             print("FEEL current quiet \(name) edge-back returned: \(returned)")
             capture(app, "\(name)-quiet-edge-back")
-            try await proof(base, "stop")
             XCTAssertTrue(returned, "Quiet detail must support interactive back")
             link.tap()
             XCTAssertTrue(back.waitForExistence(timeout: 5))
             back.tap()
             XCTAssertTrue(link.waitForExistence(timeout: 5))
+            app.terminate()
         }
         app.terminate()
     }
@@ -241,7 +260,7 @@ final class ConversationOperationTests: XCTestCase {
         app.launchArguments = ["--conversation-smoke", "--conversation-stub", base, "--conversation-fixture-speech"]
         let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
         let line = app.buttons["conversation-line"]
-        let close = app.navigationBars.buttons.firstMatch
+        let close = app.buttons["detail-back"]
         let keyboardVisible = NSPredicate { _, _ in
             MainActor.assumeIsolated { app.keyboards.firstMatch.frame.minY < app.frame.height - 200 }
         }

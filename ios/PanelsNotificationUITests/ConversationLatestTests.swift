@@ -16,7 +16,8 @@ final class ConversationLatestTests: XCTestCase {
         XCTAssertTrue(line.waitForExistence(timeout: 8))
         line.tap()
         let composer = app.descendants(matching: .any).matching(identifier: "conversation-composer-region").firstMatch
-        app.buttons["Conversation lens"].tap()
+        app.buttons["conversation-actions"].tap()
+        app.buttons["Full"].tap()
         try await Task.sleep(for: .seconds(2))
         let thread = app.scrollViews.firstMatch
         let latest = app.buttons["Latest"]
