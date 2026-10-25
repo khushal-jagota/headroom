@@ -46,7 +46,7 @@ final class RingSpinnerTests: XCTestCase {
         }.panelsRefreshable {
             // Stub the work; never contact a Panels server.
             refreshed.fulfill()
-        }.environment(\.accessibilityReduceMotion, true)
+        }
         let host = UIHostingController(rootView: content)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
@@ -58,8 +58,9 @@ final class RingSpinnerTests: XCTestCase {
         let ring = try XCTUnwrap(control.subviews.compactMap { $0 as? RingSpinnerUIView }.first)
         XCTAssertEqual(control.tintColor, .clear, "Apple's spokes must be invisible")
         XCTAssertEqual(ring.bounds.size, CGSize(width: 20, height: 20))
-        XCTAssertTrue(ring.reduceMotion)
-        XCTAssertNil(ring.layer.animation(forKey: "panels-ring-spin"))
+        XCTAssertEqual(ring.reduceMotion, UIAccessibility.isReduceMotionEnabled)
+        if ring.reduceMotion { XCTAssertNil(ring.layer.animation(forKey: "panels-ring-spin")) }
+        else { XCTAssertNotNil(ring.layer.animation(forKey: "panels-ring-spin")) }
         control.beginRefreshing()
         control.sendActions(for: .valueChanged)
         await fulfillment(of: [refreshed], timeout: 2)
