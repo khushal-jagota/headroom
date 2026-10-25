@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
+from alembic import op
 from tests.unit.test_conversation_view_projection import FIXTURES, database
 
 from planner.conversation.events import (
@@ -169,7 +170,7 @@ def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental
         conn.execute("UPDATE conversation_view_state SET projection_version=1")
         conn.execute("UPDATE conversation_view_rows SET rest_summary=NULL")
         monkeypatch.setattr(
-            owner_message_preview.op,
+            op,
             "get_bind",
             lambda: SimpleNamespace(connection=SimpleNamespace(driver_connection=conn)),
         )
