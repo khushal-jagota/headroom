@@ -726,23 +726,34 @@ class MacExecutor:
                     snapshots=snapshots,
                     submission_id=request.request_id,
                 )
-            envelope = await self.registry.source_work(
-                child.reference, publish_write, new_work=True
-            )
+            if request.request_id in self._receipts:
+                return IpcResponse(
+                    request.request_id, None, None, QueuedCliResult(request.request_id)
+                )
             future: asyncio.Future[AcceptanceReceipt] = asyncio.get_running_loop().create_future()
-            self._receipts[envelope.submission_id] = future
+            # Publication can become replayable before source_work returns.
+            self._receipts[request.request_id] = future
             try:
-                receipt = await asyncio.wait_for(asyncio.shield(future), CLI_RESULT_TIMEOUT_SECONDS)
+                envelope = await self.registry.source_work(
+                    child.reference, publish_write, new_work=True
+                )
+                try:
+                    receipt = await asyncio.wait_for(
+                        asyncio.shield(future), CLI_RESULT_TIMEOUT_SECONDS
+                    )
+                except TimeoutError:
+                    return IpcResponse(
+                        request.request_id, None, None, QueuedCliResult(envelope.submission_id)
+                    )
                 if receipt.disposition == ReceiptDisposition.refused:
                     error = receipt.result.get("error", receipt.result)
                     return IpcResponse(request.request_id, None, cast(JsonObject, error))
                 return IpcResponse(request.request_id, receipt.result, None)
-            except TimeoutError:
-                return IpcResponse(
-                    request.request_id, None, None, QueuedCliResult(envelope.submission_id)
-                )
             finally:
-                self._receipts.pop(envelope.submission_id, None)
+                if self._receipts.get(request.request_id) is future:
+                    del self._receipts[request.request_id]
+                if not future.done():
+                    future.cancel()
         except (ValueError, PermissionError, ConnectionError) as error:
             return IpcResponse(
                 request.request_id, None, {"message": str(error), "type": type(error).__name__}

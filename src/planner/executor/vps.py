@@ -472,6 +472,18 @@ class ExecutorEndpoint:
             raise PlannerError(ErrorCode.agent_forbidden, "child has no VPS assignment", {})
         return Principal(PrincipalKind(binding[0]), binding[1])
 
+    def _closed_reconciliation_child(
+        self, child: ChildReference, identity: ExecutorIdentity
+    ) -> bool:
+        # Historical assignment is evidence for settling original outcomes only.
+        # It never makes this child adoptable or restores its work authority.
+        if child.executor_incarnation != identity.executor_incarnation:
+            raise ValueError("reconciliation child incarnation conflicts with connection")
+        if self.store.has_closed_child_assignment(child):
+            return True
+        self._assignment(child)
+        return False
+
     def _require_application_assignment(
         self, application: AnswerApplication, identity: ExecutorIdentity, conversation_id: str
     ) -> None:
@@ -1007,8 +1019,11 @@ class ExecutorEndpoint:
                 inventory = TypeAdapter(ReconciliationInventory).validate_python(message.payload)
                 if inventory.identity != identity:
                     raise ValueError("stale reconciliation generation")
+                self.store.verify_connection(identity)
                 for item in inventory.children:
-                    self._assignment(item.child)
+                    if self._closed_reconciliation_child(item.child, identity):
+                        self._inventory.pop(item.child.child_id, None)
+                        continue
                     previous = self._inventory.get(item.child.child_id)
                     if previous is not None and previous.active_turn == item.active_turn:
                         item = replace(
@@ -1029,12 +1044,17 @@ class ExecutorEndpoint:
                         self.children[item.child.child_id] = proxy
                     await self.runtime.system.adopt_remote_child(item, proxy)
                 for outcome in inventory.retained_command_outcomes:
+                    self._closed_reconciliation_child(outcome.child, identity)
                     self._retained_inventory[outcome.command_id] = outcome
                     self._resolve_command(outcome)
                 if not inventory.children and not inventory.retained_command_outcomes:
                     merged = replace(
                         inventory,
-                        children=tuple(self._inventory.values()),
+                        children=tuple(
+                            item
+                            for item in self._inventory.values()
+                            if not self._closed_reconciliation_child(item.child, identity)
+                        ),
                         retained_command_outcomes=tuple(self._retained_inventory.values()),
                     )
                     reconciliation = self.store.reconcile(merged, now_ms())

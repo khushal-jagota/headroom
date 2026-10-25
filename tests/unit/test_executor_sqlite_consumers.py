@@ -7,7 +7,10 @@ import fcntl
 import os
 import sqlite3
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -15,10 +18,14 @@ from planner.executor import files
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
+    ChildReference,
     EnvelopeKind,
     ExecutorSshConfig,
     FileScope,
+    IpcOperation,
+    IpcRequest,
     JsonObject,
+    QueuedEnvelope,
     ReceiptDisposition,
     SshAuthenticationMode,
     WireMessage,
@@ -201,6 +208,222 @@ def test_replay_drains_captured_heads_and_quiescence_counts_without_full_invento
                 assert visited == {"c_new": [1], "c_one": [1, 2, 3, 4], "c_two": [1, 2, 3, 4]}
             assert mac.registry._quiescence_counts() == (0, 0, 0, 0)
         finally:
+            mac.spool.close()
+
+    asyncio.run(run())
+
+
+def ipc_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MacExecutor, IpcRequest]:
+    mac = MacExecutor(
+        paths=ExecutorPaths(tmp_path),
+        revision="a" * 40,
+        ssh_config=ExecutorSshConfig(
+            "unused",
+            1,
+            "unused",
+            tmp_path / "key",
+            tmp_path / "hosts",
+            SshAuthenticationMode.public_key,
+        ),
+        panels_server_url="http://unused",
+    )
+    mac._handshake_accepted = True
+    reference = ChildReference(mac.identity.executor_incarnation, str(uuid4()), "c_one")
+    child = SimpleNamespace(reference=reference, ticket_id=None, active_turn=None)
+    monkeypatch.setattr(mac.registry, "authenticate", lambda *_: child)
+
+    async def accept(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+        assert kind is WireMessageKind.envelope
+        return WireMessage(
+            WireMessageKind.receipt,
+            "accepted",
+            as_object(
+                AcceptanceReceipt(
+                    str(payload["sender_id"]),
+                    str(payload["submission_id"]),
+                    str(payload["payload_sha256"]),
+                    ReceiptDisposition.accepted,
+                    {"landed": True},
+                    100,
+                )
+            ),
+        )
+
+    monkeypatch.setattr(mac, "_request", accept)
+    return mac, IpcRequest(
+        "original-submission",
+        IpcOperation.write,
+        reference.child_id,
+        "capability",
+        {"operation": "ticket.note", "arguments": {}},
+    )
+
+
+def test_ipc_receives_acknowledgment_before_source_publication_returns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        mac, request = ipc_writer(tmp_path, monkeypatch)
+        source_work = mac.registry.source_work
+        acknowledged = False
+
+        async def publish_and_ack(
+            child: ChildReference,
+            work: Callable[[], Awaitable[QueuedEnvelope]],
+            *,
+            new_work: bool,
+        ) -> QueuedEnvelope:
+            async def publish() -> QueuedEnvelope:
+                nonlocal acknowledged
+                envelope = await work()
+                # Actual receipt validation and durable acknowledgment happen while
+                # source_work still owns publication and has not returned its row.
+                await mac._replay_envelope(envelope)
+                acknowledged = True
+                assert not mac.spool.has_pending()
+                return envelope
+
+            return await source_work(child, publish, new_work=new_work)
+
+        monkeypatch.setattr(mac.registry, "source_work", publish_and_ack)
+        try:
+            response = await asyncio.wait_for(mac.handle_ipc(request), 2)
+            assert acknowledged
+            assert response.result == {"landed": True}
+            assert response.error is None and response.queued is None
+            assert not mac._receipts
+        finally:
+            mac.spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "outcome", ["failure", "publication_timeout", "timeout", "cancel_publication", "cancel_receipt"]
+)
+def test_ipc_waiter_cleanup_preserves_durable_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    async def run() -> None:
+        from planner.executor import mac as module
+
+        mac, request = ipc_writer(tmp_path, monkeypatch)
+        source_work = mac.registry.source_work
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def controlled(
+            child: ChildReference,
+            work: Callable[[], Awaitable[QueuedEnvelope]],
+            *,
+            new_work: bool,
+        ) -> QueuedEnvelope:
+            async def publish() -> QueuedEnvelope:
+                if outcome == "failure":
+                    raise ValueError("publication refused")
+                if outcome == "publication_timeout":
+                    raise TimeoutError("publication timed out")
+                if outcome == "cancel_publication":
+                    entered.set()
+                    await release.wait()
+                row = await work()
+                entered.set()
+                return row
+
+            return await source_work(child, publish, new_work=new_work)
+
+        monkeypatch.setattr(mac.registry, "source_work", controlled)
+        monkeypatch.setattr(module, "CLI_RESULT_TIMEOUT_SECONDS", 0.01)
+        task = asyncio.create_task(mac.handle_ipc(request))
+        try:
+            if outcome.startswith("cancel"):
+                await entered.wait()
+                owned = mac._receipts[request.request_id]
+                task.cancel()
+                await asyncio.sleep(0)
+                if outcome == "cancel_publication":
+                    assert not task.done()
+                    assert mac._receipts[request.request_id] is owned
+                    assert mac.registry._source_work == {"c_one": 1}
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert owned.cancelled()
+            elif outcome == "publication_timeout":
+                with pytest.raises(TimeoutError, match="publication timed out"):
+                    await task
+            else:
+                response = await task
+                if outcome == "failure":
+                    assert response.error is not None
+                    assert response.error["message"] == "publication refused"
+                else:
+                    assert response.queued is not None
+                    assert response.queued.submission_id == request.request_id
+            assert not mac._receipts
+            assert not mac.registry._source_work
+            assert mac.spool.has_pending() is (outcome not in ("failure", "publication_timeout"))
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            mac.spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("changed_content", [False, True])
+def test_concurrent_duplicate_cannot_replace_original_receipt_waiter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed_content: bool,
+) -> None:
+    async def run() -> None:
+        from dataclasses import replace
+
+        mac, request = ipc_writer(tmp_path, monkeypatch)
+        source_work = mac.registry.source_work
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def controlled(
+            child: ChildReference,
+            work: Callable[[], Awaitable[QueuedEnvelope]],
+            *,
+            new_work: bool,
+        ) -> QueuedEnvelope:
+            async def publish() -> QueuedEnvelope:
+                row = await work()
+                entered.set()
+                await release.wait()
+                await mac._replay_envelope(row)
+                return row
+
+            return await source_work(child, publish, new_work=new_work)
+
+        monkeypatch.setattr(mac.registry, "source_work", controlled)
+        original = asyncio.create_task(mac.handle_ipc(request))
+        try:
+            await entered.wait()
+            owned = mac._receipts[request.request_id]
+            duplicate = (
+                replace(request, payload={"operation": "different", "arguments": {}})
+                if changed_content
+                else request
+            )
+            response = await mac.handle_ipc(duplicate)
+            assert response.result is None and response.error is None
+            assert response.queued is not None
+            assert response.queued.submission_id == request.request_id
+            assert mac._receipts[request.request_id] is owned and not owned.done()
+            assert len(mac.spool.pending()) == 1
+            release.set()
+            result = await asyncio.wait_for(original, 2)
+            assert result.result == {"landed": True} and result.error is None
+            assert not mac._receipts and not mac.spool.has_pending()
+        finally:
+            release.set()
+            await asyncio.gather(original, return_exceptions=True)
             mac.spool.close()
 
     asyncio.run(run())

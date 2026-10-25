@@ -684,3 +684,180 @@ def test_publication_completion_retains_original_child_and_generation_authority(
         await service.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("accumulated", [False, True])
+def test_closed_original_child_reconciles_outcomes_without_restoring_authority(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, accumulated: bool
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import (
+        CommandDisposition,
+        CommandOutcome,
+        FilePublicationRequest,
+        WireMessage,
+        WireMessageKind,
+    )
+    from planner.executor.mac import as_object
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        ready_ask(store)
+        outcome = CommandOutcome("original-command", CHILD, CommandDisposition.succeeded, {})
+        connection = connect(store.db_path)
+        try:
+            store.record_command_outcome_in_transaction(connection, outcome)
+        finally:
+            connection.close()
+        endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
+        endpoint.store = store
+        endpoint.identity = IDENTITY
+        writer = Mock()
+        endpoint.writer = writer
+        adopt = AsyncMock()
+        endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=adopt))
+        send = AsyncMock()
+        monkeypatch.setattr(endpoint, "_send", send)
+        original_reconcile = store.reconcile
+        observed: list[ReconciliationInventory] = []
+
+        def observe(value: ReconciliationInventory, now_ms: int) -> object:
+            observed.append(value)
+            return original_reconcile(value, now_ms)
+
+        monkeypatch.setattr(store, "reconcile", observe)
+        child = ChildInventory(CHILD, ASK.turn, (ASK,), ())
+        if accumulated:
+            # A child accepted in an earlier batch can close before final merge.
+            endpoint._inventory[CHILD.child_id] = child
+        store.close_child(CHILD, 1100)
+        batch = ReconciliationInventory(
+            IDENTITY, () if accumulated else (child,), (), (outcome,)
+        )
+        for value in (batch, inventory()):
+            await endpoint._handle_message(
+                WireMessage(WireMessageKind.reconcile_inventory, "reconcile", as_object(value)),
+                IDENTITY,
+                writer,
+            )
+        adopt.assert_not_awaited()
+        assert len(observed) == 1 and observed[0].children == ()
+        assert observed[0].retained_command_outcomes == (outcome,)
+        replies = [call.args[0] for call in send.await_args_list]
+        assert [reply.kind for reply in replies] == [
+            WireMessageKind.reconcile_result,
+            WireMessageKind.command_outcome_ack,
+            WireMessageKind.reconcile_result,
+        ]
+        assert replies[1].payload == {"command_id": outcome.command_id}
+        evidence = store.ask_evidence(ASK)
+        assert evidence is not None and evidence.reachability is AskReachability.child_gone
+        assert store.child_assignment(CHILD) is None
+        with pytest.raises(PlannerError, match="no VPS assignment"):
+            endpoint._assignment(CHILD)
+        with pytest.raises(PlannerError, match="no VPS assignment"):
+            endpoint._authorize_file(FilePublicationRequest(manifest("new-work", b"new"), CHILD))
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("location", ["child", "outcome"])
+@pytest.mark.parametrize("changed", ["child", "conversation", "incarnation"])
+def test_reconciliation_closed_child_exception_requires_exact_original_identity(
+    store: ExecutorStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    location: str,
+    changed: str,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import (
+        CommandDisposition,
+        CommandOutcome,
+        WireMessage,
+        WireMessageKind,
+    )
+    from planner.executor.mac import as_object
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        store.close_child(CHILD, 1100)
+        changed_child = {
+            "child": replace(CHILD, child_id="different"),
+            "conversation": replace(CHILD, conversation_id="different"),
+            "incarnation": replace(CHILD, executor_incarnation="different"),
+        }[changed]
+        endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
+        endpoint.store = store
+        endpoint.identity = IDENTITY
+        writer = Mock()
+        endpoint.writer = writer
+        adopt = AsyncMock()
+        endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=adopt))
+        send = AsyncMock()
+        monkeypatch.setattr(endpoint, "_send", send)
+        value = ReconciliationInventory(
+            IDENTITY,
+            (ChildInventory(changed_child, None, (), ()),) if location == "child" else (),
+            (),
+            (CommandOutcome("untrusted", changed_child, CommandDisposition.succeeded, {}),)
+            if location == "outcome"
+            else (),
+        )
+        await endpoint._handle_message(
+            WireMessage(WireMessageKind.reconcile_inventory, "invalid", as_object(value)),
+            IDENTITY,
+            writer,
+        )
+        adopt.assert_not_awaited()
+        assert send.await_count == 1
+        assert send.await_args.args[0].kind is WireMessageKind.error
+        assert not endpoint._inventory and not endpoint._retained_inventory
+        assert store.child_assignment(CHILD) is None
+
+    asyncio.run(run())
+
+
+def test_closed_child_reconciliation_cannot_use_stale_authenticated_generation(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import WireMessage, WireMessageKind
+    from planner.executor.mac import as_object
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        store.close_child(CHILD, 1100)
+        endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
+        endpoint.store = store
+        endpoint.identity = IDENTITY
+        writer = Mock()
+        endpoint.writer = writer
+        send = AsyncMock()
+        monkeypatch.setattr(endpoint, "_send", send)
+        store.begin_connection(replace(IDENTITY, connection_generation=2), 1200)
+        await endpoint._handle_message(
+            WireMessage(
+                WireMessageKind.reconcile_inventory,
+                "stale",
+                as_object(inventory(ChildInventory(CHILD, None, (), ()))),
+            ),
+            IDENTITY,
+            writer,
+        )
+        assert send.await_count == 1
+        assert send.await_args.args[0].kind is WireMessageKind.error
+        assert not endpoint._inventory
+
+    asyncio.run(run())
