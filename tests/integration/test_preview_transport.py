@@ -12,9 +12,11 @@ from tests.integration.test_executor_end_to_end import boot, eventually
 
 from planner.previews.configuration import MAX_PREVIEW_STREAMS
 
+pytestmark = pytest.mark.usefixtures("executor_transport_home")
+
 
 def test_large_binary_http_body_and_shared_listener_leases(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executor_transport_home: Path
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -37,6 +39,13 @@ def test_large_binary_http_body_and_shared_listener_leases(
         server = await asyncio.start_server(http, "127.0.0.1", 0)
         port = int(server.sockets[0].getsockname()[1])
         endpoint = harness.endpoint
+        identity = endpoint.identity
+        assert identity is not None
+        generation = Path(endpoint._transport_roots[identity].name)
+        assert generation.parent == executor_transport_home / ".cache/panels/ssh"
+        assert endpoint._transports[identity].root == generation / "s"
+        assert endpoint._preview_forwards is not None
+        assert endpoint._preview_forwards.root == generation / "p"
         try:
             async with endpoint.preview_forward(port, "t_scripted") as local:
                 async with endpoint.preview_forward(port, "t_scripted") as shared:
@@ -71,6 +80,7 @@ def test_large_binary_http_body_and_shared_listener_leases(
             server.close()
             await server.wait_closed()
             await harness.close()
+        assert not generation.exists()
 
     asyncio.run(run())
 

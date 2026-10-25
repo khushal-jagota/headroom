@@ -12,7 +12,10 @@ property. ``tests/unit/test_instrument.py`` reaches ``scripts`` the same way.
 from __future__ import annotations
 
 import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +23,19 @@ TREE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TREE / "scripts"))
 
 import tree_environment  # noqa: E402  # reached via sys.path.insert above
+
+
+@pytest.fixture
+def executor_transport_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Use a short synthetic account home for real Unix socket tests."""
+    from planner.executor import vps
+
+    with tempfile.TemporaryDirectory(prefix="h-", dir="/tmp") as temporary:
+        home = Path(temporary)
+        monkeypatch.setattr(
+            vps, "pwd", SimpleNamespace(getpwuid=lambda uid: SimpleNamespace(pw_dir=str(home)))
+        )
+        yield home
 
 
 def pytest_configure(config: pytest.Config) -> None:

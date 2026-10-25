@@ -85,6 +85,12 @@ permits only its issued upload or download. No SFTP path grants access to ordina
 account files or the served destination. Four transfers and four open handles
 share a session. Each transfer permits sixteen requests of at most 64 KiB.
 
+The VPS keeps each session's SFTP socket and preview sockets together under a
+private, owned `~/.cache/panels/ssh` directory in the server user's account home.
+It does not use the service's private `/tmp`, which the outer Tailscale SSH
+daemon cannot see. Symlink paths, an unsafe directory, or paths exceeding Unix
+socket limits refuse setup. Session cleanup removes the whole temporary root.
+
 Completion closes upload handles before a separate copy and digest check seals
 the bytes. Panels then validates publication and commits the first receipt.
 A successful SFTP write is no proof of publication or a native effect. Lost input

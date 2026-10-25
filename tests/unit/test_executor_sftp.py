@@ -17,6 +17,7 @@ import pytest
 from planner.executor.contracts import ExecutorIdentity, FileManifest, FileScope, FileSnapshot
 from planner.executor.files import copy_verified
 from planner.executor.sftp import RestrictedSftpService
+from planner.executor.vps import _generation_root
 
 
 def _string(value: bytes) -> bytes:
@@ -110,10 +111,13 @@ def _service(
     )
 
 
-def test_real_sftp_slot_boundary_and_sealing(tmp_path: Path) -> None:
+def test_real_sftp_slot_boundary_and_sealing(tmp_path: Path, executor_transport_home: Path) -> None:
     async def exercise() -> None:
         key = asyncssh.generate_private_key("ssh-ed25519")
-        service = _service(tmp_path, key)
+        root = _generation_root()
+        generation = Path(root.name)
+        assert generation.parent == executor_transport_home / ".cache/panels/ssh"
+        service = _service(generation, key)
         connection = await _connect(service, key)
         try:
             async with connection.start_sftp_client(sftp_version=3) as client:
@@ -163,7 +167,9 @@ def test_real_sftp_slot_boundary_and_sealing(tmp_path: Path) -> None:
             connection.close()
             await connection.wait_closed()
             await service.close()
+            root.cleanup()
         assert not service.socket_path.exists()
+        assert not generation.exists()
 
     asyncio.run(exercise())
 

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import pwd
 import sqlite3
+import stat
 import tempfile
 import time
 from collections.abc import AsyncIterator
@@ -28,6 +30,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.executor.codec import encode_value
+from planner.executor.configuration import SSH_UNIX_SOCKET_MAX_BYTES
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AnswerApplication,
@@ -61,7 +64,7 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.files import snapshot_file
+from planner.executor.files import directory_descriptor, snapshot_file
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.sftp import RestrictedSftpService
@@ -72,6 +75,25 @@ from planner.executor.wire import (
     write_frame,
 )
 from planner.previews.forward import PreviewForwards
+
+
+def _generation_root() -> tempfile.TemporaryDirectory[str]:
+    """Keep forwarded sockets visible outside a service's private /tmp mount."""
+    home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    if not home.is_absolute():
+        raise ValueError("executor user home must be absolute")
+    parent = home / ".cache" / "panels" / "ssh"
+    with directory_descriptor(parent, create=True) as descriptor:
+        info = os.fstat(descriptor)
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError("executor transport directory must be private and owned")
+        root = tempfile.TemporaryDirectory(prefix="panels-ssh-", dir=parent)
+    # Preview names are longer than the SFTP socket name. Refuse before
+    # advertising either endpoint, retaining both existing Unix path bounds.
+    if len(os.fsencode(Path(root.name) / "p" / uuid4().hex)) > SSH_UNIX_SOCKET_MAX_BYTES:
+        root.cleanup()
+        raise ValueError("executor transport socket path too long")
+    return root
 
 
 def now_ms() -> int:
@@ -936,7 +958,7 @@ class ExecutorEndpoint:
                         or parse_identity(message.payload.get("identity")) != identity
                     ):
                         raise ValueError("duplicate or stale transport generation")
-                    root = tempfile.TemporaryDirectory(prefix="panels-ssh-")
+                    root = _generation_root()
                     root_path = Path(root.name)
                     previews_root = root_path / "p"
                     previews_root.mkdir(mode=0o700)

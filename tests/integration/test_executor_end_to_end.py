@@ -75,6 +75,8 @@ from planner.executor.publication import PublicationReceiver
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 
+pytestmark = pytest.mark.usefixtures("executor_transport_home")
+
 
 def production_relay_argv(socket_path: Path) -> tuple[str, ...]:
     return (
