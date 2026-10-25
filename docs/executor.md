@@ -177,7 +177,12 @@ Read-only journal inspection establishes compatibility, not authority to replace
 a process. Inspection errors refuse preflight. An update or rollback still needs
 fresh identity-bound quiescence. Active work, callbacks, uncertain operations,
 unfinished native calls, or unaccepted entries prevent readiness. Quiescence
-rechecks the process identity after awaited shutdown work.
+closes admission for new commands and CLI writes first. It accounts for source
+writes already admitted, including publication that continues after caller
+cancellation. Once native work and callbacks are idle, it stops idle producers
+before it waits for the journal to drain. Final native events remain admitted
+and every unaccepted entry still blocks exit. Quiescence rechecks the process
+identity after awaited shutdown work.
 
 A committed controlled exit returns zero. The resident's successful-exit restart
 policy and process observations must prevent a replacement process from being

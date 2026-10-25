@@ -157,6 +157,36 @@ class NativeChildRegistry:
         key = child.conversation_id
         self._source_work[key] = self._source_work.get(key, 0) + 1
 
+    async def source_work[T](
+        self,
+        child: ChildReference,
+        work: Callable[[], Awaitable[T]],
+        *,
+        new_work: bool = False,
+    ) -> T:
+        # Existing native work can still publish its final events after admission closes.
+        if new_work and self.admission_stopped:
+            raise PermissionError("executor admission stopped")
+        self.begin_source_work(child)
+        task = asyncio.ensure_future(work())
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # A cancelled catalog refresh or IPC must not release its source count
+            # while its snapshot/publication thread still owns durable work.
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not task.cancelled():
+                task.exception()
+            raise
+        finally:
+            self.end_source_work(child)
+
     def end_source_work(self, child: ChildReference) -> None:
         key = child.conversation_id
         self._source_work[key] -= 1
@@ -585,11 +615,9 @@ class NativeChildRegistry:
         turn: TurnToken | None,
         arguments: dict[str, object],
     ) -> None:
-        self.begin_source_work(reference)
-        try:
-            await self._report_event(reference, method, turn, arguments)
-        finally:
-            self.end_source_work(reference)
+        await self.source_work(
+            reference, lambda: self._report_event(reference, method, turn, arguments)
+        )
 
     async def _report_event(
         self,
@@ -707,13 +735,12 @@ class NativeChildRegistry:
         application = self._applications.get(action.answer_id)
         if application is None or application.ask != action.ask:
             raise ValueError("tool action has no exact applied answer correlation")
-        self.begin_source_work(action.ask.child)
-        try:
-            await self._emit(
+        await self.source_work(
+            action.ask.child,
+            lambda: self._emit(
                 action.ask.child.conversation_id, EnvelopeKind.authorized_action, action
-            )
-        finally:
-            self.end_source_work(action.ask.child)
+            ),
+        )
 
     def inventory(
         self, identity: ExecutorIdentity, *, include_pending: bool = True
@@ -767,6 +794,7 @@ class NativeChildRegistry:
         unresolved += sum(
             answer_id not in self._applications_published for answer_id in self._applications
         )
+        unresolved += sum(self._source_work.values())
         return active, callbacks, unresolved, self.spool.pending_count()
 
     async def quiesce(self) -> Quiescence:
@@ -774,10 +802,10 @@ class NativeChildRegistry:
         self.admission_stopped = True
         counts = self._quiescence_counts()
         stopped = False
-        if not any(counts):
+        if not any(counts[:3]):
             for child in tuple(self.children.values()):
                 async with child.lock:
-                    if any(self._quiescence_counts()):
+                    if any(self._quiescence_counts()[:3]):
                         break
                     await child.native.stop()
                     self.children.pop(child.reference.child_id, None)
