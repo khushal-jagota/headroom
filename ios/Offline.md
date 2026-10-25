@@ -7,6 +7,12 @@ immediately, including changes that move rows. A failed refresh keeps the last
 successful response. A screen with no saved response shows still, rough blocks
 only after 300 milliseconds. The blocks never replace existing content.
 
+Successful cached reads are saved by a serial background writer before the read
+finishes. An identical response still refreshes its saved date, so it keeps its
+place in eviction order. Cache reads use a fresh database context to see the
+latest completed save. Drafts and outgoing messages keep their separate main-thread
+writer and observation signal.
+
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
 are never removed by this eviction. Everything is partitioned by server origin;

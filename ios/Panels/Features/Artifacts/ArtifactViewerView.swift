@@ -13,6 +13,7 @@ struct ArtifactViewerView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @State private var document: ArtifactDocument?
+    @State private var image: UIImage?
     @State private var error: String?
     @State private var isLoading = true
     @State private var showLoading = false
@@ -116,7 +117,7 @@ struct ArtifactViewerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.lg)
             }.refreshable { await load() }
         case .image:
-            if let image = UIImage(contentsOfFile: document.localURL.path) { ArtifactImageView(image: image).id(renderVersion) }
+            if let image { ArtifactImageView(image: image).id(renderVersion) }
             else { fallback(document) }
         default: fallback(document)
         }
@@ -144,7 +145,11 @@ struct ArtifactViewerView: View {
         defer { isLoading = false }
         do {
             let result = try await store.client.artifactDocument(target)
+            let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
+                UIImage(contentsOfFile: result.localURL.path)
+            }.value : nil
             try Task.checkCancellation()
+            self.image = image
             document = result; error = nil; webReady = false; renderVersion += 1
         } catch {
             if !Task.isCancelled {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var visible = false
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var groups: [String: [WorkspaceTicketGroup]] = [:]
@@ -80,12 +81,18 @@ struct WorkspaceView: View {
         .onChange(of: selectedRoute) { old, new in if old != new { Haptics.light() } }
         .navigationDestination(item: $selectedRoute) { RouteDestination(route: $0) }
         .panelsScreen()
-        .onChange(of: store.revision, initial: true) { _, _ in updateGroups() }
+        .onAppear {
+            visible = true; store.workspaceVisible = true
+            updateGroups()
+            Task { await store.refresh() }
+        }
+        .onDisappear { visible = false; store.workspaceVisible = false }
+        .onChange(of: store.revision, initial: true) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.baseURL) { _, _ in
             groups = [:]; managers = []; settled = nil; chiefSignal = nil
             settledError = nil; chiefSignalError = nil; settledOpen = false; settledRequestedOffset = 0
         }
-        .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await refreshSupplementary() }
+        .task(id: "\(store.baseURL.absoluteString):\(store.revision):\(visible)") { if visible { await refreshSupplementary() } }
         }
     }
 

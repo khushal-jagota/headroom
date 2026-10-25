@@ -28,7 +28,7 @@ struct ConversationCursor: Codable, Sendable {
     struct Scope: Codable, Sendable { let kind: String; let key: String? }
     struct Order: Codable, Sendable { let sequence: Int; let slot: Int }
 }
-struct ConversationItem: Decodable, Identifiable, Sendable {
+struct ConversationItem: Equatable, Decodable, Identifiable, Sendable {
     let kind: String
     let key: String
     let senderMessageId: String?
@@ -37,12 +37,12 @@ struct ConversationItem: Decodable, Identifiable, Sendable {
     let body: ConversationDeliveredBody?
     var id: String { senderMessageId ?? key }
 }
-struct ConversationDeliveredBody: Decodable, Sendable {
+struct ConversationDeliveredBody: Equatable, Decodable, Sendable {
     let kind: String
     let value: ConversationBody?
     let reference: ConversationBodyReference?
 }
-struct ConversationBodyReference: Codable, Sendable {
+struct ConversationBodyReference: Equatable, Codable, Sendable {
     let bodyId: String
     let version: String
     let byteCount: Int
@@ -52,7 +52,7 @@ struct ConversationBodyChunk: Decodable, Sendable {
     let text: String
     let nextOffset: Int?
 }
-struct ConversationBody: Decodable, Sendable {
+struct ConversationBody: Equatable, Decodable, Sendable {
     let kind: String
     let content: [Piece]?
     let title: String?
@@ -64,8 +64,8 @@ struct ConversationBody: Decodable, Sendable {
     let reason: String?
     let questions: [Question]?
     var senderLabel: String? = nil
-    struct Piece: Decodable, Sendable { let piece: String; let text: String?; let fileName: String? }
-    struct Question: Decodable, Sendable { let question: String }
+    struct Piece: Equatable, Decodable, Sendable { let piece: String; let text: String?; let fileName: String? }
+    struct Question: Equatable, Decodable, Sendable { let question: String }
     var text: String {
         if let content { return content.map { $0.text ?? "[\($0.fileName ?? $0.piece)]" }.joined(separator: "\n") }
         return title ?? questions?.map(\.question).joined(separator: "\n") ?? errorSummary ?? detail ?? (kind == "deferred" ? "Long message — open on the web to read in full" : "")
@@ -73,20 +73,20 @@ struct ConversationBody: Decodable, Sendable {
     var isPrompt: Bool { kind.hasPrefix("prompt") }
     var isOwnerPrompt: Bool { isPrompt && (senderLabel == nil || ["You", "owner"].contains(senderLabel!)) }
 }
-struct ConversationStatus: Decodable, Sendable {
+struct ConversationStatus: Equatable, Decodable, Sendable {
     let authority: String
     let turnRunning: Bool?
     let liveOutput: ConversationLiveOutput?
     let rest: Rest
-    struct Rest: Decodable, Sendable {
+    struct Rest: Equatable, Decodable, Sendable {
         let latestHappened: Happened?
         let latestOwnerMessageSequence: Int?
         let latestTool: Happened?
         let permissionTitleExcerpt: String?
         let planProgress: Plan
     }
-    struct Happened: Decodable, Sendable { let kind: String; let excerpt: String?; let title: String? }
-    struct Plan: Decodable, Sendable { let currentTextExcerpt: String? }
+    struct Happened: Equatable, Decodable, Sendable { let kind: String; let excerpt: String?; let title: String? }
+    struct Plan: Equatable, Decodable, Sendable { let currentTextExcerpt: String? }
     var line: String {
         if authority != "current" { return "Connection status unavailable" }
         if let title = rest.permissionTitleExcerpt { return title }
@@ -167,7 +167,7 @@ struct ConversationConfiguration: Decodable, Sendable {
         heldPrompts = try values.decodeIfPresent([HeldPrompt].self, forKey: .heldPrompts) ?? []
     }
 }
-struct ConversationRow: Identifiable {
+struct ConversationRow: Identifiable, Equatable {
     let id: String
     let text: String
     let own: Bool
@@ -205,7 +205,7 @@ struct ConversationSpeechDraft {
     mutating func cancel() { generation += 1; words = "" }
 }
 
-struct ConversationLiveOutput: Decodable, Sendable {
+struct ConversationLiveOutput: Equatable, Decodable, Sendable {
     let turnKey: String
     let reference: ConversationBodyReference
 }

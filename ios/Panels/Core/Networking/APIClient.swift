@@ -34,16 +34,21 @@ struct APIClient: Sendable {
     }
 
     func get<T: Decodable & Sendable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
+        let (data, url) = try await responseData(path, query: query)
+        let value = try Self.decoder().decode(T.self, from: data)
+        if Self.cacheable(path) {
+            try? await LocalStore.shared.cacheResponse(server: LocalStore.server(baseURL), id: url.absoluteString, data: data)
+        }
+        return value
+    }
+
+    func responseData(_ path: String, query: [URLQueryItem] = []) async throws -> (Data, URL) {
         var request = URLRequest(url: try url(path, query: query))
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 25
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
-        let value = try Self.decoder().decode(T.self, from: data)
-        if Self.cacheable(path) {
-            try? await LocalStore.shared.put(server: LocalStore.server(baseURL), kind: "cache", id: request.url!.absoluteString, data: data)
-        }
-        return value
+        return (data, request.url!)
     }
 
     static func validate(_ response: URLResponse, data: Data = Data()) throws {

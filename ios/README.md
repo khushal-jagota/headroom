@@ -23,6 +23,26 @@ The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets?detail=full&id=…` succeeded. This adapter deliberately uses that
 working endpoint rather than inventing a new backend route.
 
+## Refresh work
+
+A global change still refreshes Review for its tab badge and tells selected pages
+to refresh. The overview's manager and ticket windows refresh while Workspace is
+visible; returning to Workspace reads its loaded window again. Hidden Workspace
+supplementary reads pause too. Chief settings and deployment use the existing
+resource-version API: unchanged versions need no body read. A body is accepted
+with the version from the same server snapshot. A failed or unknown version check
+keeps a full refresh, and servers without that API keep ordinary reads. Manual
+refresh and reconnect always read again. Manager, ticket and Review list versions
+are not registered by the server, so visible lists still use ordinary reads.
+
+Conversation polling retains its 700 ms interval and its tail subscription.
+Overlapping refresh requests share a following read instead of being dropped.
+The transcript projection is retained until its message, expanded body, outgoing
+receipt, live text or ordering changes. An unchanged live-output reference reuses
+its text; a changed byte count, version or body identity reads it again. Image
+artifacts load their image once per successful document load, outside the view
+body. A failed reload retains the previous document and image.
+
 ## Build and run headless
 
 Use Xcode 16 or newer with an installed iOS 18+ simulator runtime. The committed

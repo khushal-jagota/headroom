@@ -19,6 +19,46 @@ import XCTest
         XCTAssertEqual(try reopened.records(server: "a", kind: "cache").count, LocalStore.cacheLimit)
         XCTAssertEqual(try reopened.record(server: "a", kind: "outbox", id: "send")?.payload, Data("same identity".utf8))
     }
+    func testBackgroundCacheRefreshesIdenticalPayloadAndReadsLatestAcrossContexts() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("test.store")
+        let store = LocalStore(url: url)
+        store.saveDraft("Keep", server: "a", id: "draft")
+        let revision = store.workRevision
+        try await store.cacheResponse(server: "a", id: "same", data: Data([1]), updated: Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([1]))
+        store.saveError = "Couldn’t save on this phone: temporary failure"
+        try await store.cacheResponse(server: "a", id: "same", data: Data([1]), updated: Date(timeIntervalSince1970: 3))
+        XCTAssertNil(store.saveError)
+        XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.updated, Date(timeIntervalSince1970: 3))
+        try await store.cacheResponse(server: "a", id: "same", data: Data([2]), updated: Date(timeIntervalSince1970: 4))
+        XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([2]))
+        XCTAssertNil(try store.record(server: "b", kind: "cache", id: "same"))
+        XCTAssertEqual(store.workRevision, revision)
+        let reopened = LocalStore(url: url)
+        XCTAssertEqual(try reopened.record(server: "a", kind: "cache", id: "same")?.payload, Data([2]))
+        XCTAssertEqual(reopened.draft(server: "a", id: "draft"), "Keep")
+    }
+    func testBackgroundCacheEvictsByRefreshedAgeAndBytesWithoutTouchingWork() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        store.saveDraft("Keep", server: "a", id: "draft")
+        for index in 0..<LocalStore.cacheLimit {
+            try await store.cacheResponse(server: "a", id: String(index), data: Data([1]), updated: Date(timeIntervalSince1970: Double(index)))
+        }
+        try await store.cacheResponse(server: "a", id: "0", data: Data([1]), updated: Date(timeIntervalSince1970: 100))
+        try await store.cacheResponse(server: "b", id: "new", data: Data([1]), updated: Date(timeIntervalSince1970: 101))
+        XCTAssertNotNil(try store.record(server: "a", kind: "cache", id: "0"))
+        XCTAssertNil(try store.record(server: "a", kind: "cache", id: "1"))
+        try await store.cacheResponse(server: "b", id: "large", data: Data(repeating: 2, count: LocalStore.cacheByteLimit), updated: Date(timeIntervalSince1970: 102))
+        XCTAssertNil(try store.record(server: "a", kind: "cache", id: "0"))
+        XCTAssertNil(try store.record(server: "b", kind: "cache", id: "new"))
+        try await store.cacheResponse(server: "b", id: "too-large", data: Data(count: LocalStore.cacheByteLimit + 1))
+        XCTAssertNil(try store.record(server: "b", kind: "cache", id: "too-large"))
+        XCTAssertEqual(store.draft(server: "a", id: "draft"), "Keep")
+    }
     func testCachedReadsDoNotInvalidateOutgoingWorkButEnqueueAndRemovalDo() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
