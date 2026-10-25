@@ -41,7 +41,7 @@ struct APIClient: Sendable {
         try Self.validate(response, data: data)
         let value = try Self.decoder().decode(T.self, from: data)
         if Self.cacheable(path) {
-            try? await LocalStore.shared.put(server: LocalStore.server(baseURL), kind: "cache", id: request.url!.absoluteString, data: data)
+            try? await LocalStore.shared.cacheResponse(server: LocalStore.server(baseURL), id: request.url!.absoluteString, data: data)
         }
         return value
     }

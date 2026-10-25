@@ -118,6 +118,52 @@ import XCTest
             XCTAssertEqual(model.latestLine, "\(sender == "owner" ? "You" : sender): Continue the authorized step.")
         }
     }
+    func testUnchangedPollRetainsProjectionButBodyAndOutgoingChangesRefreshIt() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        await service.setSnapshot(Self.snapshot([Self.item("reply", kind: "agent_message", text: "Before")]))
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.latestLine, "Before")
+        let count = model.projectionBuildCount
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.rows.first?.text, "Before")
+        XCTAssertEqual(model.latestLine, "Before")
+        XCTAssertEqual(model.projectionBuildCount, count)
+        await service.setSnapshot(Self.snapshot([Self.item("reply", kind: "agent_message", text: "After")]))
+        await model.refresh(using: service, transcript: true)
+        XCTAssertEqual(model.latestLine, "After")
+        XCTAssertEqual(model.projectionBuildCount, count + 1)
+        model.outgoing = [.init(id: "pending", text: "New", note: "Queued")]
+        XCTAssertEqual(model.latestLine, "You: New · Queued")
+        model.outgoing[0].note = "Sent"
+        XCTAssertEqual(model.latestLine, "You: New")
+        model.expandedBodies["reply"] = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"agent_message","content":[{"piece":"text","text":"Expanded"}]}"#.utf8))
+        XCTAssertEqual(model.rows.first?.text, "Expanded")
+    }
+    func testLiveReferenceReusesOnlyIdenticalBytesAndRefreshWaitsForInFlightRead() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"; model.lens = .full
+        let service = ConversationStub(fate: "started")
+        let reference: [String: Any] = ["body_id": "live", "version": "v1", "byte_count": 10, "media_type": "text/markdown"]
+        await service.setSnapshot(Self.snapshot([], live: ["turn_key": "turn", "reference": reference]))
+        await model.refresh(using: service, transcript: true)
+        await model.refresh(using: service, transcript: true)
+        let firstReads = await service.liveReads
+        XCTAssertEqual(firstReads, 1)
+        var grown = reference; grown["byte_count"] = 20
+        await service.setSnapshot(Self.snapshot([], live: ["turn_key": "turn", "reference": grown]))
+        await model.refresh(using: service, transcript: true)
+        let grownReads = await service.liveReads
+        XCTAssertEqual(grownReads, 2)
+        await service.holdNextSnapshot()
+        let first = Task { await model.refresh(using: service, transcript: true) }
+        while !(await service.snapshotHeld) { await Task.yield() }
+        model.lens = .focus
+        let second = Task { await model.refresh(using: service, transcript: true) }
+        await service.releaseSnapshot()
+        await first.value; await second.value
+        let lenses = await service.requestedLenses
+        XCTAssertEqual(lenses.suffix(2), [.full, .focus])
+    }
     func testSendKeepsUncertainMessageAndDoesNotRetry() async {
         let model = ConversationModel()
         let service = ConversationStub(fate: "uncertain")
@@ -374,7 +420,14 @@ private actor ConversationStub: ConversationServing {
     var senderID = ""
     var snapshot: String?
     var receipt: String?
-    func conversationLiveText(_ id: String, reference: ConversationBodyReference) async throws -> String { "Live words" }
+    var liveReads = 0
+    var requestedLenses: [ConversationLens] = []
+    var holdNext = false
+    var held: CheckedContinuation<Void, Never>?
+    var snapshotHeld: Bool { held != nil }
+    func holdNextSnapshot() { holdNext = true }
+    func releaseSnapshot() { held?.resume(); held = nil }
+    func conversationLiveText(_ id: String, reference: ConversationBodyReference) async throws -> String { liveReads += 1; return "Live words" }
     func setSnapshot(_ value: String) { snapshot = value }
     func setReceipt(_ value: String) { receipt = value }
     func conversationReceipts(_ id: String, messageIDs: [String]) async throws -> [ConversationReceipt] { receipt.map { [ConversationReceipt(senderMessageId: senderID, fate: $0)] } ?? [] }
@@ -386,6 +439,8 @@ private actor ConversationStub: ConversationServing {
         return ConversationDelivery(conversationId: "conv_1", fate: fate, refusalReason: nil, reason: "no longer current")
     }
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot {
+        requestedLenses.append(lens)
+        if holdNext { holdNext = false; await withCheckedContinuation { held = $0 } }
         let json = #"{"page":{"items":[{"kind":"row","key":"row-1","sender_message_id":"SENDER","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}],"older":null},"status":{"authority":"current","turn_running":true,"rest":{"latest_happened":null,"latest_tool":{"kind":"tool_call","title":"Reading the code"},"permission_title_excerpt":null,"plan_progress":{"current_text_excerpt":null}}}}"#.replacingOccurrences(of: "SENDER", with: senderID)
         return try APIClient.decoder().decode(ConversationSnapshot.self, from: Data((snapshot ?? json).utf8))
     }

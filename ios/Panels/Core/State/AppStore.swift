@@ -3,7 +3,8 @@ import Observation
 
 @MainActor @Observable final class AppStore {
     var baseURL: URL
-    var client: APIClient { APIClient(baseURL: baseURL) }
+    private let session: URLSession
+    var client: APIClient { APIClient(baseURL: baseURL, session: session) }
     var managers: [ManagerSummary] = []
     var tickets: [TicketSummary] = []
     var chief: ChiefDetail?
@@ -15,11 +16,15 @@ import Observation
     var isLoading = false
     var connection = "Connecting"
     var revision = 0
+    var workspaceVisible = true
+    private var resourceVersions = ResourceVersionState()
     private var refreshing = false
     private var loadingMore = false
 
-    init() {
+    init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
+        self.session = session
         defer { restore() }
+        if let suppliedBaseURL { baseURL = suppliedBaseURL; return }
 #if DEBUG
         if let at = ProcessInfo.processInfo.arguments.firstIndex(of: "--conversation-stub"), ProcessInfo.processInfo.arguments.indices.contains(at + 1),
            let local = URL(string: ProcessInfo.processInfo.arguments[at + 1]), ["localhost", "127.0.0.1"].contains(local.host) {
@@ -42,6 +47,7 @@ import Observation
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; chief = nil; review = nil; deployment = nil
         managerPage = nil; ticketPage = nil; errors = [:]
+        resourceVersions = ResourceVersionState()
         restore()
     }
 
@@ -62,7 +68,7 @@ import Observation
                 connection = "Following changes"
                 for try await _ in client.changes() {
                     try Task.checkCancellation()
-                    await refresh()
+                    await refresh(changesOnly: true)
                     try await Task.sleep(for: .milliseconds(300))
                 }
             } catch {
@@ -75,7 +81,7 @@ import Observation
         }
     }
 
-    func refresh() async {
+    func refresh(changesOnly: Bool = false) async {
         // A refresh requested during pagination or another read must not be dropped.
         // Waiting remains cancellable when the shell leaves the foreground.
         while refreshing || loadingMore {
@@ -86,17 +92,41 @@ import Observation
         isLoading = managers.isEmpty && tickets.isEmpty && chief == nil
         defer { refreshing = false; isLoading = false }
         let api = client
+        let workspace = !changesOnly || workspaceVisible
+        let keys = ["/api/workers/chief-of-staff/settings", "/api/deployment-status"]
+        let probe = changesOnly ? try? await api.resourceVersions(keys) : nil
+        guard !Task.isCancelled, api.baseURL == baseURL else { return }
         let managerOffset = managerPage?.offset ?? 0
         let ticketOffset = ticketPage?.offset ?? 0
-        async let managerRead: () = read("Workspace", from: api) { try await api.managerWindow(through: managerOffset) } apply: { self.managers = $0.managers; self.managerPage = $0.page }
-        async let ticketRead: () = read("Tickets", from: api) { try await api.ticketWindow(through: ticketOffset) } apply: { self.tickets = $0.tickets; self.ticketPage = $0.page }
-        async let chiefRead: () = read("Chief", from: api) { try await api.chief() } apply: { self.chief = $0 }
+        async let managerRead: () = readIf(workspace, "Workspace", from: api) { try await api.managerWindow(through: managerOffset) } apply: { self.managers = $0.managers; self.managerPage = $0.page }
+        async let ticketRead: () = readIf(workspace, "Tickets", from: api) { try await api.ticketWindow(through: ticketOffset) } apply: { self.tickets = $0.tickets; self.ticketPage = $0.page }
+        async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !changesOnly) { self.chief = $0 }
         async let reviewRead: () = read("Review", from: api) { try await api.review() } apply: { self.review = $0 }
-        async let deployRead: () = read("Deployment", from: api) { try await api.deployment() } apply: { self.deployment = $0 }
+        async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !changesOnly) { self.deployment = $0 }
         _ = await (managerRead, ticketRead, chiefRead, reviewRead, deployRead)
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
         revision += 1
         if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
+    }
+
+    private func readIf<T: Sendable>(_ needed: Bool, _ key: String, from api: APIClient, fetch: @Sendable () async throws -> T, apply: @MainActor @Sendable (T) -> Void) async {
+        if needed { await read(key, from: api, fetch: fetch, apply: apply) }
+    }
+
+    private func readVersioned<T: Codable & Sendable>(_ label: String, path: String, api: APIClient, probe: ResourceVersions?, force: Bool, apply: @MainActor @Sendable (T) -> Void) async {
+        if !force, errors[label] == nil, resourceVersions.isCurrent(path, probe: probe) { return }
+        do {
+            let result: ResourceBody<T> = try await api.resourceBody(path)
+            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            apply(result.body)
+            resourceVersions.accept(result)
+            errors[label] = nil
+        } catch {
+            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            // Older servers and unregistered resources retain ordinary refresh.
+            resourceVersions.invalidate(path)
+            await read(label, from: api, fetch: { try await api.get(path) }, apply: apply)
+        }
     }
 
     private func read<T: Sendable>(_ key: String, from api: APIClient, fetch: @Sendable () async throws -> T, apply: @MainActor @Sendable (T) -> Void) async {

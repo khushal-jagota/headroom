@@ -23,7 +23,7 @@ import Observation
         }
         if let id = conversationID,
            let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
-            status = snapshot.status; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
+            if status != snapshot.status { status = snapshot.status }; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
             rememberRows(items.map(\.id))
         }
         syncOutbox()
@@ -45,8 +45,8 @@ import Observation
         rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
     }
     var lens: ConversationLens = .focus
-    var items: [ConversationItem] = []
-    var expandedBodies: [String: ConversationBody] = [:]
+    var items: [ConversationItem] = [] { didSet { if oldValue != items { projectionRevision += 1 } } }
+    var expandedBodies: [String: ConversationBody] = [:] { didSet { if oldValue != expandedBodies { projectionRevision += 1 } } }
     var status: ConversationStatus?
     var hasUnread = false
     private var readThroughSequence = 0
@@ -55,8 +55,8 @@ import Observation
     var error: String?
     var sending = false
     var loadingOlder = false
-    var outgoing: [Outgoing] = []
-    struct Outgoing: Identifiable {
+    var outgoing: [Outgoing] = [] { didSet { if oldValue != outgoing { projectionRevision += 1 } } }
+    struct Outgoing: Identifiable, Equatable {
         let id: String
         let text: String
         var note: String?
@@ -76,14 +76,32 @@ import Observation
     var selectedModel: String?
     var reasoningEffort: String?
     private var pinnedMessageIDs: Set<String> = []
-    private var rowOrder: [String] = []
-    private var supersededIDs: Set<String> = []
-    private var liveRow: ConversationRow?
+    private var rowOrder: [String] = [] { didSet { if oldValue != rowOrder { projectionRevision += 1 } } }
+    private var supersededIDs: Set<String> = [] { didSet { if oldValue != supersededIDs { projectionRevision += 1 } } }
+    private var liveRow: ConversationRow? { didSet { if oldValue != liveRow { projectionRevision += 1 } } }
     private var liveTurnKey: String?
     private var refreshing = false
-    private var retryAliases: [String: String] = [:]
+    private var refreshAgain = false
+    private var requestedTranscript = false
+    private var retryAliases: [String: String] = [:] { didSet { if oldValue != retryAliases { projectionRevision += 1 } } }
+
+    private var projectionRevision = 0
+    @ObservationIgnored private var projectedRevision = -1
+    @ObservationIgnored private var projectedRows: [ConversationRow] = []
+    @ObservationIgnored private(set) var projectionBuildCount = 0
+    private var liveConversationID: String?
+    private var liveReference: ConversationBodyReference?
 
     var rows: [ConversationRow] {
+        let revision = projectionRevision
+        if projectedRevision != revision {
+            projectedRows = projectRows()
+            projectedRevision = revision
+            projectionBuildCount += 1
+        }
+        return projectedRows
+    }
+    private func projectRows() -> [ConversationRow] {
         let received = Set(items.compactMap(\.senderMessageId))
         let remote = items.compactMap { item -> ConversationRow? in
             guard !supersededIDs.contains(item.id) else { return nil }
@@ -166,21 +184,35 @@ import Observation
     }
 
     func refresh(using service: any ConversationServing, transcript: Bool) async {
-        guard !refreshing, let id = conversationID else { return }
+        requestedTranscript = requestedTranscript || transcript
+        refreshAgain = true
+        guard !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
+        repeat {
+            refreshAgain = false
+            let transcript = requestedTranscript
+            requestedTranscript = false
+            await refreshSnapshot(using: service, transcript: transcript)
+        } while refreshAgain && !Task.isCancelled
+    }
+    private func refreshSnapshot(using service: any ConversationServing, transcript: Bool) async {
+        guard !Task.isCancelled, let id = conversationID else { return }
         let requestedLens = lens
         do {
             let snapshot = try await service.conversationSnapshot(id, lens: requestedLens, transcript: transcript)
             let output = snapshot.status.liveOutput
             let liveText: String?
-            if let output { liveText = try await service.conversationLiveText(id, reference: output.reference) }
+            if let output {
+                if id == liveConversationID, output.reference == liveReference, let liveRow { liveText = liveRow.text }
+                else { liveText = try await service.conversationLiveText(id, reference: output.reference) }
+            }
             else { liveText = nil }
             let receiptIDs = Array(outgoing.map(\.id).suffix(64))
             let receipts = receiptIDs.isEmpty ? [] : try await service.conversationReceipts(id, messageIDs: receiptIDs)
             try Task.checkCancellation()
             guard id == conversationID, lens == requestedLens else { return }
-            status = snapshot.status
+            if status != snapshot.status { status = snapshot.status }
             if transcript {
                 if loadedLens != requestedLens { items = []; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
                 if let liveRow, output?.reference.version != liveRow.id.replacingOccurrences(of: "live:", with: "", options: .anchored),
@@ -191,9 +223,11 @@ import Observation
                 }
                 // Replace the current window; retain explicitly loaded history before it.
                 let keys = Set(snapshot.page.items.map(\.key))
+                let nextItems: [ConversationItem]
                 if let first = snapshot.page.items.first, let at = items.firstIndex(where: { $0.key == first.key }) {
-                    items = Array(items.prefix(at)).filter { !keys.contains($0.key) } + snapshot.page.items
-                } else { items = snapshot.page.items; older = snapshot.page.older }
+                    nextItems = Array(items.prefix(at)).filter { !keys.contains($0.key) } + snapshot.page.items
+                } else { nextItems = snapshot.page.items; older = snapshot.page.older }
+                if items != nextItems { items = nextItems }
                 insertRemoteRows(items.map { retryAliases[$0.id] ?? $0.id })
                 let received = Set(items.compactMap(\.senderMessageId))
                 outgoing.removeAll { message in
@@ -214,11 +248,14 @@ import Observation
                 }
             }
             if let output, let liveText, !liveText.isEmpty {
+                liveConversationID = id
+                liveReference = output.reference
                 liveTurnKey = output.turnKey
                 let identity = "live:" + output.reference.version
-                liveRow = ConversationRow(id: identity, text: liveText, own: false, note: nil)
+                let row = ConversationRow(id: identity, text: liveText, own: false, note: nil)
+                if liveRow != row { liveRow = row }
                 rememberRows([identity])
-            } else { liveRow = nil; liveTurnKey = nil }
+            } else { liveRow = nil; liveTurnKey = nil; liveReference = nil }
             for receipt in receipts {
                 switch receipt.fate {
                 case "prompt": setNote(receipt.senderMessageId, "Sent")
@@ -328,14 +365,17 @@ import Observation
         return false
     }
     private func insertRemoteRows(_ ids: [String]) {
-        for (index, id) in ids.enumerated() where !rowOrder.contains(id) {
+        var known = Set(rowOrder)
+        for (index, id) in ids.enumerated() where known.insert(id).inserted {
             if let following = ids.dropFirst(index + 1).first(where: { rowOrder.contains($0) && !pinnedMessageIDs.contains($0) }), let at = rowOrder.firstIndex(of: following) {
                 rowOrder.insert(id, at: at)
             } else { rowOrder.append(id) }
         }
     }
     private func rememberRows(_ ids: [String]) {
-        for id in ids where !rowOrder.contains(id) { rowOrder.append(id) }
+        var known = Set(rowOrder)
+        let added = ids.filter { known.insert($0).inserted }
+        if !added.isEmpty { rowOrder.append(contentsOf: added) }
     }
     private func setNote(_ id: String, _ note: String, retryable: Bool = false) {
         if let at = outgoing.firstIndex(where: { $0.id == id }) {
