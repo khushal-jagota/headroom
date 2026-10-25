@@ -307,10 +307,12 @@ pass, and do not establish physical-device haptics or frame-rate performance.
 
 Chief, Orchestrator and Ticket share a latest-message line and a composer. Tapping
 the line pushes a conversation page from the right using the native navigation
-stack. The standard Back button or edge swipe returns to the same page and scroll
-position. Both composers share the same draft and conversation model. The chat
-keeps the raised background, conversation name and Focus/Full header, thread and
-input; it does not repeat the latest-message line. The page's bottom bar remains
+stack. The same subtle Back and ⋯ controls as the Ticket page replace the system
+navigation bar and conversation title. Focus and Full are available in ⋯. Back
+or an edge swipe returns to the same page and scroll position; completed
+navigation gives light haptic feedback. Both composers share the same draft and
+conversation model. The chat uses the page surface with raised outgoing-message
+bubbles, the thread and input; it does not repeat the latest-message line. The page's bottom bar remains
 available for sending without opening the chat. At rest the line remains visible
 while typing and recording,
 with the latest message from either side and “You:” for outgoing messages.
@@ -370,8 +372,12 @@ sheet, voice-draft flow, page opening/closing, queue controls after relaunch,
 offline status geometry, largest-text controls and system sender attribution. The layout/attribution case can run independently of delivery waits.
 The detail-page scenario reuses that host and the existing Ticket/Orchestrator
 fixtures to check native push, edge swipe and Back, retained drafts and restored
-page scroll positions. It records push/back clips for frame review. This native
-navigation boundary is absent from host model tests. It uses no additional server
+page scroll positions. It also checks that the shared Back and ⋯ controls match
+the parent page, the title and system bar are absent, and Focus/Full works through
+⋯. Ticket and Orchestrator run with both light and dark system appearances;
+Panels retains its existing dark palette. The runner restores the previous system
+appearance. It records screenshots of the pushed page, cancelled swipe and
+restored parent. This native navigation boundary is absent from host model tests. It uses no additional server
 or browser host.
 
 It locks PanelsLaneA, uses the

@@ -154,6 +154,9 @@ def main() -> int:
         for group in devices["devices"].values()
         for d in group
     ), f"{LANE} must already be booted"
+    original_appearance = subprocess.check_output(
+        ["xcrun", "simctl", "ui", DEVICE, "appearance"], text=True
+    ).strip()
     stub = Stub(output)
     fixtures = ROOT / "ios/PanelsTests/Fixtures"
     ticket = json.loads((fixtures / "ticket-full.json").read_text())
@@ -283,6 +286,24 @@ def main() -> int:
                     for pending in stub.pending:
                         pending["at"] -= 200
                     stub.tick()
+                self.respond({})
+                return
+            if path in {"/proof/appearance/light", "/proof/appearance/dark"}:
+                subprocess.run(
+                    ["xcrun", "simctl", "ui", DEVICE, "appearance", path.rsplit("/", 1)[-1]],
+                    check=True,
+                )
+                self.respond({})
+                return
+            if path == "/proof/header-fixture":
+                with stub.lock:
+                    stub.reset()
+                    stub.items.append(
+                        row("header-own", "Keep this message visible.", True, "header-own")
+                    )
+                    stub.items.append(
+                        row("header-reply", "I’ll keep the conversation steady as messages arrive.")
+                    )
                 self.respond({})
                 return
             if path == "/proof/reset":
@@ -531,6 +552,9 @@ def main() -> int:
         )
     finally:
         stub.stop_clip()
+        subprocess.run(
+            ["xcrun", "simctl", "ui", DEVICE, "appearance", original_appearance], check=True
+        )
         subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
         server.shutdown()
         server.server_close()
