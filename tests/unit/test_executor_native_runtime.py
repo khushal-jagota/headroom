@@ -847,7 +847,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
             {"operation": "ticket.note", "arguments": {"ticket_id": "t_other"}},
         )
         task = asyncio.create_task(executor.handle_ipc(request))
-        while "write" not in executor._receipts:
+        while not any(row.submission_id == "write" for row in executor.spool.pending()):
             await asyncio.sleep(0)
         row = next(row for row in executor.spool.pending() if row.submission_id == "write")
         assert {manifest.owner_id for manifest in row.file_dependencies} == {"t_own"}

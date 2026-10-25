@@ -819,6 +819,7 @@ def test_reconciliation_closed_child_exception_requires_exact_original_identity(
         )
         adopt.assert_not_awaited()
         assert send.await_count == 1
+        assert send.await_args is not None
         assert send.await_args.args[0].kind is WireMessageKind.error
         assert not endpoint._inventory and not endpoint._retained_inventory
         assert store.child_assignment(CHILD) is None
@@ -857,6 +858,7 @@ def test_closed_child_reconciliation_cannot_use_stale_authenticated_generation(
             writer,
         )
         assert send.await_count == 1
+        assert send.await_args is not None
         assert send.await_args.args[0].kind is WireMessageKind.error
         assert not endpoint._inventory
 
