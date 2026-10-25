@@ -65,6 +65,10 @@ def now_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
+class _CommandAdmissionRefused(Exception):
+    """An admission guard proved that the native command was not dispatched."""
+
+
 @dataclass
 class _Child:
     reference: ChildReference
@@ -449,7 +453,7 @@ class NativeChildRegistry:
             outcome = CommandOutcome(
                 command.command_id,
                 command.child,
-                CommandDisposition.uncertain,
+                CommandDisposition.refused,
                 {"reason": "incarnation_gone"},
             )
         elif (
@@ -481,7 +485,7 @@ class NativeChildRegistry:
                     raise BackendSpawnFailed("child identity already has a native start")
                 if child is None and command.operation == ChildOperation.start:
                     if self.admission_stopped:
-                        raise ValueError("executor is quiescing")
+                        raise _CommandAdmissionRefused("executor is quiescing")
                     resolved = TypeAdapter(ResolvedConversationStart).validate_python(
                         command.arguments["resolved_start"]
                     )
@@ -531,7 +535,7 @@ class NativeChildRegistry:
                     async with child.lock:
                         if command.operation == ChildOperation.write_prompt:
                             if self.admission_stopped:
-                                raise ValueError("executor is quiescing")
+                                raise _CommandAdmissionRefused("executor is quiescing")
                             child.active_turn = command.turn
                         result = await invoke_child(child.native, native_command)
                         if command.operation == ChildOperation.answer_permission_ask:
@@ -555,6 +559,13 @@ class NativeChildRegistry:
                         outcome = CommandOutcome(
                             command.command_id, command.child, CommandDisposition.succeeded, result
                         )
+            except _CommandAdmissionRefused as error:
+                outcome = CommandOutcome(
+                    command.command_id,
+                    command.child,
+                    CommandDisposition.refused,
+                    {"error_type": type(error).__name__, "error_message": str(error)},
+                )
             except (ValueError, BackendAdapterError) as error:
                 # A native write failure does not prove non-delivery.
                 disposition = (
