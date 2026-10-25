@@ -2,7 +2,10 @@
 
 from planner.conversation import events as event
 from planner.conversation.message_content import message_content_text
-from planner.conversation.views.configuration import REST_EXCERPT_CHARACTERS
+from planner.conversation.views.configuration import (
+    OWNER_MESSAGE_PREVIEW_CHARACTERS,
+    REST_EXCERPT_CHARACTERS,
+)
 
 
 def excerpt(text: str) -> str:
@@ -10,6 +13,16 @@ def excerpt(text: str) -> str:
     if len(first) <= REST_EXCERPT_CHARACTERS:
         return first
     return first[: REST_EXCERPT_CHARACTERS - 1].rstrip() + "…"
+
+
+def owner_message_preview(text: str) -> str | None:
+    """Keep bounded multiline Markdown, without losing leading-blank-line replies."""
+    text = text.strip()
+    if not text:
+        return None
+    if len(text) <= OWNER_MESSAGE_PREVIEW_CHARACTERS:
+        return text
+    return text[: OWNER_MESSAGE_PREVIEW_CHARACTERS - 1].rstrip() + "…"
 
 
 def event_has_rest_text(payload: event.ConversationEventPayload) -> bool:

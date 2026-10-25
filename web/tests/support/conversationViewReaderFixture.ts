@@ -1,5 +1,6 @@
 /** A finite indexed-page transport for browser lifecycle and scroll admission checks. */
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
+import { VIEW_PROJECTION_VERSION } from '../../src/lib/conversation/view/contracts';
 export function installConversationViewReaderFixture(id='bounded-reader'):void {
   const positionRace=new URLSearchParams(location.search).has('position-race');
   const positionBodies: Array<()=>void>=[];
@@ -33,7 +34,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
   (window as any).__viewCalls=calls;
-  const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
+  const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,latest_owner_message_preview:"Latest owner answer",last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
   let liveText='Temporary streaming prose.';
   let liveVersion=1;
   const deferredEndingText=JSON.stringify({kind:'turn_ended',ending:'completed',error_summary:null,automatic_compaction_result:null});
@@ -54,7 +55,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     const ending=items.find((item):item is ConversationViewRow=>item.kind==='row'&&item.key==='e13');
     if(ending)ending.body={kind:'deferred',reference:{body_id:'completed:13',version:'1',byte_count:deferredEndingText.length,media_type:'application/json'}};
     items.sort((a,b)=>a.order.sequence-b.order.sequence||a.order.slot-b.order.slot);
-    return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope,items,older:null,newer:null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
+    return{conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,scope,items,older:null,newer:null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
   }
   // A settled owner turn exercises the real reader's Full autoexpansion and the
   // never-fold metadata before a deferred owner body has been materialized.
@@ -74,7 +75,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(scope.kind==='turn')items=scope.key==='turn:1'?[prose(2,'Ordinary commentary one.',false),prose(4,'Ordinary commentary two.',false),prose(8,'Ordinary commentary three.',false),{kind:'work_group',key:'work:6',order:{sequence:6,slot:0},changed_through_sequence:10,turn_key:'turn:1',entry_count:2,latest_entry_key:'e7',settled:true}]:[];
     if(scope.kind==='work_group')items=[tool(6),tool(7)];
     items.sort((a,b)=>a.order.sequence-b.order.sequence||a.order.slot-b.order.slot);
-    return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope,items,older:null,newer:null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
+    return{conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,scope,items,older:null,newer:null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
   }
   if(folds){status.turn_key='turn:14';status.stopped_without_ending=true;}
   function page(url:URL):ConversationViewPage{
@@ -82,12 +83,12 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(ownerWidth){
       const items:ConversationViewRow[]=[1,2,3].map(n=>({...item(n),row_kind:'prompt',body:{kind:'inline',value:{kind:'prompt',sender_label:n===3?'Chief':'owner',mode:'queue',sent_at_unix_milliseconds:n,content:[{piece:'text',text:n===2?'A long owner prompt retains its existing width limit. '.repeat(8):'Short prompt.'}]}}}));
       items[0].body={kind:'deferred',reference:{body_id:'owner-width:1',version:'1',byte_count:widthBody.length,media_type:'application/json'}};
-      return{conversation_id:id,protocol_version:1,projection_version:1,lens:'focus',scope:{kind:'timeline',key:null},items,older:null,newer:null,body_bytes:0};
+      return{conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens:'focus',scope:{kind:'timeline',key:null},items,older:null,newer:null,body_bytes:0};
     }
     if(expiry){
       const tool:ConversationViewRow={...item(1),row_kind:'tool_call',body:{kind:'inline',value:{kind:'tool_call',tool_call_id:'expiry-tool',title:'Read diagnostic',tool_kind:'read',detail:'Capped diagnostic',started_detail:'Capped diagnostic',capped_detail_sequence:2,status:'completed'}}};
       const pending:ConversationViewRow={...item(3),body:{kind:'deferred',reference:{body_id:'row:3',version:'1',byte_count:delayedBody.length,media_type:'application/json'}}};
-      return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope:{kind:'timeline',key:null},items:expired&&!deferredExpired?[tool]:[tool,pending],older:null,newer:null,body_bytes:0};
+      return{conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,scope:{kind:'timeline',key:null},items:expired&&!deferredExpired?[tool]:[tool,pending],older:null,newer:null,body_bytes:0};
     }
     if(folds)return foldPage(url);
     if(visual)return visualPage(url);
@@ -116,8 +117,8 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
       }
       return row;
     });
-    const position=(n:number):ViewPageCursor=>({projection_version:1,lens,scope:{kind:'timeline',key:null},order:{sequence:n,slot:0}});
-    return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope:{kind:'timeline',key:null},items,older:start>1?position(start):null,newer:end<sequence?position(end):null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
+    const position=(n:number):ViewPageCursor=>({projection_version:VIEW_PROJECTION_VERSION,lens,scope:{kind:'timeline',key:null},order:{sequence:n,slot:0}});
+    return{conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,scope:{kind:'timeline',key:null},items,older:start>1?position(start):null,newer:end<sequence?position(end):null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
   }
   // Gates model a cancellable transport, so superseding history can release the
   // existing serialized reader queue. Forward recovery stays blocked until the
@@ -197,7 +198,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
       if(this.closed)return;
       const result=page(url);if(url.searchParams.get('transcript')==='false')result.items=[];
       const after=url.searchParams.get('after');
-      const value=after===null?{page:result,coverage:{through_sequence:sequence},status}:{kind:'changes',conversation_id:id,protocol_version:1,projection_version:1,lens:result.lens,from_sequence:Number(after),coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status};
+      const value=after===null?{page:result,coverage:{through_sequence:sequence},status}:{kind:'changes',conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens:result.lens,from_sequence:Number(after),coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status};
       this.dispatchEvent(new MessageEvent(after===null?'snapshot':'changes',{data:JSON.stringify(value)}));
     });}
     close(){this.closed=true;}
@@ -206,7 +207,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     liveText+=text;liveVersion++;
     status.live_output={runtime_epoch:'fixture',turn_key:'turn:1',version:liveVersion,byte_count:liveText.length,reference:{body_id:'live:fixture',version:String(liveVersion),byte_count:liveText.length,media_type:'text/markdown'}};
     const before=sequence;sequence++;status.revision=sequence;
-    for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,location.origin).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:1,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
+    for(const source of sources){if((source as Source).closed)continue;const lens=new URL((source as Source).raw,location.origin).searchParams.get('lens');source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,from_sequence:before,coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
   }};
   (window as any).__expireDiagnostics=()=>{
     expired=true;status.diagnostics_expired=true;

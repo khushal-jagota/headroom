@@ -1,5 +1,6 @@
 /** Small transport fixture, not a second semantic reducer. Backend parity tests own that proof. */
 import type {ConversationViewLens, ConversationViewSnapshot, ConversationViewRow, ViewRowBody, ViewTailChanges} from '../../../src/lib/conversation/view/contracts';
+import { VIEW_PROJECTION_VERSION } from '../../../src/lib/conversation/view/contracts';
 export type FixtureEvent = {conversation_id:string;sequence:number;kind:string;created_at:number;
   payload:Record<string,unknown>};
 export function viewSnapshot(id:string,lens:ConversationViewLens,rows:FixtureEvent[],transcript=true):ConversationViewSnapshot {
@@ -18,10 +19,10 @@ export function viewSnapshot(id:string,lens:ConversationViewLens,rows:FixtureEve
   }
   const latest=rows.at(-1);
   const coverage={through_sequence:Math.max(0,...rows.map(row=>row.sequence))};
-  return {page:{conversation_id:id,protocol_version:1,projection_version:1,lens,scope:{kind:'timeline',key:null},items:transcript?items:[],older:null,newer:null,body_bytes:JSON.stringify(items).length},coverage,
+  return {page:{conversation_id:id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,scope:{kind:'timeline',key:null},items:transcript?items:[],older:null,newer:null,body_bytes:JSON.stringify(items).length},coverage,
     status:{diagnostics_expired:false,runtime_epoch:'fixture',revision:coverage.through_sequence,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,
-      rest:{latest_happened:latest?{kind:latest.kind==='prompt'?'prompt':'agent_message',sender_label:null,excerpt:String(latest.payload.text??latest.payload.title??'')}:null,latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:Math.max(0,...rows.filter(row=>row.kind==='message_to_owner').map(row=>row.sequence)),last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}}};
+      rest:{latest_happened:latest?{kind:latest.kind==='prompt'?'prompt':'agent_message',sender_label:null,excerpt:String(latest.payload.text??latest.payload.title??'')}:null,latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_preview:rows.filter(row=>row.kind==='message_to_owner').at(-1)?.payload.text as string | undefined ?? null,latest_owner_message_sequence:Math.max(0,...rows.filter(row=>row.kind==='message_to_owner').map(row=>row.sequence)),last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}}};
 }
 export function viewChanges(snapshot:ConversationViewSnapshot,from:number):ViewTailChanges {
-  return {kind:'changes',conversation_id:snapshot.page.conversation_id,protocol_version:1,projection_version:1,lens:snapshot.page.lens,from_sequence:from,coverage:snapshot.coverage,upserts:snapshot.page.items,scope_changes:[{scope:snapshot.page.scope,item_keys:snapshot.page.items.map(item=>item.key),removed_keys:[]}],removed_keys:[],invalidated_scopes:[],status:snapshot.status};
+  return {kind:'changes',conversation_id:snapshot.page.conversation_id,protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens:snapshot.page.lens,from_sequence:from,coverage:snapshot.coverage,upserts:snapshot.page.items,scope_changes:[{scope:snapshot.page.scope,item_keys:snapshot.page.items.map(item=>item.key),removed_keys:[]}],removed_keys:[],invalidated_scopes:[],status:snapshot.status};
 }

@@ -195,8 +195,8 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         rest = pane.locator("[data-conversation-rest-bar]")
         if rest.is_visible():
             with page.expect_request(read_pattern, timeout=WAIT_MS):
-                rest.click()
-            expect(page.locator('[data-conversation-state="peeked"]')).to_be_visible()
+                pane.locator("[data-conversation-expand]").click()
+            expect(page.locator('[data-conversation-state="opened"]')).to_be_visible()
         assert pending_reads, "An eligible open conversation must acknowledge its message"
         for read_route in list(pending_reads):
             observations.append(

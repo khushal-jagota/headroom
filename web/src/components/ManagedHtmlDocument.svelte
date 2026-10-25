@@ -31,7 +31,7 @@
   let objectUrl: string | null = null;
 
   function visible(): boolean {
-    if (!active || !host?.isConnected || document.visibilityState === "hidden") return false;
+    if (!active || !host?.isConnected || host.closest("[inert]") || document.visibilityState === "hidden") return false;
     if (host.closest('[data-visible-content-state="retained"], [data-visible-content-state="released"]')) return false;
     if (!frame?.isConnected) return false;
     const rect = frame.getBoundingClientRect();

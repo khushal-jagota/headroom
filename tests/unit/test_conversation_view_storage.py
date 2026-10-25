@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
@@ -16,7 +17,10 @@ from planner.conversation.events import (
 from planner.conversation.retention.read import diagnostics_expired, sequence_expired
 from planner.conversation.storage import StoredConversationEvent
 from planner.conversation.views.api import _changes
-from planner.conversation.views.configuration import BODY_CHUNK_BYTES
+from planner.conversation.views.configuration import (
+    BODY_CHUNK_BYTES,
+    OWNER_MESSAGE_PREVIEW_CHARACTERS,
+)
 from planner.conversation.views.contracts import (
     VIEW_PROJECTION_VERSION,
     ConversationViewLens,
@@ -34,8 +38,9 @@ from planner.conversation.views.storage import (
     read_page,
     read_turn,
 )
-from planner.conversation.views.writer import append_projection, backfill_projection
+from planner.conversation.views.writer import append_projection
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.migrations.versions import owner_message_preview
 
 
 def event(sequence: int, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -123,7 +128,9 @@ def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_documen
             read_body_chunk(conn, "fixture", reference, 0)
 
 
-def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental() -> None:
+def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with database(FIXTURES[0]["events"]) as conn:
         conn.commit()
         before = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
@@ -157,11 +164,32 @@ def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental
             ]
             == 0
         )
-        for table in ("lookups", "groups", "turns", "rows", "state"):
-            conn.execute(f"DELETE FROM conversation_view_{table}")
+        # An old derived cache has no private owner preview. Rebuilding must
+        # recover it from canonical events without changing row layout.
+        conn.execute("UPDATE conversation_view_state SET projection_version=1")
+        conn.execute("UPDATE conversation_view_rows SET rest_summary=NULL")
+        monkeypatch.setattr(
+            owner_message_preview.op,
+            "get_bind",
+            lambda: SimpleNamespace(connection=SimpleNamespace(driver_connection=conn)),
+        )
+        conn.commit()
+        stale = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
+        with pytest.raises(RuntimeError, match="migration rollback"), conn:
+            owner_message_preview.upgrade()
+            assert (
+                conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
+                == VIEW_PROJECTION_VERSION
+            )
+            raise RuntimeError("migration rollback")
+        assert (
+            conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
+            == 1
+        )
+        assert list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == stale
         original_factory = conn.row_factory
         conn.row_factory = None
-        backfill_projection(conn)
+        owner_message_preview.upgrade()
         assert conn.row_factory is None
         conn.row_factory = original_factory
         assert (
@@ -543,3 +571,112 @@ def test_missing_body_requires_recorded_expiry_and_syntax_stays_first(
                 read({**reference, "body_id": f"{kind}:10junk"})
             with pytest.raises(ValueError, match="absent"):
                 read({**reference, "body_id": f"{kind}:21"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [None, "\n\n# Answer\n\nSecond paragraph", "界🙂" * 20_000],
+    ids=["attachment-only", "multiline", "bounded-unicode"],
+)
+def test_latest_owner_preview_survives_later_activity_without_transcript_reads(
+    text: str | None,
+) -> None:
+    """Status must retain one bounded owner reply when newer activity replaces rest facts.
+
+    Existing rest tests cover first-line facts, not a separate multiline owner
+    source. Reuse the in-memory projection and SQL counters, with no browser host.
+    """
+    owner = {
+        "sender": {"kind": "ticket", "id": "worker"},
+        "recipient": {"kind": "owner", "id": "owner"},
+        "sender_label": "worker",
+    }
+    content = (
+        [{"piece": "text", "text": text}]
+        if text is not None
+        else [
+            {
+                "piece": "file",
+                "stored_file_id": "f",
+                "media_type": "text/plain",
+                "file_name": "answer.txt",
+                "byte_count": 10,
+            }
+        ]
+    )
+    events = [
+        prompt(),
+        event(2, "message_to_owner", {**owner, "text": "Earlier answer"}),
+        event(3, "message_to_owner", {**owner, "content": content}),
+        event(
+            4,
+            "tool_call_started",
+            {"tool_call_id": "tool", "title": "Read", "tool_kind": "other", "detail": "x"},
+        ),
+        event(5, "agent_message", {"text": "Private commentary"}),
+        event(6, "turn_ended", {"ending": "completed", "error_summary": None}),
+        prompt(7),
+        event(
+            8,
+            "tool_call_started",
+            {"tool_call_id": "next-tool", "title": "Write", "tool_kind": "other", "detail": "x"},
+        ),
+    ]
+    live = ConversationViewLiveOutput()
+    with database(events) as conn:
+        for lens in ("focus", "full"):
+            statements: list[str] = []
+            conn.set_trace_callback(statements.append)
+            rest = read_status(conn, "fixture", lens, live, running=True)["rest"]
+            conn.set_trace_callback(None)
+            assert rest["latest_owner_message_sequence"] == 3
+            preview = rest["latest_owner_message_preview"]
+            if text is None:
+                assert preview is None  # Never reuse the earlier textual reply.
+            elif len(text.strip()) <= OWNER_MESSAGE_PREVIEW_CHARACTERS:
+                assert preview == text.strip()
+            else:
+                assert preview is not None
+                assert len(preview) == OWNER_MESSAGE_PREVIEW_CHARACTERS
+                assert preview.endswith("…")
+            # Status reads cached facts, never owner source bodies or transcript pages.
+            assert not any("SELECT kind,payload" in sql for sql in statements)
+            assert '"_owner_message_preview"' not in json.dumps(rest)
+            assert len(json.dumps(rest, ensure_ascii=False).encode()) < 8_000
+        retained = conn.execute(
+            "SELECT sequence FROM conversation_view_rows WHERE rest_summary IS NOT NULL"
+        ).fetchall()
+        assert 3 in [row[0] for row in retained]
+        assert 2 not in [row[0] for row in retained]
+        assert len(retained) <= 4
+
+
+def test_owner_preview_is_null_without_a_reply_and_private_in_latest_rest_event() -> None:
+    """Generic rest payloads cannot leak the private cache field or expose old text."""
+    live = ConversationViewLiveOutput()
+    with database([prompt()]) as conn:
+        rest = read_status(conn, "fixture", "focus", live, running=True)["rest"]
+        assert rest["latest_owner_message_sequence"] == 0
+        assert rest["latest_owner_message_preview"] is None
+    events = [
+        prompt(),
+        event(
+            2,
+            "message_to_owner",
+            {
+                "sender": {"kind": "ticket", "id": "worker"},
+                "recipient": {"kind": "owner", "id": "owner"},
+                "sender_label": "worker",
+                "text": "Answer\n\nDetail",
+            },
+        ),
+    ]
+    with database(events) as conn:
+        rest = read_status(conn, "fixture", "focus", live, running=True)["rest"]
+        assert rest["latest_happened"] == {
+            "kind": "agent_message",
+            "sender_label": None,
+            "excerpt": "Answer",
+        }
+        assert rest["latest_owner_message_preview"] == "Answer\n\nDetail"
+        assert '"_owner_message_preview"' not in json.dumps(rest)

@@ -1136,18 +1136,19 @@ def verify_conversation_overlay(browser, url):
             page.mouse.up()
             page.wait_for_timeout(100)
         expect(document.get_by_text(final_text, exact=True)).to_have_count(1)
-        # A user-owned Ticket starts opened. Explicitly choose peeked for this proof.
+        # Initial selection stays product-owned. Choose dock state for this proof.
         if pane.get_attribute('data-conversation-state') == 'opened':
             page.locator('[data-conversation-collapse]').click()
         # Open by the same controls as an owner. A viewport read follows each layout.
         box.click()
-        expect(pane).to_have_attribute('data-conversation-state', 'peeked')
-        page.wait_for_timeout(250)
-        doc_before = document.bounding_box()
-        document.evaluate('e=>e.scrollTop=240')
-        scroll_before = document.evaluate('e=>e.scrollTop')
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
         box.fill("Draft keeps its place.\n" * 6)
         page.wait_for_timeout(250)
+        doc_before = document.bounding_box()
+        dock_before = page.locator('.conversation-layer').bounding_box()
+        assert doc_before['y'] + doc_before['height'] <= dock_before['y'] + 1, (name, doc_before, dock_before)
+        document.evaluate('e=>e.scrollTop=240')
+        scroll_before = document.evaluate('e=>e.scrollTop')
         page.locator('[data-conversation-expand]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'opened')
         page.wait_for_timeout(250)
@@ -1199,18 +1200,22 @@ def verify_conversation_overlay(browser, url):
         # Collapse cannot remove document scroll range or clamp the reader.
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
         end_scroll = document.evaluate('e=>e.scrollTop')
-        collapse_before = {'thread':transcript_bounds(),'anchor':thread.evaluate('''(e,key)=>{const n=[...e.querySelectorAll('[data-conversation-view-key]')].find(n=>n.dataset.conversationViewKey===key);const c=n.querySelector('[data-conversation-row]')??n;return {top:c.getBoundingClientRect().top,text:c.textContent};}''', anchor['key'])}
+        collapse_before = {'thread':transcript_bounds(),'anchor':anchor}
         page.locator('[data-conversation-collapse]').click()
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
         page.wait_for_timeout(250)
-        collapse_after = {'thread':transcript_bounds(),'anchor':thread.evaluate('''(e,key)=>{const n=[...e.querySelectorAll('[data-conversation-view-key]')].find(n=>n.dataset.conversationViewKey===key);const c=n.querySelector('[data-conversation-row]')??n;return {top:c.getBoundingClientRect().top,text:c.textContent};}''', anchor['key'])}
-        print('COLLAPSE_GEOMETRY '+json.dumps({'name':name,'before':collapse_before,'after':collapse_after}),flush=True)
+        assert not thread.is_visible()
         assert document.evaluate('e=>e.scrollHeight') >= highwater
         assert document.evaluate('e=>e.scrollTop') == end_scroll
-        # Collapse removes the top of the window. The same content stays fixed
-        # relative to its bottom, rather than following the new top edge.
-        collapsed_anchor = {**anchor, **assert_anchor('collapse to peeked', edge='bottom')}
-        box.click()
+        # Dock state keeps the mounted reader and its full-conversation anchor.
+        page.locator('[data-conversation-expand]').click()
         page.wait_for_timeout(250)
+        assert_anchor('return from dock')
+        collapse_after = {'thread':transcript_bounds(),'anchor':anchor}
+        page.locator('[data-conversation-collapse]').click()
+        page.wait_for_timeout(250)
+        box.click()
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
         final = document.get_by_text(final_text, exact=True)
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
         page.wait_for_timeout(100)
@@ -1232,9 +1237,10 @@ def verify_conversation_overlay(browser, url):
         card_keyboard = pane.bounding_box()
         assert card_keyboard['y'] >= max(host['y'], 100) - 1, (name, card_keyboard, host)
         assert card_keyboard['y'] + card_keyboard['height'] <= min(host['y'] + host['height'], 520) + 1, (name, card_keyboard, host)
-        # Keyboard displacement keeps the thread-top offset. Compare against
-        # the post-collapse position, after that operation moves the top edge.
-        assert_anchor('keyboard reduction and displacement', anchor=collapsed_anchor)
+        # Full conversation follows the displaced viewport without losing scrollback.
+        page.locator('[data-conversation-expand]').click()
+        page.wait_for_timeout(250)
+        assert_anchor('keyboard reduction and displacement')
         thread.evaluate('e=>e.scrollTop=e.scrollHeight')
         page.wait_for_timeout(100)
         expect(tail).to_be_in_viewport()
@@ -1247,6 +1253,8 @@ def verify_conversation_overlay(browser, url):
         thread.evaluate('e=>e.scrollTop=e.scrollHeight')
         page.wait_for_timeout(100)
         page.screenshot(path=str(evidence / f'{name}.png'), animations='disabled')
+        page.locator('[data-conversation-collapse]').click()
+        page.wait_for_timeout(250)
         artifact_proof = None
         if ticket_host:
             page.evaluate('window.__keyboardViewport(0, innerHeight)')
@@ -1264,12 +1272,7 @@ def verify_conversation_overlay(browser, url):
             page.locator('[data-conversation-collapse]').click()
             page.wait_for_timeout(250)
             artifact_scroll = artifact.locator('.ticket-artifact-body')
-            assert artifact_scroll.evaluate('e=>e.scrollHeight>e.clientHeight')
-            artifact_scroll.evaluate('e=>e.scrollTop=e.scrollHeight')
-            page.wait_for_timeout(100)
             card = pane.bounding_box()
-            artifact_scroll.evaluate('(e,bottom)=>{const frame=e.querySelector("iframe");e.scrollTop+=frame.getBoundingClientRect().bottom-bottom;}', card['y'] - 24)
-            page.wait_for_timeout(100)
             frame_tail = frame.bounding_box()
             assert frame_tail['y'] + frame_tail['height'] <= card['y'] + 1, (frame_tail, card)
             assert frame_tail['height'] == frame_before['height']

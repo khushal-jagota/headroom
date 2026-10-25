@@ -29,7 +29,7 @@ const indexPath = join(scratchRoot, `live-switch-index-${process.pid}.html`);
   };
 
   let conversationId = $state("conversation-a");
-  let conversationState = $state<"rest" | "peeked" | "opened">("opened");
+  let conversationState = $state<"rest" | "opened">("opened");
   (window as any).__setConversationState = (state: typeof conversationState) => conversationState = state;
   (window as any).__switchConversation = (id: string) => (conversationId = id);
 
