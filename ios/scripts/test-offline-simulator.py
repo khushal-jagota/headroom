@@ -63,9 +63,10 @@ def main() -> int:
         "worker_types": [
             {
                 "worker_type": base_ticket["worker_type"],
+                "label": "Product design",
                 "stages": [
-                    {"id": base_ticket["stage"], "label": "Current"},
-                    {"id": "done", "label": "Done"},
+                    {"id": base_ticket["stage"], "label": "Current", "is_terminal": False},
+                    {"id": "done", "label": "Done", "is_terminal": True},
                 ],
                 "advance": {base_ticket["stage"]: "done"},
                 "fields": [{"id": "wireframe", "label": "Proposal"}],
@@ -80,7 +81,13 @@ def main() -> int:
         "messages": [],
         "recording": None,
     }
-    state.update(read_through=1, historical_read=False, new_message=False, refused=False)
+    state.update(
+        read_through=1,
+        historical_read=False,
+        new_message=False,
+        refused=False,
+        review_owner="chief",
+    )
     if REVIEW_MESSAGES:
         state["slow"] = False
         tickets = {"offline-1": tickets["offline-1"]}
@@ -134,7 +141,9 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
-                if name == "new-message":
+                if name.startswith("review-owner/"):
+                    state["review_owner"] = name.split("/")[-1]
+                elif name == "new-message":
                     state["new_message"] = True
                 elif name == "offline":
                     state["offline"] = True
@@ -246,8 +255,12 @@ def main() -> int:
                                 "review_item_type": "message",
                                 "conversation_id": "stub",
                                 "address_id": "chief",
-                                "owner_kind": "chief",
-                                "owner_id": "chief",
+                                "owner_kind": state["review_owner"],
+                                "owner_id": {
+                                    "chief": "chief",
+                                    "ticket": "offline-1",
+                                    "manager": "review-manager",
+                                }[state["review_owner"]],
                                 "title": "Unread conversation",
                                 "waiting_since": 1 if state["read_through"] < 3 else 3,
                             }
@@ -281,6 +294,12 @@ def main() -> int:
                         "conversation_signal": {"working": False, "message_for_owner": False},
                     }
                 }
+            elif path == "/api/managers/review-manager/workspace":
+                value = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
+                value.update(
+                    id="review-manager", title="Review orchestrator", tickets=[], artifacts=[]
+                )
+                value["manager"]["conversation_id"] = "stub"
             elif path == "/api/chief/conversation":
                 value = {"conversation_id": "stub"}
             elif path == "/api/deployment-status":

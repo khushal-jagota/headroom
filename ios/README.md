@@ -340,7 +340,8 @@ including after relaunch, independently of delivery-note wording; receipts settl
 even when the corresponding row falls outside the loaded window.
 System and other-agent prompts retain their sender labels in the thread and latest
 line; only owner prompts are attributed to You. Conversation pages share one refresh
-error above the composer. Parent refresh failures never add a footer between the
+error inside the composer. Speech errors, attachments and retry controls also stay
+inside its border. Parent refresh failures never add a footer between the
 input and keyboard.
 
 A new reply follows the bottom only while the reader is already there; scrolling

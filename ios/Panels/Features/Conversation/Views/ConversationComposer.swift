@@ -7,6 +7,8 @@ struct ConversationComposer: View {
     let owner: ConversationOwner
     var reviewReply = false
     var sendReply: (() async -> Bool)? = nil
+    var statusNote: String?
+    var retryReply = false
     var onCaptureChanged: ((Bool) -> Void)? = nil
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
@@ -24,31 +26,10 @@ struct ConversationComposer: View {
     @FocusState private var focused: Bool
     private var stopsTurn: Bool { !reviewReply && model.status?.turnRunning == true && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
     private var card: Bool { (!model.draft.isEmpty || !model.attachments.isEmpty) && !speech.recording && !speech.transcribing }
-    private var expandedLayout: Bool { card || reviewReply }
     private var capturingSpeech: Bool { speech.recording || speech.transcribing || speech.starting }
 
     var body: some View {
-        VStack(spacing: 8) {
-            if let error = speech.error ?? model.error ?? refreshError {
-                HStack(alignment: .center) {
-                    Text(error).frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Try again") {
-                        Task {
-                            await retry?()
-                            await model.refresh(using: store.client, transcript: true)
-                        }
-                    }.frame(minHeight: 44)
-                }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-                    .padding(.horizontal, 20).accessibilityIdentifier("conversation-error")
-            }
-            if !model.attachments.isEmpty {
-                HStack {
-                    Text(model.attachments.compactMap(\.fileName).joined(separator: ", ")).lineLimit(1)
-                    Button("Remove") { model.attachments = [] }
-                }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 20)
-            }
-            composer
-        }
+        composer
         .sheet(isPresented: $modelSheet) { ConversationModelSheet(model: model) }
         .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
         .onChange(of: picture) { _, selected in
@@ -85,30 +66,69 @@ struct ConversationComposer: View {
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onDisappear { speech.cancel() }
     }
-    private var composer: some View {
-        ZStack(alignment: .bottom) {
-            if capturingSpeech {
-                Color.clear.frame(height: ConversationLayout.restingHeight)
-            } else {
-                VStack(spacing: 0) {
-                    field.padding(.horizontal, expandedLayout ? 16 : 46)
-                        .padding(.top, expandedLayout ? 14 : 12).padding(.bottom, expandedLayout ? 7 : 12)
-                    if expandedLayout {
-                        if typeSize.isAccessibilitySize && !reviewReply {
-                            VStack(alignment: .leading, spacing: 4) { configurationControls }
-                                .padding(.horizontal, 12)
+    @ViewBuilder private var feedback: some View {
+        if let error = speech.error ?? model.error ?? refreshError {
+            HStack(alignment: .center) {
+                Text(error).frame(maxWidth: .infinity, alignment: .leading)
+                Button("Try again") {
+                    Task {
+                        if speech.error != nil { startVoice() }
+                        else {
+                            await retry?()
+                            await model.refresh(using: store.client, transcript: true)
                         }
-                        controls
+                    }
+                }.frame(minHeight: 44)
+            }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                .accessibilityIdentifier("conversation-error")
+        }
+        if !model.attachments.isEmpty {
+            HStack {
+                Text(model.attachments.compactMap(\.fileName).joined(separator: ", ")).lineLimit(1)
+                Button("Remove") { model.attachments = [] }
+            }.font(PanelsTheme.TypeScale.small)
+        }
+        if let statusNote {
+            HStack {
+                Text(statusNote).frame(maxWidth: .infinity, alignment: .leading)
+                if retryReply {
+                    Button("Retry reply") { Haptics.light(); Task { _ = await sendReply?() } }
+                        .frame(minHeight: 44).disabled(capturingSpeech)
+                }
+            }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+        }
+    }
+
+    private var composer: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 8) { feedback }
+                .padding(.horizontal, 16)
+            ZStack(alignment: .bottom) {
+                if capturingSpeech {
+                    Color.clear.frame(height: ConversationLayout.restingHeight)
+                } else {
+                    VStack(spacing: 0) {
+                        field.padding(.horizontal, card ? 16 : 46)
+                            .padding(.top, card ? 14 : 12).padding(.bottom, card ? 7 : 12)
+                        if card {
+                            if typeSize.isAccessibilitySize && !reviewReply {
+                                VStack(alignment: .leading, spacing: 4) { configurationControls }
+                                    .padding(.horizontal, 12)
+                            }
+                            controls
+                        }
                     }
                 }
-            }
-            if !expandedLayout || capturingSpeech { controls }
+                if !card || capturingSpeech { controls }
 
+            }
+            .frame(minHeight: card ? ConversationLayout.cardHeight : ConversationLayout.restingHeight)
         }
-        .frame(minHeight: expandedLayout ? ConversationLayout.cardHeight : ConversationLayout.restingHeight)
-        .background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: expandedLayout ? 22 : 24))
-        .overlay(RoundedRectangle(cornerRadius: expandedLayout ? 22 : 24).stroke(PanelsTheme.border))
-        .padding(.horizontal, reviewReply ? 0 : card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
+        .background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: card ? 22 : 24))
+        .overlay(RoundedRectangle(cornerRadius: card ? 22 : 24).stroke(PanelsTheme.border))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation-input-box")
+        .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
         .animation(reduceMotion ? nil : ConversationLayout.shapeMotion, value: card)
         .foregroundStyle(PanelsTheme.text)
     }
@@ -150,7 +170,7 @@ struct ConversationComposer: View {
                         .frame(width: 44, height: 44)
                 }.disabled(speech.starting || speech.transcribing || model.sending)
                     .accessibilityLabel(speech.recording ? "Stop recording" : stopsTurn ? "Stop turn" : card || !model.attachments.isEmpty ? "Send message" : "Record voice input")
-            }.padding(.horizontal, expandedLayout ? 1 : 2).padding(.bottom, expandedLayout ? 1 : 0)
+            }.padding(.horizontal, card ? 1 : 2).padding(.bottom, card ? 1 : 0)
     }
 
     @ViewBuilder private var configurationControls: some View {

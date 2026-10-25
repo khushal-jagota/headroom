@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ChiefView: View {
+    var openConversationID: String?
     @Environment(AppStore.self) private var store
     @State private var chief: ChiefRosterEntry?
     @State private var active: TicketsResponse?
@@ -44,7 +45,7 @@ struct ChiefView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
-        .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .task(id: store.revision) { await load() }
         .refreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }

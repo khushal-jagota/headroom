@@ -3,7 +3,7 @@ import SwiftUI
 enum AppTab: Hashable { case review, workspace, more }
 enum AppRoute: Hashable {
     case chief
-    case conversation(owner: ConversationOwner, id: String, title: String)
+    case conversation(owner: ConversationOwner, id: String)
     case orchestrator(String)
     case ticket(String)
     case artifact(owner: ArtifactOwner, path: String, title: String)
@@ -21,7 +21,12 @@ struct RouteDestination: View {
     @ViewBuilder private var destination: some View {
         switch route {
         case .chief: ChiefView()
-        case .conversation(let owner, let id, let title): ReviewConversationView(owner: owner, id: id, title: title)
+        case .conversation(let owner, let id):
+            switch owner {
+            case .chief: ChiefView(openConversationID: id)
+            case .manager(let managerID): OrchestratorView(managerID: managerID, openConversationID: id)
+            case .ticket(let ticketID): TicketView(ticketID: ticketID, openConversationID: id)
+            }
         case .orchestrator(let id): OrchestratorView(managerID: id)
         case .ticket(let id): TicketView(ticketID: id)
         case .artifact(let owner, let path, let title): ArtifactViewerView(owner: owner, path: path, title: title)

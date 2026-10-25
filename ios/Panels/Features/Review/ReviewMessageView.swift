@@ -31,36 +31,32 @@ struct ReviewMessageView: View {
                     }
                     if decision.loaded {
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
-                            ForEach(decision.events) { event in
-                                if event.id != decision.events.first?.id { Divider().frame(width: 28) }
-                                ReviewMessageContent(pieces: event.payload.pieces, conversationID: item.conversationId ?? "")
-                                    .accessibilityIdentifier("review.message.\(event.sequence)")
-                            }
-                            if decision.events.isEmpty { Text("These messages have been read.").foregroundStyle(PanelsTheme.faint) }
-                            if decision.historical {
-                                Text("Historical conversation · read only").font(.footnote).foregroundStyle(PanelsTheme.faint)
-                            } else if let owner = item.owner, !decision.events.isEmpty {
-                                ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: send, onCaptureChanged: { capturing = $0 })
-                                    .disabled(decision.busy || leaving || (decision.attempt != nil && decision.attempt?.state != .failed))
-                                if let attempt = displayedAttempt {
-                                    Text(attempt.note).font(.footnote).foregroundStyle(PanelsTheme.faint)
-                                    if attempt.state == .failed {
-                                        Button("Retry reply") { Haptics.light(); Task { _ = await send() } }.buttonStyle(ReviewActionStyle(approval: true))
-                                            .disabled(decision.busy || decision.pending || leaving || capturing)
-                                    }
+                            VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
+                                ForEach(decision.events) { event in
+                                    if event.id != decision.events.first?.id { Divider().frame(width: 28) }
+                                    ReviewMessageContent(pieces: event.payload.pieces, conversationID: item.conversationId ?? "")
+                                        .accessibilityIdentifier("review.message.\(event.sequence)")
                                 }
+                                if decision.events.isEmpty { Text("These messages have been read.").foregroundStyle(PanelsTheme.faint) }
+                                if decision.historical {
+                                    Text("Historical conversation · read only").font(.footnote).foregroundStyle(PanelsTheme.faint)
+                                }
+                            }.padding(ReviewStyle.gutter)
+                            if !decision.historical, let owner = item.owner, !decision.events.isEmpty {
+                                ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: send, statusNote: displayedAttempt?.note, retryReply: displayedAttempt?.state == .failed, onCaptureChanged: { capturing = $0 })
+                                    .disabled(decision.busy || leaving || (decision.attempt != nil && decision.attempt?.state != .failed))
+                                    .padding(.bottom, ReviewStyle.gutter)
                             }
                         }
-                        .padding(ReviewStyle.gutter)
                         .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
                         .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(Color.white.opacity(0.05)))
                         .shadow(color: .black.opacity(0.12), radius: 20, y: 8)
                         (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
                             Button("Mark read") { Haptics.light(); Task { if await decision.markRead() { Haptics.success(); leave(resolved: true) } else { ReviewStyle.error() } } }
-                                .buttonStyle(ReviewActionStyle(approval: true)).accessibilityIdentifier("review.markRead")
+                                .buttonStyle(ReviewActionStyle()).accessibilityIdentifier("review.markRead")
                                 .disabled(decision.through == 0 || decision.busy || decision.pending || capturing || leaving)
                             if let owner = item.owner, let id = item.conversationId {
-                                NavigationLink(value: AppRoute.conversation(owner: owner, id: id, title: item.title)) { Text("Open conversation") }
+                                NavigationLink(value: AppRoute.conversation(owner: owner, id: id)) { Text("Open conversation") }
                                     .buttonStyle(ReviewActionStyle()).accessibilityIdentifier("review.openConversation")
                             }
                         }
@@ -207,34 +203,5 @@ private struct ReviewInlineArtifact: View {
     private func load() async {
         do { document = try await store.client.artifactDocument(target); error = nil }
         catch { self.error = error.localizedDescription }
-    }
-}
-
-/// A Review link always opens the named conversation, even after its owner moves on.
-struct ReviewConversationView: View {
-    let owner: ConversationOwner
-    let id: String
-    let title: String
-    @Environment(AppStore.self) private var store
-    @State private var model = ConversationModel()
-    @State private var historical = true
-    var body: some View {
-        ConversationThread(model: model, owner: owner, readOnly: historical)
-            .safeAreaInset(edge: .bottom) {
-                if historical { Text("Historical conversation · read only").font(.footnote).padding().frame(maxWidth: .infinity).background(PanelsTheme.raised) }
-                else { ConversationComposer(model: model, owner: owner).padding(.vertical, 8).background(PanelsTheme.raised) }
-            }
-            .navigationTitle(title).navigationBarTitleDisplayMode(.inline).panelsScreen()
-            .task(id: store.baseURL) {
-                model.conversationID = id
-                model.restore(owner: owner, api: store.client, draftID: "conversation-id:\(id)")
-                do { historical = try await store.client.currentConversation(owner) != id }
-                catch { model.error = error.localizedDescription }
-                await model.refresh(using: store.client, transcript: true)
-                if let config = try? await store.client.conversationConfiguration(owner, id: id) { model.applyConfiguration(config) }
-                do {
-                    for try await _ in store.client.conversationChanges(id, lens: model.lens) { await model.refresh(using: store.client, transcript: true) }
-                } catch { if !Task.isCancelled { model.error = error.localizedDescription } }
-            }
     }
 }

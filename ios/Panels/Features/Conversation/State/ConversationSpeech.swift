@@ -25,7 +25,9 @@ import Observation
         defer { if capture.generation == currentGeneration { starting = false } }
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--conversation-fixture-speech"), ProcessInfo.processInfo.arguments.contains("--conversation-stub") {
-            capture.receive("Keep the newest message in view.\n", generation: currentGeneration)
+            if !ProcessInfo.processInfo.arguments.contains("--conversation-fixture-silence") {
+                capture.receive("Keep the newest message in view.\n", generation: currentGeneration)
+            }
             recording = true; startedAt = Date(); level = 0.4; error = nil
             return
         }
