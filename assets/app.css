@@ -5512,12 +5512,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 @media (prefers-reduced-motion:reduce){
   .skeleton[data-entering]{animation:none}
+  .skeleton--frame,
+  .skeleton-region[data-shape="frame"] > .skeleton-content{transition:none}
 }
 
 /* Region integration. Flow reservations are the drawn shape's geometry, and end
    when the wait ends. Fill regions receive their size from their parent. */
-.skeleton-region[data-active]{min-height:var(--skeleton-reservation)}
-.skeleton-region:not([data-active]):not(.skeleton-region--fill),
+.skeleton-region[data-active]:not([data-shape="frame"]){min-height:var(--skeleton-reservation)}
+.skeleton-region:not([data-active]):not(.skeleton-region--fill):not([data-shape="frame"]),
 .skeleton-content:not(.resource-state):not(.skeleton-content--inline){display:contents}
 .skeleton-region--fill{height:100%;min-height:0;flex:1;min-width:0}
 .skeleton-region--fill[data-active]{min-height:0}
@@ -5542,6 +5544,23 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 .skeleton-rows{padding:var(--space-5)}
 .skeleton-document{padding:var(--space-5) var(--space-7)}
+/* The frame shape: one box in both states, at the embedded preview frame's own
+   minimum, with the skeleton and the artifact as layers inside it. */
+.skeleton-region[data-shape="frame"]{min-height:18rem}
+.skeleton-region[data-shape="frame"] > .skeleton-content{position:absolute;inset:0;overflow:hidden;
+  opacity:1;transition:opacity var(--skeleton-fade) ease-in-out}
+.skeleton-region[data-shape="frame"][data-active] > .skeleton-content{opacity:0;pointer-events:none}
+.skeleton-region[data-shape="frame"] .file-preview-frame{height:100%;min-height:0}
+/* No bottom fade: this shape ends at the box, rather than suggesting more below it. */
+.skeleton--frame{opacity:1;transition:opacity var(--skeleton-fade) ease-in-out;
+  mask-image:none;-webkit-mask-image:none}
+@starting-style{.skeleton--frame{opacity:0}}
+.skeleton--frame.skeleton--leaving{opacity:0}
+/* The shape ends where the box ends: a fixed head, then one block taking the rest. */
+.skeleton-frame{display:flex;flex-direction:column;height:100%;padding:var(--space-5) var(--space-7)}
+.skeleton-frame-block{flex:1}
+@media (max-width:720px){.skeleton-frame{padding:var(--space-5) var(--space-4)}}
+.managed-html-fetch-notice{display:flex;align-items:center;justify-content:center;height:100%;padding:var(--space-5)}
 @media (max-width:720px){.skeleton-document{padding:var(--space-5) var(--space-4)}}
 
 /* Native document bands share their summary and body rhythm. */

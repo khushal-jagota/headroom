@@ -4,7 +4,10 @@
   import SkeletonRegion from "./SkeletonRegion.svelte";
   import { MANAGED_HTML_PREVIEW_SANDBOX, prepareManagedHtmlPreviewDocument } from "../lib/filePreview";
   import { readManagedFile } from "../lib/managedFileRead";
-  import { resolveManagedHtmlNavigation } from "../lib/managedHtmlNavigation";
+  import { MANAGED_HTML_PAINTED, resolveManagedHtmlNavigation } from "../lib/managedHtmlNavigation";
+
+  // The reveal waits for the frame's paint report, and this limit always ends the wait.
+  const PAINT_LIMIT_MS = 1500;
 
   let { href, label, active = true, reloadSignal = 0, full = false, registerArtifactFrame }: {
     href: string; label: string; active?: boolean; reloadSignal?: number; full?: boolean; registerArtifactFrame?: RegisterManagedArtifactFrame;
@@ -15,6 +18,11 @@
   let notice = $state("");
   let fetchFailed = $state(false);
   let history = $state<string[]>([]);
+  let revealed = $state(false);
+  // A fetch that failed with nothing drawn yet. A failed navigation keeps its own frame
+  // and reports in the controls row above the box.
+  const emptyFailure = $derived(fetchFailed && !frameHref);
+  let paintLimit: ReturnType<typeof setTimeout> | null = null;
   let currentHref = "";
   let rootHref = "";
   let generation = "";
@@ -45,8 +53,12 @@
     return right > left && bottom > top;
   }
   function cancel() { request++; controller?.abort(); controller = null; }
+  function stopPaintLimit() { if (paintLimit !== null) clearTimeout(paintLimit); paintLimit = null; }
+  function reveal() { stopPaintLimit(); revealed = true; }
   function release() {
     cancel();
+    stopPaintLimit();
+    revealed = false;
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = null;
     frameHref = null;
@@ -69,6 +81,8 @@
     try {
       const body = await readManagedFile(candidate.pathname, abort.signal, {artifactRootHref: rootHref, fresh});
       if (abort.signal.aborted || sequence !== request || !active || (requireVisible && !visible())) return;
+      revealed = false;
+      stopPaintLimit();
       const nextGeneration = crypto.randomUUID();
       const prepared = prepareManagedHtmlPreviewDocument(body, candidate.href, Boolean(registerArtifactFrame), nextGeneration);
       const previous = objectUrl;
@@ -77,6 +91,7 @@
       history = nextHistory;
       generation = nextGeneration;
       frameHref = objectUrl;
+      paintLimit = setTimeout(reveal, PAINT_LIMIT_MS);
       if (previous) void tick().then(() => URL.revokeObjectURL(previous));
     } catch (error) {
       if (!abort.signal.aborted && sequence === request && (!requireVisible || visible())) {
@@ -99,8 +114,11 @@
     } else void load(candidate, nextHistory, false, true);
   }
   function receive(event: MessageEvent) {
-    if (!visible() || !frame || event.source !== frame.contentWindow) return;
-    if (event.data?.type !== 'panels-html-navigation' || event.data.generation !== generation || typeof event.data.href !== 'string') return;
+    if (!frame || event.source !== frame.contentWindow || event.data?.generation !== generation) return;
+    // The reveal does not depend on the viewport. A report from the current frame ends the
+    // wait wherever that frame sits.
+    if (event.data.type === MANAGED_HTML_PAINTED) { reveal(); return; }
+    if (!visible() || event.data.type !== 'panels-html-navigation' || typeof event.data.href !== 'string') return;
     navigate(event.data.href);
   }
   $effect(() => {
@@ -123,14 +141,18 @@
 
 <svelte:window onmessage={receive} />
 <div class:full class="managed-html-document" bind:this={host} data-visible-content-failed={fetchFailed && !frameHref || undefined}>
-  {#if history.length > 0 || notice}
+  {#if history.length > 0 || (notice && !emptyFailure)}
     <div class="managed-html-controls">
       {#if history.length > 0}<button type="button" data-html-back onclick={() => navigate(history[history.length - 1], true)}>Back</button>{/if}
-      {#if notice}<span class="quiet-line" role="status" data-html-navigation-notice>{notice}</span>{/if}
+      {#if notice && !emptyFailure}<span class="quiet-line" role="status" data-html-navigation-notice>{notice}</span>{/if}
     </div>
   {/if}
-  <SkeletonRegion shape="document" layout={full ? "fill" : "flow"} loading={!notice && !frameHref} loadingText="Loading preview...">
-    {#if frameHref}
+  <SkeletonRegion shape={full ? "document" : "frame"} layout={full ? "fill" : "flow"}
+    loading={full ? !notice && !frameHref : active && !notice && !revealed} loadingText="Loading preview...">
+    {#if emptyFailure}
+      <!-- The box the reader already sees holds the message, rather than collapsing to a line. -->
+      <span class="quiet-line managed-html-fetch-notice" role="status" data-html-fetch-notice>{notice}</span>
+    {:else if frameHref}
       <iframe use:artifactFrame bind:this={frame} class={full ? "file-preview-document-frame" : "file-preview-frame"} data-file-preview-html src={frameHref}
         sandbox={MANAGED_HTML_PREVIEW_SANDBOX} title={label} onload={() => fragment(new URL(currentHref, window.location.origin).hash)}></iframe>
     {/if}
