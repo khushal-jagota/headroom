@@ -374,6 +374,17 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
         await task
         from planner.executor.contracts import AcceptanceReceipt, ReceiptDisposition
 
+        pending_before_stop = spool.pending()
+        assert pending_before_stop
+        registry.begin_source_work(reference)
+        assert (await registry.quiesce()).uncertain_operation_count == 1
+        assert native_stops == []
+        registry.end_source_work(reference)
+        stopped_with_event = await registry.quiesce()
+        assert native_stops == [True]
+        assert not stopped_with_event.ready
+        assert stopped_with_event.unsent_entry_count == len(pending_before_stop) + 1
+        assert spool.pending()[:-1] == pending_before_stop
         for row in spool.pending():
             spool.acknowledge(
                 AcceptanceReceipt(
@@ -385,10 +396,7 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
                     1,
                 )
             )
-        stopped_with_event = await registry.quiesce()
-        assert native_stops == [True]
-        assert not stopped_with_event.ready
-        assert stopped_with_event.unsent_entry_count == 1
+        assert (await registry.quiesce()).ready
         spool.close()
 
     asyncio.run(run())
@@ -647,6 +655,13 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         assert response.result is None
         assert response.queued is None
         assert response.error == failure
+        executor.registry.admission_stopped = True
+        count = executor.spool.pending_count()
+        refused = await executor.handle_ipc(replace(request, request_id="after-closure"))
+        assert refused.error == {
+            "message": "executor admission stopped", "type": "PermissionError"
+        }
+        assert executor.spool.pending_count() == count
         executor.spool.close()
 
     asyncio.run(run())
@@ -1561,6 +1576,62 @@ def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
             assert "capacity" in message.payload["message"]
             assert executor._transfers == 4
         finally:
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_cancelled_source_publication_remains_counted_until_durable_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancellation cannot let quiescence overtake a still-running journal thread."""
+    import threading
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        reference = ChildReference(executor.identity.executor_incarnation, str(uuid4()), "c_one")
+        entered = threading.Event()
+        release = threading.Event()
+        from types import SimpleNamespace
+
+        # Authentication is covered by the existing IPC owner test. Exercise the
+        # real IPC publication boundary and real filesystem journal here.
+        child = SimpleNamespace(reference=reference, ticket_id=None, active_turn=None)
+        monkeypatch.setattr(executor.registry, "authenticate", lambda *_: child)
+        original = executor.spool.mint_envelope
+
+        def mint(**kwargs: object) -> QueuedEnvelope:
+            entered.set()
+            assert release.wait(5)
+            return original(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(executor.spool, "mint_envelope", mint)
+        task = asyncio.create_task(
+            executor.handle_ipc(
+                IpcRequest(
+                    "admitted-write", IpcOperation.write, reference.child_id, "capability",
+                    {"operation": "ticket.note", "arguments": {}},
+                )
+            )
+        )
+        try:
+            while not entered.is_set():
+                await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            blocked = await executor.registry.quiesce()
+            assert blocked.uncertain_operation_count == 1
+            assert not blocked.ready and not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            settled = await executor.registry.quiesce()
+            assert settled.uncertain_operation_count == 0
+            assert settled.unsent_entry_count == 1
+            assert not settled.ready
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
             executor.spool.close()
 
     asyncio.run(run())

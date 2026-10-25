@@ -683,8 +683,7 @@ class MacExecutor:
                     ),
                 )
                 return IpcResponse(request.request_id, response.payload, None)
-            self.registry.begin_source_work(child.reference)
-            try:
+            async def publish_write() -> QueuedEnvelope:
                 payload = as_object(
                     CliWrite(
                         str(request.payload["operation"]),
@@ -698,7 +697,7 @@ class MacExecutor:
                     snapshots = await asyncio.to_thread(
                         snapshot_ticket, self.paths, child.ticket_id
                     )
-                envelope = await asyncio.to_thread(
+                return await asyncio.to_thread(
                     self.spool.mint_envelope,
                     conversation_id=child.reference.conversation_id,
                     kind=EnvelopeKind.cli_write,
@@ -706,8 +705,9 @@ class MacExecutor:
                     snapshots=snapshots,
                     submission_id=request.request_id,
                 )
-            finally:
-                self.registry.end_source_work(child.reference)
+            envelope = await self.registry.source_work(
+                child.reference, publish_write, new_work=True
+            )
             future: asyncio.Future[AcceptanceReceipt] = asyncio.get_running_loop().create_future()
             self._receipts[envelope.submission_id] = future
             try:
