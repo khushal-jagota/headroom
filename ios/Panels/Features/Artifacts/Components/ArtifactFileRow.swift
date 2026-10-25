@@ -47,7 +47,7 @@ struct ArtifactFileRow: View {
                         Text((entry.path as NSString).pathExtension.lowercased()).font(.caption).foregroundStyle(PanelsTheme.faint)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
-                if downloading { ProgressView().accessibilityHidden(true) }
+                if downloading { RingSpinner().accessibilityHidden(true) }
                 else if !typeSize.isAccessibilitySize { Text((entry.path as NSString).pathExtension.lowercased()).font(.caption).foregroundStyle(PanelsTheme.faint) }
             }.frame(minHeight: target?.kind == .image ? 56 : 48).contentShape(Rectangle())
         }

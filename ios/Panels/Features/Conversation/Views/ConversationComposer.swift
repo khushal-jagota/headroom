@@ -147,7 +147,7 @@ struct ConversationComposer: View {
                             .animation(reduceMotion ? nil : .linear(duration: PanelsTheme.Motion.fast), value: speech.level)
                             .accessibilityLabel(speech.recording ? "Recording" : "Turning speech into text")
                         if speech.recording, let start = speech.startedAt { Text(start, style: .timer).monospacedDigit().font(PanelsTheme.TypeScale.small) }
-                        else { ProgressView().controlSize(.mini) }
+                        else { RingSpinner(size: .compact) }
                     }
                     Spacer(minLength: 0)
                 } else {

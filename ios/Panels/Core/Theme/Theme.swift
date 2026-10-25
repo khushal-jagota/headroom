@@ -25,7 +25,15 @@ enum PanelsTheme {
         static let heading = Font.title3.weight(.semibold)
         static let title = Font.largeTitle.weight(.semibold)
     }
+    enum Spinner {
+        static let stroke: CGFloat = 2
+        static let trackOpacity = 0.3
+        static let compact: CGFloat = 14
+        static let small: CGFloat = 16
+        static let regular: CGFloat = 20
+    }
     enum Motion {
+        static let loopSpin = 0.9
         static let exit = 0.12
         static let fast = 0.09
         static let base = 0.15

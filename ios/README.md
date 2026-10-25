@@ -549,3 +549,22 @@ and scroll position through the short fade. Retry gives light feedback; a confir
 Mark read gives success feedback. Message and proposal headings share the same
 top padding. Chief's Workspace link extends its touch area into the existing card
 padding, preserving its visible spacing.
+
+## Loading rings
+
+All app loading indicators use the same ring: a two-point stroke, a 30%-opacity
+track, and a solid quarter-circle arc, turning once every 900 ms at constant
+speed. Working marks and compact controls are 14 points; small controls are 16;
+other loading states and pull-to-refresh are 20. The colours come from the theme:
+accent by default, faint for conversation activity, and ink on filled actions.
+Reduce Motion keeps the ring and arc still. Unread dots still take precedence
+over working rings, and loading conditions have not changed. The usage meter
+remains a determinate progress bar.
+
+Pull-to-refresh keeps SwiftUI's native gesture and async action. A small UIKit
+bridge hides the native spokes and places the shared ring in the refresh control.
+The simulator tests in `RingSpinnerTests` cover the new risks: ring animation
+stopping for Reduce Motion and detachment, and the native refresh bridge keeping
+its action and completion behavior. Existing model tests cannot exercise UIKit
+layers or SwiftUI's refresh-control hierarchy. These tests reuse the app's unit
+test host, stub the refresh work, and require no server or additional browser host.

@@ -43,7 +43,7 @@ struct TicketWorkerSetup: View {
     var body: some View {
         NavigationStack {
             Form {
-                if backends.isEmpty && error == nil { ProgressView("Loading models…") }
+                if backends.isEmpty && error == nil { RingSpinner("Loading models…") }
                 Picker("Backend", selection: $backend) {
                     ForEach(backends) { item in Text(item.id.capitalized).tag(item.id).disabled(!item.installed) }
                 }

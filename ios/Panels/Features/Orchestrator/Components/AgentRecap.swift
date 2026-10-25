@@ -43,7 +43,7 @@ struct AgentRecap: View {
             if recap.isEmpty {
                 Text("Write a concise recap…").font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.faint)
             }
-            if actions.isSending { ProgressView("Sending recap request…").controlSize(.mini) }
+            if actions.isSending { RingSpinner("Sending recap request…", size: .compact) }
             if let note = actions.note { Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
         }.clipped()
             .contextMenu {

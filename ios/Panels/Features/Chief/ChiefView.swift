@@ -47,7 +47,7 @@ struct ChiefView: View {
         .panelsScreen()
         .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .task(id: store.revision) { await load() }
-        .refreshable { await load() }
+        .panelsRefreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("chief-screen")
     }
@@ -59,7 +59,7 @@ struct ChiefView: View {
             } label: {
                 HStack {
                     Text("Load more")
-                    if loadingMore { ProgressView().controlSize(.mini).accessibilityHidden(true) }
+                    if loadingMore { RingSpinner(size: .compact).accessibilityHidden(true) }
                 }.font(PanelsTheme.TypeScale.small).frame(minHeight: 44).frame(maxWidth: .infinity)
             }.disabled(loadingMore)
                 .accessibilityValue(loadingMore ? "Loading more workers" : "")

@@ -24,7 +24,7 @@ struct FeedbackView: View {
                 if let response = model.response {
                     if handled { handledNotes(response) } else { openNotes(response) }
                 } else if model.loading {
-                    ProgressView("Loading feedback…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.hero)
+                    RingSpinner("Loading feedback…").frame(maxWidth: .infinity).padding(.top, PanelsTheme.Space.hero)
                 }
             }
             .padding(PanelsTheme.Space.lg)
@@ -32,7 +32,7 @@ struct FeedbackView: View {
         .panelsScreen()
         .navigationTitle("Feedback")
         .navigationBarTitleDisplayMode(.large)
-        .refreshable { await model.load(using: store.client) }
+        .panelsRefreshable { await model.load(using: store.client) }
         .task(id: store.revision) { await model.load(using: store.client) }
     }
 
@@ -133,7 +133,7 @@ struct FeedbackView: View {
             }
         } label: {
             HStack(spacing: PanelsTheme.Space.sm) {
-                if model.pendingNoteID == note.id { ProgressView().controlSize(.small) }
+                if model.pendingNoteID == note.id { RingSpinner(size: .small) }
                 Text(action == .dismiss ? "Dismiss" : "Reopen")
             }.frame(minHeight: 32)
         }

@@ -23,19 +23,19 @@ struct UsageView: View {
                 Picker("Usage", selection: $metric) { ForEach(metrics, id: \.self) { Text($0) } }.accessibleSegmentedPicker().disabled(refreshing)
                 Picker("Provider", selection: $provider) { ForEach(["All", "Codex", "Claude"], id: \.self) { Text($0) } }
             }.listRowBackground(PanelsTheme.raised)
-            if loading && summary == nil && backends.isEmpty { ProgressView("Reading usage…") }
+            if loading && summary == nil && backends.isEmpty { RingSpinner("Reading usage…") }
             if metric == "Limits" { limits } else { recorded }
             if let error { Section { LoadErrorView(message: error) { await refresh() } } }
         }
         .navigationTitle("Usage").panelsScreen()
         .task(id: "\(store.baseURL):\(metric):\(days):\(store.revision)") { await load() }
-        .refreshable { await refresh() }
+        .panelsRefreshable { await refresh() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await refresh() } } label: {
                     Image(systemName: "arrow.clockwise")
                         .opacity(refreshing ? 0 : 1)
-                        .overlay { if refreshing { ProgressView() } }
+                        .overlay { if refreshing { RingSpinner() } }
                 }
                 .accessibilityLabel(refreshing ? "Refreshing usage and limits" : "Refresh usage and limits")
                 .accessibilityIdentifier("usage.refresh")
