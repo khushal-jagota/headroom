@@ -42,6 +42,7 @@ def test_agent_uses_account_home_gui_and_stable_data_with_spaces(tmp_path: Path)
     plist = plistlib.loads(render_launch_agent(configuration))
     assert plist["ProgramArguments"][:3] == [str(paths.venv / "bin/panels"), "executor", "run"]
     assert plist["EnvironmentVariables"]["HOME"] == str(home)
+    assert "TAILSCALE_BE_CLI" not in plist["EnvironmentVariables"]
     assert plist["EnvironmentVariables"]["PLAN_EXECUTOR_ROOT"] == str(
         home / "Library/Application Support/Panels/executor"
     )
@@ -131,8 +132,10 @@ def test_tailscale_launch_suppresses_key_and_requires_safe_executable(tmp_path: 
         tailscale_binary=binary,
     )
     config = ServiceConfiguration(mac_executor_paths(tmp_path), 501, launch=launch)
-    args = plistlib.loads(render_launch_agent(config))["ProgramArguments"]
+    plist = plistlib.loads(render_launch_agent(config))
+    args = plist["ProgramArguments"]
     assert args[args.index("--ssh-auth-mode") + 1] == "tailscale"
+    assert plist["EnvironmentVariables"]["TAILSCALE_BE_CLI"] == "1"
     assert args[args.index("--tailscale-binary") + 1] == str(binary)
     assert "--ssh-identity-file" not in args
     for invalid in (
