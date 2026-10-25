@@ -34,7 +34,7 @@ from planner.navigation.views.contracts import (
 )
 from planner.navigation.views.delivery import difference
 from planner.navigation.views.logic import compact, digest, section_key
-from planner.navigation.views.projection import rebuild
+from planner.navigation.views.projection import _members, rebuild
 from planner.navigation.views.read import read_content, request
 from planner.navigation.views.schema import prepare
 from planner.tickets.views import _review_items, review_view
@@ -1128,6 +1128,41 @@ def test_review_owner_state_reversals_preserve_unread_discovery(tmp_path: Path) 
             conn.execute(statement)
             conn.commit()
             check(*expected)
+
+
+def test_review_address_drops_missing_manager_with_retained_unread_metadata(tmp_path: Path) -> None:
+    """A disappearing owner must not crash evaluation of an already indexed address."""
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        add_conversation(conn, "manager-conversation")
+        conn.execute("BEGIN")
+        add_parent(conn, "m")
+        conn.execute("INSERT INTO agents VALUES('manager_m','manager-conversation')")
+        conn.execute(
+            "INSERT INTO conversation_events "
+            "VALUES('manager-conversation',1,'message_to_owner','{}',1)"
+        )
+        conn.commit()
+        address = conn.execute(
+            "SELECT id,value FROM navigation_records WHERE kind='address' "
+            "AND json_extract(value,'$.owner_kind')='manager'"
+        ).fetchone()
+        assert address is not None
+        key = ("address", str(address[0]))
+        value = json.loads(address[1])
+        metadata = tuple(
+            conn.execute(
+                "SELECT * FROM navigation_view_index WHERE kind=? AND id=?", key
+            ).fetchone()
+        )
+        assert metadata[12] == 1
+        review = section_key("review", None)
+        assert any(row[0] == review for row in _members(conn, key, value, metadata, DEFAULT_CONFIG))
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM navigation_records WHERE kind='manager' AND id='m'")
+        members = _members(conn, key, value, metadata, DEFAULT_CONFIG)
+        assert not any(row[0] == review for row in members)
+        conn.rollback()
 
 
 def test_review_ticket_closure_tracks_historical_constituents_without_rank_change(

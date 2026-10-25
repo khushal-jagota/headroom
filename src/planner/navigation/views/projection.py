@@ -212,9 +212,10 @@ def _members(
                     )
             elif kind == "address" and metadata[12]:
                 conversation_id = str(value["conversation_id"])
-                owner_value = record(conn, (value["owner_kind"], value["owner_id"])) or {}
+                owner_value = record(conn, (value["owner_kind"], value["owner_id"]))
                 if (
-                    value["owner_kind"] != "ticket"
+                    owner_value is not None
+                    and value["owner_kind"] != "ticket"
                     and message_owner_is_live(value["owner_kind"], owner_value)
                     and canonical_review_address(conn, conversation_id) == identity
                 ):
