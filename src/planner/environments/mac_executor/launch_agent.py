@@ -128,6 +128,11 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
             "KeepAlive": {"SuccessfulExit": False},
             "ThrottleInterval": RESTART_THROTTLE_SECONDS,
             "EnvironmentVariables": {
+                **(
+                    {"TAILSCALE_BE_CLI": "1"}
+                    if launch.ssh_auth_mode is SshAuthenticationMode.tailscale
+                    else {}
+                ),
                 "HOME": str(paths.home),
                 "PLAN_CLAUDE_EXECUTABLE": str(
                     paths.source

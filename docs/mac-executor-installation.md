@@ -285,6 +285,9 @@ plutil -lint "$EVIDENCE/candidate.plist"
 
 For Tailscale mode, use `--ssh-auth-mode tailscale` and port 22.
 Replace `--ssh-identity-file` with `--tailscale-binary /absolute/tailscale`.
+The renderer adds `TAILSCALE_BE_CLI=1` in Tailscale mode so the bundled macOS executable uses its CLI.
+The [Tailscale CLI reference](https://tailscale.com/docs/reference/tailscale-cli?tab=macos) documents this selector.
+Public-key mode does not add it.
 
 Check the rendered arguments and environment before installation.
 The program is `$VENV/bin/panels executor run` with the full explicit SHA.
