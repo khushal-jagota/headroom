@@ -75,6 +75,26 @@ class TailnetDestinationValidator(Protocol):
     async def validate(self, host: str, binary: Path) -> ValidatedTailnetDestination: ...
 
 
+class ConnectionPhase(StrEnum):
+    outer_connect = "outer_connect"
+    relay_start = "relay_start"
+    hello = "hello"
+    transport_open = "transport_open"
+    sftp_open = "sftp_open"
+    preview_setup = "preview_setup"
+    reconcile1 = "reconcile1"
+    replay1 = "replay1"
+    reconcile2 = "reconcile2"
+    replay2 = "replay2"
+    ready_ack = "ready_ack"
+    steady_state = "steady_state"
+
+
+class ConnectionFailureOrigin(StrEnum):
+    reader = "reader"
+    session = "session"
+
+
 class ConnectionFailureCategory(StrEnum):
     configuration = "configuration"
     tailnet_validation = "tailnet_validation"

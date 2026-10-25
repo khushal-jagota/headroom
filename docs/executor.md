@@ -314,7 +314,12 @@ Unknown, changed, and revoked host keys refuse. Advertised peer keys never repla
 operator pins. The inner restricted SFTP connection keeps its temporary key policy.
 
 Connection diagnostics use fixed categories and omit addresses, paths, credentials,
-and remote output. Each category appears at most once per process.
+and remote output. Each category appears at most once per process, except that the
+first failure with context can add one line if its category was already reported.
+That first contextual failure includes the fixed connection phase, reader or
+session origin, and an allowlisted exception class (unknown types use `other`).
+Later failures omit context, keeping the process total to at most eight lines.
+Exception messages, remote payloads, and arbitrary class names are never included.
 
 The actual connection path uses AsyncSSH 2.24.1. Connection and login deadlines
 are ten seconds. Keepalives run every 15 seconds with three unanswered probes.

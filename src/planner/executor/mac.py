@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -36,6 +36,8 @@ from planner.executor.contracts import (
     ChildCommand,
     ChildReference,
     CliWrite,
+    ConnectionFailureOrigin,
+    ConnectionPhase,
     ConnectionState,
     EnvelopeKind,
     ExecutorHealth,
@@ -471,20 +473,33 @@ class MacExecutor:
                 await self.registry.apply_answer(answer)
 
     async def _connected(self) -> None:
+        phase = ConnectionPhase.outer_connect
+
+        async def observe[T](awaitable: Awaitable[T], origin: ConnectionFailureOrigin) -> T:
+            try:
+                return await awaitable
+            except Exception as error:
+                connection_diagnostics.report(error, phase=phase, origin=origin)
+                raise
+
         self.identity = replace(
             self.identity, connection_generation=self.identity.connection_generation + 1
         )
         self.state = ConnectionState.reconciling
         self._handshake_accepted = False
         try:
-            outer = await connect_outer(self.ssh_config)
+            outer = await observe(connect_outer(self.ssh_config), ConnectionFailureOrigin.session)
         except BaseException:
             self.state = ConnectionState.disconnected
             if self.lost_at_ms is None:
                 self.lost_at_ms = now_ms()
             raise
         try:
-            process = await outer.create_process(self.remote_command, encoding=None)
+            phase = ConnectionPhase.relay_start
+            process = await observe(
+                outer.create_process(self.remote_command, encoding=None),
+                ConnectionFailureOrigin.session,
+            )
         except BaseException:
             self.state = ConnectionState.disconnected
             if self.lost_at_ms is None:
@@ -493,16 +508,21 @@ class MacExecutor:
             raise
         self._writer = process.stdin
         identity = self.identity
-        reader_task = asyncio.create_task(self._read_loop(process.stdout))
+        phase = ConnectionPhase.hello
+        reader_task = asyncio.create_task(
+            observe(self._read_loop(process.stdout), ConnectionFailureOrigin.reader)
+        )
         client_key = asyncssh.generate_private_key("ssh-ed25519")
         sftp_context = None
 
         async def session() -> None:
+            nonlocal phase
             response = await self._request(WireMessageKind.hello, as_object(self.health()))
             peer = parse_identity(response.payload)
             if peer != self.identity:
                 raise ValueError("handshake identity changed")
             self._handshake_accepted = True
+            phase = ConnectionPhase.transport_open
             opened = await self._request(
                 WireMessageKind.transport_open,
                 {
@@ -514,9 +534,11 @@ class MacExecutor:
                 raise ValueError("restricted SFTP endpoint refused")
             endpoint = TypeAdapter(SftpEndpoint).validate_python(opened.payload["endpoint"])
             nonlocal sftp_context
+            phase = ConnectionPhase.sftp_open
             opening_sftp = connect_sftp(outer, endpoint, client_key, self.paths.run)
             self._sftp = await opening_sftp.__aenter__()
             sftp_context = opening_sftp
+            phase = ConnectionPhase.preview_setup
             self._preview_streams = MacPreviewForwards(
                 outer,
                 Path(str(opened.payload["preview_root"])),
@@ -527,22 +549,28 @@ class MacExecutor:
                     and not self.registry.admission_stopped
                 ),
             )
+            phase = ConnectionPhase.reconcile1
             await self._reconcile()
+            phase = ConnectionPhase.replay1
             await self._replay()
+            phase = ConnectionPhase.reconcile2
             await self._reconcile()
+            phase = ConnectionPhase.replay2
             await self._replay()
+            phase = ConnectionPhase.ready_ack
             await self._request(WireMessageKind.reconciliation_ready, as_object(self.identity))
             # This is the current outage marker, not a historical loss timestamp.
             # Clear it only after this generation finishes reconciliation.
             self.lost_at_ms = None
             self.state = ConnectionState.ready
+            phase = ConnectionPhase.steady_state
             while not self._stop.is_set():
                 await self._replay()
                 await self._reconcile()
                 await self._replay()
                 await asyncio.sleep(RECONNECT_INTERVAL_SECONDS)
 
-        session_task = asyncio.create_task(session())
+        session_task = asyncio.create_task(observe(session(), ConnectionFailureOrigin.session))
         stop_task = asyncio.create_task(self._stop.wait())
         try:
             done, _ = await asyncio.wait(
