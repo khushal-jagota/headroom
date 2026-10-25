@@ -23,6 +23,8 @@ env:
   PANELS_EXECUTOR_SSH_HOST: ${{ vars.PANELS_EXECUTOR_SSH_HOST }}
   PANELS_EXECUTOR_SSH_PORT: ${{ vars.PANELS_EXECUTOR_SSH_PORT }}
   PANELS_EXECUTOR_SSH_USER: ${{ vars.PANELS_EXECUTOR_SSH_USER }}
+  PANELS_EXECUTOR_SSH_AUTH_MODE: ${{ vars.PANELS_EXECUTOR_SSH_AUTH_MODE }}
+  PANELS_EXECUTOR_TAILSCALE_BINARY: ${{ vars.PANELS_EXECUTOR_TAILSCALE_BINARY }}
   PANELS_EXECUTOR_SSH_IDENTITY_FILE: ${{ vars.PANELS_EXECUTOR_SSH_IDENTITY_FILE }}
   PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE: ${{ vars.PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE }}
   PANELS_EXECUTOR_SERVER_URL: ${{ vars.PANELS_EXECUTOR_SERVER_URL }}
@@ -60,7 +62,7 @@ jobs:
         if: vars.PANELS_RESIDENT_DEPLOY_ENABLED == 'true'
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python 3.12 or newer is required"'
-          for name in PANELS_MAC_HOST PANELS_MAC_KNOWN_HOSTS PANELS_MAC_SSH_IDENTITY PANELS_MAC_PYTHON PANELS_MAC_NODE PANELS_MAC_NPM PANELS_MAC_ARCHITECTURE PANELS_MAC_PYTHON_VERSION PANELS_EXECUTOR_SSH_HOST PANELS_EXECUTOR_SSH_PORT PANELS_EXECUTOR_SSH_USER PANELS_EXECUTOR_SSH_IDENTITY_FILE PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE PANELS_EXECUTOR_SERVER_URL; do
+          for name in PANELS_MAC_HOST PANELS_MAC_KNOWN_HOSTS PANELS_MAC_SSH_IDENTITY PANELS_MAC_PYTHON PANELS_MAC_NODE PANELS_MAC_NPM PANELS_MAC_ARCHITECTURE PANELS_MAC_PYTHON_VERSION PANELS_EXECUTOR_SSH_HOST PANELS_EXECUTOR_SSH_PORT PANELS_EXECUTOR_SSH_USER PANELS_EXECUTOR_SSH_AUTH_MODE PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE PANELS_EXECUTOR_SERVER_URL; do
             test -n "${!name}" || { echo "Missing explicit resident configuration: $name" >&2; exit 2; }
           done
           git show "$PANELS_REQUESTED_SHA:ops/panels-environments/executor-build-contract.json" > "$PANELS_EXECUTOR_CONTRACT"
@@ -68,6 +70,18 @@ jobs:
             --source-root "$GITHUB_WORKSPACE" --requested-sha "$PANELS_REQUESTED_SHA" \
             --build-contract "$PANELS_EXECUTOR_CONTRACT" --target-architecture "$PANELS_MAC_ARCHITECTURE" \
             --python-version "$PANELS_MAC_PYTHON_VERSION" --output "$PANELS_RESIDENT_MANIFEST"
+          auth_args=(--executor-ssh-auth-mode "$PANELS_EXECUTOR_SSH_AUTH_MODE")
+          case "$PANELS_EXECUTOR_SSH_AUTH_MODE" in
+            public_key)
+              test -n "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" && test -z "$PANELS_EXECUTOR_TAILSCALE_BINARY" || exit 2
+              auth_args+=(--executor-ssh-identity-file "$PANELS_EXECUTOR_SSH_IDENTITY_FILE")
+              ;;
+            tailscale)
+              test -z "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" && test -n "$PANELS_EXECUTOR_TAILSCALE_BINARY" || exit 2
+              auth_args+=(--executor-tailscale-binary "$PANELS_EXECUTOR_TAILSCALE_BINARY")
+              ;;
+            *) echo "Explicit executor authentication mode required" >&2; exit 2 ;;
+          esac
           backend_args=()
           if [ -n "$PANELS_EXECUTOR_BACKEND_PATH" ]; then
             backend_args=(--backend-path "$PANELS_EXECUTOR_BACKEND_PATH")
@@ -80,7 +94,7 @@ jobs:
             --python "$PANELS_MAC_PYTHON" --node "$PANELS_MAC_NODE" --npm "$PANELS_MAC_NPM" \
             --executor-ssh-host "$PANELS_EXECUTOR_SSH_HOST" --panels-server-url "$PANELS_EXECUTOR_SERVER_URL" \
             --executor-ssh-port "$PANELS_EXECUTOR_SSH_PORT" --executor-ssh-user "$PANELS_EXECUTOR_SSH_USER" \
-            --executor-ssh-identity-file "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" \
+            "${auth_args[@]}" \
             --executor-ssh-known-hosts "$PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE" \
             --relay-command "$PANELS_EXECUTOR_RELAY_COMMAND" \
             "${backend_args[@]}"
@@ -180,6 +194,18 @@ jobs:
       - name: Deploy exact resident and record both observed hosts
         if: always() && !cancelled() && vars.PANELS_RESIDENT_DEPLOY_ENABLED == 'true' && steps.resident-preflight.outcome == 'success'
         run: |
+          auth_args=(--executor-ssh-auth-mode "$PANELS_EXECUTOR_SSH_AUTH_MODE")
+          case "$PANELS_EXECUTOR_SSH_AUTH_MODE" in
+            public_key)
+              test -n "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" && test -z "$PANELS_EXECUTOR_TAILSCALE_BINARY" || exit 2
+              auth_args+=(--executor-ssh-identity-file "$PANELS_EXECUTOR_SSH_IDENTITY_FILE")
+              ;;
+            tailscale)
+              test -z "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" && test -n "$PANELS_EXECUTOR_TAILSCALE_BINARY" || exit 2
+              auth_args+=(--executor-tailscale-binary "$PANELS_EXECUTOR_TAILSCALE_BINARY")
+              ;;
+            *) echo "Explicit executor authentication mode required" >&2; exit 2 ;;
+          esac
           backend_args=()
           if [ -n "$PANELS_EXECUTOR_BACKEND_PATH" ]; then
             backend_args=(--backend-path "$PANELS_EXECUTOR_BACKEND_PATH")
@@ -192,7 +218,7 @@ jobs:
             --python "$PANELS_MAC_PYTHON" --node "$PANELS_MAC_NODE" --npm "$PANELS_MAC_NPM" \
             --executor-ssh-host "$PANELS_EXECUTOR_SSH_HOST" --panels-server-url "$PANELS_EXECUTOR_SERVER_URL" \
             --executor-ssh-port "$PANELS_EXECUTOR_SSH_PORT" --executor-ssh-user "$PANELS_EXECUTOR_SSH_USER" \
-            --executor-ssh-identity-file "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" \
+            "${auth_args[@]}" \
             --executor-ssh-known-hosts "$PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE" \
             --relay-command "$PANELS_EXECUTOR_RELAY_COMMAND" \
             --vps-health-url "http://127.0.0.1:8767/api/health" --report "$PANELS_RESIDENT_REPORT" \

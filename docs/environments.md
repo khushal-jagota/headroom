@@ -208,13 +208,26 @@ provenance remains unchanged. Current packaging inputs live in `current_packagin
 Physical Mac support, installed credentials, reboot, and pre-unlock behavior remain
 unverified. The implementation does not authorize host installation or live probes.
 
-The Mac-initiated executor connection requires explicit resolved host, port, user,
-identity file, and known-hosts file. Deployment inputs are
-`PANELS_EXECUTOR_SSH_PORT`, `PANELS_EXECUTOR_SSH_USER`,
-`PANELS_EXECUTOR_SSH_IDENTITY_FILE`, and `PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE`.
-The identity and known-hosts paths belong to the Mac. They are separate from the
-VPS-to-Mac delivery credentials. Ambient SSH configuration, agents, default keys,
-aliases, proxies, and interactive key setup do not supply missing inputs.
+The Mac-initiated executor connection requires explicit host, port, user,
+authentication mode, and known-hosts file. `public_key` requires a Mac identity file.
+`tailscale` forbids that file and requires an explicit executable Tailscale CLI path
+on the Mac, plus port 22. See [executor authentication](executor.md#ssh-prerequisites-and-boundaries)
+for peer association, host pins, and trust assumptions.
+
+Resident launch commands use `--executor-ssh-auth-mode public_key` with
+`--executor-ssh-identity-file /absolute/key`, or `--executor-ssh-auth-mode tailscale`
+with `--executor-tailscale-binary /absolute/tailscale`. Both retain
+`--executor-ssh-host`, `--executor-ssh-port`, `--executor-ssh-user`, and
+`--executor-ssh-known-hosts`. The generated LaunchAgent carries only the selected
+mode's arguments. Ambient configuration does not supply missing inputs.
+
+The deployment workflow requires `PANELS_EXECUTOR_SSH_AUTH_MODE` explicitly.
+For public-key mode, set `PANELS_EXECUTOR_SSH_IDENTITY_FILE` and leave
+`PANELS_EXECUTOR_TAILSCALE_BINARY` empty. For Tailscale mode, set
+`PANELS_EXECUTOR_TAILSCALE_BINARY` and leave the identity variable empty.
+`PANELS_EXECUTOR_SSH_PORT`, `PANELS_EXECUTOR_SSH_USER`, and
+`PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE` remain explicit.
+These paths belong to the Mac. VPS-to-Mac delivery uses separate credentials.
 
 
 ---

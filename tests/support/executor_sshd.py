@@ -14,7 +14,7 @@ from pathlib import Path
 
 import asyncssh
 
-from planner.executor.contracts import ExecutorSshConfig
+from planner.executor.contracts import ExecutorSshConfig, SshAuthenticationMode
 
 
 @contextlib.contextmanager
@@ -72,7 +72,9 @@ def isolated_sshd(directory: Path) -> Iterator[ExecutorSshConfig]:
                     if time.monotonic() >= deadline:
                         raise RuntimeError("private sshd did not listen") from None
                     time.sleep(0.02)
-            yield ExecutorSshConfig("127.0.0.1", port, username, identity, known_hosts)
+            yield ExecutorSshConfig(
+                "127.0.0.1", port, username, identity, known_hosts, SshAuthenticationMode.public_key
+            )
         finally:
             process.terminate()
             try:

@@ -20,6 +20,7 @@ from planner.executor.contracts import (
     FileScope,
     JsonObject,
     ReceiptDisposition,
+    SshAuthenticationMode,
     WireMessage,
     WireMessageKind,
 )
@@ -35,7 +36,12 @@ def test_replay_pin_retains_bytes_after_concurrent_receipt_until_transfer_finish
             paths=ExecutorPaths(tmp_path / "mac"),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="http://unused",
         )
@@ -129,7 +135,12 @@ def test_replay_drains_conversation_heads_and_quiescence_counts_without_full_inv
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="http://unused",
         )

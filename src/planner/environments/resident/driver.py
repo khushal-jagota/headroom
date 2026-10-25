@@ -247,8 +247,8 @@ def prepare_and_activate(
         str(launch.ssh_port),
         "--executor-ssh-user",
         launch.ssh_user,
-        "--executor-ssh-identity-file",
-        str(launch.ssh_identity_file),
+        "--executor-ssh-auth-mode",
+        launch.ssh_auth_mode,
         "--executor-ssh-known-hosts",
         str(launch.ssh_known_hosts_file),
         "--panels-server-url",
@@ -258,6 +258,10 @@ def prepare_and_activate(
         "--timeout-seconds",
         str(timeout_seconds),
     ]
+    if launch.ssh_identity_file is not None:
+        command += ["--executor-ssh-identity-file", str(launch.ssh_identity_file)]
+    if launch.tailscale_binary is not None:
+        command += ["--executor-tailscale-binary", str(launch.tailscale_binary)]
     if launch.backend_path is not None:
         command += ["--backend-path", launch.backend_path]
     # The command never runs with server/db environment or an alternate HOME.
@@ -444,8 +448,12 @@ def write_package_spec(
     )
 
     files = (
-        "pyproject.toml", "src/planner", EXECUTOR_REQUIREMENTS, BUILD_REQUIREMENTS,
-        "agent_backends/package.json", "agent_backends/package-lock.json",
+        "pyproject.toml",
+        "src/planner",
+        EXECUTOR_REQUIREMENTS,
+        BUILD_REQUIREMENTS,
+        "agent_backends/package.json",
+        "agent_backends/package-lock.json",
     )
     versions = requested_versions(source, revision)
     package = ResidentPackage(

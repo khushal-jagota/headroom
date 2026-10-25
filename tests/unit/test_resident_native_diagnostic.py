@@ -1,4 +1,5 @@
 """Safe failure facts cross command, remote-result and durable-report boundaries."""
+
 from __future__ import annotations
 
 import json
@@ -60,15 +61,26 @@ def test_diagnostic_round_trip_and_legacy_compatibility(tmp_path: Path) -> None:
     assert SECRET not in path.read_text()
 
 
-@pytest.mark.parametrize("change", [
-    {"phase": "backend_npm_install", "operation": "create_venv"},
-    {"operation": SECRET}, {"phase": "unknown"}, {"failure_kind": "unknown"},
-    {"exit_status": True}, {"exit_status": 0}, {"exit_status": 256},
-    {"exit_status": -256}, {"exit_status": 1.0}, {"exit_status": None},
-    {"failure_kind": "timeout", "exit_status": 1}, {"extra": SECRET},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"phase": "backend_npm_install", "operation": "create_venv"},
+        {"operation": SECRET},
+        {"phase": "unknown"},
+        {"failure_kind": "unknown"},
+        {"exit_status": True},
+        {"exit_status": 0},
+        {"exit_status": 256},
+        {"exit_status": -256},
+        {"exit_status": 1.0},
+        {"exit_status": None},
+        {"failure_kind": "timeout", "exit_status": 1},
+        {"extra": SECRET},
+    ],
+)
 def test_diagnostic_rejects_invalid_values_at_all_boundaries(
-    tmp_path: Path, change: dict[str, object],
+    tmp_path: Path,
+    change: dict[str, object],
 ) -> None:
     payload = {**asdict(DIAGNOSTIC), **change}
     detail = "native-build-diagnostic:" + json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -83,26 +95,37 @@ def test_diagnostic_rejects_invalid_values_at_all_boundaries(
     assert not (tmp_path / "report").exists()
 
 
-@pytest.mark.parametrize("detail", [
-    "native-build-diagnostic", "native-build-diagnostic:{", "native-build-diagnostic:[]",
-    "\n" + format_native_diagnostic(DIAGNOSTIC),
-    "native-build-diagnostic:" + " " * 600,
-    'native-build-diagnostic:{"phase":"python_probe"}',
-    'native-build-diagnostic:{"phase":"python_probe","phase":"node_probe"}',
-])
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "native-build-diagnostic",
+        "native-build-diagnostic:{",
+        "native-build-diagnostic:[]",
+        "\n" + format_native_diagnostic(DIAGNOSTIC),
+        "native-build-diagnostic:" + " " * 600,
+        'native-build-diagnostic:{"phase":"python_probe"}',
+        'native-build-diagnostic:{"phase":"python_probe","phase":"node_probe"}',
+    ],
+)
 def test_reserved_malformed_details_are_refused_before_report_summarization(
-    tmp_path: Path, detail: str,
+    tmp_path: Path,
+    detail: str,
 ) -> None:
     with pytest.raises(ResidentError):
         write_deployment_record(tmp_path / "report", _record(_host(detail)))
     assert not (tmp_path / "report").exists()
 
 
-@pytest.mark.parametrize("change", [
-    {"host": "vps"}, {"disposition": "verified", "observed_revision": SHA},
-    {"disposition": "deferred"}, {"disposition": "unreachable"},
-    {"observed_revision": SHA},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"host": "vps"},
+        {"disposition": "verified", "observed_revision": SHA},
+        {"disposition": "deferred"},
+        {"disposition": "unreachable"},
+        {"observed_revision": SHA},
+    ],
+)
 def test_diagnostics_require_failed_mac_without_observed_revision(change: dict[str, Any]) -> None:
     host = replace(_host(format_native_diagnostic(DIAGNOSTIC)), **change)
     with pytest.raises(ResidentError):
@@ -135,18 +158,38 @@ def test_remote_json_is_bounded_before_parsing(monkeypatch: pytest.MonkeyPatch) 
 @pytest.mark.parametrize("failure", [NativeBuildFailure(DIAGNOSTIC), RuntimeError(SECRET)])
 @pytest.mark.parametrize("command", ["deploy-local", "deploy-prepared", "activate"])
 def test_native_cli_failure_is_safe_five_field_host_result(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-    failure: Exception, command: str, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+    command: str,
+    tmp_path: Path,
 ) -> None:
     def fail(*args: object, **kwargs: object) -> Any:
         raise failure
 
     for name in ("activate", "deploy_local_source", "prepare_and_activate"):
         monkeypatch.setattr(driver, name, fail)
-    args = [command, "--candidate-app", "/candidate", "--requested-sha", SHA,
-            "--executor-ssh-host", "vps.example", "--executor-ssh-port", "2222",
-            "--executor-ssh-user", "owner", "--executor-ssh-identity-file", "/key",
-            "--executor-ssh-known-hosts", "/hosts", "--panels-server-url", "https://panels.example"]
+    args = [
+        command,
+        "--candidate-app",
+        "/candidate",
+        "--requested-sha",
+        SHA,
+        "--executor-ssh-host",
+        "vps.example",
+        "--executor-ssh-port",
+        "2222",
+        "--executor-ssh-auth-mode",
+        "public_key",
+        "--executor-ssh-user",
+        "owner",
+        "--executor-ssh-identity-file",
+        "/key",
+        "--executor-ssh-known-hosts",
+        "/hosts",
+        "--panels-server-url",
+        "https://panels.example",
+    ]
     if command == "deploy-local":
         args += ["--source-root", "/source", "--manifest", "/manifest"]
     assert cli.main(args) == 3
@@ -154,7 +197,8 @@ def test_native_cli_failure_is_safe_five_field_host_result(
     assert SECRET not in output
     host = transport.parse_host_result(output, SHA)
     assert host == _host(
-        format_native_diagnostic(DIAGNOSTIC) if isinstance(failure, NativeBuildFailure)
+        format_native_diagnostic(DIAGNOSTIC)
+        if isinstance(failure, NativeBuildFailure)
         else "Native deployment did not complete"
     )
     path = tmp_path / "report.json"

@@ -10,6 +10,7 @@ import pytest
 
 from planner.environments.resident.cli import main
 from planner.environments.resident.contracts import (
+    ExecutorLaunchOptions,
     HostDeploymentResult,
     ResidentDeploymentRecord,
     TwoHostDeploymentResult,
@@ -174,3 +175,58 @@ def test_source_build_uses_committed_bytes_and_requested_manifest(
     arguments[-1] = str(other)
     assert main(arguments) == 2
     assert not other.exists()
+
+
+def test_native_cli_requires_explicit_mode_and_propagates_tailscale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from planner.environments.resident import driver
+    from planner.executor.contracts import SshAuthenticationMode
+
+    args = [
+        "activate",
+        "--candidate-app",
+        str(tmp_path / "app"),
+        "--home",
+        str(tmp_path),
+        "--requested-sha",
+        SHA,
+        "--executor-ssh-host",
+        "vps.example",
+        "--executor-ssh-port",
+        "22",
+        "--executor-ssh-user",
+        "owner",
+        "--executor-ssh-known-hosts",
+        str(tmp_path / "hosts"),
+        "--panels-server-url",
+        "https://panels.example",
+    ]
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2
+    observed: list[ExecutorLaunchOptions] = []
+
+    def activate(
+        app: Path, *, home: Path, launch: ExecutorLaunchOptions, timeout_seconds: float
+    ) -> HostDeploymentResult:
+        observed.append(launch)
+        return HostDeploymentResult("mac", SHA, "verified", SHA, "Fixture ready")
+
+    monkeypatch.setattr(driver, "activate", activate)
+    assert (
+        main(
+            [
+                *args,
+                "--executor-ssh-auth-mode",
+                "tailscale",
+                "--executor-tailscale-binary",
+                "/absolute/tailscale",
+            ]
+        )
+        == 0
+    )
+    assert observed[0].ssh_auth_mode is SshAuthenticationMode.tailscale
+    assert observed[0].ssh_identity_file is None
+    assert observed[0].tailscale_binary == Path("/absolute/tailscale")
+    assert json.loads(capsys.readouterr().out)["disposition"] == "verified"

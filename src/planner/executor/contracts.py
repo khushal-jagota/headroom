@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Protocol, TypedDict
@@ -34,13 +35,65 @@ class ExecutorIdentity:
     connection_generation: int
 
 
+class SshAuthenticationMode(StrEnum):
+    public_key = "public_key"
+    tailscale = "tailscale"
+
+
+class SshConfigurationError(ValueError):
+    """Explicit outer SSH inputs contradict their selected authentication mode."""
+
+
+class TailnetValidationError(ConnectionError):
+    """The local Tailscale status cannot establish a permitted destination."""
+
+
+@dataclass(frozen=True, slots=True)
+class TailnetPeer:
+    node_id: str
+    dns_name: str
+    addresses: tuple[str, ...]
+    in_network_map: bool
+    expired: bool
+    key_expiry: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class TailnetStatus:
+    running: bool
+    kernel_networking: bool
+    peers: tuple[TailnetPeer, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedTailnetDestination:
+    node_id: str
+    address: str
+
+
+class TailnetDestinationValidator(Protocol):
+    async def validate(self, host: str, binary: Path) -> ValidatedTailnetDestination: ...
+
+
+class ConnectionFailureCategory(StrEnum):
+    configuration = "configuration"
+    tailnet_validation = "tailnet_validation"
+    host_key = "host_key"
+    authentication = "authentication"
+    timeout = "timeout"
+    network = "network"
+    connection_or_protocol = "connection_or_protocol"
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutorSshConfig:
     host: str
     port: int
     username: str
-    identity_file: Path
+    identity_file: Path | None
     known_hosts_file: Path
+    auth_mode: SshAuthenticationMode
+    tailscale_binary: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

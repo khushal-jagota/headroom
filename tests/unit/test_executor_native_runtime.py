@@ -54,6 +54,7 @@ from planner.executor.contracts import (
     Quiescence,
     QuiesceRequest,
     ReconciliationResult,
+    SshAuthenticationMode,
     WireMessage,
     WireMessageKind,
 )
@@ -213,7 +214,12 @@ def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="http://unused",
         )
@@ -268,7 +274,12 @@ def test_generation_change_during_quiesce_cannot_commit_exit(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="http://unused",
         )
@@ -514,7 +525,12 @@ def test_replay_failure_blocks_only_its_conversation(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="http://unused",
         )
@@ -563,7 +579,12 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="http://unused",
         )
@@ -644,11 +665,13 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
     script = (
         "import asyncio; from pathlib import Path; "
         "from planner.executor.mac import MacExecutor; "
+        "from planner.executor.contracts import SshAuthenticationMode; "
         "from planner.executor.configuration import ExecutorPaths, PROTOCOL_VERSION; "
         f"service=MacExecutor(paths=ExecutorPaths(Path({str(root)!r})),revision={'a' * 40!r},"
         "ssh_config=__import__('planner.executor.contracts',"
         "fromlist=['ExecutorSshConfig']).ExecutorSshConfig("
-        "'127.0.0.1',1,'unused',Path('/missing-key'),Path('/missing-hosts')),"
+        "'127.0.0.1',1,'unused',Path('/missing-key'),Path('/missing-hosts'),"
+        "SshAuthenticationMode.public_key),"
         "panels_server_url='http://unused'); "
         "asyncio.run(service.run()); "
         "assert service.exit_committed"
@@ -1056,7 +1079,9 @@ def make_executor(root: Path) -> MacExecutor:
     return MacExecutor(
         paths=ExecutorPaths(root),
         revision="a" * 40,
-        ssh_config=ExecutorSshConfig("unused", 1, "unused", root / "key", root / "hosts"),
+        ssh_config=ExecutorSshConfig(
+            "unused", 1, "unused", root / "key", root / "hosts", SshAuthenticationMode.public_key
+        ),
         panels_server_url="http://unused",
     )
 
@@ -1190,7 +1215,12 @@ def test_ready_ack_clears_loss_before_fulfilling_current_request(tmp_path: Path,
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="http://unused",
         )

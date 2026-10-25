@@ -271,11 +271,50 @@ access, installed routes, provider credentials, or deployed behavior.
 
 ## SSH prerequisites and boundaries
 
-The launcher requires an explicit hostname, port, username, absolute private key
-path, and absolute `known_hosts` path. The adapter disables ambient configuration,
-agent use, adjacent certificates, proxies, password authentication, and alternative
-authentication. Missing or changed host keys refuse the connection. Encrypted
-identities without explicit unattended support refuse.
+The launcher requires an explicit authentication mode, host, port, username, and
+absolute `known_hosts` path. `public_key` requires an absolute private key path.
+`tailscale` forbids that key and requires port 22 plus an absolute executable
+Tailscale CLI path. Neither mode reads ambient SSH configuration or uses agents,
+passwords, adjacent certificates, proxies, or interactive authentication.
+Missing or changed host keys refuse the connection. Encrypted public-key identities
+without explicit unattended support refuse.
+
+An explicit public-key launch uses these connection arguments:
+
+```sh
+panels executor run --ssh-auth-mode public_key \
+  --ssh-host vps.example --ssh-port 2222 --ssh-user owner \
+  --ssh-identity-file /absolute/executor-key \
+  --ssh-known-hosts /absolute/known_hosts \
+  --panels-server-url https://panels.example
+```
+
+For Tailscale, replace the mode with `tailscale`, set port 22, and replace
+`--ssh-identity-file` with `--tailscale-binary /absolute/tailscale`.
+The installed wrapper supplies its exact application revision.
+
+Before each Tailscale connection, the explicit CLI reads `status --json`.
+The local daemon must run with kernel networking. The configured IP must belong
+to one visible, unexpired peer. A name must match that peer's exact DNS name.
+Short aliases, system DNS, subnet routes, and ambiguous matches refuse.
+The selected address must also lie in Tailscale's IPv4 or IPv6 range.
+This range alone does not authenticate the peer.
+
+The status read establishes only the local daemon's current peer association.
+It does not prove reachability, packet routes, Tailscale SSH support, or permission.
+This mode trusts the local CLI, daemon, coordination state, and correct kernel routes.
+Tailscale enforces device authentication, network access, and SSH authorization at
+the existing endpoint. The executor supplies no extra key challenge.
+Tailscale check-mode challenges and denials remain connection failures.
+The executor does not open a login URL or change endpoint policy.
+
+The numeric connection retains the configured host's exact `known_hosts` identity.
+A different pin for the numeric address cannot override a name's pin.
+Unknown, changed, and revoked host keys refuse. Advertised peer keys never replace
+operator pins. The inner restricted SFTP connection keeps its temporary key policy.
+
+Connection diagnostics use fixed categories and omit addresses, paths, credentials,
+and remote output. Each category appears at most once per process.
 
 The actual connection path uses AsyncSSH 2.24.1. Connection and login deadlines
 are ten seconds. Keepalives run every 15 seconds with three unanswered probes.

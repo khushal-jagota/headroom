@@ -15,6 +15,8 @@ from planner.environments.resident.contracts import (
     ServiceConfiguration,
 )
 from planner.environments.resident.paths import data_paths
+from planner.executor.contracts import SshAuthenticationMode, SshConfigurationError
+from planner.executor.logic.ssh_configuration import validate_authentication_inputs
 
 
 def validate_executor_launch(launch: ExecutorLaunchOptions, *, check_files: bool) -> None:
@@ -30,7 +32,25 @@ def validate_executor_launch(launch: ExecutorLaunchOptions, *, check_files: bool
         or not launch.remote_command.strip()
     ):
         raise ResidentError("invalid explicit executor SSH launch configuration")
-    for path, secret in ((launch.ssh_identity_file, True), (launch.ssh_known_hosts_file, False)):
+    try:
+        validate_authentication_inputs(
+            launch.ssh_auth_mode, launch.ssh_identity_file, launch.tailscale_binary, launch.ssh_port
+        )
+    except SshConfigurationError as exc:
+        raise ResidentError(str(exc)) from exc
+    if launch.ssh_auth_mode is SshAuthenticationMode.tailscale:
+        binary = launch.tailscale_binary
+        if binary is None or not binary.is_absolute() or any(ord(c) < 32 for c in str(binary)):
+            raise ResidentError("tailscale requires an absolute executable path")
+        if check_files:
+            if any(p.is_symlink() for p in (binary, *binary.parents)):
+                raise ResidentError("Tailscale binary path must contain no symlinks")
+            if not binary.is_file() or not os.access(binary, os.X_OK):
+                raise ResidentError("Tailscale binary must be an executable file")
+    files = [(launch.ssh_known_hosts_file, False)]
+    if launch.ssh_identity_file is not None:
+        files.append((launch.ssh_identity_file, True))
+    for path, secret in files:
         if not path.is_absolute() or any(ord(c) < 32 for c in str(path)):
             raise ResidentError("executor SSH files must be absolute paths")
         if not check_files:
@@ -80,8 +100,8 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
             str(launch.ssh_port),
             "--ssh-user",
             launch.ssh_user,
-            "--ssh-identity-file",
-            str(launch.ssh_identity_file),
+            "--ssh-auth-mode",
+            launch.ssh_auth_mode,
             "--ssh-known-hosts",
             str(launch.ssh_known_hosts_file),
             "--panels-server-url",
@@ -89,6 +109,10 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
             "--remote-command",
             launch.remote_command,
         ]
+        if launch.ssh_identity_file is not None:
+            arguments += ["--ssh-identity-file", str(launch.ssh_identity_file)]
+        if launch.tailscale_binary is not None:
+            arguments += ["--tailscale-binary", str(launch.tailscale_binary)]
     return plistlib.dumps(
         {
             "Label": configuration.label,

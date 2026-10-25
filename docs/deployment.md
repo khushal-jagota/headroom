@@ -168,6 +168,17 @@ native preparation, owner-only activation, and pinned-host delivery commands. Th
 commands change a host only after explicit invocation. Code review does not authorize
 their live use.
 
+The executor authentication mode must be explicit in resident launch inputs and
+workflow configuration. Set `PANELS_EXECUTOR_SSH_AUTH_MODE` before a resident-enabled
+workflow runs. The selected mode never follows from the presence of a key.
+See [runtime environments](environments.md#mac-executor-packages) for the conditional
+Mac key and Tailscale binary inputs.
+
+The resident delivery arguments `--identity` and `--known-hosts` still authenticate
+the separate VPS-to-Mac deployment connection. Tailscale executor mode does not
+remove those requirements or alter the installed job without an explicit update.
+Review and tests do not change the existing installation or endpoint policy.
+
 The code location is `~/Deployments/PanelsExecutor/current/app`. The stable data root
 is `~/Library/Application Support/Panels/executor`, selected by `PLAN_EXECUTOR_ROOT`.
 Its spool, artifacts, logs, and IPC socket remain outside replaceable code. The account

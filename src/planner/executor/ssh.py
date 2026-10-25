@@ -27,7 +27,14 @@ from planner.executor.configuration import (
     SSH_LOGIN_TIMEOUT_SECONDS,
     SSH_UNIX_SOCKET_MAX_BYTES,
 )
-from planner.executor.contracts import ExecutorSshConfig, SftpEndpoint
+from planner.executor.contracts import (
+    ExecutorSshConfig,
+    SftpEndpoint,
+    SshAuthenticationMode,
+    SshConfigurationError,
+)
+from planner.executor.logic.ssh_configuration import validate_authentication_inputs
+from planner.executor.tailscale import validate_tailnet_destination
 
 
 def generate_ephemeral_key() -> asyncssh.SSHKey:
@@ -35,13 +42,15 @@ def generate_ephemeral_key() -> asyncssh.SSHKey:
     return asyncssh.generate_private_key("ssh-ed25519")
 
 
-def _client_options(key: asyncssh.SSHKey, username: str) -> asyncssh.SSHClientConnectionOptions:
+def _client_options(
+    key: asyncssh.SSHKey | None, username: str
+) -> asyncssh.SSHClientConnectionOptions:
     # Passing a parsed key is essential: AsyncSSH loads adjacent *-cert.pub files
     # when given a filename, even with an explicitly empty client_certs list.
     return asyncssh.SSHClientConnectionOptions(
         config=None,
         username=username,
-        client_keys=[key],
+        client_keys=[key] if key is not None else None,
         client_certs=[],
         agent_path=None,
         agent_identities=None,
@@ -51,12 +60,12 @@ def _client_options(key: asyncssh.SSHKey, username: str) -> asyncssh.SSHClientCo
         client_host_certs=[],
         client_host_keysign=False,
         host_based_auth=False,
-        public_key_auth=True,
+        public_key_auth=key is not None,
         password_auth=False,
         kbdint_auth=False,
         password=None,
-        preferred_auth=["publickey"],
-        disable_trivial_auth=True,
+        preferred_auth=["publickey"] if key is not None else [],
+        disable_trivial_auth=key is not None,
         gss_auth=False,
         gss_kex=False,
         gss_delegate_creds=False,
@@ -77,13 +86,58 @@ def _client_options(key: asyncssh.SSHKey, username: str) -> asyncssh.SSHClientCo
     )
 
 
+def validate_ssh_config(config: ExecutorSshConfig) -> None:
+    """Refuse incomplete or contradictory explicit connection inputs before dialing."""
+    if (
+        not config.host
+        or config.host.startswith("-")
+        or not config.username
+        or not 0 < config.port < 65536
+    ):
+        raise SshConfigurationError(
+            "SSH host, user, port, and authentication mode must be explicit"
+        )
+    validate_authentication_inputs(
+        config.auth_mode, config.identity_file, config.tailscale_binary, config.port
+    )
+    paths = [config.known_hosts_file]
+    if config.auth_mode is SshAuthenticationMode.public_key:
+        assert config.identity_file is not None
+        paths.append(config.identity_file)
+    else:
+        assert config.tailscale_binary is not None
+        paths.append(config.tailscale_binary)
+        if not os.access(config.tailscale_binary, os.X_OK):
+            raise SshConfigurationError("Tailscale binary must be executable")
+    if any(
+        not path.is_absolute()
+        or not path.is_file()
+        or any(character in str(path) for character in ("\0", "\n", "\r"))
+        for path in paths
+    ):
+        raise SshConfigurationError("SSH input paths must be absolute existing safe files")
+
+
 async def connect_outer(config: ExecutorSshConfig) -> asyncssh.SSHClientConnection:
-    """Connect with one explicit key and strict known_hosts. Ambient input is off."""
-    if not config.host or not config.username or not 0 < config.port < 65536:
-        raise ValueError("SSH hostname, username, and port must be explicit")
-    for path in (config.identity_file, config.known_hosts_file):
-        if not path.is_absolute() or not path.is_file():
-            raise ValueError("SSH key and known_hosts must be absolute existing files")
+    """Connect using explicit authentication and independently pinned host identity."""
+    validate_ssh_config(config)
+    if config.auth_mode is SshAuthenticationMode.tailscale:
+        assert config.tailscale_binary is not None
+        destination = await validate_tailnet_destination(config.host, config.tailscale_binary)
+        # Match only the configured identity: AsyncSSH's usual hostname/address
+        # union must not allow an address-only pin to rescue a changed name pin.
+        known_hosts = asyncssh.read_known_hosts(str(config.known_hosts_file)).match(
+            config.host, "", None
+        )
+        return await asyncssh.connect(
+            destination.address,
+            config.port,
+            options=_client_options(None, config.username),
+            config=None,
+            known_hosts=known_hosts,
+            host_key_alias=config.host,
+        )
+    assert config.identity_file is not None
     key = asyncssh.import_private_key(config.identity_file.read_bytes())
     return await asyncssh.connect(
         config.host,

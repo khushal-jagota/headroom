@@ -14,6 +14,7 @@ from planner.environments.resident.contracts import (
     ResidentError,
 )
 from planner.environments.resident.logic.native_diagnostic import format_native_diagnostic
+from planner.executor.contracts import SshAuthenticationMode
 
 
 def _revision(value: str) -> str:
@@ -66,7 +67,11 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--executor-ssh-host", required=True)
         command.add_argument("--executor-ssh-port", type=int, required=True)
         command.add_argument("--executor-ssh-user", required=True)
-        command.add_argument("--executor-ssh-identity-file", type=Path, required=True)
+        command.add_argument("--executor-ssh-identity-file", type=Path)
+        command.add_argument(
+            "--executor-ssh-auth-mode", choices=["public_key", "tailscale"], required=True
+        )
+        command.add_argument("--executor-tailscale-binary", type=Path)
         command.add_argument("--executor-ssh-known-hosts", type=Path, required=True)
         command.add_argument("--panels-server-url", required=True)
         command.add_argument("--relay-command", default="panels executor relay")
@@ -90,6 +95,8 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--executor-ssh-port", type=int)
         command.add_argument("--executor-ssh-user")
         command.add_argument("--executor-ssh-identity-file", type=Path)
+        command.add_argument("--executor-ssh-auth-mode", choices=["public_key", "tailscale"])
+        command.add_argument("--executor-tailscale-binary", type=Path)
         command.add_argument("--executor-ssh-known-hosts", type=Path)
         command.add_argument("--panels-server-url")
         command.add_argument("--relay-command", default="panels executor relay")
@@ -140,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                 "executor_ssh_host",
                 "executor_ssh_port",
                 "executor_ssh_user",
-                "executor_ssh_identity_file",
+                "executor_ssh_auth_mode",
                 "executor_ssh_known_hosts",
                 "panels_server_url",
             )
@@ -177,8 +184,10 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.executor_ssh_user,
                 arguments.executor_ssh_identity_file,
                 arguments.executor_ssh_known_hosts,
+                SshAuthenticationMode(arguments.executor_ssh_auth_mode),
                 arguments.relay_command,
                 arguments.backend_path,
+                arguments.executor_tailscale_binary,
             )
             adapter = SshResidentDeployment(
                 source=arguments.source_root,
@@ -240,8 +249,10 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.executor_ssh_user,
                 arguments.executor_ssh_identity_file,
                 arguments.executor_ssh_known_hosts,
+                SshAuthenticationMode(arguments.executor_ssh_auth_mode),
                 arguments.relay_command,
                 arguments.backend_path,
+                arguments.executor_tailscale_binary,
             )
             if not 0 < arguments.timeout_seconds <= 3600:
                 raise ResidentError("native control deadline must be between zero and one hour")

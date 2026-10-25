@@ -32,6 +32,7 @@ from planner.environments.resident.packaging import (
 )
 from planner.environments.resident.paths import resident_paths
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.executor.contracts import SshAuthenticationMode
 
 
 @pytest.mark.parametrize(
@@ -282,7 +283,14 @@ print(json.dumps({name: module.__file__ for name, module in modules.items()}))
     key.chmod(0o600)
     hosts.write_text("vps.example ssh-ed25519 isolated-fixture-key\n")
     launch = ExecutorLaunchOptions(
-        "vps.example", sha, "https://panels.example", 22, "owner", key, hosts
+        "vps.example",
+        sha,
+        "https://panels.example",
+        22,
+        "owner",
+        key,
+        hosts,
+        SshAuthenticationMode.public_key,
     )
     plist = plistlib.loads(
         render_launch_agent(ServiceConfiguration(paths, os.getuid(), launch=launch))

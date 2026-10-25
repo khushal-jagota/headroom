@@ -61,6 +61,7 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
+from planner.executor.diagnostics import connection_diagnostics
 from planner.executor.files import IncomingFiles, safe_component, snapshot_ticket
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry, now_ms
@@ -706,7 +707,8 @@ class MacExecutor:
                         ConnectionError,
                         asyncio.IncompleteReadError,
                         asyncssh.Error,
-                    ):
+                    ) as error:
+                        connection_diagnostics.report(error)
                         if not self._stop.is_set():
                             with contextlib.suppress(TimeoutError):
                                 await asyncio.wait_for(

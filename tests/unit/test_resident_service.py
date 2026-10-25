@@ -29,6 +29,7 @@ from planner.executor.contracts import (
     Quiescence,
     QuiescenceReceipt,
     QuiesceRequest,
+    SshAuthenticationMode,
 )
 
 IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "revision", SPOOL_FORMAT_VERSION, "first", 1)
@@ -56,7 +57,14 @@ def _launch(root: Path, revision: str) -> ExecutorLaunchOptions:
     key.chmod(0o600)
     hosts.write_text("vps.example ssh-ed25519 fixture-pinned-host-key\n")
     return ExecutorLaunchOptions(
-        "vps.example", revision, "https://panels.example", 2222, "owner", key, hosts
+        "vps.example",
+        revision,
+        "https://panels.example",
+        2222,
+        "owner",
+        key,
+        hosts,
+        SshAuthenticationMode.public_key,
     )
 
 

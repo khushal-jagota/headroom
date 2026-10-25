@@ -44,6 +44,7 @@ from planner.executor.contracts import (
     QueuedEnvelope,
     ReceiptDisposition,
     SourceRetirementRequest,
+    SshAuthenticationMode,
 )
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
@@ -372,7 +373,12 @@ def test_ipc_journal_work_is_counted_before_thread_await(
             paths=ExecutorPaths(tmp_path / "resident"),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="",
             registry=registry,
@@ -450,7 +456,12 @@ def test_mac_source_wire_request_returns_typed_receipt(
             paths=ExecutorPaths(tmp_path / "resident"),
             revision="a" * 40,
             ssh_config=ExecutorSshConfig(
-                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+                "unused",
+                1,
+                "unused",
+                tmp_path / "key",
+                tmp_path / "hosts",
+                SshAuthenticationMode.public_key,
             ),
             panels_server_url="",
             registry=registry,

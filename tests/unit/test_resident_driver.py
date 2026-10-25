@@ -25,6 +25,7 @@ from planner.environments.resident.contracts import (
 from planner.environments.resident.native_builder import NativeRuntimeBuilder
 from planner.environments.resident.preflight import supported_versions
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.executor.contracts import SshAuthenticationMode
 
 SHA = "a" * 40
 
@@ -35,7 +36,14 @@ def _launch(root: Path, revision: str) -> ExecutorLaunchOptions:
     key.chmod(0o600)
     hosts.write_text("vps.example ssh-ed25519 fixture-pinned-host-key\n")
     return ExecutorLaunchOptions(
-        "vps.example", revision, "https://panels.example", 2222, "owner", key, hosts
+        "vps.example",
+        revision,
+        "https://panels.example",
+        2222,
+        "owner",
+        key,
+        hosts,
+        SshAuthenticationMode.public_key,
     )
 
 
@@ -73,11 +81,21 @@ def _remote(tmp_path: Path) -> dict[str, Any]:
     )
 
 
+@pytest.mark.parametrize("mode", list(SshAuthenticationMode))
 def test_remote_authenticated_transfer_and_exact_host_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mode: SshAuthenticationMode,
 ) -> None:
     config = _remote(tmp_path)
+    if mode is SshAuthenticationMode.tailscale:
+        config["launch"] = replace(
+            config["launch"],
+            ssh_auth_mode=mode,
+            ssh_port=22,
+            ssh_identity_file=None,
+            tailscale_binary=Path("/absolute/tailscale"),
+        )
     monkeypatch.setattr(transport, "requested_versions", lambda *args: supported_versions())
     adapter = transport.SshResidentDeployment(**config)
     monkeypatch.setattr(transport, "build_delivery_archive", lambda *args: b"source-tar")
@@ -109,6 +127,22 @@ def test_remote_authenticated_transfer_and_exact_host_result(
     assert "-F" in argv and "/dev/null" in argv
     assert kwargs["input"] == b"source-tar"
     assert kwargs["timeout"] == 1200.0
+    import base64
+    import shlex
+
+    remote_args = json.loads(base64.b64decode(shlex.split(argv[-1])[-1]))
+    assert remote_args[remote_args.index("--executor-ssh-auth-mode") + 1] == mode.value
+    if mode is SshAuthenticationMode.tailscale:
+        assert "--executor-ssh-identity-file" not in remote_args
+        assert (
+            remote_args[remote_args.index("--executor-tailscale-binary") + 1]
+            == "/absolute/tailscale"
+        )
+    else:
+        assert "--executor-tailscale-binary" not in remote_args
+        assert remote_args[remote_args.index("--executor-ssh-identity-file") + 1] == str(
+            config["launch"].ssh_identity_file
+        )
     assert len(calls) == 2
 
 
@@ -198,6 +232,8 @@ def test_preflight_validates_config_archive_and_read_only_host_evidence(
         "vps.example",
         "--executor-ssh-port",
         "2222",
+        "--executor-ssh-auth-mode",
+        "public_key",
         "--executor-ssh-user",
         "owner",
         "--executor-ssh-identity-file",
@@ -217,10 +253,12 @@ def test_preflight_validates_config_archive_and_read_only_host_evidence(
 
 
 @pytest.mark.parametrize("activation_exit", [0, 3])
+@pytest.mark.parametrize("mode", list(SshAuthenticationMode))
 def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     activation_exit: int,
+    mode: SshAuthenticationMode,
 ) -> None:
     home = tmp_path / "home"
     app = tmp_path / "app"
@@ -231,6 +269,14 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
     runtime = tmp_path / "permanent-runtime"
     prepared = SimpleNamespace(runtime=runtime)
     built = []
+    launch = replace(_launch(tmp_path, SHA), backend_path="/native/bin:/usr/bin")
+    if mode is SshAuthenticationMode.tailscale:
+        binary = tmp_path / "tailscale"
+        binary.write_text("#!/bin/sh\nexit 1\n")
+        binary.chmod(0o755)
+        launch = replace(
+            launch, ssh_auth_mode=mode, ssh_port=22, ssh_identity_file=None, tailscale_binary=binary
+        )
 
     def prepare(app: Path, package: Any, paths: Any, builder: Any) -> Any:
         assert isinstance(builder, NativeRuntimeBuilder)
@@ -244,11 +290,19 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
         assert argv[0] == str(runtime / "bin/python")
         assert argv[1:4] == ["-I", "-B", "-c"]
         assert "activate" in argv
-        assert argv[argv.index("--executor-ssh-port") + 1] == "2222"
+        assert argv[argv.index("--executor-ssh-port") + 1] == str(launch.ssh_port)
+        assert argv[argv.index("--executor-ssh-auth-mode") + 1] == mode.value
         assert argv[argv.index("--executor-ssh-user") + 1] == "owner"
-        assert argv[argv.index("--executor-ssh-identity-file") + 1] == str(
-            tmp_path / "executor-key"
-        )
+        if mode is SshAuthenticationMode.tailscale:
+            assert "--executor-ssh-identity-file" not in argv
+            assert argv[argv.index("--executor-tailscale-binary") + 1] == str(
+                launch.tailscale_binary
+            )
+        else:
+            assert "--executor-tailscale-binary" not in argv
+            assert argv[argv.index("--executor-ssh-identity-file") + 1] == str(
+                launch.ssh_identity_file
+            )
         assert argv[argv.index("--executor-ssh-known-hosts") + 1] == str(
             tmp_path / "executor-hosts"
         )
@@ -270,8 +324,10 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
     if activation_exit:
         with pytest.raises(ResidentError, match="success report conflicts"):
             driver.prepare_and_activate(
-                app, python=Path("/native/python"), home=home,
-                launch=replace(_launch(tmp_path, SHA), backend_path="/native/bin:/usr/bin"),
+                app,
+                python=Path("/native/python"),
+                home=home,
+                launch=launch,
                 timeout_seconds=30.0,
             )
         assert len(built) == 1
@@ -280,7 +336,7 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
         app,
         python=Path("/native/python"),
         home=home,
-        launch=replace(_launch(tmp_path, SHA), backend_path="/native/bin:/usr/bin"),
+        launch=launch,
         timeout_seconds=30.0,
     )
     assert result.disposition == "verified"
@@ -528,8 +584,11 @@ def test_typed_native_preparation_failure_never_enters_activation(
     monkeypatch.setattr(driver, "activate", forbidden)
     with pytest.raises(NativeBuildFailure) as raised:
         driver.prepare_and_activate(
-            app, python=Path("/native/python"), home=home,
-            launch=_launch(tmp_path, SHA), timeout_seconds=1,
+            app,
+            python=Path("/native/python"),
+            home=home,
+            launch=_launch(tmp_path, SHA),
+            timeout_seconds=1,
         )
     assert raised.value is failure
     assert len(attempts) == 1

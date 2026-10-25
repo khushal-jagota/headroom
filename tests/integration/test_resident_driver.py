@@ -194,6 +194,8 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
         "vps.example",
         "--executor-ssh-port",
         "2222",
+        "--executor-ssh-auth-mode",
+        "public_key",
         "--executor-ssh-user",
         "owner",
         "--executor-ssh-identity-file",
@@ -220,7 +222,10 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
     )
     assert result.returncode == 3, result.stderr.decode()
     assert json.loads(result.stdout) == {
-        "host": "mac", "requested_revision": revision, "disposition": "failed",
-        "observed_revision": None, "detail": "Native deployment did not complete",
+        "host": "mac",
+        "requested_revision": revision,
+        "disposition": "failed",
+        "observed_revision": None,
+        "detail": "Native deployment did not complete",
     }
     assert len(list((home / "Deployments/PanelsExecutor/staging").iterdir())) == 1

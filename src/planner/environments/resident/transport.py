@@ -336,8 +336,8 @@ class SshResidentDeployment:
             str(self.launch.ssh_port),
             "--executor-ssh-user",
             self.launch.ssh_user,
-            "--executor-ssh-identity-file",
-            str(self.launch.ssh_identity_file),
+            "--executor-ssh-auth-mode",
+            self.launch.ssh_auth_mode,
             "--executor-ssh-known-hosts",
             str(self.launch.ssh_known_hosts_file),
             "--panels-server-url",
@@ -347,6 +347,10 @@ class SshResidentDeployment:
             "--timeout-seconds",
             str(min(self.timeout_seconds, 60.0)),
         ]
+        if self.launch.ssh_identity_file is not None:
+            arguments += ["--executor-ssh-identity-file", str(self.launch.ssh_identity_file)]
+        if self.launch.tailscale_binary is not None:
+            arguments += ["--executor-tailscale-binary", str(self.launch.tailscale_binary)]
         if self.launch.backend_path is not None:
             arguments += ["--backend-path", self.launch.backend_path]
         if self.npm is not None:

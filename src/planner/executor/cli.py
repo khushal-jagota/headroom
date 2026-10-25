@@ -18,6 +18,8 @@ from planner.executor.contracts import (
     ExecutorSshConfig,
     IpcOperation,
     QuiesceRequest,
+    SshAuthenticationMode,
+    SshConfigurationError,
 )
 from planner.executor.ipc_client import request
 
@@ -32,9 +34,15 @@ def executor_group() -> None:
 @click.option("--ssh-port", type=click.IntRange(1, 65535), required=True)
 @click.option("--ssh-user", required=True)
 @click.option(
+    "--ssh-auth-mode",
+    type=click.Choice([mode.value for mode in SshAuthenticationMode]),
+    required=True,
+)
+@click.option("--tailscale-binary", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option(
     "--ssh-identity-file",
     type=click.Path(path_type=Path, exists=True, dir_okay=False),
-    required=True,
+    required=False,
 )
 @click.option(
     "--ssh-known-hosts", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
@@ -46,7 +54,9 @@ def run(
     ssh_host: str,
     ssh_port: int,
     ssh_user: str,
-    ssh_identity_file: Path,
+    ssh_identity_file: Path | None,
+    ssh_auth_mode: str,
+    tailscale_binary: Path | None,
     ssh_known_hosts: Path,
     application_revision: str,
     panels_server_url: str,
@@ -62,9 +72,21 @@ def run(
         raise click.ClickException("application revision must be the full lowercase source SHA")
     if ssh_host.startswith("-") or not ssh_host:
         raise click.ClickException("SSH host must name the resident-configured peer")
-    if not ssh_identity_file.is_absolute() or not ssh_known_hosts.is_absolute():
-        raise click.ClickException("SSH key and known_hosts paths must be absolute")
-    config = ExecutorSshConfig(ssh_host, ssh_port, ssh_user, ssh_identity_file, ssh_known_hosts)
+    from planner.executor.ssh import validate_ssh_config
+
+    config = ExecutorSshConfig(
+        ssh_host,
+        ssh_port,
+        ssh_user,
+        ssh_identity_file,
+        ssh_known_hosts,
+        SshAuthenticationMode(ssh_auth_mode),
+        tailscale_binary,
+    )
+    try:
+        validate_ssh_config(config)
+    except SshConfigurationError as error:
+        raise click.ClickException(str(error)) from error
     asyncio.run(
         MacExecutor(
             paths=executor_paths(),

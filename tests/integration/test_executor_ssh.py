@@ -6,6 +6,7 @@ import asyncio
 import os
 import socket
 import tempfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -165,6 +166,7 @@ def test_openssh_strict_host_key_and_no_ambient_auth(
             home = tmp_path / "home"
             (home / ".ssh").mkdir(parents=True)
             # A usable default identity must never rescue a wrong explicit key.
+            assert config.identity_file is not None
             (home / ".ssh" / "id_ed25519").write_bytes(config.identity_file.read_bytes())
             marker = tmp_path / "proxy-executed"
             (home / ".ssh" / "config").write_text(f"Host *\n ProxyCommand touch {marker}\n")
@@ -199,5 +201,105 @@ def test_openssh_strict_host_key_and_no_ambient_auth(
             finally:
                 agent_server.close()
                 await agent_server.wait_closed()
+
+    asyncio.run(exercise())
+
+
+def test_tailscale_no_challenge_handshake_and_original_identity_pins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real handshake exposes trivial-auth and numeric-address trust-union bugs."""
+    import time
+
+    from planner.executor import ssh
+    from planner.executor.contracts import (
+        ExecutorSshConfig,
+        SshAuthenticationMode,
+        ValidatedTailnetDestination,
+    )
+
+    class NoChallengeServer(asyncssh.SSHServer):
+        def begin_auth(self, username: str) -> bool:
+            return False
+
+    async def exercise() -> None:
+        key = generate_ephemeral_key()
+        wrong_key = generate_ephemeral_key()
+        server = await asyncssh.listen(
+            "127.0.0.1",
+            0,
+            server_factory=NoChallengeServer,
+            server_host_keys=[key],
+        )
+        known_hosts = tmp_path / "known_hosts"
+        binary = tmp_path / "tailscale"
+        binary.touch(mode=0o700)
+        config = ExecutorSshConfig(
+            "peer.example",
+            22,
+            "user",
+            None,
+            known_hosts,
+            SshAuthenticationMode.tailscale,
+            binary,
+        )
+        original_create_connection = asyncio.get_running_loop().create_connection
+        calls = []
+
+        async def numeric_dial(
+            factory: Callable[[], asyncio.Protocol],
+            host: str,
+            port: int,
+            *,
+            family: int,
+            flags: int,
+            local_addr: tuple[str, int] | None,
+        ) -> tuple[asyncio.Transport, asyncio.Protocol]:
+            assert host == "100.64.1.2" and port == 22
+            calls.append((host, port))
+            return await original_create_connection(
+                factory,
+                "127.0.0.1",
+                server.get_port(),
+                family=family,
+                flags=flags,
+                local_addr=local_addr,
+            )
+
+        async def validate(host: str, path: Path) -> ValidatedTailnetDestination:
+            assert host == "peer.example" and path == binary
+            return ValidatedTailnetDestination("node", "100.64.1.2")
+
+        # Keep AsyncSSH connection, host verification, and authentication real;
+        # only map the already-validated numeric socket dial to our local server.
+        monkeypatch.setattr(asyncio.get_running_loop(), "create_connection", numeric_dial)
+        monkeypatch.setattr(ssh, "validate_tailnet_destination", validate)
+        started = time.monotonic()
+        try:
+            known_hosts.write_bytes(b"peer.example " + key.export_public_key())
+            connection = await connect_outer(config)
+            await close_connection(connection)
+            for content in (
+                b"",  # Unknown original host.
+                b"peer.example " + wrong_key.export_public_key(),  # Changed key.
+                # An address pin must never rescue the conflicting original pin.
+                b"peer.example "
+                + wrong_key.export_public_key()
+                + b"100.64.1.2 "
+                + key.export_public_key(),
+                b"peer.example "
+                + key.export_public_key()
+                + b"@revoked peer.example "
+                + key.export_public_key(),
+            ):
+                known_hosts.write_bytes(content)
+                with pytest.raises(asyncssh.HostKeyNotVerifiable):
+                    await connect_outer(config)
+            assert len(calls) == 5
+            print(f"Connected Tailscale handshake and pin cases: {time.monotonic() - started:.3f}s")
+        finally:
+            server.close()
+            await server.wait_closed()
 
     asyncio.run(exercise())

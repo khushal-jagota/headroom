@@ -43,6 +43,7 @@ from planner.environments.resident.preflight import (
     versions_from_source,
 )
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.executor.contracts import SshAuthenticationMode
 
 SHA = "a" * 40
 
@@ -53,7 +54,14 @@ def _launch(root: Path, revision: str) -> ExecutorLaunchOptions:
     key.chmod(0o600)
     hosts.write_text("vps.example ssh-ed25519 fixture-pinned-host-key\n")
     return ExecutorLaunchOptions(
-        "vps.example", revision, "https://panels.example", 2222, "owner", key, hosts
+        "vps.example",
+        revision,
+        "https://panels.example",
+        2222,
+        "owner",
+        key,
+        hosts,
+        SshAuthenticationMode.public_key,
     )
 
 
@@ -470,6 +478,8 @@ def test_production_workflow_shell_refuses_before_lifecycle_and_vps_mutation(
         PANELS_EXECUTOR_SSH_HOST="vps.example",
         PANELS_EXECUTOR_SSH_PORT="2222",
         PANELS_EXECUTOR_SSH_USER="owner",
+        PANELS_EXECUTOR_SSH_AUTH_MODE="public_key",
+        PANELS_EXECUTOR_TAILSCALE_BINARY="",
         PANELS_EXECUTOR_SSH_IDENTITY_FILE=str(tmp_path / "executor-key"),
         PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE=str(tmp_path / "executor-hosts"),
         PANELS_EXECUTOR_SERVER_URL="https://panels.example",
@@ -586,6 +596,8 @@ def test_remote_cli_refuses_before_report_or_upload(
             "vps.example",
             "--executor-ssh-port",
             "2222",
+            "--executor-ssh-auth-mode",
+            "public_key",
             "--executor-ssh-user",
             "owner",
             "--executor-ssh-identity-file",
