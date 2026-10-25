@@ -359,9 +359,11 @@ class MacExecutor:
             temporary.unlink(missing_ok=True)
 
     async def _replay(self) -> None:
+        # Drain the pending prefix captured for this pass, not newly produced work.
         # Admit one head per conversation and refill capacity after every receipt.
         # A blocked conversation retains its bytes without stopping other heads.
         async with self._replay_lock:
+            ceilings = await asyncio.to_thread(self.spool.pending_sequence_ceilings)
             tasks: dict[asyncio.Task[bool], str] = {}
             blocked: set[str] = set()
 
@@ -382,7 +384,10 @@ class MacExecutor:
                 for envelope in await asyncio.to_thread(self.spool.pending_heads):
                     if len(tasks) >= SFTP_MAX_TRANSFERS:
                         break
-                    if envelope.conversation_id not in active | blocked:
+                    if (
+                        envelope.sequence <= ceilings.get(envelope.conversation_id, 0)
+                        and envelope.conversation_id not in active | blocked
+                    ):
                         tasks[asyncio.create_task(submit(envelope))] = envelope.conversation_id
                         active.add(envelope.conversation_id)
 

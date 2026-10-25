@@ -120,6 +120,13 @@ replays queued events. It also reconciles accepted submissions and recorded
 answers. A VPS restart restores the authoritative turn information
 needed to interpret those events.
 
+Each replay pass drains only the pending sequence prefix captured at its start,
+with one in-flight submission per conversation. New events stay durable for a
+later pass. Both passes before readiness use their own prefix, so new child
+output cannot extend either pass indefinitely. Each captured prefix still needs
+its ordinary delivery and receipts; there is no wall-clock readiness bound. After readiness,
+ordinary replay passes continue delivering the retained work in conversation order.
+
 An accepted answer and callback application are different durable facts. Panels
 saves the permission choice or complete question answer map before transmission.
 Reconciliation can give an old answer to its original surviving callback.

@@ -48,19 +48,30 @@ def contents(root: Path) -> dict[str, bytes | None]:
     }
 
 
-def test_indexed_heads_counts_and_permanent_sequence_ownership(tmp_path: Path) -> None:
+def test_indexed_heads_counts_and_permanent_sequence_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     spool = FilesystemSpool(tmp_path / "spool")
     rows = [
         spool.mint_envelope(conversation_id=c, kind=EnvelopeKind.cli_write, payload={"n": n})
         for c, n in (("c_b", 1), ("c_a", 1), ("c_b", 2), ("c_a", 2))
     ]
     assert spool.pending_heads() == (rows[1], rows[0])
+    with monkeypatch.context() as metadata_only:
+
+        def forbid_decode(*args: object, **kwargs: object) -> None:
+            raise AssertionError("sequence snapshot decoded an envelope")
+
+        metadata_only.setattr("planner.executor.journal.TypeAdapter", forbid_decode)
+        assert spool.pending_sequence_ceilings() == {"c_a": 2, "c_b": 2}
     assert spool.pending_count() == 4
     assert spool.has_pending() and spool.has_pending("c_a")
     assert not spool.has_pending("c_absent")
     spool.acknowledge(receipt(rows[1]))
     assert spool.pending_heads() == (rows[3], rows[0])
     assert spool.pending_count() == 3
+    spool.acknowledge(receipt(rows[3]))
+    assert spool.pending_sequence_ceilings() == {"c_b": 2}
     with pytest.raises(ValueError, match="sequence conflicts"):
         old = rows[1]
         identity = "other-id"

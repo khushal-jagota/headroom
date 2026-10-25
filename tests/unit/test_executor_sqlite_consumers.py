@@ -127,8 +127,9 @@ def test_mac_full_flush_failure_propagates_after_regular_flush(
     assert events == [("fsync", 17), ("fullfsync", 17)]
 
 
-def test_replay_drains_conversation_heads_and_quiescence_counts_without_full_inventory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("produce", [False, True])
+def test_replay_drains_captured_heads_and_quiescence_counts_without_full_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, produce: bool
 ) -> None:
     async def run() -> None:
         mac = MacExecutor(
@@ -149,6 +150,7 @@ def test_replay_drains_conversation_heads_and_quiescence_counts_without_full_inv
                 conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={}
             )
         visited: dict[str, list[int]] = {}
+        producing = produce
 
         def forbid_full_inventory() -> None:
             raise AssertionError("routine consumer decoded the entire queue")
@@ -159,6 +161,15 @@ def test_replay_drains_conversation_heads_and_quiescence_counts_without_full_inv
             sequence = payload["sequence"]
             assert isinstance(sequence, int)
             visited.setdefault(conversation, []).append(sequence)
+            if producing:
+                # Every receipt produces more work, so draining until empty cannot finish.
+                mac.spool.mint_envelope(
+                    conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={}
+                )
+                if not mac.spool.has_pending("c_new"):
+                    mac.spool.mint_envelope(
+                        conversation_id="c_new", kind=EnvelopeKind.cli_write, payload={}
+                    )
             receipt = AcceptanceReceipt(
                 str(payload["sender_id"]),
                 str(payload["submission_id"]),
@@ -174,8 +185,14 @@ def test_replay_drains_conversation_heads_and_quiescence_counts_without_full_inv
         try:
             assert mac.registry._quiescence_counts() == (0, 0, 0, 4)
             assert not mac.registry.inventory(mac.identity, include_pending=False).queued_envelopes
-            await mac._replay()
+            await asyncio.wait_for(mac._replay(), 2)
             assert visited == {"c_one": [1, 2], "c_two": [1, 2]}
+            if produce:
+                assert mac.spool.pending_sequence_ceilings() == {"c_new": 1, "c_one": 4, "c_two": 4}
+                # A later pass captures the retained suffix and the new conversation.
+                producing = False
+                await asyncio.wait_for(mac._replay(), 2)
+                assert visited == {"c_new": [1], "c_one": [1, 2, 3, 4], "c_two": [1, 2, 3, 4]}
             assert mac.registry._quiescence_counts() == (0, 0, 0, 0)
         finally:
             mac.spool.close()

@@ -32,6 +32,8 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
@@ -50,7 +52,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
-from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.executor.configuration import ExecutorPaths
@@ -64,9 +66,12 @@ from planner.executor.contracts import (
     ConnectionState,
     EnvelopeKind,
     ExecutorIdentity,
+    IpcOperation,
+    IpcRequest,
     JsonObject,
     JsonValue,
     QueuedEnvelope,
+    ReceiptDisposition,
     WireMessage,
     WireMessageKind,
 )
@@ -326,7 +331,9 @@ def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
     )
 
 
-async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
+async def boot(
+    root: Path, monkeypatch: pytest.MonkeyPatch, *, with_worker_ticket: bool = False
+) -> ExecutorHarness:
     from planner.executor import mac as mac_module
 
     monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
@@ -334,8 +341,25 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     vps_root.mkdir()
     db_path = str(vps_root / "panels.sqlite")
     connection = connect(db_path)
+    worker_ticket_id = "t_scripted"
     try:
         create_schema(connection)
+        if with_worker_ticket:
+            from planner.tickets import data
+            from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
+
+            ticket = data.create_ticket(
+                connection,
+                title="Reconnect worker",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=TITLE_MAX_CHARS,
+                locale=TicketLocale.macos,
+                employee_backend="codex",
+                employee_launch_model="scripted",
+            )
+            worker_ticket_id = ticket.id
     finally:
         connection.close()
     socket_path = root / "vps.sock"
@@ -394,7 +418,7 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
                 workspace_folder=root,
                 role_materials=ConversationRoleMaterials(
                     "A scripted test worker.",
-                    (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_scripted")),
+                    (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", worker_ticket_id)),
                 ),
             )
         )
@@ -404,7 +428,7 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
                 text_message_content("Start"),
                 sender_label="Test",
                 sender=CHIEF_PRINCIPAL,
-                recipient=Principal(PrincipalKind.ticket, "t_scripted"),
+                recipient=Principal(PrincipalKind.ticket, worker_ticket_id),
             ),
             5,
         )
@@ -456,6 +480,167 @@ def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(
             timing = harness.endpoint.store.action_timing(harness.ask)
             assert timing is not None and timing.unknown_reason == "action not observed"
         finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real receipts keep producing work until ready, without exhausting the queue."""
+    from planner.executor import mac as mac_module
+    from planner.tickets import data
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, with_worker_ticket=True)
+        first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
+        try:
+            child = next(iter(harness.mac.registry.children.values()))
+            assert child.ticket_id is not None and harness.native.sink is not None
+            sink = harness.native.sink
+            generation = harness.mac.identity.connection_generation
+            pass_number = 0
+            producing = True
+            produced: dict[int, list[QueuedEnvelope]] = {0: [], 1: [], 2: []}
+            accepted: list[tuple[QueuedEnvelope, AcceptanceReceipt]] = []
+            pre_ready: dict[int, list[QueuedEnvelope]] = {1: [], 2: []}
+            retained_at_ready: list[QueuedEnvelope] = []
+            send = harness.endpoint._send
+            request = harness.mac._request
+            accept = harness.endpoint._accept_envelope
+
+            async def catalog() -> None:
+                number = sum(len(entries) for entries in produced.values())
+                # An old drain-until-empty implementation fails promptly, rather
+                # than running a background producer indefinitely after timeout.
+                assert number < 24, "pre-ready replay kept admitting newly produced heads"
+                await sink.composer_catalog_reported(
+                    (
+                        ComposerCatalogEntry(
+                            ComposerCatalogEntryKind.command,
+                            f"/catalog_{number}",
+                            f"/catalog_{number}",
+                            "Reconnect production",
+                        ),
+                    )
+                )
+                produced[pass_number].append(harness.mac.spool.pending()[-1])
+
+            async def observe_request(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+                nonlocal pass_number
+                response = await request(kind, payload)
+                if (
+                    harness.mac.identity.connection_generation > generation
+                    and kind is WireMessageKind.reconcile_inventory
+                    and not payload["children"]
+                    and not payload["retained_command_outcomes"]
+                    and pass_number < 2
+                ):
+                    pass_number += 1
+                    if pass_number == 1:
+                        first_inventory.set()
+                        await release_inventory.wait()
+                return response
+
+            async def observe_accept(
+                envelope: QueuedEnvelope, identity: ExecutorIdentity
+            ) -> AcceptanceReceipt:
+                receipt = await accept(envelope, identity)
+                accepted.append((envelope, receipt))
+                if producing:
+                    pre_ready[pass_number].append(envelope)
+                return receipt
+
+            async def producing_send(message: WireMessage) -> None:
+                nonlocal producing
+                if message.kind is WireMessageKind.receipt and producing:
+                    await catalog()
+                if message.kind is WireMessageKind.reconciliation_ready:
+                    retained_at_ready.extend(harness.mac.spool.pending())
+                await send(message)
+                if message.kind is WireMessageKind.reconciliation_ready:
+                    producing = False
+
+            monkeypatch.setattr(harness.mac, "_request", observe_request)
+            monkeypatch.setattr(harness.endpoint, "_accept_envelope", observe_accept)
+            monkeypatch.setattr(harness.endpoint, "_send", producing_send)
+            assert harness.endpoint.writer is not None
+            harness.endpoint.writer.close()
+            await asyncio.wait_for(first_inventory.wait(), 5)
+            await catalog()
+            # Submit through the authenticated native Worker path while reconnect
+            # is paused at a real inventory response, before either replay pass.
+            monkeypatch.setattr(mac_module, "CLI_RESULT_TIMEOUT_SECONDS", 0.02)
+            response = await harness.mac.handle_ipc(
+                IpcRequest(
+                    "queued_reconnect_recap",
+                    IpcOperation.write,
+                    child.reference.child_id,
+                    child.capability,
+                    {
+                        "operation": "ticket.edit",
+                        "arguments": {
+                            "ticket_id": child.ticket_id,
+                            "body": {"recap": "Durable reconnect result"},
+                        },
+                    },
+                )
+            )
+            assert response.queued is not None and response.error is None
+            write = next(
+                entry
+                for entry in harness.mac.spool.pending()
+                if entry.submission_id == response.queued.submission_id
+            )
+            release_inventory.set()
+            await eventually(
+                lambda: harness.mac.state is ConnectionState.ready and bool(retained_at_ready),
+                "Continuous production prevented readiness with retained work",
+            )
+            assert pass_number == 2
+            assert produced[1] and produced[2]
+            assert {write.submission_id, produced[1][0].submission_id} <= {
+                entry.submission_id for entry in pre_ready[1]
+            }
+            assert {entry.submission_id for entry in produced[1][1:]} <= {
+                entry.submission_id for entry in pre_ready[2]
+            }
+            # First-pass additions join pass two; second-pass additions survive
+            # both passes and are still pending when the ready response is sent.
+            assert {entry.submission_id for entry in produced[2]} <= {
+                entry.submission_id for entry in retained_at_ready
+            }
+            await eventually(
+                lambda: not harness.mac.spool.pending(), "retained suffix did not drain after ready"
+            )
+            sequences = [entry.sequence for entry, _ in accepted]
+            assert sequences == sorted(set(sequences))
+            assert {entry.submission_id for entries in produced.values() for entry in entries} <= {
+                entry.submission_id for entry, _ in accepted
+            }
+            receipt = harness.endpoint.store.lookup_receipt(write.sender_id, write.submission_id)
+            assert receipt is not None and receipt.disposition is ReceiptDisposition.accepted
+            assert receipt.payload_sha256 == write.payload_sha256
+            connection = connect(harness.endpoint.db_path)
+            try:
+                ticket = data.read_ticket(connection, child.ticket_id)
+                assert ticket.recap == "Durable reconnect result"
+            finally:
+                connection.close()
+            # A repeated delivery returns the immutable first receipt rather than
+            # executing the canonical writer a second time.
+            from planner.executor import vps as vps_module
+
+            def duplicate_effect(*arguments: object, **keywords: object) -> JsonObject:
+                raise AssertionError("duplicate submission invoked the canonical writer")
+
+            monkeypatch.setattr(vps_module, "write_ticket_mutation", duplicate_effect)
+            assert await harness.endpoint.accept_envelope(write, harness.mac.identity) == receipt
+            assert harness.native.start_count == harness.native.prompt_count == 1
+            assert next(iter(harness.mac.registry.children.values())) is child
+        finally:
+            release_inventory.set()
             await harness.close()
 
     asyncio.run(run())

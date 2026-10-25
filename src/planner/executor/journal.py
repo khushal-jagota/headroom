@@ -325,6 +325,15 @@ class FilesystemSpool:
                 )
             )
 
+    def pending_sequence_ceilings(self) -> dict[str, int]:
+        with self._lock:
+            return dict(
+                self._db.execute(
+                    "SELECT conversation_id, MAX(sequence) FROM envelopes "
+                    "WHERE pending=1 GROUP BY conversation_id"
+                )
+            )
+
     def pending_count(self) -> int:
         with self._lock:
             return int(
