@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter
+from tests.support.executor_turns import persist_pending_turn
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
 from planner.core.contracts import PlannerError
 from planner.core.db import connect
 from planner.core.migrations.versions.executor_authoritative_acceptance import STATEMENTS
+from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AnswerApplication,
@@ -72,6 +74,14 @@ def store(tmp_path: Path) -> ExecutorStore:
         connection.close()
     result = ExecutorStore(path)
     result.begin_connection(IDENTITY, 1000)
+    persist_pending_turn(
+        result,
+        PERMISSION,
+        REQUEST,
+        runtime_overrides={
+            "pending_user_input_questions": {REQUEST.ask_id: encode_value(QUESTIONS)},
+        },
+    )
     return result
 
 
@@ -155,7 +165,7 @@ def test_original_questions_are_immutable_nonempty_unique(store: ExecutorStore) 
         )
 
 
-def test_input_callback_liveness_is_exact_and_answer_survives_missing_callback(
+def test_input_callback_liveness_is_exact_and_terminal(
     store: ExecutorStore,
 ) -> None:
     store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
@@ -169,10 +179,23 @@ def test_input_callback_liveness_is_exact_and_answer_survives_missing_callback(
     store.mark_ready(IDENTITY, 1002)
     evidence = store.ask_evidence(REQUEST)
     assert evidence is not None and evidence.reachability == AskReachability.callback_gone
-    with pytest.raises(PlannerError, match="unconfirmed"):
+    with pytest.raises(PlannerError, match="closed or unknown"):
         store.choose_user_input_answer(REQUEST, ANSWERS, 1, 1003)
+    # A terminal callback cannot be revived by a later inventory.
     ready(store)
-    answer = store.choose_user_input_answer(REQUEST, ANSWERS, 1, 1010)
+    evidence = store.ask_evidence(REQUEST)
+    assert evidence is not None and evidence.reachability == AskReachability.callback_gone
+    assert store.recorded_answer(REQUEST) is None
+
+
+def test_complete_map_first_selection_after_loss_survives_restart_and_closure(
+    store: ExecutorStore,
+) -> None:
+    store.publish_user_input_request(REQUEST, QUESTIONS, 1000)
+    ready(store)
+    store.mark_lost(IDENTITY, 1003)
+    answer = store.choose_user_input_answer(REQUEST, tuple(reversed(ANSWERS)), 999, 1010)
+    assert answer.user_input_answers == ANSWERS
     store.mark_lost(IDENTITY, 1011)
     replacement = replace(IDENTITY, connection_generation=2)
     store.begin_connection(replacement, 9999999)
@@ -191,7 +214,9 @@ def test_input_callback_liveness_is_exact_and_answer_survives_missing_callback(
         ),
         10000002,
     )
-    assert result.answers == (answer,)
+    assert result.answers == ()
+    evidence = restored.ask_evidence(REQUEST)
+    assert evidence is not None and evidence.reachability == AskReachability.child_gone
     application = AnswerApplication(answer.answer_id, REQUEST, 10000003)
     restored.record_application(application, identity=replacement)
     restored.record_application(application, identity=replacement)

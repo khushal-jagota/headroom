@@ -34,7 +34,8 @@ import { queryClient } from "../src/lib/queryClient";
 let generation = 4;
 let reachability = "reachable";
 let kind = "permission";
-let answer: any = null;
+let answer: any = JSON.parse(sessionStorage.getItem("saved-answer") ?? "null");
+let wrongChild = false;
 let applied = false;
 let hold = false;
 let finish: (() => void) | null = null;
@@ -43,15 +44,15 @@ const turn = {conversation_id: "conversation", turn_number: 1};
 const options = [{option_id:"yes",label:"Yes",option_kind:"choice"}];
 const questions = [{question_id:"q1",header:"First",question:"Choose first",options:[{label:"One",description:""}],multi_select:false,allow_other:true},{question_id:"q2",header:"Second",question:"Choose second",options:[{label:"Two",description:""}],multi_select:false,allow_other:true}];
 let events: any[] = [{conversation_id:"conversation",sequence:1,kind:"prompt",payload:{text:"Work",sender_label:"owner",mode:"queue"},created_at:1},{conversation_id:"conversation",sequence:2,kind:"permission_asked",payload:{ask_id:"ask",title:"Allow?",detail:null,options},created_at:1}];
-const evidence = () => ({ask:{child,turn,ask_id:kind === "permission" ? "ask" : "questions",kind},connection_generation:generation,reachability,observed_at_ms:10,answer_id:answer?.answer_id ?? null,applied_at_mac_ms:applied ? 20 : null});
-const snapshot = () => ({conversation_id:"conversation",backend_key:"codex",supports_steer:false,model:null,reasoning_effort:null,workspace_folder:"/workspace",access:"full",role_text:null,identity_environment_variable_names:[],latest_sequence:events.length,owner_read_through_sequence:0,is_running:true,held_prompts:[],composer_catalog:[],executor_context:{child,turn},executor_asks:[{evidence:evidence(),answer}],pending_permission_ask:kind === "permission" ? {ask_id:"ask",title:"Allow?",detail:null,options,answer_available:reachability === "reachable" && answer === null,executor_evidence:evidence()}:null,pending_user_input:kind === "user_input" ? {request_id:"questions",questions,answer_available:reachability === "reachable" && answer === null,executor_evidence:evidence()}:null});
-let health: any = {mode:"remote",identity:{executor_incarnation:"mac",connection_generation:4},connection_state:"ready",reconciliation_ready:true,last_contact_at_ms:100,last_contact_source:"vps_received_valid_executor_frame"};
+const evidence = () => ({ask:{child:wrongChild ? {...child,child_id:"replacement"}:child,turn,ask_id:kind === "permission" ? "ask" : "questions",kind},connection_generation:generation,reachability,observed_at_ms:10,answer_id:answer?.answer_id ?? null,applied_at_mac_ms:applied ? 20 : null});
+const snapshot = () => ({conversation_id:"conversation",backend_key:"codex",supports_steer:false,model:null,reasoning_effort:null,workspace_folder:"/workspace",access:"full",role_text:null,identity_environment_variable_names:[],latest_sequence:events.length,owner_read_through_sequence:0,is_running:true,held_prompts:[],composer_catalog:[],executor_context:{child,turn},executor_asks:[{evidence:evidence(),answer}],pending_permission_ask:kind === "permission" ? {ask_id:"ask",title:"Allow?",detail:null,options,answer_available:(reachability === "reachable" || reachability === "uncertain") && answer === null,executor_evidence:evidence()}:null,pending_user_input:kind === "user_input" ? {request_id:"questions",questions,answer_available:(reachability === "reachable" || reachability === "uncertain") && answer === null,executor_evidence:evidence()}:null});
+let health: any = {mode:"remote",identity:null,connection_state:"disconnected",reconciliation_ready:false,last_contact_at_ms:100,last_contact_source:"vps_received_valid_executor_frame"};
 (window as any).__posts = [];
 (window as any).__setHealth = (next: any) => {health={...health,...next};queryClient.setQueryData(["executor-health"],health);};
-(window as any).__evidence = async (next: any) => {if(next.generation !== undefined) generation=next.generation;if(next.reachability !== undefined) reachability=next.reachability;if(next.applied !== undefined) applied=next.applied;await queryClient.invalidateQueries({queryKey:["executor-health"]});};
+(window as any).__evidence = async (next: any) => {if(next.wrongChild !== undefined) wrongChild=next.wrongChild;if(next.generation !== undefined) generation=next.generation;if(next.reachability !== undefined) reachability=next.reachability;if(next.applied !== undefined) applied=next.applied;await queryClient.invalidateQueries({queryKey:["executor-health"]});};
 (window as any).__hold = () => {hold=true;};
 (window as any).__release = () => {hold=false;finish?.();};
-(window as any).__questions = async () => {kind="user_input";answer=null;events.push({conversation_id:"conversation",sequence:3,kind:"permission_answered",payload:{ask_id:"ask",option_id:"yes"},created_at:1},{conversation_id:"conversation",sequence:4,kind:"user_input_requested",payload:{request_id:"questions",questions},created_at:1});for(const row of events.slice(2)) source?.emit("conversation-event",row);await queryClient.invalidateQueries({queryKey:["executor-health"]});};
+(window as any).__questions = async () => {kind="user_input";answer=null;reachability="uncertain";applied=false;events.push({conversation_id:"conversation",sequence:3,kind:"permission_answered",payload:{ask_id:"ask",option_id:"yes"},created_at:1},{conversation_id:"conversation",sequence:4,kind:"user_input_requested",payload:{request_id:"questions",questions},created_at:1});for(const row of events.slice(2)) source?.emit("conversation-event",row);await queryClient.invalidateQueries({queryKey:["executor-health"]});};
 (globalThis as any).fetch = async (input: any, init?: RequestInit) => {
  const url=String(input);
  if(url === "/api/executor/health") return Response.json(health);
@@ -60,6 +61,7 @@ let health: any = {mode:"remote",identity:{executor_incarnation:"mac",connection
  if(url.endsWith("/permission-answers") || url.endsWith("/user-input-answers")) {
   (window as any).__posts.push(JSON.parse(String(init?.body)));
   answer={answer_id:"answer",ask:evidence().ask,accepted_at_vps_ms:15};
+  sessionStorage.setItem("saved-answer",JSON.stringify(answer));
   return Response.json({landed:true});
  }
  if(url.endsWith("/conversations/conversation")) {if(hold) await new Promise<void>((resolve)=>finish=resolve);return Response.json(snapshot());}
@@ -112,50 +114,69 @@ with sync_playwright() as p:
     page.goto(sys.argv[1], wait_until="domcontentloaded")
     allow = page.locator('[data-conversation-ask-choice=yes]')
     expect(allow).to_be_enabled()
-    page.evaluate("window.__setHealth({connection_state:'disconnected',reconciliation_ready:false})")
+    page.evaluate("window.__setHealth({connection_state:'disconnected',reconciliation_ready:false,identity:null})")
+    page.evaluate("window.__evidence({reachability:'uncertain',generation:1})")
+    expect(allow).to_be_enabled()
+    # The persisted snapshot remains usable after VPS restart without Mac health.
+    page.evaluate("window.__evidence({wrongChild:true})")
     expect(allow).to_be_disabled()
     page.evaluate("document.querySelector('[data-conversation-ask-choice=yes]').dispatchEvent(new Event('click',{bubbles:true}))")
     page.keyboard.press("1")
     assert page.evaluate("window.__posts.length") == 0
-    # A newly ready connection cannot attest a request in an older generation.
-    page.evaluate("window.__setHealth({connection_state:'ready',reconciliation_ready:true,identity:{executor_incarnation:'mac',connection_generation:5}})")
+    page.evaluate("window.__evidence({wrongChild:false,reachability:'callback_gone'})")
     expect(allow).to_be_disabled()
-    # Even matching evidence cannot enable a control before its snapshot arrives.
-    page.evaluate("window.__hold(); void window.__evidence({generation:5})")
-    expect(allow).to_be_disabled()
-    page.evaluate("window.__release()")
+    page.evaluate("window.__evidence({reachability:'uncertain'})")
     expect(allow).to_be_enabled()
     page.keyboard.press("1")
     expect(allow).to_be_disabled()
-    expect(page.locator('[data-conversation-ask-note]')).to_contain_text('Answer recorded on VPS')
-    page.evaluate("window.__setHealth({connection_state:'disconnected',reconciliation_ready:false})")
-    expect(page.locator('[data-conversation-ask-note]')).to_contain_text('Answer recorded on VPS')
-    page.evaluate("window.__setHealth({connection_state:'ready',reconciliation_ready:true})")
+    expect(page.locator('[data-conversation-ask-note]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    reference = {"child":{"executor_incarnation":"mac","child_id":"child","conversation_id":"conversation"},"turn":{"conversation_id":"conversation","turn_number":1},"ask_id":"ask","kind":"permission"}
+    assert page.evaluate("window.__posts[0]") == {"ask_id":"ask","option_id":"yes","executor_ask":reference}
+    if len(sys.argv) > 2 and sys.argv[2]:
+        page.screenshot(path=sys.argv[2], full_page=True)
+    page.reload(wait_until="domcontentloaded")
+    expect(allow).to_be_disabled()
+    expect(page.locator('[data-conversation-ask-note]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    page.evaluate("window.__evidence({reachability:'callback_gone'})")
+    expect(page.locator('[data-conversation-ask-note]')).to_contain_text('original Mac request is gone')
+    expect(allow).to_be_disabled()
     page.evaluate("window.__evidence({applied:true})")
     expect(page.locator('[data-conversation-ask-note]')).to_have_text('Answer applied on Mac.')
-    page.evaluate("window.__questions()")
+    page.evaluate("window.__hold(); void window.__questions()")
     one = page.locator('[data-user-input-option="One"]')
+    expect(one).to_be_disabled()
+    page.evaluate("window.__release()")
     expect(one).to_be_enabled()
+    if len(sys.argv) > 3 and sys.argv[3]:
+        page.screenshot(path=sys.argv[3], full_page=True)
     one.click()
     page.locator('[data-user-input-continue]').click()
     page.locator('[data-user-input-option="Two"]').click()
-    # Keep the multi-question draft but require exact evidence before submit.
-    page.evaluate("window.__evidence({reachability:'uncertain'})")
+    # Keep the multi-question draft across outage and snapshot refresh.
+    page.evaluate("window.__setHealth({connection_state:'disconnected',reconciliation_ready:false,identity:null}); window.__evidence({reachability:'uncertain',applied:false})")
     submit = page.locator('[data-user-input-continue]')
+    expect(submit).to_be_enabled()
+    page.evaluate("window.__evidence({wrongChild:true})")
     expect(submit).to_be_disabled()
     page.evaluate("document.querySelector('[data-user-input-continue]').dispatchEvent(new Event('click',{bubbles:true}))")
-    assert page.evaluate("window.__posts.length") == 1
-    page.evaluate("window.__evidence({reachability:'reachable'})")
+    assert page.evaluate("window.__posts.length") == 0
+    page.evaluate("window.__evidence({wrongChild:false})")
     expect(submit).to_be_enabled()
     submit.click()
     expect(submit).to_be_disabled()
-    assert page.evaluate("window.__posts[1].answers") == {"q1":{"answers":["One"]},"q2":{"answers":["Two"]}}
+    assert page.evaluate("window.__posts[0].answers") == {"q1":{"answers":["One"]},"q2":{"answers":["Two"]}}
+    reference["kind"] = "user_input"
+    reference["ask_id"] = "questions"
+    assert page.evaluate("window.__posts[0].executor_ask") == reference
+    page.evaluate("window.__evidence({reachability:'child_gone'})")
+    expect(page.locator('[data-user-input-panel] [role=alert]')).to_contain_text('original Mac request is gone')
     browser.close()
 print("executor-ask-evidence-browser.test.mjs: all assertions passed")
 `;
+  const browserStartedAt = performance.now();
   const probe = spawn(
     join(repositoryRoot, ".venv", "bin", "python"),
-    ["-c", browserScript, url],
+    ["-c", browserScript, url, process.env.PANELS_OFFLINE_ANSWER_SCREENSHOT ?? "", process.env.PANELS_OFFLINE_QUESTION_SCREENSHOT ?? ""],
     { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] }
   );
   let output = "";
@@ -164,7 +185,7 @@ print("executor-ask-evidence-browser.test.mjs: all assertions passed")
   const exitCode = await new Promise((resolve) => probe.on("close", resolve));
   assert.equal(exitCode, 0, output);
   assert.match(output, /executor-ask-evidence-browser\.test\.mjs: all assertions passed/);
-  console.log("executor-ask-evidence-browser.test.mjs: all assertions passed");
+  console.log(`executor-ask-evidence-browser.test.mjs: all assertions passed (${((performance.now() - browserStartedAt) / 1000).toFixed(2)}s browser elapsed)`);
 } finally {
   serverProcess?.kill();
   await rm(hostPath, { force: true });

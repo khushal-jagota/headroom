@@ -641,8 +641,16 @@ turn, and an unanswered ask dies — visibly — when its turn ends.
 
 For a remote child, the VPS saves the selected choice before transmission and
 records callback application separately. A dropped connection supplies no answer
-or refusal. Current evidence for the exact callback gates new selections.
-Reconciliation recovers recorded choices after reconnect. See
+or refusal. An owner can save a new choice during the outage if the exact persisted
+child, turn, and callback remain open and pending. The request carries the original
+`executor_ask` reference from the snapshot. A remote `{landed: true}` confirms
+VPS acceptance; the UI says "Answer saved on VPS; delivery to Mac is pending."
+Only matching application evidence says "Answer applied on Mac." Fresh evidence
+of the original callback gates delivery after reconnect. A restart preserves the
+pending form or saved answer before inventory returns. Cancellation persists
+closure before waiting for the Mac; an ended or replaced turn cannot receive the
+saved answer. Such an answer stays saved and unresolved. A prior transmission
+can still receive its application acknowledgment after closure. See
 [the Mac executor](executor.md) for this boundary and its timing limitations.
 
 Agent question requests keep every question in order, including

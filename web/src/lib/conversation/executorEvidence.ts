@@ -1,13 +1,11 @@
-import type { ExecutorHealth, TicketLocale } from "../ticketMachines";
-import { macActivityKnown } from "../ticketMachines";
+import type { TicketLocale } from "../ticketMachines";
 import type { ConversationView, ExecutorAskEvidence, ExecutorAskRecord } from "./wire";
 
-/** A snapshot authorizes only its exact live callback. Connection health alone never does. */
+/** A current pending snapshot authorizes durable acceptance for its exact callback. */
 export function executorAnswerAvailable(
   view: ConversationView | null,
   kind: "permission" | "user_input",
   askId: string | undefined,
-  health: ExecutorHealth | undefined,
   locale: TicketLocale | undefined,
   snapshotCurrent = true
 ): boolean {
@@ -16,18 +14,15 @@ export function executorAnswerAvailable(
   const remote = locale === "macos" || view.executor_context != null
     || pending?.answer_available !== undefined;
   if (!remote) return true;
-  if (!snapshotCurrent || !macActivityKnown(health) || !view.is_running || !pending) return false;
+  if (!snapshotCurrent || !view.is_running || !pending) return false;
   if (("ask_id" in pending ? pending.ask_id : pending.request_id) !== askId) return false;
   const evidence = pending.executor_evidence;
   const context = view.executor_context;
-  const identity = health?.identity;
   return Boolean(
-    pending.answer_available === true && evidence && context?.turn && identity
-    && evidence.reachability === "reachable" && evidence.answer_id === null
-    && evidence.connection_generation === identity.connection_generation
+    pending.answer_available === true && evidence && context?.turn
+    && (evidence.reachability === "reachable" || evidence.reachability === "uncertain") && evidence.answer_id === null
     && evidence.ask.kind === kind && evidence.ask.ask_id === askId
     && evidence.ask.child.conversation_id === view.conversation_id
-    && evidence.ask.child.executor_incarnation === identity.executor_incarnation
     && evidence.ask.child.executor_incarnation === context.child.executor_incarnation
     && evidence.ask.child.child_id === context.child.child_id
     && evidence.ask.child.conversation_id === context.child.conversation_id
@@ -76,7 +71,9 @@ export function executorAnswerSentence(record: ExecutorAskRecord | undefined): s
   return record.evidence.applied_at_mac_ms !== null
     && record.evidence.answer_id === record.answer.answer_id
     ? "Answer applied on Mac."
-    : "Answer recorded on VPS; application on Mac is unconfirmed.";
+    : record.evidence.reachability === "child_gone" || record.evidence.reachability === "callback_gone"
+      ? "Answer saved on VPS; the original Mac request is gone. Application is unconfirmed."
+      : "Answer saved on VPS; delivery to Mac is pending.";
 }
 
 export const EXECUTOR_ASK_UNCERTAIN = "This request is still pending. Its current availability on Mac is unknown.";

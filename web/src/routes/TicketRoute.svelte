@@ -529,7 +529,7 @@
   .ticket-machine-notice { position:sticky; top:var(--space-7); z-index:3; }
   .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
   .ticket-col { padding-top:0; }
-  .ticket-doc { scrollbar-gutter:auto; }
+  .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }

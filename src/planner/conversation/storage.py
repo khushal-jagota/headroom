@@ -22,11 +22,11 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable, Collection, Coroutine
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from planner.conversation.backends.contracts import BackendSpawnFailed
+from planner.conversation.backends.contracts import BackendSpawnFailed, TurnToken
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -55,6 +55,7 @@ from planner.conversation.events import (
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
+from planner.executor.contracts import ChildReference
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
@@ -1209,6 +1210,8 @@ class ConversationStore:
         ):
             current = json.loads(metadata[2])
             committed = json.loads(previous[2])
+            if committed.get("callbacks_revoked"):
+                current["callbacks_revoked"] = True
             recipients = current["explicit_reply_recipients"]
             for recipient in committed["explicit_reply_recipients"]:
                 if recipient not in recipients:
@@ -1221,6 +1224,19 @@ class ConversationStore:
             "child_json=excluded.child_json,turn_json=excluded.turn_json,runtime_json=excluded.runtime_json",
             (conversation_id, *metadata),
         )
+        if json.loads(metadata[2]).get("ended"):
+            token = json.loads(metadata[1])
+            for row in conn.execute(
+                "SELECT ask_key,reference_json FROM executor_asks WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchall():
+                reference = json.loads(row[1])
+                if reference["turn"] == token and reference["child"] == json.loads(metadata[0]):
+                    conn.execute(
+                        "UPDATE executor_asks SET reachability='callback_gone' "
+                        "WHERE ask_key=? AND reachability IN ('reachable','uncertain')",
+                        (row[0],),
+                    )
 
     @staticmethod
     def credit_executor_reply_in_transaction(
@@ -1267,6 +1283,50 @@ class ConversationStore:
                             "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
                             (json.dumps(runtime), conversation_id),
                         )
+            finally:
+                conn.close()
+
+        await self._write(write)
+
+    async def revoke_executor_turn_asks(self, child: ChildReference, turn: TurnToken) -> None:
+        """Close callbacks before a remote cancellation can await transport."""
+
+        def write() -> None:
+            conn = self._connect()
+            try:
+                with conn:
+                    context = conn.execute(
+                        "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
+                        "WHERE conversation_id=?",
+                        (child.conversation_id,),
+                    ).fetchone()
+                    if (
+                        context is not None
+                        and json.loads(context[0]) == asdict(child)
+                        and json.loads(context[1]) == asdict(turn)
+                    ):
+                        runtime = json.loads(context[2])
+                        runtime["callbacks_revoked"] = True
+                        conn.execute(
+                            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                            (json.dumps(runtime), child.conversation_id),
+                        )
+                    for row in conn.execute(
+                        "SELECT ask_key,reference_json FROM executor_asks WHERE conversation_id=?",
+                        (child.conversation_id,),
+                    ).fetchall():
+                        reference = json.loads(row[1])
+                        token = reference["turn"]
+                        if (
+                            reference["child"] == asdict(child)
+                            and token["conversation_id"] == turn.conversation_id
+                            and token["turn_number"] == turn.turn_number
+                        ):
+                            conn.execute(
+                                "UPDATE executor_asks SET reachability='callback_gone' "
+                                "WHERE ask_key=? AND reachability IN ('reachable','uncertain')",
+                                (row[0],),
+                            )
             finally:
                 conn.close()
 

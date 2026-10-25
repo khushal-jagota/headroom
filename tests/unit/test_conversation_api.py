@@ -24,6 +24,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.executor_turns import persist_pending_turn
 from tests.support.principals import OWNER_PRINCIPAL
 
 import planner.conversation.api as conversation_api
@@ -1285,6 +1286,147 @@ def test_an_answer_lands_once_and_then_has_nothing_left_to_land_on(
     _run(exercise)
 
 
+@pytest.mark.parametrize("kind", ["permission", "user_input"])
+def test_remote_answer_requires_original_reference_and_accepts_first_choice_offline(
+    harness: _Harness,
+    kind: str,
+) -> None:
+    from dataclasses import replace
+
+    from planner.core.clock import RealClock
+    from planner.executor.codec import encode_value
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.executor.contracts import AskKind, AskReference, ChildReference, ExecutorIdentity
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            endpoint = ExecutorEndpoint(str(harness.db_path), RealClock())
+            harness.runtime = replace(harness.runtime, executor_endpoint=endpoint)
+            harness.app.state.conversation = harness.runtime
+            identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
+            endpoint.store.begin_connection(identity, 100)
+            ask = AskReference(
+                ChildReference("inc", "child", "c"), TurnToken("c", 1), "ask", AskKind(kind)
+            )
+            persist_pending_turn(endpoint.store, ask)
+            if kind == "permission":
+                endpoint.store.publish_ask(ask, ("allow", "deny"), 100)
+                route = "permission-answers"
+                body: dict[str, Any] = {"ask_id": "ask", "option_id": "allow"}
+            else:
+                questions = (UserInputQuestion("q", "Question", "Choose", (), False, True),)
+                persist_pending_turn(
+                    endpoint.store,
+                    ask,
+                    runtime_overrides={
+                        "pending_user_input_questions": {ask.ask_id: encode_value(questions)},
+                    },
+                )
+                endpoint.store.publish_user_input_request(ask, questions, 100)
+                route = "user-input-answers"
+                body = {"request_id": "ask", "answers": {"q": {"answers": ["answer"]}}}
+            endpoint.store.mark_lost(identity, 101)
+            path = f"/api/conversation/conversations/c/{route}"
+            # Neither an ID nor an identity partly copied from another ask grants admission.
+            assert (await client.post(path, json=body)).json() == {"landed": False}
+            mismatches = (
+                replace(ask, ask_id="other"),
+                replace(
+                    ask,
+                    child=replace(ask.child, conversation_id="elsewhere"),
+                    turn=TurnToken("elsewhere", 1),
+                ),
+                replace(
+                    ask, kind=AskKind.user_input if kind == "permission" else AskKind.permission
+                ),
+                replace(ask, child=replace(ask.child, child_id="replacement")),
+                replace(ask, turn=TurnToken("c", 2)),
+                replace(ask, child=replace(ask.child, executor_incarnation="replacement")),
+            )
+            for mismatch in mismatches:
+                response = await client.post(
+                    path, json={**body, "executor_ask": encode_value(mismatch)}
+                )
+                assert response.status_code == 200, response.text
+                assert response.json() == {"landed": False}
+            assert endpoint.store.recorded_answer(ask) is None
+            malformed = encode_value(ask)
+            assert isinstance(malformed, dict)
+            malformed["unexpected"] = True
+            assert (
+                await client.post(path, json={**body, "executor_ask": malformed})
+            ).status_code == 422
+            malformed = encode_value(ask)
+            assert isinstance(malformed, dict) and isinstance(malformed["turn"], dict)
+            malformed["turn"]["turn_number"] = "1"
+            assert (
+                await client.post(path, json={**body, "executor_ask": malformed})
+            ).status_code == 422
+            exact = {**body, "executor_ask": encode_value(ask)}
+            for actor in ("chief", "worker"):
+                headers = {"X-Plan-Actor": actor, "X-Plan-Ticket-ID": "test-ticket"}
+                with pytest.raises(PlannerError, match="only to the owner"):
+                    await client.post(path, json=exact, headers=headers)
+            assert endpoint.store.recorded_answer(ask) is None
+            response = await client.post(path, json=exact)
+            assert response.status_code == 200 and response.json() == {"landed": True}
+            answer = endpoint.store.recorded_answer(ask)
+            assert answer is not None
+            evidence = endpoint.store.ask_evidence(ask)
+            assert evidence is not None and evidence.applied_at_mac_ms is None
+            endpoint.store.close_child(ask.child, 102)
+            assert (await client.post(path, json=exact)).json() == {"landed": True}
+            assert endpoint.store.recorded_answer(ask) == answer
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("kind", ["permission", "user_input"])
+def test_remote_reference_never_falls_through_to_local_callback(
+    harness: _Harness,
+    kind: str,
+) -> None:
+    from planner.executor.codec import encode_value
+    from planner.executor.contracts import AskKind, AskReference, ChildReference
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                },
+            )
+            if kind == "permission":
+                ask_id = await harness.raise_permission_ask("c")
+                path = "/api/conversation/conversations/c/permission-answers"
+                body: dict[str, Any] = {"ask_id": ask_id, "option_id": "allow-once"}
+            else:
+                request = await harness.request_user_input("c")
+                ask_id = request.request_id
+                path = "/api/conversation/conversations/c/user-input-answers"
+                body = {
+                    "request_id": ask_id,
+                    "answers": {
+                        "where": {"answers": ["Local"]},
+                        "why": {"answers": ["because"]},
+                    },
+                }
+            ask = AskReference(
+                ChildReference("inc", "child", "c"), TurnToken("c", 1), ask_id, AskKind(kind)
+            )
+            response = await client.post(path, json={**body, "executor_ask": encode_value(ask)})
+            assert response.status_code == 200 and response.json() == {"landed": False}
+            assert harness.backend("c").permission_answers == {}
+            assert harness.backend("c").user_input_answers == {}
+
+    _run(exercise)
+
+
 def test_interrupting_frees_what_was_held_and_killing_throws_it_away(
     harness: _Harness,
 ) -> None:
@@ -1902,8 +2044,52 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     def conn_factory() -> sqlite3.Connection:
         return connect(str(db_path))
 
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.executor.contracts import (
+        AskReachability,
+        AskReference,
+        ChildInventory,
+        ChildReference,
+        ExecutorIdentity,
+        ReconciliationInventory,
+    )
+    from planner.executor.store import ExecutorStore
+
+    executor_store = ExecutorStore(str(db_path))
+    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
+    executor_store.begin_connection(identity, 100)
+    asks = tuple(
+        AskReference(ChildReference("inc", name, name), TurnToken(name, 1), "ask")
+        for name in ("child-gone", "callback-gone", "live")
+    )
+    for ask in asks:
+        executor_store.publish_ask(ask, ("allow", "deny"), 100)
+    executor_store.reconcile(
+        ReconciliationInventory(
+            identity,
+            (
+                ChildInventory(asks[1].child, asks[1].turn, (), ()),
+                ChildInventory(asks[2].child, asks[2].turn, (asks[2],), ()),
+            ),
+            (),
+            (),
+        ),
+        101,
+    )
     app = create_app(config, build_clock(config), conn_factory)
     with TestClient(app) as client:
+        # Startup discards live reachability but retains conclusive callback closure.
+        for ask, expected in zip(
+            asks,
+            (
+                AskReachability.child_gone,
+                AskReachability.callback_gone,
+                AskReachability.uncertain,
+            ),
+            strict=True,
+        ):
+            evidence = executor_store.ask_evidence(ask)
+            assert evidence is not None and evidence.reachability == expected
         assert client.get("/api/conversation/conversations/nobody").status_code == 404
 
         created = client.post(

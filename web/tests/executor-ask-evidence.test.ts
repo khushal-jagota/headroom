@@ -6,15 +6,9 @@ import UserInputQuestionPanel from "../src/components/conversation/UserInputQues
 import TurnAnchor from "../src/components/conversation/TurnAnchor.svelte";
 import { executorAnswerAvailable, executorAnswerSentence, executorUnavailableSentence, historicalExecutorAskRecord } from "../src/lib/conversation/executorEvidence";
 import type { ConversationView, ExecutorAskEvidence, ExecutorAskRecord } from "../src/lib/conversation/wire";
-import type { ExecutorHealth } from "../src/lib/ticketMachines";
 
 const child = { executor_incarnation: "mac-incarnation", child_id: "child", conversation_id: "conversation" };
 const turn = { conversation_id: "conversation", turn_number: 3 };
-const health: ExecutorHealth = {
-  mode: "remote", identity: { executor_incarnation: "mac-incarnation", connection_generation: 4 },
-  connection_state: "ready", reconciliation_ready: true,
-  last_contact_at_ms: 100, last_contact_source: "vps_received_valid_executor_frame"
-};
 const evidence = (kind: "permission" | "user_input", ask_id: string): ExecutorAskEvidence => ({
   ask: { child, turn, kind, ask_id }, connection_generation: 4, reachability: "reachable",
   observed_at_ms: 99, answer_id: null, applied_at_mac_ms: null
@@ -33,36 +27,43 @@ function snapshot(): ConversationView {
 describe("exact executor ask evidence", () => {
   it("enables only the individually attested request, including multi-question input", () => {
     const view = snapshot();
-    expect(executorAnswerAvailable(view, "permission", "permission", health, "macos")).toBe(true);
-    expect(executorAnswerAvailable(view, "user_input", "questions", health, "macos")).toBe(false);
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(true);
+    expect(executorAnswerAvailable(view, "user_input", "questions", "macos")).toBe(false);
     view.pending_user_input!.answer_available = true;
-    expect(executorAnswerAvailable(view, "user_input", "questions", health, "macos")).toBe(true);
+    expect(executorAnswerAvailable(view, "user_input", "questions", "macos")).toBe(true);
     view.pending_user_input!.executor_evidence!.ask.kind = "permission";
-    expect(executorAnswerAvailable(view, "user_input", "questions", health, "macos")).toBe(false);
+    expect(executorAnswerAvailable(view, "user_input", "questions", "macos")).toBe(false);
   });
 
-  it("does not turn reconnect, receipt contact, or stale snapshots into evidence", () => {
+  it("accepts disconnected and restarted snapshots but rejects stale or missing identity", () => {
     const view = snapshot();
-    for (const state of [undefined, { ...health, connection_state: "reconciling" as const }, { ...health, connection_state: "disconnected" as const }, { ...health, reconciliation_ready: false }]) {
-      expect(executorAnswerAvailable(view, "permission", "permission", state, "macos")).toBe(false);
-    }
-    expect(executorAnswerAvailable(view, "permission", "permission", health, "macos", false)).toBe(false);
-    expect(executorAnswerAvailable(view, "permission", "old-transcript-request", health, "macos")).toBe(false);
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(true);
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos", false)).toBe(false);
+    expect(executorAnswerAvailable(view, "permission", "old-transcript-request", "macos")).toBe(false);
     view.pending_permission_ask!.executor_evidence = null;
-    expect(executorAnswerAvailable(view, "permission", "permission", { ...health, last_contact_at_ms: 9999 }, "macos")).toBe(false);
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
   });
 
-  it.each(["generation", "incarnation", "child", "turn", "conversation", "answer", "reachability"])("rejects stale or spent %s evidence", (mismatch) => {
+  it.each(["incarnation", "child", "turn", "conversation", "answer", "child_gone", "callback_gone"])("rejects stale or spent %s evidence", (mismatch) => {
     const view = snapshot();
     const proof = view.pending_permission_ask!.executor_evidence!;
-    if (mismatch === "generation") proof.connection_generation -= 1;
     if (mismatch === "incarnation") proof.ask.child = { ...child, executor_incarnation: "old" };
     if (mismatch === "child") proof.ask.child = { ...child, child_id: "other" };
     if (mismatch === "turn") proof.ask.turn = { ...turn, turn_number: 2 };
     if (mismatch === "conversation") proof.ask.turn = { ...turn, conversation_id: "other" };
     if (mismatch === "answer") proof.answer_id = "recorded";
-    if (mismatch === "reachability") proof.reachability = "uncertain";
-    expect(executorAnswerAvailable(view, "permission", "permission", health, "macos")).toBe(false);
+    if (mismatch === "child_gone" || mismatch === "callback_gone") proof.reachability = mismatch;
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
+  });
+
+  it("accepts uncertain callbacks with persisted identity regardless of generation", () => {
+    const view = snapshot();
+    const proof = view.pending_permission_ask!.executor_evidence!;
+    proof.reachability = "uncertain";
+    proof.connection_generation = 1;
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(true);
+    view.pending_permission_ask!.answer_available = false;
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
   });
 
   it("keeps Mac controls closed when remote ownership/status is absent and preserves local behavior", () => {
@@ -70,14 +71,16 @@ describe("exact executor ask evidence", () => {
     view.executor_context = null;
     delete view.pending_permission_ask!.answer_available;
     delete view.pending_permission_ask!.executor_evidence;
-    expect(executorAnswerAvailable(view, "permission", "permission", health, "macos")).toBe(false);
-    expect(executorAnswerAvailable(view, "permission", "permission", undefined, "vps")).toBe(true);
+    expect(executorAnswerAvailable(view, "permission", "permission", "macos")).toBe(false);
+    expect(executorAnswerAvailable(view, "permission", "permission", "vps")).toBe(true);
   });
 
   it("retains durable acceptance independently from callback application", () => {
     const proof = evidence("permission", "permission");
     const record: ExecutorAskRecord = { evidence: proof, answer: { answer_id: "answer", ask: proof.ask, accepted_at_vps_ms: 100 } };
-    expect(executorAnswerSentence(record)).toBe("Answer recorded on VPS; application on Mac is unconfirmed.");
+    expect(executorAnswerSentence(record)).toBe("Answer saved on VPS; delivery to Mac is pending.");
+    proof.reachability = "callback_gone";
+    expect(executorAnswerSentence(record)).toBe("Answer saved on VPS; the original Mac request is gone. Application is unconfirmed.");
     proof.answer_id = "answer";
     proof.applied_at_mac_ms = 101;
     proof.reachability = "child_gone";

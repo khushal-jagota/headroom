@@ -100,7 +100,9 @@ def test_stalled_preview_keeps_executor_events_live_and_drop_cleans_generation(
                     await eventually(lambda: bool(accepted), "Mac loopback dial absent")
                     await harness.native.raise_ask()
                     await harness.wait_ask_reachable()
-                    assert await endpoint.answer_permission("c_scripted", "ask_permission", "allow")
+                    assert await endpoint.answer_permission(
+                        "c_scripted", "ask_permission", "allow", executor_ask=harness.ask
+                    )
                     await eventually(
                         lambda: harness.native.answers == [("ask_permission", "allow")],
                         "permission answer stalled behind preview traffic",

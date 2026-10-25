@@ -154,7 +154,7 @@ def create_app(
                 (int(_wall_time() * 1000),),
             )
             audit_conn.execute(
-                "UPDATE executor_asks SET reachability='uncertain' WHERE applied_at_mac_ms IS NULL"
+                "UPDATE executor_asks SET reachability='uncertain' WHERE reachability='reachable'"
             )
             tickets_data.audit_ticket_registry_integrity(audit_conn)
             reconcile_managed_skill_versions(audit_conn)

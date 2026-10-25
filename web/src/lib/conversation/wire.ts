@@ -647,25 +647,29 @@ export async function killConversation(conversationId: string): Promise<void> {
   );
 }
 
+/** Remote landed means saved on VPS; only application evidence proves delivery to Mac. */
 export function answerPermissionAsk(
   conversationId: string,
   askId: string,
-  optionId: string
+  optionId: string,
+  executorAsk?: ExecutorAskReference
 ): Promise<{ landed: boolean }> {
   return request<{ landed: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}/permission-answers`,
-    postJson({ ask_id: askId, option_id: optionId })
+    postJson({ ask_id: askId, option_id: optionId, executor_ask: executorAsk })
   );
 }
 
+/** Remote landed means saved on VPS; only application evidence proves delivery to Mac. */
 export function answerUserInput(
   conversationId: string,
   requestId: string,
-  answers: UserInputAnswers
+  answers: UserInputAnswers,
+  executorAsk?: ExecutorAskReference
 ): Promise<{ landed: boolean }> {
   return request<{ landed: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
-    postJson({ request_id: requestId, answers })
+    postJson({ request_id: requestId, answers, executor_ask: executorAsk })
   );
 }
 

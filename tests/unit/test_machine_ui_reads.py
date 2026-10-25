@@ -11,6 +11,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from tests.support.executor_turns import persist_pending_turn
 
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL, Priority
@@ -154,43 +155,41 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
     asyncio.run(run())
 
 
-def test_ask_evidence_matches_actual_child_not_just_reused_ask_and_turn(
-    tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
+def test_durable_context_matches_exact_child_after_restart_and_allows_offline_answer(
+    tmp_db: Connection,
+    fake_clock: ClockForTest,
 ) -> None:
     from planner.conversation.backends.contracts import TurnToken
 
     endpoint = _endpoint(tmp_db, fake_clock)
     actual = ChildReference("inc", "actual", "conversation")
-    turn = TurnToken("turn", 1)
-    child = RemoteBackendChild(actual, cast(Any, None))
-    state = SimpleNamespace(child=child, running_turn=SimpleNamespace(token=turn))
-    endpoint.runtime = SimpleNamespace(
-        system=SimpleNamespace(_conversations={"conversation": state})
-    )
-    evidence = AskEvidence(
-        AskReference(replace(actual, child_id="old"), turn, "ask"),
-        1,
-        AskReachability.reachable,
-        100,
-    )
-    monkeypatch.setattr(endpoint.store, "evidence_for_conversation", lambda _: (evidence,))
+    ask = AskReference(actual, TurnToken("conversation", 1), "ask")
+    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
+    endpoint.store.begin_connection(identity, 100)
+    persist_pending_turn(endpoint.store, ask)
+    old = replace(ask, child=replace(actual, child_id="old"))
+    endpoint.store.publish_ask(old, ("allow", "deny"), 100)
     assert endpoint._current_ask_evidence("conversation", "ask") is None
-    assert endpoint.conversation_context("conversation") == {
+    endpoint.store.publish_ask(ask, ("allow", "deny"), 101)
+    # A new endpoint has no live children, runtime state, connection or inventory.
+    restored = _endpoint(tmp_db, fake_clock)
+    assert restored.children == {} and restored.identity is None
+    assert restored.owns_conversation("conversation")
+    assert restored.conversation_context("conversation") == {
         "child": encode_value(actual),
-        "turn": encode_value(turn),
+        "turn": encode_value(ask.turn),
     }
-    evidence = replace(evidence, ask=replace(evidence.ask, child=actual))
-    assert endpoint._current_ask_evidence("conversation", "ask") == evidence
-    endpoint.ready = True
-    endpoint.identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
-    assert endpoint.ask_status("conversation", "ask")["answer_available"] is True
-    assert endpoint.ask_status("conversation", "other")["answer_available"] is False
-    endpoint.identity = replace(endpoint.identity, connection_generation=2)
-    assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
-    endpoint.identity = replace(
-        endpoint.identity, executor_incarnation="replacement", connection_generation=1
-    )
-    assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
+    status = restored.ask_status("conversation", "ask")
+    assert status["answer_available"] is True
+    assert restored.ask_status("conversation", "other")["answer_available"] is False
+    answer = restored.store.choose_answer(ask, "allow", 999, 200)
+    assert restored.ask_status("conversation", "ask")["answer_available"] is False
+    assert restored.conversation_asks("conversation")[-1]["answer"] == encode_value(answer)
+    restored.store.close_child(actual, 201)
+    final = _endpoint(tmp_db, fake_clock)
+    assert final.ask_status("conversation", "ask")["answer_available"] is False
+    evidence = final._current_ask_evidence("conversation", "ask")
+    assert evidence is not None and evidence.reachability == AskReachability.child_gone
 
 
 def test_draft_inherits_project_matches_write_and_never_writes(

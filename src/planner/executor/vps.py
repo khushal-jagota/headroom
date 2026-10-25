@@ -38,11 +38,13 @@ from planner.executor.contracts import (
     BackendEventMethod,
     ChildCommand,
     ChildInventory,
+    ChildOperation,
     ChildReference,
     CliWrite,
     ClockSample,
     CommandDisposition,
     CommandOutcome,
+    DurableAnswer,
     EnvelopeKind,
     ExecutorHealth,
     ExecutorHealthRead,
@@ -334,6 +336,85 @@ class ExecutorEndpoint:
                         service.release(slot.token)
                     snapshot.local_path.unlink(missing_ok=True)
 
+    async def _emit_command(self, command: ChildCommand) -> bool:
+        """The final guard is shared by immediate sends and reconnect replay."""
+        if command.operation not in (
+            ChildOperation.answer_permission_ask,
+            ChildOperation.answer_user_input,
+        ):
+            await self._send(
+                WireMessage(WireMessageKind.command, command.command_id, _object(command))
+            )
+            return True
+        answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
+        identity, writer = self.identity, self.writer
+        emitted = False
+
+        async def emit() -> None:
+            nonlocal emitted
+            async with self._send_lock:
+                if (
+                    identity is None
+                    or writer is None
+                    or not self.ready
+                    or self.identity != identity
+                    or self.writer is not writer
+                    or command.operation
+                    != (
+                        ChildOperation.answer_user_input
+                        if answer.ask.kind is AskKind.user_input
+                        else ChildOperation.answer_permission_ask
+                    )
+                    or command.child != answer.ask.child
+                    or command.turn != answer.ask.turn
+                    or command.command_id != "apply_" + answer.answer_id
+                    or not self.store.answer_is_deliverable(answer, identity)
+                ):
+                    return
+                await write_frame(
+                    writer,
+                    WireMessage(WireMessageKind.command, command.command_id, _object(command)),
+                )
+                emitted = True
+
+        await self.runtime.system.emit_executor_answer(command.child.conversation_id, emit)
+        return emitted
+
+    def _release_closed_answer(
+        self, command: ChildCommand, future: asyncio.Future[CommandOutcome]
+    ) -> None:
+        if command.operation in (
+            ChildOperation.answer_permission_ask,
+            ChildOperation.answer_user_input,
+        ):
+            answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
+            if not self.store.answer_target_is_open(answer.ask):
+                # No native result exists for an untransmitted closed callback.
+                # Cancel bookkeeping only; the durable choice remains unapplied.
+                future.cancel()
+
+    def _dispatch_answer(self, answer: DurableAnswer) -> None:
+        if (
+            not self.ready
+            or self.identity is None
+            or not self.store.answer_is_deliverable(answer, self.identity)
+        ):
+            return
+        command = ChildCommand(
+            "apply_" + answer.answer_id,
+            answer.ask.child,
+            ChildOperation.answer_user_input
+            if answer.ask.kind is AskKind.user_input
+            else ChildOperation.answer_permission_ask,
+            answer.ask.turn,
+            {"answer": _object(answer)},
+        )
+        if command.command_id in self.pending_commands:
+            return
+        task = asyncio.create_task(self.send_command(command))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     async def send_command(self, command: ChildCommand) -> CommandOutcome:
         existing = self.pending_commands.get(command.command_id)
         if existing is not None:
@@ -353,11 +434,8 @@ class ExecutorEndpoint:
                         if self.writer is not None:
                             self.writer.close()
                     else:
-                        await self._send(
-                            WireMessage(
-                                WireMessageKind.command, command.command_id, _object(command)
-                            )
-                        )
+                        if not await self._emit_command(command):
+                            self._release_closed_answer(command, future)
                 except (OSError, ConnectionError):
                     pass  # The exact command remains pending across a link loss.
             return await asyncio.shield(future)
@@ -370,6 +448,20 @@ class ExecutorEndpoint:
         if binding is None:
             raise PlannerError(ErrorCode.agent_forbidden, "child has no VPS assignment", {})
         return Principal(PrincipalKind(binding[0]), binding[1])
+
+    def _require_application_assignment(
+        self, application: AnswerApplication, identity: ExecutorIdentity, conversation_id: str
+    ) -> None:
+        child = application.ask.child
+        if (
+            child.executor_incarnation != identity.executor_incarnation
+            or child.conversation_id != conversation_id
+            or (
+                self.store.child_assignment(child) is None
+                and not self.store.has_closed_child_assignment(child)
+            )
+        ):
+            raise ValueError("application lacks the original authenticated child assignment")
 
     async def accept_envelope(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
@@ -398,6 +490,7 @@ class ExecutorEndpoint:
                     if (
                         event.method is BackendEventMethod.permission_ask_raised
                         and event.turn is not None
+                        and result.get("applied") is True
                     ):
                         from planner.executor.codec import decode_event_arguments
 
@@ -411,6 +504,7 @@ class ExecutorEndpoint:
                     if (
                         event.method is BackendEventMethod.user_input_requested
                         and event.turn is not None
+                        and result.get("applied") is True
                     ):
                         from planner.executor.codec import decode_event_arguments
 
@@ -467,13 +561,26 @@ class ExecutorEndpoint:
                 and outcome.child.executor_incarnation == identity.executor_incarnation
                 and self.store.has_closed_child_assignment(outcome.child)
             )
-            if not retired_refusal:
+            answer = self.store.answer_by_id(outcome.command_id.removeprefix("apply_"))
+            historical_answer_outcome = (
+                answer is not None
+                and answer.ask.child == outcome.child
+                and outcome.child.executor_incarnation == identity.executor_incarnation
+                and self.store.has_closed_child_assignment(outcome.child)
+            )
+            if not retired_refusal and not historical_answer_outcome:
                 self._assignment(outcome.child)
             application_payload = outcome.result.get("answer_application")
-            if isinstance(application_payload, dict):
+            if not retired_refusal and isinstance(application_payload, dict):
                 application = TypeAdapter(AnswerApplication).validate_python(application_payload)
-                if application.ask.child != outcome.child:
-                    raise ValueError("answer application conflicts with command child")
+                if application.ask.child != outcome.child or outcome.command_id not in (
+                    application.answer_id,
+                    "apply_" + application.answer_id,
+                ):
+                    raise ValueError("answer application conflicts with command child or identity")
+                self._require_application_assignment(
+                    application, identity, envelope.conversation_id
+                )
 
                 def record(connection: Any, applied: AnswerApplication) -> None:
                     self.store.record_application_in_transaction(connection, applied)
@@ -497,7 +604,7 @@ class ExecutorEndpoint:
             return receipt
         if envelope.kind is EnvelopeKind.answer_application:
             application = TypeAdapter(AnswerApplication).validate_python(envelope.payload)
-            self._assignment(application.ask.child)
+            self._require_application_assignment(application, identity, envelope.conversation_id)
             return cast(
                 AcceptanceReceipt,
                 await self.runtime.system.receive_remote_answer_application(
@@ -596,7 +703,8 @@ class ExecutorEndpoint:
         }
 
     def owns_conversation(self, conversation_id: str) -> bool:
-        return any(
+        context = self.store.turn_context(conversation_id)
+        return (context is not None and not context.source_retired) or any(
             child.reference.conversation_id == conversation_id for child in self.children.values()
         )
 
@@ -615,27 +723,22 @@ class ExecutorEndpoint:
         return result
 
     def conversation_context(self, conversation_id: str) -> JsonObject | None:
-        """Current remote child and turn, independent of historical ask records."""
-        state = self.runtime.system._conversations.get(conversation_id)
-        if state is None or not isinstance(state.child, RemoteBackendChild):
+        context = self.store.turn_context(conversation_id)
+        if context is None or context.source_retired:
             return None
-        return {
-            "child": _object(state.child.reference),
-            "turn": None if state.running_turn is None else _object(state.running_turn.token),
-        }
+        return {"child": _object(context.child), "turn": _object(context.turn)}
 
     def _current_ask_evidence(
         self, conversation_id: str, ask_id: str, kind: AskKind = AskKind.permission
     ) -> Any:
-        state = self.runtime.system._conversations.get(conversation_id)
-        running = None if state is None else state.running_turn
-        if running is None or not isinstance(state.child, RemoteBackendChild):
+        context = self.store.turn_context(conversation_id)
+        if context is None:
             return None
         for evidence in reversed(self.store.evidence_for_conversation(conversation_id)):
             if (
                 evidence.ask.ask_id == ask_id
-                and evidence.ask.child == state.child.reference
-                and evidence.ask.turn == running.token
+                and evidence.ask.child == context.child
+                and evidence.ask.turn == context.turn
                 and evidence.ask.kind is kind
             ):
                 return evidence
@@ -649,68 +752,54 @@ class ExecutorEndpoint:
             return {"answer_available": False, "executor_evidence": None}
         return {
             "executor_evidence": _object(evidence),
-            "answer_available": self.ready
-            and self.identity is not None
-            and evidence.connection_generation == self.identity.connection_generation
-            and evidence.ask.child.executor_incarnation == self.identity.executor_incarnation
-            and evidence.reachability.value == "reachable"
-            and evidence.answer_id is None,
+            "answer_available": evidence.answer_id is None
+            and self.store.answer_target_is_open(evidence.ask),
         }
 
-    async def answer_permission(self, conversation_id: str, ask_id: str, option_id: str) -> bool:
-        from planner.executor.contracts import ChildOperation
-
-        if not self.ready or self.identity is None:
-            return False
-        evidence = self._current_ask_evidence(conversation_id, ask_id)
-        if evidence is not None:
-            try:
-                answer = self.store.choose_answer(
-                    evidence.ask, option_id, self.identity.connection_generation, now_ms()
-                )
-            except PlannerError:
-                return False
-            # The selection is durable before any native attempt. A timeout or
-            # drop keeps it in the store for reconciliation, never permits replacement.
-            command = ChildCommand(
-                "apply_" + answer.answer_id,
-                evidence.ask.child,
-                ChildOperation.answer_permission_ask,
-                evidence.ask.turn,
-                {"answer": _object(answer)},
-            )
-            task = asyncio.create_task(self.send_command(command))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
-            return True
-        return False
-
-    async def answer_user_input(
-        self, conversation_id: str, request_id: str, answers: tuple[UserInputAnswer, ...]
+    async def answer_permission(
+        self,
+        conversation_id: str,
+        ask_id: str,
+        option_id: str,
+        executor_ask: AskReference | None = None,
     ) -> bool:
-        from planner.executor.contracts import ChildOperation
-
-        if not self.ready or self.identity is None:
+        if (
+            executor_ask is None
+            or executor_ask.child.conversation_id != conversation_id
+            or executor_ask.ask_id != ask_id
+            or executor_ask.kind is not AskKind.permission
+        ):
             return False
-        evidence = self._current_ask_evidence(conversation_id, request_id, AskKind.user_input)
-        if evidence is None:
-            return False
+        previous = self.store.recorded_answer(executor_ask)
         try:
-            answer = self.store.choose_user_input_answer(
-                evidence.ask, answers, self.identity.connection_generation, now_ms()
-            )
+            answer = self.store.choose_answer(executor_ask, option_id, 0, now_ms())
         except PlannerError:
             return False
-        command = ChildCommand(
-            "apply_" + answer.answer_id,
-            evidence.ask.child,
-            ChildOperation.answer_user_input,
-            evidence.ask.turn,
-            {"answer": _object(answer)},
-        )
-        task = asyncio.create_task(self.send_command(command))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        if previous is None:
+            self._dispatch_answer(answer)
+        return True
+
+    async def answer_user_input(
+        self,
+        conversation_id: str,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        executor_ask: AskReference | None = None,
+    ) -> bool:
+        if (
+            executor_ask is None
+            or executor_ask.child.conversation_id != conversation_id
+            or executor_ask.ask_id != request_id
+            or executor_ask.kind is not AskKind.user_input
+        ):
+            return False
+        previous = self.store.recorded_answer(executor_ask)
+        try:
+            answer = self.store.choose_user_input_answer(executor_ask, answers, 0, now_ms())
+        except PlannerError:
+            return False
+        if previous is None:
+            self._dispatch_answer(answer)
         return True
 
     async def _session(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -912,29 +1001,12 @@ class ExecutorEndpoint:
                     self._retained_inventory[outcome.command_id] = outcome
                     self._resolve_command(outcome)
                 if not inventory.children and not inventory.retained_command_outcomes:
-                    from planner.executor.contracts import ChildOperation
-
                     merged = replace(
                         inventory,
                         children=tuple(self._inventory.values()),
                         retained_command_outcomes=tuple(self._retained_inventory.values()),
                     )
                     reconciliation = self.store.reconcile(merged, now_ms())
-                    # Evidence stays canonical on the VPS. Each pending answer is
-                    # a separate bounded stable command, never a growing reply frame.
-                    for answer in reconciliation.answers:
-                        command = ChildCommand(
-                            "apply_" + answer.answer_id,
-                            answer.ask.child,
-                            ChildOperation.answer_user_input
-                            if answer.ask.kind is AskKind.user_input
-                            else ChildOperation.answer_permission_ask,
-                            answer.ask.turn,
-                            {"answer": _object(answer)},
-                        )
-                        task = asyncio.create_task(self.send_command(command))
-                        self._tasks.add(task)
-                        task.add_done_callback(self._tasks.discard)
                     for command_id in reconciliation.acknowledged_command_ids:
                         await self._send(
                             WireMessage(
@@ -956,6 +1028,8 @@ class ExecutorEndpoint:
                 if hasattr(self.store, "mark_ready"):
                     self.store.mark_ready(identity, now_ms())
                 await self.runtime.system.resume_executor_held_prompts(remote_ready=True)
+                for answer in self.store.unapplied_answers():
+                    self._dispatch_answer(answer)
                 result, response_kind = {"ready": True}, WireMessageKind.reconciliation_ready
                 # Resending a stable command to the same live registry is safe:
                 # the registry retains its pending task and first outcome.
@@ -965,11 +1039,8 @@ class ExecutorEndpoint:
                         and command.child.executor_incarnation == identity.executor_incarnation
                     ):
                         await self._transfer_command_inputs(command)
-                        await self._send(
-                            WireMessage(
-                                WireMessageKind.command, command.command_id, _object(command)
-                            )
-                        )
+                        if not await self._emit_command(command):
+                            self._release_closed_answer(command, future)
             elif message.kind is WireMessageKind.envelope:
                 envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
                 result, response_kind = (

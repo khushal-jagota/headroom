@@ -128,8 +128,22 @@ Neither acknowledgment repeats the native operation.
 
 The VPS exposes per-ask evidence: uncertain, reachable, child gone, or callback
 gone, alongside the stored answer and its application. A restored link alone
-cannot enable an answer. Loss invalidates the previous evidence. New answers
-require current evidence; an answer accepted just before a drop remains durable.
+cannot prove delivery. During an outage, the owner can save an answer for the exact
+original request while its persisted child and turn remain open and pending.
+Reachability may be uncertain. The VPS validates the choice or complete answer map
+and saves it transactionally; the first answer wins. An identical retry returns
+the original receipt, including after closure. A conflicting retry fails.
+
+The browser submits the exact child, turn, request kind, and request ID from its
+pending snapshot as `executor_ask`. For remote submissions, `{landed: true}` means
+durable acceptance on VPS. The UI says "Answer saved on VPS; delivery to Mac is
+pending." Only matching application evidence says "Answer applied on Mac."
+Delivery waits for fresh evidence of the original callback on a ready connection.
+A restart restores the pending identity before the Mac reconnects. Cancellation,
+a completed turn, or a replaced child/turn prevents new acceptance and delivery.
+Cancellation persists that closure before waiting for the Mac. Saved answers to
+closed callbacks remain unresolved; reconnect cannot reopen them. An application
+acknowledgment for an answer transmitted before closure can still record its effect.
 
 Panels records callback application separately from tool execution. The clock
 exchange gives bounds for cross-host timing. Exact action timing requires
@@ -315,11 +329,11 @@ its original meaning: the handshake observation time.
 Contact proves receipt only. It proves neither current activity nor answer
 delivery. After disconnect, the last contact remains historical. Before the first
 observation, or after a VPS restart, it is null. A failed health read leaves the
-current contact unknown. A cached generation cannot authorize an answer.
+current contact unknown. Contact and generation do not decide whether the VPS can save an answer.
 There is no timer-based cutoff that turns historical receipt into current activity.
 
 Conversation reads include nullable `executor_context`, with the actual remote
 child reference and current turn token. Pending ask controls require the exact
-child, turn, request kind, request ID, and current connection generation.
-`answer_available` remains the server's per-ask admission read. One callback's
+child, turn, request kind, request ID, and pending snapshot membership.
+`answer_available` means the VPS can accept the answer, even while disconnected. One callback's
 evidence cannot authorize another callback, including a reused ID on an old child.

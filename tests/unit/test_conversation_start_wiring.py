@@ -26,6 +26,8 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
+    MoveRetirementResult,
+    MoveSourceRetirement,
     PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
@@ -106,6 +108,15 @@ class _LinkWatchingConversationSystem:
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         return await self._system.run_if_idle(conversation_id, operation)
+
+    async def retire_idle_for_move(
+        self,
+        conversation_id: str | None,
+        operation: Callable[[], None],
+        *,
+        source: MoveSourceRetirement | None = None,
+    ) -> MoveRetirementResult:
+        return await self._system.retire_idle_for_move(conversation_id, operation, source=source)
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         await self._system.start_conversation(request)

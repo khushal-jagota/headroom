@@ -23,7 +23,8 @@ def _lines(result_output: str) -> list[str]:
 
 
 def _materialized_tokens(call: str) -> list[str]:
-    tokens = shlex.split(call)
+    # Click describes IntRange with a two-word metavar, but it takes one value.
+    tokens = shlex.split(call.replace("INTEGER RANGE", "INTEGER"))
     if "<" in tokens:
         tokens = tokens[: tokens.index("<")]
     if call.startswith("panels day set"):

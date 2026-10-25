@@ -22,6 +22,7 @@ from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSIO
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AnswerActionTiming,
+    AnswerAdmission,
     AnswerApplication,
     AskEvidence,
     AskKind,
@@ -34,6 +35,7 @@ from planner.executor.contracts import (
     ConnectionState,
     DurableAnswer,
     ExecutorIdentity,
+    ExecutorTurnContext,
     FileManifest,
     JsonObject,
     QueuedEnvelope,
@@ -42,7 +44,12 @@ from planner.executor.contracts import (
     ReconciliationResult,
     TransactionalWriter,
 )
-from planner.executor.logic.reconciliation import answer_action_timing, callback_reachability
+from planner.executor.logic.reconciliation import (
+    answer_action_timing,
+    answer_target_is_open,
+    callback_reachability,
+    preserved_reachability,
+)
 
 
 def _json(value: object) -> str:
@@ -190,7 +197,8 @@ class ExecutorStore:
                 ),
             )
             connection.execute(
-                "UPDATE executor_asks SET reachability=?,observed_at_ms=?",
+                "UPDATE executor_asks SET reachability=?,observed_at_ms=? "
+                "WHERE reachability='reachable'",
                 (AskReachability.uncertain.value, now_ms),
             )
 
@@ -235,7 +243,8 @@ class ExecutorStore:
                 (ConnectionState.disconnected.value, now_ms, now_ms),
             )
             connection.execute(
-                "UPDATE executor_asks SET reachability=?,observed_at_ms=?",
+                "UPDATE executor_asks SET reachability=?,observed_at_ms=? "
+                "WHERE reachability='reachable'",
                 (AskReachability.uncertain.value, now_ms),
             )
 
@@ -410,7 +419,10 @@ class ExecutorStore:
                     acknowledged_commands.append(outcome.command_id)
             for row in connection.execute("SELECT * FROM executor_asks").fetchall():
                 ask = _parse(AskReference, row["reference_json"])
-                reachability = callback_reachability(ask, inventory.children)
+                reachability = preserved_reachability(
+                    AskReachability(row["reachability"]),
+                    callback_reachability(ask, inventory.children),
+                )
                 connection.execute(
                     "UPDATE executor_asks SET connection_generation=?,reachability=?,"
                     "observed_at_ms=? "
@@ -457,6 +469,119 @@ class ExecutorStore:
             else None,
         )
 
+    @staticmethod
+    def _turn_context(
+        connection: sqlite3.Connection, conversation_id: str
+    ) -> ExecutorTurnContext | None:
+        row = connection.execute(
+            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
+            "WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            child = _parse(ChildReference, row[0])
+            turn = _parse(TurnToken, row[1])
+            runtime = json.loads(row[2])
+            pending = tuple(
+                TypeAdapter(list[str]).validate_python(
+                    runtime["pending_permission_ask_ids"], strict=True
+                )
+            )
+            questions = TypeAdapter(dict[str, tuple[UserInputQuestion, ...]]).validate_python(
+                runtime["pending_user_input_questions"]
+            )
+            ended = TypeAdapter(bool).validate_python(runtime["ended"], strict=True)
+            flags = tuple(
+                TypeAdapter(bool).validate_python(runtime.get(key, False), strict=True)
+                for key in (
+                    "source_retired",
+                    "move_retirement_uncertain",
+                    "delivery_uncertain",
+                    "callbacks_revoked",
+                )
+            )
+            if child.conversation_id != conversation_id or turn.conversation_id != conversation_id:
+                return None
+            return ExecutorTurnContext(child, turn, pending, tuple(questions), ended, *flags)
+        except (ValueError, TypeError, KeyError):
+            return None
+
+    def turn_context(self, conversation_id: str) -> ExecutorTurnContext | None:
+        connection = connect(self.db_path)
+        try:
+            return self._turn_context(connection, conversation_id)
+        finally:
+            connection.close()
+
+    @classmethod
+    def _answer_target_is_open(
+        cls, connection: sqlite3.Connection, ask: AskReference, row: sqlite3.Row
+    ) -> bool:
+        assignment = connection.execute(
+            "SELECT conversation_id,closed_at_ms FROM executor_child_assignments "
+            "WHERE executor_incarnation=? AND child_id=?",
+            (ask.child.executor_incarnation, ask.child.child_id),
+        ).fetchone()
+        return answer_target_is_open(
+            AnswerAdmission(
+                ask,
+                cls._turn_context(connection, ask.child.conversation_id),
+                assignment is not None
+                and assignment[0] == ask.child.conversation_id
+                and assignment[1] is None,
+                AskReachability(row["reachability"]),
+            )
+        )
+
+    def answer_target_is_open(self, ask: AskReference) -> bool:
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT * FROM executor_asks WHERE ask_key=?", (_ask_key(ask),)
+            ).fetchone()
+            return row is not None and self._answer_target_is_open(connection, ask, row)
+        finally:
+            connection.close()
+
+    def answer_is_deliverable(self, answer: DurableAnswer, identity: ExecutorIdentity) -> bool:
+        connection = connect(self.db_path)
+        try:
+            current = connection.execute(
+                "SELECT * FROM executor_connections WHERE active=1"
+            ).fetchone()
+            row = connection.execute(
+                "SELECT * FROM executor_asks WHERE ask_key=?", (_ask_key(answer.ask),)
+            ).fetchone()
+            return (
+                current is not None
+                and current["identity_json"] == _record(identity)
+                and current["connection_state"] == ConnectionState.ready.value
+                and identity.executor_incarnation == answer.ask.child.executor_incarnation
+                and row is not None
+                and self._answer(row) == answer
+                and row["applied_at_mac_ms"] is None
+                and row["connection_generation"] == identity.connection_generation
+                and row["reachability"] == AskReachability.reachable.value
+                and self._answer_target_is_open(connection, answer.ask, row)
+            )
+        finally:
+            connection.close()
+
+    def unapplied_answers(self) -> tuple[DurableAnswer, ...]:
+        connection = connect(self.db_path)
+        try:
+            return tuple(
+                self._answer(row)
+                for row in connection.execute(
+                    "SELECT * FROM executor_asks WHERE answer_id IS NOT NULL "
+                    "AND applied_at_mac_ms IS NULL"
+                )
+            )
+        finally:
+            connection.close()
+
     def choose_answer(
         self, ask: AskReference, option_id: str, generation: int, now_ms: int
     ) -> DurableAnswer:
@@ -472,18 +597,8 @@ class ExecutorStore:
                 if row["option_id"] != option_id:
                     raise _invalid("Permission choice is already recorded")
                 return self._answer(row)
-            current = connection.execute(
-                "SELECT * FROM executor_connections WHERE active=1"
-            ).fetchone()
-            if (
-                current is None
-                or current["connection_state"] != ConnectionState.ready.value
-                or current["executor_incarnation"] != ask.child.executor_incarnation
-                or current["connection_generation"] != generation
-                or row["connection_generation"] != generation
-                or row["reachability"] != AskReachability.reachable.value
-            ):
-                raise _invalid("Current callback reachability is unconfirmed")
+            if not self._answer_target_is_open(connection, ask, row):
+                raise _invalid("Original callback target is closed or unknown")
             if option_id not in json.loads(row["option_ids_json"]):
                 raise _invalid("Unknown permission option")
             answer = DurableAnswer(str(uuid4()), ask, option_id, now_ms)
@@ -696,6 +811,14 @@ class ExecutorStore:
         cls._connected(connection, identity)
         if ask.child.executor_incarnation != identity.executor_incarnation:
             raise _invalid("Callback belongs to a different executor incarnation")
+        row = connection.execute(
+            "SELECT reachability FROM executor_asks WHERE ask_key=?", (_ask_key(ask),)
+        ).fetchone()
+        if row is not None and AskReachability(row[0]) in (
+            AskReachability.child_gone,
+            AskReachability.callback_gone,
+        ):
+            return
         changed = connection.execute(
             "UPDATE executor_asks SET connection_generation=?,reachability=?,observed_at_ms=? "
             "WHERE ask_key=?",
@@ -708,6 +831,16 @@ class ExecutorStore:
         ).rowcount
         if changed != 1:
             raise _invalid("Callback has no accepted ask row")
+
+    def answer_by_id(self, answer_id: str) -> DurableAnswer | None:
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT * FROM executor_asks WHERE answer_id=?", (answer_id,)
+            ).fetchone()
+            return self._answer(row) if row is not None else None
+        finally:
+            connection.close()
 
     def recorded_answer(self, ask: AskReference) -> DurableAnswer | None:
         connection = connect(self.db_path)
@@ -890,18 +1023,8 @@ class ExecutorStore:
                 if row["user_input_answers_json"] != answer_json:
                     raise _invalid("User input choice is already recorded")
                 return self._answer(row)
-            current = connection.execute(
-                "SELECT * FROM executor_connections WHERE active=1"
-            ).fetchone()
-            if (
-                current is None
-                or current["connection_state"] != ConnectionState.ready.value
-                or current["executor_incarnation"] != ask.child.executor_incarnation
-                or current["connection_generation"] != generation
-                or row["connection_generation"] != generation
-                or row["reachability"] != AskReachability.reachable.value
-            ):
-                raise _invalid("Current callback reachability is unconfirmed")
+            if not self._answer_target_is_open(connection, ask, row):
+                raise _invalid("Original callback target is closed or unknown")
             answer = DurableAnswer(str(uuid4()), ask, None, now_ms, normalized)
             connection.execute(
                 "UPDATE executor_asks SET answer_id=?,user_input_answers_json=?,"

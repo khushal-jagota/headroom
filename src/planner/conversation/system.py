@@ -234,6 +234,7 @@ class _RunningTurn:
     explicit_reply_recipients: set[Principal] = field(default_factory=set)
     automatic_notice: bool = False
     ended: bool = False
+    callbacks_revoked: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a
     # send-now killing the incumbent. The cancel goes out with the lock let go, and the
     # backend reports the ending it was just asked for while that is happening. Only one
@@ -937,6 +938,8 @@ class SqliteProcessConversationSystem:
         try:
             await self._discard_held_prompts(state)
             running = state.running_turn
+            if running is not None:
+                await self._revoke_executor_turn_asks(state, running)
             try:
                 child = state.child
                 if child is not None:
@@ -2851,6 +2854,29 @@ class SqliteProcessConversationSystem:
         self._set_phase(state, phase)
         reservation.resolved.set()
 
+    async def emit_executor_answer(
+        self, conversation_id: str, emit: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Order the bounded answer frame with durable local callback revocation.
+
+        This lock covers emission only, never a native result or application wait.
+        The emitter rechecks durable identity after its asynchronous preparation.
+        """
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return
+        async with state.lock:
+            await emit()
+
+    async def _revoke_executor_turn_asks(
+        self, state: _ConversationState, running: _RunningTurn
+    ) -> None:
+        if state.executor_child_reference is not None:
+            await self._store.revoke_executor_turn_asks(
+                state.executor_child_reference, running.token
+            )
+            running.callbacks_revoked = True
+
     async def _cancel_and_end_running_turn(
         self, state: _ConversationState, running: _RunningTurn
     ) -> None:
@@ -2864,6 +2890,7 @@ class SqliteProcessConversationSystem:
         """
         self._set_phase(state, _ConversationPhase.ending)
         running.ending_is_the_cores = True
+        await self._revoke_executor_turn_asks(state, running)
         child = state.child
         state.lock.release()
         try:
@@ -2892,6 +2919,7 @@ class SqliteProcessConversationSystem:
         """
         if running.ended:
             return None
+        await self._revoke_executor_turn_asks(state, running)
         automatic_compaction_result = (
             AutomaticCompactionResult.not_compacted
             if running.automatic_compaction
@@ -3530,6 +3558,7 @@ class SqliteProcessConversationSystem:
             "compaction_confirmed": running.compaction_confirmed,
             "automatic_notice": running.automatic_notice,
             "ended": running.ended,
+            "callbacks_revoked": running.callbacks_revoked,
             "pending_permission_ask_ids": list(running.pending_permission_ask_ids),
             "pending_user_input_questions": encode_value(running.pending_user_input_questions),
             "prompt_senders": encode_value(tuple(running.prompt_senders)),
@@ -3582,6 +3611,7 @@ class SqliteProcessConversationSystem:
             automatic_compaction=runtime["automatic_compaction"],
             compaction_confirmed=runtime["compaction_confirmed"],
             automatic_notice=runtime["automatic_notice"],
+            callbacks_revoked=runtime.get("callbacks_revoked", False),
             pending_permission_ask_ids=set(runtime["pending_permission_ask_ids"]),
             pending_user_input_questions=TypeAdapter(
                 dict[str, tuple[UserInputQuestion, ...]]
@@ -3617,8 +3647,21 @@ class SqliteProcessConversationSystem:
         if state is None:
             raise ValueError("remote inventory names an unknown conversation")
         async with state.lock:
-            state.child = child
+            if (
+                state.executor_child_reference is not None
+                and state.executor_child_reference != inventory.child
+            ):
+                return
             token = inventory.active_turn
+            if token is not None and (
+                (
+                    state.last_ended_turn_token is not None
+                    and token.turn_number <= state.last_ended_turn_token.turn_number
+                )
+                or (state.running_turn is not None and state.running_turn.token != token)
+            ):
+                return
+            state.child = child
             if token is not None:
                 if state.running_turn is None or state.running_turn.token != token:
                     state.running_turn = _RunningTurn(token=token)
@@ -3737,8 +3780,21 @@ class SqliteProcessConversationSystem:
         async with state.lock:
             running = state.running_turn
             live = token is None or (
-                running is not None and running.token == token and not running.ended
+                running is not None
+                and running.token == token
+                and not running.ended
+                and not running.ending_is_the_cores
             )
+            if (
+                running is not None
+                and running.callbacks_revoked
+                and method
+                in (
+                    BackendEventMethod.permission_ask_raised,
+                    BackendEventMethod.user_input_requested,
+                )
+            ):
+                live = False
             payloads: tuple[ConversationEventPayload, ...] = ()
             compacted = method is BackendEventMethod.context_compacted
             compaction_result = None

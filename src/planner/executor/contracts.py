@@ -129,6 +129,29 @@ class AskReachability(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutorTurnContext:
+    """Durable provenance and closure for the canonical remote turn."""
+
+    child: ChildReference
+    turn: TurnToken
+    pending_permission_ask_ids: tuple[str, ...]
+    pending_user_input_ids: tuple[str, ...]
+    ended: bool
+    source_retired: bool
+    move_retirement_uncertain: bool
+    delivery_uncertain: bool
+    callbacks_revoked: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerAdmission:
+    ask: AskReference
+    context: ExecutorTurnContext | None
+    assignment_open: bool
+    reachability: AskReachability
+
+
+@dataclass(frozen=True, slots=True)
 class AskEvidence:
     """Reachability and durable answer/application are independent facts."""
 
@@ -412,9 +435,7 @@ class DurableSpool(Protocol):
 
     def snapshots(self, submission_id: str) -> tuple[FileSnapshot, ...]: ...
 
-    def pin_snapshots(
-        self, submission_id: str
-    ) -> AbstractContextManager[tuple[FileSnapshot, ...]]:
+    def pin_snapshots(self, submission_id: str) -> AbstractContextManager[tuple[FileSnapshot, ...]]:
         """Retain immutable paths until exit without a network-spanning transaction."""
         ...
 

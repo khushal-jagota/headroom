@@ -160,7 +160,7 @@
   let healthKey = $derived(remote
     ? `${healthQuery.isError}:${health?.identity?.executor_incarnation}:${health?.identity?.connection_generation}:${health?.connection_state}:${health?.reconciliation_ready}`
     : "local");
-  let snapshotHealthKey = $state("");
+  let snapshotCurrent = $state(false);
   let latestAskBoundary = $state(0);
   let activityUncertain = $derived(remote && !macActivityKnown(health));
   let feed = $state<ConversationFeed>(emptyConversationFeed());
@@ -226,8 +226,8 @@
   ));
   let ask = $derived(liveAskFrom(visibleRows));
   let userInput = $derived(liveUserInputFrom(visibleRows));
-  let permissionAvailable = $derived(executorAnswerAvailable(view, "permission", ask?.askId, health, locale, snapshotHealthKey === healthKey && (view?.latest_sequence ?? -1) >= latestAskBoundary));
-  let userInputAvailable = $derived(executorAnswerAvailable(view, "user_input", userInput?.requestId, health, locale, snapshotHealthKey === healthKey && (view?.latest_sequence ?? -1) >= latestAskBoundary));
+  let permissionAvailable = $derived(executorAnswerAvailable(view, "permission", ask?.askId, locale, snapshotCurrent && (view?.latest_sequence ?? -1) >= latestAskBoundary));
+  let userInputAvailable = $derived(executorAnswerAvailable(view, "user_input", userInput?.requestId, locale, snapshotCurrent && (view?.latest_sequence ?? -1) >= latestAskBoundary));
   let permissionRecord = $derived(currentExecutorAskRecord(view, "permission", ask?.askId));
   let userInputRecord = $derived(currentExecutorAskRecord(view, "user_input", userInput?.requestId));
   let permissionNote = $derived(executorAnswerSentence(permissionRecord) ?? (askNoteKey === `permission:${ask?.askId}` ? askNote : null) ?? (remote && !permissionAvailable ? executorUnavailableSentence(permissionRecord?.evidence ?? view?.pending_permission_ask?.executor_evidence) : null));
@@ -238,7 +238,6 @@
     void healthQuery.dataUpdatedAt;
     const id = openedId;
     if (remote && id !== null) {
-      snapshotHealthKey = "";
       untrack(() => void refreshView(id));
     }
   });
@@ -427,7 +426,6 @@
     if (openedId !== id) return;
     opening = true;
     let snapshot: ConversationView;
-    const readingHealthKey = healthKey;
     try {
       snapshot = await readConversation(id);
     } catch (error) {
@@ -445,7 +443,7 @@
     }
     if (openedId !== id) return;
     view = snapshot;
-    snapshotHealthKey = readingHealthKey;
+    snapshotCurrent = true;
     connectionTrouble = false;
     let theOpenAlreadyReadTheView = true;
     let localStream: ConversationStream;
@@ -460,7 +458,7 @@
                 handlers.onCommittedEvent(event);
                 if (["permission_asked", "permission_answered", "user_input_requested", "user_input_answered", "user_input_failed", "turn_ended", "prompt"].includes(event.kind)) {
                   latestAskBoundary = event.sequence;
-                  snapshotHealthKey = "";
+                  snapshotCurrent = false;
                   void refreshView(id);
                 }
               }
@@ -551,16 +549,15 @@
     const inFlight = viewBeingRead;
     const read = async (): Promise<void> => {
       if (openedId !== requestedId) return;
-      const readingHealthKey = healthKey;
       try {
         const refreshed = await readConversation(requestedId);
         if (openedId === requestedId) {
           view = refreshed;
-          snapshotHealthKey = readingHealthKey;
+          snapshotCurrent = true;
         }
       } catch {
         // Keep the request visible, but an unsuccessful read cannot authorize an answer.
-        if (openedId === requestedId) snapshotHealthKey = "";
+        if (openedId === requestedId) snapshotCurrent = false;
       }
     };
     const reading =
@@ -827,9 +824,9 @@
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerPermissionAsk(openedId, askId, optionId);
+      const { landed } = await answerPermissionAsk(openedId, askId, optionId, view?.pending_permission_ask?.executor_evidence?.ask);
       askNote = landed
-        ? remote ? "Answer recorded on VPS; application on Mac is unconfirmed." : null
+        ? remote ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take that answer. Cancelling the turn always works.";
       await refreshView();
     } catch (error) {
@@ -846,9 +843,9 @@
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerUserInput(openedId, requestId, answers);
+      const { landed } = await answerUserInput(openedId, requestId, answers, view?.pending_user_input?.executor_evidence?.ask);
       askNote = landed
-        ? remote ? "Answer recorded on VPS; application on Mac is unconfirmed." : null
+        ? remote ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take those answers. You can try again or stop the turn.";
       await refreshView();
     } catch (error) {
