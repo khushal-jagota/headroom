@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal, cast
 from unittest.mock import AsyncMock, Mock
 
 import asyncssh
@@ -171,10 +173,6 @@ def test_tailscale_suppresses_key_loaders_and_preserves_original_host_trust(
     assert options.agent_path is None
     assert options.proxy_command is None and options.tunnel is None
     assert not options.request_pty and not options.env and not options.send_env
-    # The generation-scoped SFTP transport retains key-only trivial-auth refusal.
-    inner = ssh._client_options(host_key, "generation")
-    assert inner.public_key_auth and inner.disable_trivial_auth
-    assert inner.preferred_auth == ["publickey"]
 
 
 @pytest.mark.parametrize(
@@ -199,3 +197,96 @@ def test_authentication_inputs_refuse_contradictions(
 
     with pytest.raises(SshConfigurationError):
         validate_authentication_inputs(mode, identity, binary, port)
+
+
+@pytest.mark.parametrize("direction", ["upload", "download"])
+@pytest.mark.parametrize("data", [b"", b"short", b"expected", b"expected excess"])
+def test_transfer_helpers_bound_manifest_and_check_eof(
+    tmp_path: Path,
+    direction: Literal["upload", "download"],
+    data: bytes,
+) -> None:
+    import hashlib
+    from contextlib import asynccontextmanager
+
+    from planner.executor.contracts import FileManifest, FileScope, FileTransfer
+
+    expected = b"expected"
+    manifest = FileManifest(
+        "publication",
+        FileScope.ticket,
+        "ticket",
+        "file",
+        hashlib.sha256(expected).hexdigest(),
+        len(expected),
+    )
+    transfer = FileTransfer("transfer", "/remote/file", direction, manifest)
+    requests = []
+    writes = bytearray()
+
+    class Remote:
+        async def write(self, content: bytes, offset: int) -> int:
+            requests.append((offset, len(content)))
+            writes.extend(content)
+            return len(content)
+
+        async def read(self, size: int, offset: int) -> bytes:
+            requests.append((offset, size))
+            return data[offset : offset + size]
+
+    class Client:
+        @asynccontextmanager
+        async def open(
+            self,
+            path: str,
+            flags: int,
+            **kwargs: object,
+        ) -> AsyncIterator[Remote]:
+            assert path == transfer.path
+            assert kwargs["block_size"] == 65536 and kwargs["max_requests"] == 16
+            yield Remote()
+
+    local = tmp_path / "local"
+    if direction == "upload":
+        local.write_bytes(data)
+        operation = ssh.upload_snapshot(cast(asyncssh.SFTPClient, Client()), local, transfer)
+    else:
+        operation = ssh.download_transfer(cast(asyncssh.SFTPClient, Client()), transfer, local)
+    if data == expected:
+        asyncio.run(operation)
+        assert (bytes(writes) if direction == "upload" else local.read_bytes()) == expected
+    else:
+        with pytest.raises(ValueError, match="manifest"):
+            asyncio.run(operation)
+    assert all(size <= 65536 for _, size in requests)
+    assert all(
+        offset + size <= len(expected) or (offset, size) == (len(expected), 1)
+        for offset, size in requests
+    )
+
+
+def test_sftp_uses_existing_connection_with_empty_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import asynccontextmanager
+
+    client = cast(asyncssh.SFTPClient, object())
+    calls = []
+
+    class Outer:
+        @asynccontextmanager
+        async def start_sftp_client(self, **kwargs: object) -> AsyncIterator[asyncssh.SFTPClient]:
+            calls.append(kwargs)
+            yield client
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("SFTP opened another SSH connection")
+
+    monkeypatch.setattr(asyncssh, "connect", forbidden)
+
+    async def exercise() -> None:
+        async with ssh.connect_sftp(cast(asyncssh.SSHClientConnection, Outer())) as result:
+            assert result is client
+
+    asyncio.run(exercise())
+    assert calls == [{"sftp_version": 3, "env": {}, "send_env": []}]

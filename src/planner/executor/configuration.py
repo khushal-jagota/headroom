@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-PROTOCOL_VERSION: Final = 5
+PROTOCOL_VERSION: Final = 6
 SPOOL_FORMAT_VERSION: Final = 2
 OUTBOX_BUSY_TIMEOUT_MS: Final = 5000
 OUTBOX_COPY_BYTES: Final = 256 * 1024
@@ -70,7 +70,6 @@ SSH_KEEPALIVE_INTERVAL_SECONDS: Final = 15.0
 SSH_KEEPALIVE_COUNT_MAX: Final = 3
 SSH_CLOSE_TIMEOUT_SECONDS: Final = 5.0
 SFTP_MAX_TRANSFERS: Final = 4
-SFTP_MAX_HANDLES: Final = 4
 SFTP_BLOCK_BYTES: Final = 64 * 1024
 SFTP_MAX_REQUESTS: Final = 16
 

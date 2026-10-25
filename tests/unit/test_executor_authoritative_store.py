@@ -361,7 +361,7 @@ def test_quarantine_publication_old_retry_cannot_overwrite_newer(
     for entry, contents in ((old, b"old\x00"), (new, b"new\xff")):
         sealed = tmp_path / (entry.publication_id + ".sealed")
         sealed.write_bytes(contents)
-        receiver.ingest_sealed(entry, sealed, identity=IDENTITY)
+        receiver.ingest_staged(entry, sealed, identity=IDENTITY)
         receiver.complete(entry, 1100, identity=IDENTITY)
     receiver.complete(old, 1200, identity=IDENTITY)
     assert (tmp_path / "files/tickets/ticket/result.bin").read_bytes() == b"new\xff"
@@ -375,7 +375,7 @@ def test_staged_publication_blocks_newer_until_rename_crash_recovery(
     receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
     sealed = tmp_path / "old.sealed"
     sealed.write_bytes(b"old")
-    receiver.ingest_sealed(old, sealed, identity=IDENTITY)
+    receiver.ingest_staged(old, sealed, identity=IDENTITY)
 
     def crash_after_rename() -> None:
         target = tmp_path / "files/tickets/ticket/result.bin"
@@ -402,7 +402,7 @@ def test_partial_corrupt_and_unsafe_files_never_publish(
     sealed = tmp_path / "partial.sealed"
     sealed.write_bytes(b"part")
     with pytest.raises(ValueError, match="incomplete"):
-        receiver.ingest_sealed(entry, sealed, identity=IDENTITY)
+        receiver.ingest_staged(entry, sealed, identity=IDENTITY)
     with pytest.raises(ValueError, match="incomplete"):
         receiver.complete(entry, 1100, identity=IDENTITY)
     assert not (tmp_path / "files/tickets/ticket/result.bin").exists()
@@ -476,7 +476,7 @@ def test_session_preview_cleanup_failure_still_releases_transport_root(
         WireMessageKind,
     )
     from planner.executor.mac import as_object
-    from planner.executor.sftp import RestrictedSftpService
+    from planner.executor.transfers import GenerationTransfers
     from planner.executor.vps import ExecutorEndpoint
     from planner.executor.wire import encode_frame
     from planner.previews.forward import PreviewForwards
@@ -509,9 +509,9 @@ def test_session_preview_cleanup_failure_still_releases_transport_root(
 
         async def setup_generation() -> None:
             endpoint._preview_forwards = cast(PreviewForwards, previews)
-            endpoint._transports[identity] = cast(RestrictedSftpService, service)
+            endpoint._transports[identity] = cast(GenerationTransfers, service)
             endpoint._transport_roots[identity] = root
-            endpoint._upload_slots[(identity, "publication")] = "token"
+            endpoint._upload_transfers[(identity, "publication")] = "token"
 
         writer = Mock()
         writer.drain = AsyncMock(side_effect=setup_generation)
@@ -523,12 +523,164 @@ def test_session_preview_cleanup_failure_still_releases_transport_root(
             service.close.assert_awaited_once()
             assert not root_path.exists()
             assert not endpoint._transports and not endpoint._transport_roots
-            assert not endpoint._upload_slots
+            assert not endpoint._upload_transfers
             assert endpoint.writer is None and not endpoint.ready
         finally:
             root.cleanup()
             for task in tuple(endpoint._tasks):
                 task.cancel()
             await asyncio.gather(*endpoint._tasks, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_receiver_copy_is_separate_from_mutable_staging_handle(
+    store: ExecutorStore, tmp_path: Path
+) -> None:
+    """Account SFTP cannot revoke an open handle; publication owns a fresh inode."""
+    import os
+
+    receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
+    staged = tmp_path / "staged"
+    contents = b"verified original bytes"
+    staged.write_bytes(contents)
+    entry = manifest("fresh_receiver", contents)
+    with staged.open("r+b", buffering=0) as retained:
+        receiver.ingest_staged(entry, staged, identity=IDENTITY)
+        receiver.complete(entry, 1100, identity=IDENTITY)
+        target = tmp_path / "files/tickets/ticket/result.bin"
+        assert target.stat().st_ino != os.fstat(retained.fileno()).st_ino
+        retained.seek(0)
+        retained.write(b"mutated after acceptance")
+        retained.truncate()
+        staged.unlink()
+        assert target.read_bytes() == contents
+        assert store.publication_accepted(entry)
+
+
+@pytest.mark.parametrize("cancel_cleanup", [False, True])
+def test_receiver_cancellation_drains_ingestion_before_transfer_cleanup(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel_cleanup: bool
+) -> None:
+    import asyncio
+    import tempfile
+    import threading
+    from unittest.mock import Mock
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import FilePublicationRequest, WireMessage, WireMessageKind
+    from planner.executor.mac import as_object
+    from planner.executor.transfers import GenerationTransfers
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
+        endpoint.store = store
+        endpoint.identity = IDENTITY
+        root = tempfile.TemporaryDirectory(dir=tmp_path)
+        root_path = Path(root.name)
+        service = GenerationTransfers(IDENTITY, root_path / "transfers", lambda: True)
+        endpoint._transports[IDENTITY] = service
+        endpoint._transport_roots[IDENTITY] = root
+        receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
+        endpoint.file_receiver = receiver
+        contents = b"receiver copy source"
+        entry = manifest("drain_receiver", contents)
+        publication = FilePublicationRequest(entry, CHILD)
+        monkeypatch.setattr(endpoint, "_authorize_file", Mock())
+        payload, _ = await endpoint._file(
+            WireMessage(WireMessageKind.file_manifest, "begin", as_object(publication)), IDENTITY
+        )
+        staged = Path(str(payload["path"]))
+        staged.write_bytes(contents)
+        entered, settle = threading.Event(), threading.Event()
+        ingest = receiver.ingest_staged
+
+        def delayed(*args: object, **kwargs: object) -> None:
+            entered.set()
+            assert settle.wait(3), "test did not release ingestion"
+            assert staged.exists(), "generation source deleted during admitted work"
+            ingest(entry, staged, identity=IDENTITY)
+
+        monkeypatch.setattr(receiver, "ingest_staged", delayed)
+        completion = asyncio.create_task(
+            endpoint._file(
+                WireMessage(WireMessageKind.file_complete, "complete", as_object(publication)),
+                IDENTITY,
+            )
+        )
+        cleanup = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            completion.cancel()
+            cleanup = asyncio.create_task(endpoint._close_transport(IDENTITY))
+            # Let both cancellation and cleanup reach their admitted-work waits.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            if cancel_cleanup:
+                cleanup.cancel()
+                await asyncio.sleep(0)
+            assert not completion.done() and not cleanup.done()
+            assert staged.exists() and root_path.exists()
+            settle.set()
+            await asyncio.gather(completion, return_exceptions=True)
+            await asyncio.gather(cleanup, return_exceptions=True)
+            assert not root_path.exists()
+            assert not endpoint._receiver_work
+            assert not store.publication_accepted(entry)
+        finally:
+            settle.set()
+            await asyncio.gather(completion, return_exceptions=True)
+            if cleanup is not None:
+                await asyncio.gather(cleanup, return_exceptions=True)
+            root.cleanup()
+
+    asyncio.run(run())
+
+
+def test_publication_completion_retains_original_child_and_generation_authority(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    from unittest.mock import Mock
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import FilePublicationRequest, WireMessage, WireMessageKind
+    from planner.executor.mac import as_object
+    from planner.executor.transfers import GenerationTransfers
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
+        endpoint.store = store
+        endpoint.identity = IDENTITY
+        service = GenerationTransfers(IDENTITY, tmp_path / "transfers", lambda: True)
+        endpoint._transports[IDENTITY] = service
+        receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
+        endpoint.file_receiver = receiver
+        contents = b"authorized original child"
+        entry = manifest("original_child", contents)
+        publication = FilePublicationRequest(entry, CHILD)
+        # Isolate transfer-record authority from the separate principal resolver.
+        monkeypatch.setattr(endpoint, "_authorize_file", Mock())
+        payload, _ = await endpoint._file(
+            WireMessage(WireMessageKind.file_manifest, "begin", as_object(publication)), IDENTITY
+        )
+        staged = Path(str(payload["path"]))
+        staged.write_bytes(contents)
+        replacement = replace(publication, child=replace(CHILD, child_id="replacement"))
+        for kind in (WireMessageKind.file_manifest, WireMessageKind.file_complete):
+            with pytest.raises(ValueError, match="assignment changed"):
+                await endpoint._file(WireMessage(kind, "changed", as_object(replacement)), IDENTITY)
+        # Connection fencing remains authoritative even while a transfer record exists.
+        store.begin_connection(replace(IDENTITY, connection_generation=2), 1100)
+        with pytest.raises(PlannerError, match="generation"):
+            await endpoint._file(
+                WireMessage(WireMessageKind.file_complete, "stale", as_object(publication)),
+                IDENTITY,
+            )
+        assert not store.publication_accepted(entry)
+        assert not (tmp_path / "files/tickets/ticket/result.bin").exists()
+        await service.close()
 
     asyncio.run(run())

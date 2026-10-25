@@ -67,8 +67,8 @@ from planner.executor.contracts import (
 from planner.executor.files import directory_descriptor, snapshot_file
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
-from planner.executor.sftp import RestrictedSftpService
 from planner.executor.store import ExecutorStore
+from planner.executor.transfers import GenerationTransfers
 from planner.executor.wire import (
     parse_identity,
     read_frame,
@@ -214,10 +214,11 @@ class ExecutorEndpoint:
         self.last_contact_at_ms: int | None = None
         self.lost_at_ms: int | None = None
         self._file_assignments: dict[str, ChildReference] = {}
-        self._transports: dict[ExecutorIdentity, RestrictedSftpService] = {}
+        self._transports: dict[ExecutorIdentity, GenerationTransfers] = {}
         self._transport_roots: dict[ExecutorIdentity, tempfile.TemporaryDirectory[str]] = {}
-        self._upload_slots: dict[tuple[ExecutorIdentity, str], str] = {}
+        self._upload_transfers: dict[tuple[ExecutorIdentity, str], str] = {}
         self._transport_lock = asyncio.Lock()
+        self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[Any]]] = {}
 
     async def start(self) -> None:
         path = vps_socket_path(self.db_path)
@@ -316,7 +317,7 @@ class ExecutorEndpoint:
     async def _transfer_command_inputs_locked(self, command: ChildCommand) -> None:
         identity = self.identity
         if identity is None or identity not in self._transports:
-            raise ConnectionError("restricted SFTP unavailable")
+            raise ConnectionError("SFTP unavailable")
         service = self._transports[identity]
         seen: set[str] = set()
         for key in ("content", "sender_content"):
@@ -355,7 +356,7 @@ class ExecutorEndpoint:
                     self.store.verify_connection(identity)
                 finally:
                     if slot is not None:
-                        service.release(slot.token)
+                        service.release(slot.transfer_id)
                     snapshot.local_path.unlink(missing_ok=True)
 
     async def _emit_command(self, command: ChildCommand) -> bool:
@@ -972,14 +973,12 @@ class ExecutorEndpoint:
                     root_path = Path(root.name)
                     previews_root = root_path / "p"
                     previews_root.mkdir(mode=0o700)
-                    service = RestrictedSftpService(
+                    service = GenerationTransfers(
                         identity,
                         root_path / "s",
-                        str(message.payload["client_public_key"]),
                         lambda: self.identity == identity and self.writer is writer,
                     )
                     try:
-                        endpoint = await service.start()
                         self.store.verify_connection(identity)
                     except BaseException:
                         await service.close()
@@ -1001,7 +1000,7 @@ class ExecutorEndpoint:
                         lambda: self.identity == identity and self.writer is writer and self.ready,
                     )
                     result, response_kind = (
-                        {"endpoint": _object(endpoint), "preview_root": str(previews_root)},
+                        {"transfer_root": str(service.root), "preview_root": str(previews_root)},
                         WireMessageKind.transport_opened,
                     )
             elif message.kind is WireMessageKind.reconcile_inventory:
@@ -1172,61 +1171,96 @@ class ExecutorEndpoint:
             )
         service = self._transports.get(identity)
         if service is None:
-            raise ValueError("restricted SFTP generation unavailable")
+            raise ValueError("SFTP generation unavailable")
         publication = TypeAdapter(FilePublicationRequest).validate_python(message.payload)
         self._authorize_file(publication)
         manifest = publication.manifest
         key = identity, manifest.publication_id
         if message.kind is WireMessageKind.file_manifest:
+            assigned = self._file_assignments.get(manifest.publication_id)
+            if assigned is not None and assigned != publication.child:
+                raise ValueError("file publication assignment changed")
             self._file_assignments[manifest.publication_id] = publication.child
-            await asyncio.to_thread(self.file_receiver.begin, manifest, identity=identity)
+            await self._receive_work(
+                identity, self.file_receiver.begin, manifest, identity=identity
+            )
             self.store.verify_connection(identity)
             if self.store.publication_accepted(manifest):
                 return _object(manifest), WireMessageKind.file_accepted
-            previous = self._upload_slots.pop(key, None)
+            previous = self._upload_transfers.pop(key, None)
             if previous is not None:
                 service.release(previous)
             slot = service.create_upload(manifest)
-            self._upload_slots[key] = slot.token
+            self._upload_transfers[key] = slot.transfer_id
             return _object(slot), WireMessageKind.file_slot
         if self._file_assignments.get(manifest.publication_id) != publication.child:
             raise ValueError("file publication assignment changed")
-        token = self._upload_slots.pop(key, None)
-        if token is None:
+        transfer_id = self._upload_transfers.pop(key, None)
+        if transfer_id is None:
             if self.store.publication_accepted(manifest):
                 return _object(manifest), WireMessageKind.file_accepted
-            raise ValueError("unknown publication slot")
-        sealed = None
+            raise ValueError("unknown publication transfer")
         try:
-            sealed = await service.seal_upload(token)
+            staged = service.upload_path(transfer_id)
             self.store.verify_connection(identity)
             self._authorize_file(publication)
-            await asyncio.to_thread(
-                self.file_receiver.ingest_sealed, manifest, sealed, identity=identity
+            await self._receive_work(
+                identity, self.file_receiver.ingest_staged, manifest, staged, identity=identity
             )
             self.store.verify_connection(identity)
-            await asyncio.to_thread(
-                self.file_receiver.complete, manifest, now_ms(), identity=identity
+            self._authorize_file(publication)
+            await self._receive_work(
+                identity, self.file_receiver.complete, manifest, now_ms(), identity=identity
             )
             self.store.verify_connection(identity)
             return _object(manifest), WireMessageKind.file_accepted
         finally:
-            if sealed is not None:
-                sealed.unlink(missing_ok=True)
-            service.release(token)
+            service.release(transfer_id)
+
+    async def _receive_work(
+        self, generation: ExecutorIdentity, operation: Any, *args: Any, **kwargs: Any
+    ) -> None:
+        # Cancellation cannot terminate a filesystem thread. Keep its source and
+        # generation directory alive until the admitted operation has settled.
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        pending = self._receiver_work.setdefault(generation, set())
+        pending.add(task)
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+        finally:
+            pending.discard(task)
+            if not pending:
+                self._receiver_work.pop(generation, None)
 
     async def _close_transport(self, identity: ExecutorIdentity) -> None:
+        # Take ownership before yielding: replacement and old-session cleanup can
+        # arrive together, but only one owns this service and its directory.
         service = self._transports.pop(identity, None)
+        root = self._transport_roots.pop(identity, None)
+        work = tuple(self._receiver_work.get(identity, ()))
+
+        async def cleanup() -> None:
+            try:
+                if work:
+                    await asyncio.gather(*work, return_exceptions=True)
+                if service is not None:
+                    await service.close()
+            finally:
+                for key in tuple(self._upload_transfers):
+                    if key[0] == identity:
+                        self._upload_transfers.pop(key)
+                if root is not None:
+                    root.cleanup()
+
+        closing = asyncio.create_task(cleanup())
         try:
-            if service is not None:
-                await service.close()
-        finally:
-            for key in tuple(self._upload_slots):
-                if key[0] == identity:
-                    self._upload_slots.pop(key)
-            root = self._transport_roots.pop(identity, None)
-            if root is not None:
-                root.cleanup()
+            await asyncio.shield(closing)
+        except BaseException:
+            await asyncio.gather(closing, return_exceptions=True)
+            raise
 
 
 def _object(value: object) -> JsonObject:

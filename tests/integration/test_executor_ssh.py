@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import socket
 import tempfile
 from collections.abc import Callable
 from dataclasses import replace
@@ -14,37 +12,31 @@ import asyncssh
 import pytest
 from tests.support.executor_sshd import isolated_sshd
 
-from planner.executor.contracts import SftpEndpoint
+from planner.executor.contracts import FileManifest, FileScope, FileTransfer
 from planner.executor.ssh import (
     close_connection,
     connect_outer,
     connect_sftp,
-    download_slot,
-    generate_ephemeral_key,
+    download_transfer,
     upload_snapshot,
 )
 
 
-class KeyOnlyServer(asyncssh.SSHServer):
-    def __init__(self, key: asyncssh.SSHKey) -> None:
-        self.key = key
-
-    def begin_auth(self, username: str) -> bool:
-        return True
-
-    def public_key_auth_supported(self) -> bool:
-        return True
-
-    def validate_public_key(self, username: str, key: asyncssh.SSHKey) -> bool:
-        return username == "generation" and key.public_data == self.key.public_data
-
-
-def test_openssh_public_bridge_pinned_sftp_and_reverse_streamlocal(
+def test_openssh_direct_sftp_with_concurrent_relay_and_reverse_preview(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import hashlib
+    import time
+
     original_write = asyncssh.SFTPClientFile.write
+    original_read = asyncssh.SFTPClientFile.read
+    read_outstanding = 0
+    read_peak = 0
     outstanding = 0
     peak = 0
+    upload_active, upload_echo = asyncio.Event(), asyncio.Event()
+    download_active, download_echo = asyncio.Event(), asyncio.Event()
+    transfers_done = asyncio.Event()
 
     async def observed_write(
         remote: asyncssh.SFTPClientFile,
@@ -54,71 +46,100 @@ def test_openssh_public_bridge_pinned_sftp_and_reverse_streamlocal(
         nonlocal outstanding, peak
         outstanding += 1
         peak = max(peak, outstanding)
+        assert len(data) <= 65536
         try:
             if isinstance(data, bytes):
-                return await original_write(remote, data, offset)
-            return await original_write(remote, data, offset)
+                result = await original_write(remote, data, offset)
+            else:
+                result = await original_write(remote, data, offset)
+            upload_active.set()
+            await upload_echo.wait()
+            return result
         finally:
             outstanding -= 1
 
+    async def observed_read(
+        remote: asyncssh.SFTPClientFile,
+        size: int = -1,
+        offset: int | None = None,
+    ) -> bytes | str:
+        nonlocal read_outstanding, read_peak
+        assert 0 < size <= 65536
+        read_outstanding += 1
+        read_peak = max(read_peak, read_outstanding)
+        try:
+            result = await original_read(remote, size, offset)
+            download_active.set()
+            await download_echo.wait()
+            return result
+        finally:
+            read_outstanding -= 1
+
+    monkeypatch.setattr(asyncssh.SFTPClientFile, "read", observed_read)
     monkeypatch.setattr(asyncssh.SFTPClientFile, "write", observed_write)
 
     async def exercise(root: Path) -> None:
+        started = time.monotonic()
         with isolated_sshd(root / "daemon") as config:
             outer = await connect_outer(config)
-            server_key, client_key = generate_ephemeral_key(), generate_ephemeral_key()
-            listener_socket = socket.socket(socket.AF_UNIX)
-            remote_path = root / "restricted"
-            listener_socket.bind(str(remote_path))
-            listener_socket.listen()
-            listener_socket.setblocking(False)
-            export = root / "export"
-            export.mkdir()
-            (export / "slot").write_bytes(b"slot bytes")
-            server = await asyncssh.listen(
-                sock=listener_socket,
-                server_factory=lambda: KeyOnlyServer(client_key),
-                server_host_keys=[server_key],
-                sftp_factory=lambda chan: asyncssh.SFTPServer(chan, chroot=os.fsencode(export)),
-                sftp_version=3,
-            )
-            endpoint = SftpEndpoint(
-                str(remote_path), server_key.export_public_key().decode(), "generation"
-            )
-            run = root / ("long-persistent-root-" * 6) / "run"
-            run.mkdir(mode=0o700, parents=True)
             try:
-                async with connect_sftp(outer, endpoint, client_key, run) as sftp:
+                async with connect_sftp(outer) as sftp:
                     assert sftp.version == 3
-                    (export / "upload").touch()
-                    source = root / "snapshot"
                     content = b"bytes" * 300000
+                    manifest = FileManifest(
+                        "publication",
+                        FileScope.ticket,
+                        "ticket",
+                        "file",
+                        hashlib.sha256(content).hexdigest(),
+                        len(content),
+                    )
+                    source = root / "snapshot"
                     source.write_bytes(content)
-                    await upload_snapshot(sftp, source, "/upload")
-                    assert (export / "upload").read_bytes() == content
-                    assert 1 < peak <= 16
-                    assert outstanding == 0
-                    downloaded = root / "download"
-                    await download_slot(sftp, "/upload", downloaded)
-                    assert downloaded.read_bytes() == content
-                    with pytest.raises(FileExistsError):
-                        await download_slot(sftp, "/upload", downloaded)
-                    async with sftp.open("/slot", "r") as handle:
-                        assert bytes(await handle.read(), "utf-8") == b"slot bytes"
-                    with pytest.raises(asyncssh.SFTPNoSuchFile):
-                        await sftp.stat("/../daemon/identity")
-                assert not list(run.iterdir())
-                wrong = replace(
-                    endpoint,
-                    server_public_key=generate_ephemeral_key().export_public_key().decode(),
-                )
-                with pytest.raises(asyncssh.HostKeyNotVerifiable):
-                    async with connect_sftp(outer, wrong, client_key, run):
-                        pytest.fail("wrong generation host key was accepted")
-                with pytest.raises(asyncssh.PermissionDenied):
-                    async with connect_sftp(outer, endpoint, generate_ephemeral_key(), run):
-                        pytest.fail("wrong generation credential was accepted")
-                assert not list(run.iterdir())
+                    remote = root / "upload"
+                    remote.touch(mode=0o600)
+                    upload = FileTransfer("upload", str(remote), "upload", manifest)
+                    download = replace(upload, direction="download")
+                    relay = await outer.create_process("cat", encoding=None)
+                    relayed: list[int] = []
+                    relay_directions: set[str] = set()
+
+                    async def exercise_relay() -> None:
+                        sequence = 0
+                        while not transfers_done.is_set():
+                            message = f"relay-{sequence}\n".encode()
+                            relay.stdin.write(message)
+                            await relay.stdin.drain()
+                            assert await relay.stdout.readexactly(len(message)) == message
+                            relayed.append(sequence)
+                            sequence += 1
+                            if upload_active.is_set():
+                                relay_directions.add("upload")
+                                upload_echo.set()
+                            if download_active.is_set():
+                                relay_directions.add("download")
+                                download_echo.set()
+                            await asyncio.sleep(0)
+
+                    async def transfers() -> None:
+                        await upload_snapshot(sftp, source, upload)
+                        upload_active.clear()
+                        assert remote.read_bytes() == content
+                        downloaded = root / "download"
+                        await download_transfer(sftp, download, downloaded)
+                        download_active.clear()
+                        assert downloaded.read_bytes() == content
+                        with pytest.raises(FileExistsError):
+                            await download_transfer(sftp, download, downloaded)
+                        transfers_done.set()
+
+                    await asyncio.gather(exercise_relay(), transfers())
+                    relay.stdin.write_eof()
+                    await relay.wait_closed()
+                    assert relayed
+                    assert relay_directions == {"upload", "download"}
+                    assert 1 < peak <= 16 and outstanding == 0
+                    assert 1 < read_peak <= 16 and read_outstanding == 0
 
                 async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
                     writer.write(await reader.read(64))
@@ -148,9 +169,8 @@ def test_openssh_public_bridge_pinned_sftp_and_reverse_streamlocal(
                 with pytest.raises((FileNotFoundError, ConnectionRefusedError)):
                     await asyncio.open_unix_connection(str(preview_path))
             finally:
-                server.close()
-                await server.wait_closed()
                 await close_connection(outer)
+        print(f"Direct SFTP with concurrent relay and preview: {time.monotonic() - started:.3f}s")
 
     with tempfile.TemporaryDirectory(prefix="panels-ssh-") as tmp:
         asyncio.run(exercise(Path(tmp)))
@@ -184,7 +204,7 @@ def test_openssh_strict_host_key_and_no_ambient_auth(
                 connection = await connect_outer(config)
                 await close_connection(connection)
                 wrong_identity = tmp_path / "wrong"
-                generate_ephemeral_key().write_private_key(wrong_identity)
+                asyncssh.generate_private_key("ssh-ed25519").write_private_key(wrong_identity)
                 with pytest.raises(asyncssh.PermissionDenied):
                     await connect_outer(replace(config, identity_file=wrong_identity))
                 assert not attempts
@@ -192,7 +212,7 @@ def test_openssh_strict_host_key_and_no_ambient_auth(
                 config.known_hosts_file.write_text("")
                 with pytest.raises(asyncssh.HostKeyNotVerifiable):
                     await connect_outer(config)
-                replacement = generate_ephemeral_key().export_public_key()
+                replacement = asyncssh.generate_private_key("ssh-ed25519").export_public_key()
                 config.known_hosts_file.write_bytes(
                     f"[127.0.0.1]:{config.port} ".encode() + replacement
                 )
@@ -224,8 +244,8 @@ def test_tailscale_no_challenge_handshake_and_original_identity_pins(
             return False
 
     async def exercise() -> None:
-        key = generate_ephemeral_key()
-        wrong_key = generate_ephemeral_key()
+        key = asyncssh.generate_private_key("ssh-ed25519")
+        wrong_key = asyncssh.generate_private_key("ssh-ed25519")
         server = await asyncssh.listen(
             "127.0.0.1",
             0,

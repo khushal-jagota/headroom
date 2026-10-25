@@ -85,7 +85,9 @@ PY
 ```
 
 Check that the resolved commit equals the reviewed full SHA.
-Record the candidate constants. This replacement retains protocol 5 and journal format 2.
+Record the candidate constants: wire protocol 6 and journal format 2.
+Both Mac and VPS peers must match protocol 6 before work. Coordinate the peer
+transition through the Manager and installation Worker before any application.
 
 Read fresh installed Mac health through the installed console:
 
@@ -336,7 +338,11 @@ The first transition retains the old app and runtimes as recovery inputs, not as
 An incompatible prior package must not open the current journal.
 Never delete pending work or automatically convert the journal for rollback.
 
-Transfer assessment remains separate. This installation replacement changes neither SFTP nor wire compatibility.
+File transfers require the standard SFTP v3 subsystem and shared-home access on
+the same authenticated SSH connection. Preview reverse Unix forwarding remains
+required. Endpoint capability evidence does not prove concurrent relay and SFTP
+behavior; that proof belongs to the reviewed candidate tests. This procedure
+grants no authority to change live SSH configuration.
 
 Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/cli.py`,
 `src/planner/executor/preflight.py`, `requirements-build.txt`, `requirements-executor.txt`,

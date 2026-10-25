@@ -45,7 +45,7 @@ from planner.executor.contracts import (
     ExecutorIdentity,
     ExecutorSshConfig,
     FileSnapshot,
-    FileTransferSlot,
+    FileTransfer,
     FrameReader,
     IpcOperation,
     IpcRequest,
@@ -59,7 +59,6 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     ReconciliationInventory,
     ReconciliationResult,
-    SftpEndpoint,
     SourceRetirementRequest,
     WireMessage,
     WireMessageKind,
@@ -67,12 +66,13 @@ from planner.executor.contracts import (
 from planner.executor.diagnostics import connection_diagnostics
 from planner.executor.files import IncomingFiles, safe_component, snapshot_ticket
 from planner.executor.journal import FilesystemSpool
+from planner.executor.logic.transfer import validate_transfer_path
 from planner.executor.runtime import NativeChildRegistry, now_ms
 from planner.executor.ssh import (
     close_connection,
     connect_outer,
     connect_sftp,
-    download_slot,
+    download_transfer,
     upload_snapshot,
 )
 from planner.executor.wire import (
@@ -104,6 +104,7 @@ class MacExecutor:
         self.ssh_config = ssh_config
         self.remote_command = remote_command
         self._sftp: asyncssh.SFTPClient | None = None
+        self._transfer_root: str | None = None
         self._transfers = 0
         self._transfer_capacity = asyncio.Semaphore(SFTP_MAX_TRANSFERS)
         self._transport_admission_stopped = False
@@ -329,7 +330,10 @@ class MacExecutor:
             )
             return
         try:
-            slot = TypeAdapter(FileTransferSlot).validate_python(message.payload)
+            slot = TypeAdapter(FileTransfer).validate_python(message.payload)
+            if self._transfer_root is None:
+                raise ValueError("input transfer root unavailable")
+            validate_transfer_path(slot.path, self._transfer_root)
             if slot.direction != "download" or self._transfers >= SFTP_MAX_TRANSFERS:
                 raise ValueError("invalid input slot or transfer capacity")
         except ValueError as error:
@@ -343,7 +347,7 @@ class MacExecutor:
         temporary = self.paths.run / ("input-" + uuid4().hex)
         try:
             async with self._transfer_capacity:
-                await download_slot(self._sftp, slot.token, temporary)
+                await download_transfer(self._sftp, slot, temporary)
             if identity != self.identity or not self._handshake_accepted:
                 raise ConnectionError("input generation changed")
             # Cancellation cannot stop disk work. Drain it before deleting its source.
@@ -419,6 +423,7 @@ class MacExecutor:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _replay_envelope(self, envelope: QueuedEnvelope) -> None:
+        identity = self.identity
         with self.spool.pin_snapshots(envelope.submission_id) as snapshots:
             for snapshot in snapshots:
                 payload = envelope.payload
@@ -430,10 +435,16 @@ class MacExecutor:
                     raise ValueError("file publication lacks assigned child")
                 publication: JsonObject = {"manifest": as_object(snapshot.manifest), "child": child}
                 response = await self._request(WireMessageKind.file_manifest, publication)
+                if identity != self.identity or not self._handshake_accepted:
+                    raise ConnectionError("publication generation changed")
                 if response.kind != WireMessageKind.file_accepted:
-                    slot = TypeAdapter(FileTransferSlot).validate_python(response.payload)
+                    slot = TypeAdapter(FileTransfer).validate_python(response.payload)
+                    if self._transfer_root is None:
+                        raise ValueError("publication transfer root unavailable")
+                    validate_transfer_path(slot.path, self._transfer_root)
                     if (
-                        slot.direction != "upload"
+                        response.kind is not WireMessageKind.file_slot
+                        or slot.direction != "upload"
                         or slot.manifest != snapshot.manifest
                         or self._sftp is None
                     ):
@@ -441,12 +452,21 @@ class MacExecutor:
                     self._transfers += 1
                     try:
                         async with self._transfer_capacity:
-                            await upload_snapshot(self._sftp, snapshot.local_path, slot.token)
+                            await upload_snapshot(self._sftp, snapshot.local_path, slot)
+                        if identity != self.identity or not self._handshake_accepted:
+                            raise ConnectionError("publication generation changed")
                         completion = await self._request(WireMessageKind.file_complete, publication)
-                        if completion.kind is not WireMessageKind.file_accepted:
+                        if (
+                            completion.kind is not WireMessageKind.file_accepted
+                            or completion.payload != as_object(snapshot.manifest)
+                        ):
                             raise ValueError("publication did not confirm complete bytes")
                     finally:
                         self._transfers -= 1
+                elif response.payload != as_object(snapshot.manifest):
+                    raise ValueError("publication receipt manifest changed")
+            if identity != self.identity or not self._handshake_accepted:
+                raise ConnectionError("publication generation changed")
             response = await self._request(WireMessageKind.envelope, as_object(envelope))
             receipt = TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
             await asyncio.to_thread(self.spool.acknowledge, receipt)
@@ -530,7 +550,6 @@ class MacExecutor:
         reader_task = asyncio.create_task(
             observe(self._read_loop(process.stdout), ConnectionFailureOrigin.reader)
         )
-        client_key = asyncssh.generate_private_key("ssh-ed25519")
         sftp_context = None
 
         async def session() -> None:
@@ -543,17 +562,18 @@ class MacExecutor:
             phase = ConnectionPhase.transport_open
             opened = await self._request(
                 WireMessageKind.transport_open,
-                {
-                    "client_public_key": client_key.export_public_key().decode(),
-                    "identity": as_object(identity),
-                },
+                {"identity": as_object(identity)},
             )
             if opened.kind is not WireMessageKind.transport_opened:
-                raise ValueError("restricted SFTP endpoint refused")
-            endpoint = TypeAdapter(SftpEndpoint).validate_python(opened.payload["endpoint"])
+                raise ValueError("SFTP generation refused")
+            transfer_root = opened.payload["transfer_root"]
+            if not isinstance(transfer_root, str):
+                raise ValueError("invalid transfer root")
+            validate_transfer_path(transfer_root + "/validation", transfer_root)
+            self._transfer_root = transfer_root
             nonlocal sftp_context
             phase = ConnectionPhase.sftp_open
-            opening_sftp = connect_sftp(outer, endpoint, client_key, self.paths.run)
+            opening_sftp = connect_sftp(outer)
             self._sftp = await opening_sftp.__aenter__()
             sftp_context = opening_sftp
             phase = ConnectionPhase.preview_setup
@@ -625,6 +645,7 @@ class MacExecutor:
                     )
                 finally:
                     self._sftp = None
+                    self._transfer_root = None
                     try:
                         if previews is not None:
                             await previews.close()

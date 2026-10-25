@@ -112,11 +112,15 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
             """import importlib, json, sys, sysconfig
 from pathlib import Path
 names = (
-    'planner.executor.mac', 'planner.executor.ssh', 'planner.executor.sftp',
+    'planner.executor.mac', 'planner.executor.ssh', 'planner.executor.transfers',
     'planner.executor.preflight', 'planner.cli.main', 'asyncssh',
 )
 modules = {name: importlib.import_module(name) for name in names}
 assert modules['planner.executor.mac'].MacExecutor.__module__ == 'planner.executor.mac'
+assert (
+    modules['planner.executor.transfers'].GenerationTransfers.__module__
+    == 'planner.executor.transfers'
+)
 sites = {Path(sysconfig.get_path(key)).resolve() for key in ('purelib', 'platlib')}
 for name, module in tuple(sys.modules.items()):
     if name.split('.')[0] in {'planner', 'asyncssh', 'cryptography', 'cffi'}:
@@ -161,7 +165,7 @@ assert 'planner.core.db' not in sys.modules
     assert set(installed_origins) == {
         "planner.executor.mac",
         "planner.executor.ssh",
-        "planner.executor.sftp",
+        "planner.executor.transfers",
         "planner.executor.preflight",
         "planner.cli.main",
         "asyncssh",

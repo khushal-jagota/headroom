@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from planner.executor import mac
+from planner.executor.configuration import PROTOCOL_VERSION
 from planner.executor.contracts import ExecutorIdentity, WireMessage, WireMessageKind
 from planner.executor.mac import MacExecutor
 from planner.executor.vps import ExecutorEndpoint
@@ -112,7 +113,7 @@ def test_unexpected_request_task_failure_closes_original_generation(failure: str
     async def run() -> None:
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
         original, replacement = peer(), peer()
-        identity = ExecutorIdentity(5, "a" * 40, 2, "incarnation", 1)
+        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "incarnation", 1)
         endpoint.identity = identity
         endpoint.writer = original
         endpoint._responses = {}
@@ -166,7 +167,7 @@ def test_request_task_cancellation_propagates() -> None:
         with pytest.raises(asyncio.CancelledError):
             await endpoint._handle(
                 WireMessage(WireMessageKind.health, "request", {}),
-                ExecutorIdentity(5, "a" * 40, 2, "incarnation", 1),
+                ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "incarnation", 1),
                 original,
             )
         original.close.assert_not_called()

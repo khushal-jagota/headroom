@@ -45,6 +45,8 @@ def test_replay_pin_retains_bytes_after_concurrent_receipt_until_transfer_finish
             ),
             panels_server_url="http://unused",
         )
+        # Isolate outbox lifetime after the peer has accepted this generation.
+        mac._handshake_accepted = True
         source = tmp_path / "source"
         source.mkdir()
         (source / "artifact").write_bytes(b"immutable bytes")
@@ -74,7 +76,9 @@ def test_replay_pin_retains_bytes_after_concurrent_receipt_until_transfer_finish
                 entered.set()
                 await release.wait()
                 assert durable_path.read_bytes() == b"immutable bytes"
-                return WireMessage(WireMessageKind.file_accepted, "file", {})
+                return WireMessage(
+                    WireMessageKind.file_accepted, "file", as_object(snapshot.manifest)
+                )
             assert kind is WireMessageKind.envelope
             return WireMessage(WireMessageKind.receipt, "row", as_object(receipt))
 
@@ -145,6 +149,8 @@ def test_replay_drains_captured_heads_and_quiescence_counts_without_full_invento
             ),
             panels_server_url="http://unused",
         )
+        # Requests below model a connected, accepted generation.
+        mac._handshake_accepted = True
         for conversation in ("c_one", "c_one", "c_two", "c_two"):
             mac.spool.mint_envelope(
                 conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={}

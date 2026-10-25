@@ -117,19 +117,13 @@ class ExecutorSshConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class FileTransferSlot:
-    """Only the opaque name crosses SFTP; a host path never grants authority."""
+class FileTransfer:
+    """Generation-owned account path; publication authority stays with the original child."""
 
-    token: str
+    transfer_id: str
+    path: str
     direction: Literal["upload", "download"]
     manifest: FileManifest
-
-
-@dataclass(frozen=True, slots=True)
-class SftpEndpoint:
-    socket_path: str
-    server_public_key: str
-    username: str
 
 
 @dataclass(frozen=True, slots=True)

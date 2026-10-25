@@ -75,15 +75,15 @@ class PublicationReceiver:
             os.close(descriptor)
         fsync_directory(self.quarantine_root)
 
-    def ingest_sealed(
-        self, manifest: FileManifest, sealed_path: Path, *, identity: ExecutorIdentity
+    def ingest_staged(
+        self, manifest: FileManifest, staged_path: Path, *, identity: ExecutorIdentity
     ) -> None:
         self.store.verify_connection(identity)
         self.begin(manifest, identity=identity)
         if self.store.publication_accepted(manifest):
             return
-        temporary = self.quarantine_root / (uuid4().hex + ".sealed-copy")
-        copy_verified(sealed_path, temporary, manifest)
+        temporary = self.quarantine_root / (uuid4().hex + ".receiver-copy")
+        copy_verified(staged_path, temporary, manifest)
         try:
             self.store.verify_connection(identity)
             with directory_descriptor(self.quarantine_root) as parent:

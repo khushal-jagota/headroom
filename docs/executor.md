@@ -23,7 +23,7 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 5. Earlier peers refuse work before replay. The
+The wire protocol is version 6. Earlier peers refuse work before replay. The
 journal format is version 2. Earlier journal formats refuse ordinary startup
 and deployment before mutation. Wire compatibility and journal compatibility are
 separate checks. Neither compatibility check converts stored work.
@@ -79,22 +79,34 @@ length, and digest, then publishes a complete file from quarantine. A dependent
 row cannot commit first. A replay of an old publication cannot overwrite a newer
 file at the same URL.
 
-Both directions use standard pipelined SFTP through a restricted endpoint. Each
-session receives temporary credentials and a pinned host key. An opaque slot
-permits only its issued upload or download. No SFTP path grants access to ordinary
-account files or the served destination. Four transfers and four open handles
-share a session. Each transfer permits sixteen requests of at most 64 KiB.
+Both directions use standard SFTP v3 on the same authenticated SSH connection as
+the relay and previews. SFTP has ordinary access as the configured VPS account.
+Panels validates each transfer's direction, manifest, and absolute path beneath
+the negotiated generation directory. It admits four transfers; each uses one
+handle and at most sixteen requests of at most 64 KiB. Reads are bounded by the
+manifest length, with an extra byte to check EOF. Short or excess data refuses
+acceptance. These are application limits, not server disk quotas or account confinement.
 
-The VPS keeps each session's SFTP socket and preview sockets together under a
-private, owned `~/.cache/panels/ssh` directory in the server user's account home.
-It does not use the service's private `/tmp`, which the outer Tailscale SSH
-daemon cannot see. Symlink paths, an unsafe directory, or paths exceeding Unix
-socket limits refuse setup. Session cleanup removes the whole temporary root.
+The VPS stages transfers in a private generation directory under the server
+user's shared account home. Upload paths are created exclusively and download
+paths contain immutable copies. Preview sockets remain in the same shared-home
+generation root, visible to the SSH daemon rather than the service's private
+`/tmp`. Unsafe or symlinked roots and paths exceeding Unix socket limits refuse
+setup.
 
-Completion closes upload handles before a separate copy and digest check seals
-the bytes. Panels then validates publication and commits the first receipt.
-A successful SFTP write is no proof of publication or a native effect. Lost input
-completion retains the original command and caller for reconciliation.
+The Mac closes an upload handle before requesting completion. The receiver
+makes a fresh verified copy before atomic publication, so a retained SFTP handle
+cannot change accepted bytes. Panels rechecks the generation, original child,
+manifest, and reservation before committing the first receipt. Input downloads
+likewise pass through a fresh verified receiver copy before acceptance and command
+dispatch. A successful SFTP write proves neither publication nor a native effect.
+Lost input completion retains the original command and caller for reconciliation.
+
+Generation loss closes application admission. Cancellation waits for admitted
+filesystem work, including receiver copies in threads, before releasing transfers
+or removing the generation directory. The Mac closes the connection before
+waiting for canceled transfer cleanup. Ordinary account SFTP supplies no handle
+revocation guarantee; receiver copies protect accepted bytes independently.
 
 Snapshots and hashes use bounded streams. One submission per conversation can
 proceed at a time. Separate conversations can progress while a large transfer
@@ -285,7 +297,7 @@ The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Protocol 4 peers refuse the protocol 5 handshake.
+Earlier peers refuse the protocol 6 handshake before replay.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac
@@ -333,7 +345,7 @@ The executor does not open a login URL or change endpoint policy.
 The numeric connection retains the configured host's exact `known_hosts` identity.
 A different pin for the numeric address cannot override a name's pin.
 Unknown, changed, and revoked host keys refuse. Advertised peer keys never replace
-operator pins. The inner restricted SFTP connection keeps its temporary key policy.
+operator pins. SFTP uses this same authenticated and pinned connection.
 
 Connection diagnostics use fixed categories and omit addresses, paths, credentials,
 and remote output. Each category appears at most once per process, except that the
@@ -348,27 +360,18 @@ are ten seconds. Keepalives run every 15 seconds with three unanswered probes.
 Graceful closure has five seconds before abort. Transport failure preserves
 uncertain remote effects.
 
-The host must support direct and reverse Unix SSH channels. The inner SSH
-connection reaches only the current generation's restricted SFTP socket. Account
-SFTP is never a fallback. Missing capabilities refuse work and grant no authority
-for host configuration changes. Both connections share the outer TCP transport,
-so underlying TCP contention remains.
+The host must accept the standard SFTP v3 subsystem and provide shared-home
+access for the configured account. Browser previews still require reverse Unix
+SSH channels; their leases and cleanup remain independent of file transfers.
+The relay, SFTP, and preview channels share one SSH connection, so underlying TCP
+contention remains. Missing capabilities refuse work and grant no authority for
+host configuration changes.
 
-The restricted service audits each inherited SFTP operation. Unapproved path,
-metadata, filesystem, and link operations refuse. The standard read-only
-`limits@openssh.com` response remains advisory. Its library and OS maxima grant no
-additional Panels authority. Panels enforces its smaller bounds independently.
-
-The optional `copy-data` extension passes through the ordinary authorized handle
-hooks. Explicit copies up to 64 KiB can pass between a readable download and a
-writable upload. Larger copies and zero-length-to-EOF requests need a larger
-internal read and refuse at the 64 KiB hook. Stale, revoked, sealed, wrong-direction,
-and out-of-range handles refuse. This safe refusal does not affect ordinary
-pipelined SFTP read/write. No private API or larger bound enables this operation.
-
-Generation loss revokes slots, handles, credentials, and preview leases. Active
-transfers prevent quiescence. Complete sealed bytes, durable reservations, and
-first receipts retain their existing recovery rules.
+Active transfers prevent quiescence. Durable reservations, verified receiver
+copies, and first receipts retain their existing recovery rules. Wire protocol 6
+requires matching Mac and VPS peers. The Manager coordinates that transition with
+the installation Worker; a reviewed coding candidate grants no live application
+or SSH configuration authority.
 
 ## Evidence boundaries
 

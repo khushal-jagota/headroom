@@ -48,6 +48,7 @@ def isolated_sshd(directory: Path) -> Iterator[ExecutorSshConfig]:
                 "PasswordAuthentication no",
                 "KbdInteractiveAuthentication no",
                 "PubkeyAuthentication yes",
+                "Subsystem sftp internal-sftp",
                 "AllowStreamLocalForwarding yes",
                 "AllowTcpForwarding yes",
                 "StreamLocalBindUnlink no",

@@ -249,11 +249,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
                     WireMessageKind.transport_opened,
                     "reply",
                     {
-                        "endpoint": {
-                            "socket_path": "/unused",
-                            "server_public_key": "unused",
-                            "username": "unused",
-                        },
+                        "transfer_root": "/unused",
                         "preview_root": "/unused",
                     },
                 )

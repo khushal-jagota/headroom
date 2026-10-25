@@ -1452,8 +1452,10 @@ def test_production_relay_exits_when_peer_ends_while_stdin_stays_open(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched"])
-def test_artifact_slot_must_validate_before_publication_and_backend_row(
+@pytest.mark.parametrize(
+    "invalid_ack", ["empty", "mismatched", "outside_root", "traversal", "manifest", "wrong_kind"]
+)
+def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
     async def run() -> None:
@@ -1470,7 +1472,21 @@ def test_artifact_slot_must_validate_before_publication_and_backend_row(
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
                         payload["direction"] = "download"
-                    message = WireMessage(message.kind, message.request_id, payload)
+                    elif invalid_ack == "outside_root":
+                        payload["path"] = "/tmp/unnegotiated-transfer"
+                    elif invalid_ack == "traversal":
+                        payload["path"] = str(payload["path"]) + "/../escape"
+                    elif invalid_ack == "manifest":
+                        payload["manifest"] = {}
+                    message = WireMessage(
+                        (
+                            WireMessageKind.file_accepted
+                            if invalid_ack == "wrong_kind"
+                            else message.kind
+                        ),
+                        message.request_id,
+                        payload,
+                    )
                 await send(message)
 
             async def observe_rejection(envelope: QueuedEnvelope) -> None:

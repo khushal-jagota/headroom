@@ -1,19 +1,13 @@
-"""Explicit SSH identity and public Unix-channel bridge for restricted SFTP.
-
-The outer account connection never opens its account-wide SFTP subsystem. The
-inner connection authenticates only to the generation's restricted endpoint.
-"""
+"""Explicit outer SSH identity and bounded standard SFTP transfers."""
 
 from __future__ import annotations
 
 import asyncio
 import os
-import socket
-import stat
-import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import asyncssh
 
@@ -25,21 +19,15 @@ from planner.executor.configuration import (
     SSH_KEEPALIVE_COUNT_MAX,
     SSH_KEEPALIVE_INTERVAL_SECONDS,
     SSH_LOGIN_TIMEOUT_SECONDS,
-    SSH_UNIX_SOCKET_MAX_BYTES,
 )
 from planner.executor.contracts import (
     ExecutorSshConfig,
-    SftpEndpoint,
+    FileTransfer,
     SshAuthenticationMode,
     SshConfigurationError,
 )
 from planner.executor.logic.ssh_configuration import validate_authentication_inputs
 from planner.executor.tailscale import validate_tailnet_destination
-
-
-def generate_ephemeral_key() -> asyncssh.SSHKey:
-    """A generation owns this in-memory key. It must never enter durable state."""
-    return asyncssh.generate_private_key("ssh-ed25519")
 
 
 def _client_options(
@@ -160,119 +148,98 @@ async def close_connection(connection: asyncssh.SSHClientConnection) -> None:
         raise
 
 
-def _private_directory(path: Path) -> None:
-    if not path.is_absolute() or path.resolve() != path:
-        raise ValueError("SSH run directory must be an absolute path without symlinks")
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    metadata = path.lstat()
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
-        raise ValueError("SSH run directory must be owned by the current user")
-    if stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise ValueError("SSH run directory must have mode 0700")
-
-
 @asynccontextmanager
 async def connect_sftp(
     outer: asyncssh.SSHClientConnection,
-    endpoint: SftpEndpoint,
-    client_key: asyncssh.SSHKey,
-    local_run_dir: Path,
 ) -> AsyncIterator[asyncssh.SFTPClient]:
-    """Bridge public APIs to a pinned generation key over the authenticated outer SSH."""
-    _private_directory(local_run_dir)
-    if (
-        not endpoint.username
-        or not endpoint.socket_path.startswith("/")
-        or "\0" in endpoint.socket_path
-        or len(os.fsencode(endpoint.socket_path)) > SSH_UNIX_SOCKET_MAX_BYTES
-    ):
-        raise ValueError("Restricted SFTP endpoint must have an absolute socket and username")
-    pinned_key = asyncssh.import_public_key(endpoint.server_public_key)
-    listener: asyncssh.SSHListener | None = None
-    connection: asyncssh.SSHClientConnection | None = None
-    channel_socket: socket.socket | None = None
-    # A normal macOS Application Support root can exceed sockaddr_un. The
-    # generated child remains private even when its short parent is shared /tmp.
-    socket_parent = local_run_dir
-    if len(os.fsencode(local_run_dir)) + 15 > SSH_UNIX_SOCKET_MAX_BYTES:
-        socket_parent = Path("/tmp").resolve()
-    with tempfile.TemporaryDirectory(prefix="s-", dir=socket_parent) as temporary:
-        local_socket = str(Path(temporary) / "s")
-        # Darwin sockaddr_un allows 104 bytes including the terminating NUL.
-        if len(os.fsencode(local_socket)) > SSH_UNIX_SOCKET_MAX_BYTES:
-            raise ValueError("SSH Unix socket path exceeds the supported platform limit")
-        try:
-            listener = await asyncio.wait_for(
-                outer.forward_local_path(local_socket, endpoint.socket_path),
-                SSH_CONNECT_TIMEOUT_SECONDS,
-            )
-            channel_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            channel_socket.setblocking(False)
-            await asyncio.wait_for(
-                asyncio.get_running_loop().sock_connect(channel_socket, local_socket),
-                SSH_CONNECT_TIMEOUT_SECONDS,
-            )
-            connection = await asyncssh.connect(
-                sock=channel_socket,
-                options=_client_options(client_key, endpoint.username),
-                config=None,
-                known_hosts=([pinned_key], [], []),
-            )
-            channel_socket = None  # The SSH connection now owns the socket.
-            async with connection.start_sftp_client(sftp_version=3) as client:
-                yield client
-        finally:
-            try:
-                if connection is not None:
-                    await close_connection(connection)
-            finally:
-                if channel_socket is not None:
-                    channel_socket.close()
-                if listener is not None:
-                    listener.close()
-                    await asyncio.wait_for(listener.wait_closed(), SSH_CLOSE_TIMEOUT_SECONDS)
+    """Open the account subsystem on the already authenticated connection."""
+    async with outer.start_sftp_client(sftp_version=3, env={}, send_env=[]) as client:
+        yield client
 
 
-async def upload_snapshot(client: asyncssh.SFTPClient, local_path: Path, token: str) -> None:
-    """Stream an existing immutable snapshot into an existing server-issued slot."""
-    source = await asyncio.to_thread(local_path.open, "rb")
+async def _filesystem_call[Result](function: Callable[..., Result], *args: Any) -> Result:
+    """Settle admitted filesystem work before its caller releases file resources."""
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
+        return await asyncio.shield(task)
+    except BaseException:
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
+async def upload_snapshot(
+    client: asyncssh.SFTPClient, local_path: Path, transfer: FileTransfer
+) -> None:
+    """Upload exactly the manifest range and refuse a short or growing snapshot."""
+    if transfer.direction != "upload" or transfer.manifest.byte_count < 0:
+        raise ValueError("invalid upload transfer")
+    from planner.executor.files import regular_descriptor
+
+    with regular_descriptor(local_path) as source:
         async with client.open(
-            token,
+            transfer.path,
             asyncssh.FXF_WRITE,
             encoding=None,
             block_size=SFTP_BLOCK_BYTES,
             max_requests=SFTP_MAX_REQUESTS,
         ) as target:
             offset = 0
-            while content := await asyncio.to_thread(
-                source.read, SFTP_BLOCK_BYTES * SFTP_MAX_REQUESTS
-            ):
+            while offset < transfer.manifest.byte_count:
+                size = min(
+                    SFTP_BLOCK_BYTES * SFTP_MAX_REQUESTS,
+                    transfer.manifest.byte_count - offset,
+                )
+                content = await _filesystem_call(os.read, source, size)
+                if not content:
+                    raise ValueError("file shorter than manifest")
                 async with asyncio.TaskGroup() as writes:
                     for start in range(0, len(content), SFTP_BLOCK_BYTES):
                         writes.create_task(
                             target.write(content[start : start + SFTP_BLOCK_BYTES], offset + start)
                         )
                 offset += len(content)
-    finally:
-        await asyncio.to_thread(source.close)
+            if await _filesystem_call(os.read, source, 1):
+                raise ValueError("file exceeds manifest length")
 
 
-async def download_slot(client: asyncssh.SFTPClient, token: str, local_path: Path) -> None:
-    """Stream a read-only slot into fresh local quarantine. Validation stays separate."""
-    target = await asyncio.to_thread(local_path.open, "xb")
-    try:
+async def download_transfer(
+    client: asyncssh.SFTPClient, transfer: FileTransfer, local_path: Path
+) -> None:
+    """Download a bounded manifest range into fresh quarantine, then check EOF."""
+    if transfer.direction != "download" or transfer.manifest.byte_count < 0:
+        raise ValueError("invalid download transfer")
+    descriptor = os.open(local_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as target:
         async with client.open(
-            token,
+            transfer.path,
             asyncssh.FXF_READ,
             encoding=None,
             block_size=SFTP_BLOCK_BYTES,
             max_requests=SFTP_MAX_REQUESTS,
         ) as source:
-            async for offset, content in await source.read_parallel():
-                await asyncio.to_thread(target.seek, offset)
-                await asyncio.to_thread(target.write, content)
-        await asyncio.to_thread(target.flush)
-        await asyncio.to_thread(os.fsync, target.fileno())
-    finally:
-        await asyncio.to_thread(target.close)
+            offset = 0
+            while offset < transfer.manifest.byte_count:
+                ranges = [
+                    (start, min(SFTP_BLOCK_BYTES, transfer.manifest.byte_count - start))
+                    for start in range(
+                        offset,
+                        min(
+                            transfer.manifest.byte_count,
+                            offset + SFTP_BLOCK_BYTES * SFTP_MAX_REQUESTS,
+                        ),
+                        SFTP_BLOCK_BYTES,
+                    )
+                ]
+                # TaskGroup settles all outstanding requests before the handle closes.
+                async with asyncio.TaskGroup() as reads:
+                    tasks = [reads.create_task(source.read(size, start)) for start, size in ranges]
+                for (_, size), task in zip(ranges, tasks, strict=True):
+                    content = task.result()
+                    if len(content) != size:
+                        raise ValueError("file shorter than manifest")
+                    await _filesystem_call(target.write, content)
+                    offset += size
+            if await source.read(1, offset):
+                raise ValueError("file exceeds manifest length")
+        await _filesystem_call(target.flush)
+        await _filesystem_call(os.fsync, target.fileno())

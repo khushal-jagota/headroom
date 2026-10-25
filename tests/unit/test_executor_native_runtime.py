@@ -542,6 +542,7 @@ def test_replay_failure_blocks_only_its_conversation(
             ),
             panels_server_url="http://unused",
         )
+        executor._handshake_accepted = True
         for conversation in ("c_a", "c_a", "c_b"):
             executor.spool.mint_envelope(
                 conversation_id=conversation, kind=EnvelopeKind.cli_write, payload={}
@@ -1128,11 +1129,7 @@ class ControlPeer:
             response = WireMessageKind.hello_accepted
         elif kind is WireMessageKind.transport_open:
             result = {
-                "endpoint": {
-                    "socket_path": "/unused",
-                    "server_public_key": "unused",
-                    "username": "unused",
-                },
+                "transfer_root": "/unused/transfers",
                 "preview_root": "/unused",
             }
             response = WireMessageKind.transport_opened
@@ -1333,11 +1330,18 @@ def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
 ) -> None:
     """A stalled file upload cannot hold another conversation's control envelope."""
     from planner.executor import mac as module
-    from planner.executor.contracts import AcceptanceReceipt, FileScope, ReceiptDisposition
+    from planner.executor.contracts import (
+        AcceptanceReceipt,
+        FileScope,
+        FileTransfer,
+        ReceiptDisposition,
+    )
     from planner.executor.files import snapshot_file
 
     async def run() -> None:
         executor = make_executor(tmp_path)
+        executor._handshake_accepted = True
+        executor._transfer_root = "/unused/transfers"
         source = tmp_path / "artifacts"
         source.mkdir()
         (source / "image").write_bytes(b"immutable")
@@ -1362,7 +1366,7 @@ def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
         sent: list[str] = []
         executor._sftp = cast(asyncssh.SFTPClient, object())
 
-        async def upload(client: object, source: Path, token: str) -> None:
+        async def upload(client: object, source: Path, transfer: FileTransfer) -> None:
             uploading.set()
             await release.wait()
             assert source.read_bytes() == b"immutable"
@@ -1382,7 +1386,12 @@ def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
                 return WireMessage(
                     WireMessageKind.file_slot,
                     "slot",
-                    {"token": "authorized", "direction": "upload", "manifest": payload["manifest"]},
+                    {
+                        "transfer_id": "authorized",
+                        "path": "/unused/transfers/output",
+                        "direction": "upload",
+                        "manifest": payload["manifest"],
+                    },
                 )
             if kind is WireMessageKind.file_complete:
                 return WireMessage(
@@ -1555,17 +1564,19 @@ def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
 ) -> None:
     from unittest.mock import AsyncMock
 
-    from planner.executor.contracts import FileManifest, FileScope, FileTransferSlot
+    from planner.executor.contracts import FileManifest, FileScope, FileTransfer
 
     async def run() -> None:
         executor = make_executor(tmp_path)
         executor._handshake_accepted = True
         executor._sftp = cast(asyncssh.SFTPClient, object())
+        executor._transfer_root = "/unused/transfers"
         executor._transfers = 4
         send = AsyncMock()
         monkeypatch.setattr(executor, "_send", send)
-        slot = FileTransferSlot(
-            "slot",
+        slot = FileTransfer(
+            "transfer",
+            "/unused/transfers/input",
             "download",
             FileManifest("publication", FileScope.conversation, "c_one", "input", "a" * 64, 1),
         )
