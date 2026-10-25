@@ -168,7 +168,7 @@ private struct ConversationSurface: View {
                     HStack(spacing: 8) {
                         Group {
                             if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil {
-                                ProgressView().controlSize(.mini)
+                                RingSpinner(size: .compact)
                             } else {
                                 Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
                             }

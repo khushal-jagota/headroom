@@ -21,7 +21,7 @@ struct SettingsView: View {
                 }.accessibleSegmentedPicker()
             }.listRowBackground(PanelsTheme.raised)
             if let error { Section { LoadErrorView(message: error) { await load() } } }
-            if loading && !hasData { ProgressView("Reading settings…") }
+            if loading && !hasData { RingSpinner("Reading settings…") }
             switch section {
             case "Config": configuration
             case "Scheduled": scheduled
@@ -35,7 +35,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings").panelsScreen()
         .task(id: "\(store.baseURL):\(section):\(store.revision)") { await load() }
-        .refreshable { await load() }
+        .panelsRefreshable { await load() }
         .onChange(of: section) { _, _ in Haptics.selection() }
         .sheet(isPresented: $showingServer) {
             ServerAddressSheet(initialAddress: store.baseURL.absoluteString) { store.configure(baseURL: $0) }

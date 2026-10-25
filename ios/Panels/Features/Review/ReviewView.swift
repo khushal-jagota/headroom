@@ -43,7 +43,7 @@ struct ReviewView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                         .padding(.horizontal, ReviewStyle.gutter)
-                    }.refreshable { await store.refresh() }
+                    }.panelsRefreshable { await store.refresh() }
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     if skippedCount > 0 {
@@ -60,7 +60,7 @@ struct ReviewView: View {
                 .opacity(emptyVisible ? 1 : 0)
                 .task { withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { emptyVisible = true } }
                 .onDisappear { emptyVisible = false }
-            } else { ScrollView { Color.clear.frame(height: 1) }.refreshable { await store.refresh() } }
+            } else { ScrollView { Color.clear.frame(height: 1) }.panelsRefreshable { await store.refresh() } }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
@@ -221,7 +221,7 @@ private struct ReviewProposalView: View {
                         .background(PanelsTheme.surface)
                 }
             }
-            .refreshable { await store.refresh(); await decision.load(item: item, api: store.client) }
+            .panelsRefreshable { await store.refresh(); await decision.load(item: item, api: store.client) }
             .toolbar { reviewToolbar }
 
         }
@@ -416,7 +416,7 @@ private struct ReviewApprovalSheet: View {
                 Button {
                     Haptics.light(); Task { await onApprove(ceiling, holder) }
                 } label: {
-                    HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.ink) } else { Text("Approve until \(selectedLabel)") }; Spacer() }.frame(minHeight: ReviewStyle.actionHeight)
+                    HStack { Spacer(); if decision.busy { RingSpinner(color: PanelsTheme.ink) } else { Text("Approve until \(selectedLabel)") }; Spacer() }.frame(minHeight: ReviewStyle.actionHeight)
                 }.buttonStyle(ReviewActionStyle(approval: true))
                     .accessibilityLabel("Approve until \(selectedLabel)")
                     .accessibilityValue(decision.busy ? "Approving" : "")
@@ -460,7 +460,7 @@ private struct ReviewReturnComposer: View {
                 Button {
                     Haptics.light(); focused = false; Task { await onReturn() }
                 } label: {
-                    HStack { Spacer(); if decision.busy { ProgressView().tint(PanelsTheme.ink) } else { Text("Send back") }; Spacer() }.frame(minHeight: 44)
+                    HStack { Spacer(); if decision.busy { RingSpinner(color: PanelsTheme.ink) } else { Text("Send back") }; Spacer() }.frame(minHeight: 44)
                 }.buttonStyle(ReviewActionStyle(approval: true))
                     .disabled(!decision.ready || decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || voice.phase != .idle)
                     .opacity(decision.revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
@@ -486,7 +486,7 @@ private struct ReviewReturnComposer: View {
                 }
                 Spacer()
                 Button { Haptics.light(); Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg)).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
-            case .transcribing: Text("transcribing"); Spacer(); ProgressView()
+            case .transcribing: Text("transcribing"); Spacer(); RingSpinner()
             case .failed:
                 Text("recording saved on this phone").font(.footnote)
                 Spacer()

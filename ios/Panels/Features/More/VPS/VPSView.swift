@@ -61,14 +61,14 @@ struct VPSView: View {
                         }
                         if nextOffset != nil {
                             Button { Task { await loadProcesses(reset: false) } } label: {
-                                if loadingProcesses { ProgressView() } else { Text("Load more processes") }
+                                if loadingProcesses { RingSpinner() } else { Text("Load more processes") }
                             }.disabled(loadingProcesses)
                         }
                     }.listRowBackground(PanelsTheme.raised)
                 } else {
                     ContentUnavailableView("No machine readings", systemImage: "server.rack", description: Text(latest.collection.reason ?? "The server has not collected a sample."))
                 }
-            } else if error == nil { ProgressView("Reading the machine…") }
+            } else if error == nil { RingSpinner("Reading the machine…") }
         }
         .navigationTitle("VPS").panelsScreen()
         .task(id: "\(store.baseURL):\(scenePhase == .active)") {
@@ -82,7 +82,7 @@ struct VPSView: View {
         }
         .task(id: window) { history = nil; await loadHistory() }
         .onChange(of: window) { _, _ in Haptics.selection() }
-        .refreshable { await load(); await loadHistory() }
+        .panelsRefreshable { await load(); await loadHistory() }
     }
     private func instruments(_ sample: VPSSample) -> some View {
         Section("Machine") {

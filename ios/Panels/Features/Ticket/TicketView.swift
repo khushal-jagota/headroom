@@ -45,7 +45,7 @@ struct TicketView: View {
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() })
-        .refreshable { await load(); await loadArtifacts() }
+        .panelsRefreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }

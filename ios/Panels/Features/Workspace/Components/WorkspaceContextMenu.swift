@@ -87,7 +87,7 @@ private struct WorkspacePreview: View {
                 Text(recap).panelsScaledFont(size: 16).lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                     .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 8))
-            } else if recap == nil && loadError == nil { ProgressView() }
+            } else if recap == nil && loadError == nil { RingSpinner() }
             if let loadError { Text(loadError).panelsScaledFont(size: 13).foregroundStyle(PanelsTheme.faint) }
         }
         .foregroundStyle(PanelsTheme.strong).padding(20).frame(width: 330, alignment: .leading)

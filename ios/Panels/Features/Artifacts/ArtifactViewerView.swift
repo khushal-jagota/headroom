@@ -43,7 +43,7 @@ struct ArtifactViewerView: View {
                     Button("Try again") { loadVersion += 1 }.buttonStyle(.bordered)
                 }
             } else {
-                Color.clear.overlay { if showLoading { ProgressView("Opening artifact…") } }
+                Color.clear.overlay { if showLoading { RingSpinner("Opening artifact…") } }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -107,15 +107,15 @@ struct ArtifactViewerView: View {
                     .accessibilityIdentifier("artifact-preview-width")
                 ArtifactWebView(source: document.text!, url: document.remoteURL, desktopPreview: desktopPreview, openLink: follow, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
                     .id(renderVersion)
-                    .overlay { if !webReady && showLoading { ProgressView("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
+                    .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
             }
         case .markdown where document.text != nil:
-            ArtifactMarkdownView(source: document.text!, baseURL: document.remoteURL).refreshable { await load() }
+            ArtifactMarkdownView(source: document.text!, baseURL: document.remoteURL).panelsRefreshable { await load() }
         case .text where document.text != nil:
             ScrollView {
                 Text(document.text!).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.lg)
-            }.refreshable { await load() }
+            }.panelsRefreshable { await load() }
         case .image:
             if let image { ArtifactImageView(image: image).id(renderVersion) }
             else { fallback(document) }

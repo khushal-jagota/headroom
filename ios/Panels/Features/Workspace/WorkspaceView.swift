@@ -56,7 +56,7 @@ struct WorkspaceView: View {
                                 loadingMore = false
                             }
                         } label: {
-                            HStack { if loadingMore { ProgressView() }; Text("Load more") }.frame(minHeight: 44)
+                            HStack { if loadingMore { RingSpinner() }; Text("Load more") }.frame(minHeight: 44)
                         }.disabled(loadingMore)
                     }
                     settledSection(proxy: proxy).padding(.top, 16)
@@ -74,7 +74,7 @@ struct WorkspaceView: View {
             scrolling = phase != .idle
             if !scrolling { updateGroups() }
         }
-        .refreshable { await refresh() }
+        .panelsRefreshable { await refresh() }
         .screenLoadState("workspace", hasContent: hasContent, error: refreshError) { await refresh() }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -111,7 +111,7 @@ struct WorkspaceView: View {
                     Text("Settled").foregroundStyle(PanelsTheme.text)
                     if let settled { Text(String(settled.page.matchCount)).foregroundStyle(PanelsTheme.faint) }
                     Spacer()
-                    if settled == nil && settledError == nil { ProgressView().controlSize(.mini) }
+                    if settled == nil && settledError == nil { RingSpinner(size: .compact) }
                 }.panelsScaledFont(size: 17).frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .id("settledLine")
@@ -139,7 +139,7 @@ struct WorkspaceView: View {
                     }
                     if settled.managers.isEmpty { Text("No settled orchestrators").foregroundStyle(PanelsTheme.faint) }
                 }
-                if settledLoading && settled != nil { ProgressView().controlSize(.mini).frame(maxWidth: .infinity) }
+                if settledLoading && settled != nil { RingSpinner(size: .compact).frame(maxWidth: .infinity) }
                 }.opacity(settledRowsVisible ? 1 : 0)
             }
         }.padding(.horizontal, 16)

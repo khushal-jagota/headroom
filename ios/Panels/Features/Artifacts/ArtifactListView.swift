@@ -41,11 +41,11 @@ struct ArtifactListView: View {
             fileSection(entries.filter { $0.directory == nil && !$0.key.hasPrefix("linked:") }, title: directory.isEmpty ? "Files" : (directory as NSString).lastPathComponent)
             fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From Fields")
             if let error { LoadErrorView(message: error) { await load(); refreshVersion += 1 } }
-            if !hasLoaded && isLoading { ProgressView("Loading artifacts…") }
+            if !hasLoaded && isLoading { RingSpinner("Loading artifacts…") }
             if hasLoaded && entries.isEmpty { Text("No artifacts yet").foregroundStyle(PanelsTheme.faint) }
             if hasLoaded && nextOffset < total {
                 Button { Task { await load(more: true) } } label: {
-                    HStack { Text("More files"); Spacer(); if isLoading { ProgressView() } }
+                    HStack { Text("More files"); Spacer(); if isLoading { RingSpinner() } }
                 }.disabled(isLoading).listRowBackground(Color.clear)
             }
         }
@@ -111,7 +111,7 @@ private struct ArtifactFolderSection: View {
                 } else { ArtifactFileRow(owner: owner, entry: entry, open: open) }
             }
             if let error { LoadErrorView(message: error) { await load() }.listRowBackground(Color.clear) }
-            if loading && entries.isEmpty { ProgressView("Loading folder…").listRowBackground(Color.clear) }
+            if loading && entries.isEmpty { RingSpinner("Loading folder…").listRowBackground(Color.clear) }
             if search.isEmpty && total > visible.count {
                 Button("\(total - visible.count) more") {
                     withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded = true }

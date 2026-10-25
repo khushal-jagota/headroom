@@ -94,29 +94,15 @@ extension View {
     }
 }
 
-/// Fixed-size UIKit indicator avoids SwiftUI control-size differences in compact rows.
-struct WorkingSpinner: UIViewRepresentable {
-    func makeUIView(context: Context) -> UIActivityIndicatorView {
-        let view = UIActivityIndicatorView(style: .medium)
-        view.color = UIColor(PanelsTheme.faint)
-        view.startAnimating()
-        return view
-    }
-    func updateUIView(_ view: UIActivityIndicatorView, context: Context) { view.startAnimating() }
-}
-
 struct ConversationSignalMark: View {
     let signal: ConversationSignal?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         Group {
             if signal?.messageForOwner == true {
                 Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).accessibilityLabel("Unread message")
             } else if signal?.working == true {
-                Group {
-                    if reduceMotion { Image(systemName: "circle.dotted").font(.system(size: 14)).foregroundStyle(PanelsTheme.faint) }
-                    else { WorkingSpinner().scaleEffect(0.7) }
-                }.frame(width: 14, height: 14).accessibilityLabel("Working")
+                RingSpinner(size: .compact, color: PanelsTheme.faint)
+                    .accessibilityLabel("Working")
             }
         }.frame(width: 14, height: 14, alignment: .trailing)
     }

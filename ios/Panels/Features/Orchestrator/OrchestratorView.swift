@@ -46,7 +46,7 @@ struct OrchestratorView: View {
         .panelsScreen()
         .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .task(id: store.revision) { await load() }
-        .refreshable { await load() }
+        .panelsRefreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("orchestrator-screen")
     }

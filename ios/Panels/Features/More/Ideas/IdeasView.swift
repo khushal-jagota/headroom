@@ -21,7 +21,7 @@ struct IdeasView: View {
                     }
                 }
                 if !model.hasLoaded && model.readError == nil {
-                    ProgressView("Loading ideas…")
+                    RingSpinner("Loading ideas…")
                 } else if model.hasLoaded && model.ideas.isEmpty {
                     Text("No ideas yet.").foregroundStyle(PanelsTheme.muted)
                 }
@@ -46,7 +46,7 @@ struct IdeasView: View {
         }
         .panelsScreen()
         .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await model.refresh(using: store.client) }
-        .refreshable { await model.refresh(using: store.client) }
+        .panelsRefreshable { await model.refresh(using: store.client) }
     }
 
     private var captureForm: some View {
@@ -75,7 +75,7 @@ struct IdeasView: View {
                 Spacer()
                 Button(action: capture) {
                     HStack(spacing: PanelsTheme.Space.sm) {
-                        if model.isCapturing { ProgressView().controlSize(.small) }
+                        if model.isCapturing { RingSpinner(size: .small) }
                         Text(model.isCapturing ? "Capturing…" : "Capture")
                     }
                     .font(PanelsTheme.TypeScale.body.weight(.semibold))

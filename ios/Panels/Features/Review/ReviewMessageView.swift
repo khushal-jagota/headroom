@@ -150,7 +150,7 @@ private struct ReviewMessageContent: View {
                 } else if let id = piece.storedFileId,
                           let url = try? store.client.url("/api/conversation/conversations/\(conversationID)/files/\(id)") {
                     if piece.piece == "image" {
-                        AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
+                        AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { RingSpinner() }
                             .accessibilityLabel(piece.fileName ?? "Message image")
                     } else { Link(piece.fileName ?? "File", destination: url) }
                 }
@@ -196,7 +196,7 @@ private struct ReviewInlineArtifact: View {
                 else if QLPreviewController.canPreview(document.localURL as NSURL) { ArtifactSystemPreview(document: document).frame(height: 320) }
                 NavigationLink(value: AppRoute.artifact(owner: target.owner, path: target.path, title: target.title)) { Text("Open artifact") }
             } else if let error { Text(error).foregroundStyle(PanelsTheme.error); Button("Retry") { Task { await load() } } }
-            else { ProgressView() }
+            else { RingSpinner() }
         } label: { Text(target.title).font(.subheadline) }
             .task { await load() }
     }

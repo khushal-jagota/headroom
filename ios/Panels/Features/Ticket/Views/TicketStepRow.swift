@@ -35,7 +35,7 @@ struct TicketStepMark: View {
             } else if current && presentation.ticket.agentState == "errored" {
                 Circle().fill(PanelsTheme.error).accessibilityLabel("Error")
             } else if current && presentation.working && presentation.ticket.pendingProposal == nil {
-                ProgressView().controlSize(.mini).tint(PanelsTheme.accent).accessibilityLabel("Working")
+                RingSpinner(size: .compact, color: PanelsTheme.accent).accessibilityLabel("Working")
             } else {
                 Circle().strokeBorder(current ? PanelsTheme.accent : PanelsTheme.faint.opacity(0.4), lineWidth: 1.5)
                     .accessibilityLabel(current ? "Current step" : "Not started")
@@ -77,7 +77,7 @@ struct TicketStepPage: View {
                         let text = pendingProposal?.body ?? detail?.fieldValues[field.id] ?? ""
                         ArtifactMarkdownContent(source: text.isEmpty ? "Not started" : text, baseURL: store.baseURL)
                     }
-                } else if error == nil { ProgressView() }
+                } else if error == nil { RingSpinner() }
             }.padding(PanelsTheme.Space.xl)
         }.panelsScreen().navigationTitle(field.label).navigationBarTitleDisplayMode(.inline)
             .toolbar {
