@@ -216,9 +216,11 @@ def test_preflight_validates_config_archive_and_read_only_host_evidence(
     assert "owner-only" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("activation_exit", [0, 3])
 def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    activation_exit: int,
 ) -> None:
     home = tmp_path / "home"
     app = tmp_path / "app"
@@ -256,7 +258,7 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
         assert "PLAN_DB_PATH" not in kwargs["env"]
         return subprocess.CompletedProcess(
             argv,
-            0,
+            activation_exit,
             json.dumps(
                 asdict(HostDeploymentResult("mac", SHA, "verified", SHA, "Instrument ready"))
             ),
@@ -265,6 +267,15 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
 
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setenv("PLAN_DB_PATH", "/do-not-inherit")
+    if activation_exit:
+        with pytest.raises(ResidentError, match="success report conflicts"):
+            driver.prepare_and_activate(
+                app, python=Path("/native/python"), home=home,
+                launch=replace(_launch(tmp_path, SHA), backend_path="/native/bin:/usr/bin"),
+                timeout_seconds=30.0,
+            )
+        assert len(built) == 1
+        return
     result = driver.prepare_and_activate(
         app,
         python=Path("/native/python"),
@@ -488,3 +499,37 @@ def test_invalid_local_ssh_inputs_refuse_before_source_or_runtime_writes(
             timeout_seconds=1,
         )
     assert set(tmp_path.rglob("*")) == before
+
+
+def test_typed_native_preparation_failure_never_enters_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.environments.resident.contracts import NativeBuildDiagnostic, NativeBuildFailure
+
+    home, app = tmp_path / "home", tmp_path / "app"
+    app.mkdir()
+    (app / "resident-package.json").write_text(json.dumps({"package": asdict(_package())}))
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "home", lambda: home)
+    failure = NativeBuildFailure(
+        NativeBuildDiagnostic("backend_npm_install", "npm_ci", "nonzero_exit", 17)
+    )
+    attempts = []
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        attempts.append(args)
+        raise failure
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("failed native preparation must not activate or start another subprocess")
+
+    monkeypatch.setattr(driver, "prepare_runtime", fail)
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(driver, "activate", forbidden)
+    with pytest.raises(NativeBuildFailure) as raised:
+        driver.prepare_and_activate(
+            app, python=Path("/native/python"), home=home,
+            launch=_launch(tmp_path, SHA), timeout_seconds=1,
+        )
+    assert raised.value is failure
+    assert len(attempts) == 1

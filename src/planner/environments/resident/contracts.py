@@ -17,6 +17,54 @@ class ResidentError(RuntimeError):
     """Preparation or deployment could not satisfy its safety contract."""
 
 
+NativeFailureKind = Literal[
+    "nonzero_exit", "timeout", "process_start", "output_limit", "cleanup_deadline"
+]
+NativeBuildPhase = Literal[
+    "python_probe", "node_probe", "python_build", "backend_npm_install", "runtime_verification"
+]
+NativeBuildOperation = Literal[
+    "python_probe",
+    "node_probe",
+    "create_venv",
+    "install_build_tools",
+    "download_source",
+    "build_source_wheel",
+    "download_dependencies",
+    "build_application_wheel",
+    "install_wheels",
+    "check_dependencies",
+    "npm_ci",
+    "import_entrypoint",
+    "installed_files",
+]
+
+
+@dataclass(frozen=True)
+class NativeBuildDiagnostic:
+    phase: NativeBuildPhase
+    operation: NativeBuildOperation
+    failure_kind: NativeFailureKind
+    exit_status: int | None = None
+
+
+class NativeCommandFailure(ResidentError):
+    """Safe process facts only; never includes captured output or command arguments."""
+
+    def __init__(self, kind: NativeFailureKind, exit_status: int | None = None) -> None:
+        super().__init__("native command failed")
+        self.kind = kind
+        self.exit_status = exit_status
+
+
+class NativeBuildFailure(ResidentError):
+    """A fixed builder operation with safe process failure facts."""
+
+    def __init__(self, diagnostic: NativeBuildDiagnostic) -> None:
+        super().__init__("native runtime build failed")
+        self.diagnostic = diagnostic
+
+
 Compatibility = Literal["compatible", "incompatible", "unknown"]
 HostName = Literal["vps", "mac"]
 HostDisposition = Literal["verified", "unreachable", "deferred", "failed"]

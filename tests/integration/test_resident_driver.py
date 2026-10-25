@@ -218,6 +218,9 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
         env=dict(os.environ, HOME=str(home)),
         capture_output=True,
     )
-    assert result.returncode == 2, result.stderr.decode()
-    assert "actual Mac owner's HOME" in json.loads(result.stdout)["error"]
+    assert result.returncode == 3, result.stderr.decode()
+    assert json.loads(result.stdout) == {
+        "host": "mac", "requested_revision": revision, "disposition": "failed",
+        "observed_revision": None, "detail": "Native deployment did not complete",
+    }
     assert len(list((home / "Deployments/PanelsExecutor/staging").iterdir())) == 1

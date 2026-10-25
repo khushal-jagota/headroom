@@ -8,6 +8,7 @@ import sys
 import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -474,3 +475,183 @@ def test_only_exact_pure_http_ece_source_artifact_is_accepted(tmp_path: Path, de
     else:
         with pytest.raises(ResidentError, match="pure Python wheel"):
             _verify_pure_http_ece(wheel)
+
+
+@pytest.mark.parametrize("fail_npm", [False, True])
+def test_npm_configuration_is_distinct_empty_and_scoped_to_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_npm: bool
+) -> None:
+    from planner.environments.resident.contracts import NativeBuildFailure, NativeCommandFailure
+
+    app, runtime, python, package, node, npm = _node_inputs(tmp_path)
+    for key in ("NPM_CONFIG_REGISTRY", "npm_config_userconfig", "npm_config_globalconfig"):
+        monkeypatch.setenv(key, "credential-sentinel")
+    monkeypatch.setenv("NpM_CoNfIg_Registry", "mixed-case-credential-sentinel")
+    scripted = ScriptedNodeCommands(runtime)
+    configurations: list[Path] = []
+
+    def runner(argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> str:
+        if "--eval" in argv or (
+            argv[0] == str(python) and "-c" in argv and "platform.machine()" in argv[4]
+        ):
+            if not configurations:
+                assert "NPM_CONFIG_USERCONFIG" not in env
+                assert "NPM_CONFIG_GLOBALCONFIG" not in env
+        if "ci" in argv:
+            assert (runtime / "bin/python").is_file()
+            assert not any("credential-sentinel" in value for value in env.values())
+            assert "NpM_CoNfIg_Registry" not in env
+            configurations.extend(
+                Path(env[key]) for key in ("NPM_CONFIG_USERCONFIG", "NPM_CONFIG_GLOBALCONFIG")
+            )
+            assert configurations[0] != configurations[1]
+            for configuration in configurations:
+                assert configuration.is_absolute() and configuration.is_file()
+                assert not configuration.is_symlink() and configuration.read_bytes() == b""
+                assert configuration.parent.name.startswith("panels-wheel-")
+            if fail_npm:
+                raise NativeCommandFailure("nonzero_exit", 17)
+        return scripted(argv, cwd, env, timeout)
+
+    builder = NativeRuntimeBuilder(python, npm=npm, node=node, runner=runner)
+    if fail_npm:
+        with pytest.raises(NativeBuildFailure) as failure:
+            builder(app, runtime, package)
+        assert failure.value.diagnostic.phase == "backend_npm_install"
+        assert failure.value.diagnostic.operation == "npm_ci"
+        assert failure.value.diagnostic.exit_status == 17
+        assert (runtime / "bin/python").is_file()
+        assert not (runtime / "resident-installed.json").exists()
+        before = len(scripted.calls)
+        with pytest.raises(ResidentError, match="fresh empty"):
+            builder(app, runtime, package)
+        assert len(scripted.calls) == before
+    else:
+        builder(app, runtime, package)
+        assert (runtime / "resident-installed.json").is_file()
+    assert configurations and all(not path.exists() for path in configurations)
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_runner_rejects_output_overflow_without_stream_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stream: str
+) -> None:
+    from planner.environments.resident import native_builder
+    from planner.environments.resident.contracts import NativeCommandFailure
+
+    monkeypatch.setattr(native_builder, f"NATIVE_{stream.upper()}_LIMIT_BYTES", 1024)
+    script = f"import sys;sys.{stream}.write('credential-sentinel' * 1000)"
+    with pytest.raises(NativeCommandFailure) as failure:
+        run_native_command([sys.executable, "-c", script], tmp_path, dict(os.environ), 2)
+    assert failure.value.kind == "output_limit"
+    assert "credential" not in str(failure.value)
+
+
+def test_runner_start_failure_is_safe_and_typed(tmp_path: Path) -> None:
+    from planner.environments.resident.contracts import NativeCommandFailure
+
+    with pytest.raises(NativeCommandFailure) as failure:
+        run_native_command(["/missing/credential-sentinel"], tmp_path, {}, 1)
+    assert failure.value.kind == "process_start" and failure.value.exit_status is None
+    assert "credential" not in str(failure.value)
+
+
+def test_owned_descendant_holding_pipes_cannot_extend_deadline(tmp_path: Path) -> None:
+    import time
+
+    from planner.environments.resident.contracts import NativeCommandFailure
+
+    script = (
+        "import subprocess,sys;subprocess.Popen([sys.executable,'-c',"
+        "'import time;time.sleep(60)']);print('credential-sentinel')"
+    )
+    started = time.monotonic()
+    with pytest.raises(NativeCommandFailure) as failure:
+        run_native_command([sys.executable, "-c", script], tmp_path, dict(os.environ), 0.2)
+    elapsed = time.monotonic() - started
+    assert failure.value.kind == "timeout"
+    assert elapsed < 2.7
+    assert "credential" not in str(failure.value)
+
+
+def test_pipe_read_failure_still_reaps_owned_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    processes: list[subprocess.Popen[bytes]] = []
+    popen = subprocess.Popen
+
+    def start(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = cast("subprocess.Popen[bytes]", popen(*args, **kwargs))  # type: ignore[call-overload]
+        processes.append(process)
+        return process
+
+    real_read = os.read
+
+    def broken_read(descriptor: int, size: int) -> bytes:
+        # Popen itself reads its exec-error pipe before returning the process.
+        if processes:
+            raise OSError("credential-sentinel")
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr(subprocess, "Popen", start)
+    monkeypatch.setattr(os, "read", broken_read)
+    with pytest.raises(ResidentError, match="could not be observed") as failure:
+        run_native_command(
+            [sys.executable, "-c", "import time;print('ready',flush=True);time.sleep(60)"],
+            tmp_path,
+            dict(os.environ),
+            2,
+        )
+    assert len(processes) == 1 and processes[0].poll() is not None
+    assert "credential" not in str(failure.value)
+
+
+def test_cleanup_deadline_reaps_direct_child_when_escaped_descendant_holds_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import signal
+    import subprocess
+    import time
+
+    from planner.environments.resident.contracts import NativeCommandFailure
+
+    processes: list[subprocess.Popen[bytes]] = []
+    popen = subprocess.Popen
+
+    def start(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = cast("subprocess.Popen[bytes]", popen(*args, **kwargs))  # type: ignore[call-overload]
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", start)
+    escaped_pid_file = tmp_path / "escaped-pid"
+    script = (
+        "import pathlib,subprocess,sys;child=subprocess.Popen([sys.executable,'-c',"
+        "'import time;time.sleep(60)'],start_new_session=True);"
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid))"
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(NativeCommandFailure) as failure:
+            run_native_command(
+                [sys.executable, "-c", script, str(escaped_pid_file)],
+                tmp_path,
+                dict(os.environ),
+                0.2,
+            )
+        assert failure.value.kind == "cleanup_deadline"
+        assert time.monotonic() - started < 2.7
+        assert len(processes) == 1 and processes[0].returncode == 0
+        # No waitable direct child may be abandoned, even when pipe EOF is uncertain.
+        with pytest.raises(ChildProcessError):
+            os.waitpid(processes[0].pid, os.WNOHANG)
+        escaped_pid = int(escaped_pid_file.read_text())
+        os.kill(escaped_pid, 0)  # Runner must not signal the escaped session.
+    finally:
+        if escaped_pid_file.exists():
+            try:
+                os.kill(int(escaped_pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass

@@ -22,6 +22,7 @@ from planner.environments.resident.contracts import (
     InstalledExecutorCompatibility,
     ResidentError,
 )
+from planner.environments.resident.logic.native_diagnostic import parse_native_diagnostic
 from planner.environments.resident.logic.upgrade import require_supported_upgrade
 from planner.environments.resident.packaging import build_source_package, package_from_dict
 from planner.environments.resident.preflight import (
@@ -33,6 +34,7 @@ from planner.environments.resident.preflight import (
     requested_versions,
     supported_versions,
 )
+from planner.environments.resident.report import MAX_REPORT_BYTES
 
 # Tooling is separate from installed executor code. This explicit closure imports
 # shared immutable types but excludes server, database and web implementations.
@@ -99,6 +101,8 @@ raise SystemExit(main(args))
 
 
 def parse_host_result(output: str, revision: str) -> HostDeploymentResult:
+    if len(output.encode("utf-8")) > MAX_REPORT_BYTES:
+        raise ResidentError("native host report is too large")
     try:
         data = json.loads(output)
         if not isinstance(data, dict) or set(data) != {
@@ -127,10 +131,13 @@ def parse_host_result(output: str, revision: str) -> HostDeploymentResult:
             or not detail.isprintable()
         ):
             raise ValueError("mismatched host report")
+        diagnostic = parse_native_diagnostic(detail)
+        if diagnostic is not None and (disposition != "failed" or observed is not None):
+            raise ValueError("native diagnostic conflicts with host evidence")
         return HostDeploymentResult(
             "mac", revision, cast(HostDisposition, disposition), observed, detail
         )
-    except (ValueError, TypeError, KeyError) as exc:
+    except (ValueError, TypeError, KeyError, RecursionError) as exc:
         raise ResidentError("native host returned no valid exact-revision report") from exc
 
 

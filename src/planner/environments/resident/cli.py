@@ -8,7 +8,12 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 
-from planner.environments.resident.contracts import ResidentError
+from planner.environments.resident.contracts import (
+    HostDeploymentResult,
+    NativeBuildFailure,
+    ResidentError,
+)
+from planner.environments.resident.logic.native_diagnostic import format_native_diagnostic
 
 
 def _revision(value: str) -> str:
@@ -306,9 +311,21 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(asdict(record), sort_keys=True))
             return 0 if record.result.verified else 3
         raise ResidentError("unsupported resident command")
-    except (ResidentError, OSError, ValueError) as exc:
-        print(json.dumps({"error": str(exc)}, sort_keys=True))
-        return 2
+    except Exception as exc:
+        if arguments.command in {"deploy-local", "deploy-prepared", "activate"}:
+            detail = "Native deployment did not complete"
+            if isinstance(exc, NativeBuildFailure):
+                try:
+                    detail = format_native_diagnostic(exc.diagnostic)
+                except (ResidentError, TypeError, ValueError):
+                    pass
+            result = HostDeploymentResult("mac", arguments.requested_sha, "failed", None, detail)
+            print(json.dumps(asdict(result), sort_keys=True))
+            return 3
+        if isinstance(exc, (ResidentError, OSError, ValueError)):
+            print(json.dumps({"error": str(exc)}, sort_keys=True))
+            return 2
+        raise
 
 
 if __name__ == "__main__":

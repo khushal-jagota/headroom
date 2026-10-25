@@ -168,6 +168,19 @@ dependencies use compatible binary wheels. The only source exception is
 tools, pure wheel metadata and contents, and output digest receive explicit checks.
 No native toolchain installation or broad source fallback exists.
 
+Backend npm installation uses two distinct empty user and global configuration
+files inside the wheel-build temporary directory. Ambient npm settings are
+excluded; the files remain present until npm completes and are removed after
+success or failure. The owner HOME and provider settings stay intact. Failed
+builds retain their uncertified permanent runtime for inspection and refuse reuse.
+
+Native command output and cleanup time are bounded. Timeout or output overflow
+kills only that command's owned process group. Native build failures carry fixed
+phase, operation, failure kind, and optional exit status through the existing
+host result detail and version 1 deployment report. Captured output, command
+arguments, paths, and exception text are excluded. Remote results and saved
+reports validate that diagnostic before accepting it as evidence.
+
 The standard generated `panels` entrypoint serves the executor and Worker CLI.
 The resident wrapper uses the isolated permanent interpreter and installed package.
 It refuses `serve` and caller-supplied revision overrides. It injects the exact

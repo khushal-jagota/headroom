@@ -21,6 +21,7 @@ from planner.environments.resident.contracts import (
     TwoHostDeploymentResult,
 )
 from planner.environments.resident.logic.deployment import validated_host_result
+from planner.environments.resident.logic.native_diagnostic import parse_native_diagnostic
 
 MAX_REPORT_BYTES = 16 * 1024
 
@@ -64,6 +65,11 @@ def _host(value: object, host: HostName, revision: str) -> HostDeploymentResult:
         "failed",
     }:
         raise ResidentError("unsupported host disposition")
+    diagnostic = parse_native_diagnostic(detail)
+    if diagnostic is not None and (
+        host != "mac" or disposition != "failed" or observed is not None
+    ):
+        raise ResidentError("native diagnostic conflicts with host evidence")
     result = HostDeploymentResult(
         host, revision, cast(HostDisposition, disposition), observed, detail
     )
@@ -126,6 +132,8 @@ def write_deployment_record(path: Path, record: ResidentDeploymentRecord) -> Non
     def summarize(host: HostDeploymentResult) -> HostDeploymentResult:
         if not isinstance(host.detail, str):
             raise ResidentError("host detail must be text")
+        # Validate reserved diagnostics before whitespace normalization or truncation.
+        parse_native_diagnostic(host.detail)
         printable = "".join(char if char.isprintable() else " " for char in host.detail)
         summary = " ".join(printable.split())[:500] or "No detail supplied"
         return replace(host, detail=summary)

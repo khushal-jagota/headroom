@@ -279,7 +279,10 @@ def prepare_and_activate(
         raise ResidentError("native activation command did not complete") from exc
     from planner.environments.resident.transport import parse_host_result
 
-    return parse_host_result(completed.stdout, launch.application_revision)
+    result = parse_host_result(completed.stdout, launch.application_revision)
+    if completed.returncode != 0 and result.disposition == "verified":
+        raise ResidentError("native success report conflicts with command failure")
+    return result
 
 
 def deploy_local_source(
