@@ -45,6 +45,8 @@ _TOOL_SHARED = (
     "src/planner/executor/__init__.py",
     "src/planner/executor/contracts.py",
     "src/planner/executor/configuration.py",
+    "src/planner/executor/logic/__init__.py",
+    "src/planner/executor/logic/ssh_configuration.py",
     "src/planner/executor/files.py",
     "src/planner/executor/legacy_preflight.py",
     "src/planner/executor/outbox_storage.py",
