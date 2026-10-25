@@ -26,6 +26,17 @@ export function validateContent(content:ViewContent,mode:'current'|'degraded') {
     if(row.kind==='conversation' && (mode==='current') !== (row.value.attention.current!==null)) throw new NavigationProtocolError('Contradictory attention profile');
     if(row.kind==='conversation' && row.value.attention.current && (row.value.attention.current.signal.message_for_owner!==row.value.attention.durable.message_for_owner || row.value.attention.current.last_turn_failed!==row.value.attention.durable.last_turn_failed)) throw new NavigationProtocolError('Contradictory durable attention');
   }
+  const contexts=new Set<string>();
+  if(content.review_context.length>256)throw new NavigationProtocolError('Review context budget exceeded');
+  for(const context of content.review_context) {
+    if(contexts.has(context.conversation_id))throw new NavigationProtocolError('Duplicate review context');
+    contexts.add(context.conversation_id);
+    if(context.canonical_address_id===null)continue;
+    const address=content.records.find(row=>row.kind==='address' && row.id===context.canonical_address_id);
+    if(address?.kind!=='address' || address.value.conversation_id!==context.conversation_id
+      || !keys.has(recordKey({kind:'conversation',id:context.conversation_id}))
+      || !keys.has(recordKey({kind:address.value.owner_kind,id:address.value.owner_id})))throw new NavigationProtocolError('Missing review context dependency');
+  }
   const windows=new Set<string>();
   for(const window of content.windows) {
     if(windows.has(window.window_id) || window.total<window.members.length || window.members.length>60 || window.members.length>window.request.limit) throw new NavigationProtocolError('Invalid view membership');
@@ -51,7 +62,7 @@ export function applyFrame(previous:ViewSnapshot | undefined,frame:ViewFrame):Vi
   const touched=new Set<string>();
   for(const key of frame.evictions) {const id=recordKey(key);if(touched.has(id)||!records.has(id))throw new NavigationProtocolError('Invalid view eviction');touched.add(id);records.delete(id);}
   for(const row of frame.upserts) {const id=recordKey(row);if(touched.has(id))throw new NavigationProtocolError('Duplicate view operation');touched.add(id);records.set(id,row);}
-  const content={records:[...records.values()],windows:frame.windows,counts:frame.counts};
+  const content={records:[...records.values()],windows:frame.windows,counts:frame.counts,review_context:frame.review_context};
   validateContent(content,'current');
   return {...previous,coverage:frame.coverage,content_version:frame.content_version,content};
 }

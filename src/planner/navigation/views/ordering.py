@@ -5,7 +5,7 @@ from typing import Any
 
 import icu  # type: ignore[import-untyped]
 
-ORDERING_GENERATION = f"icu-{icu.ICU_VERSION}-base-v1-review-v2"
+ORDERING_GENERATION = f"icu-{icu.ICU_VERSION}-base-v1-review-v3"
 
 
 @lru_cache(maxsize=8)

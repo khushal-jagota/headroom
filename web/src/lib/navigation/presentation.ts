@@ -38,6 +38,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const rawProjectsById=new Map<string,ProjectRecord>();
   const addressesByConversation=new Map<string,AddressRecord[]>();
   const reviewItems: import('../types').NavigationReviewItem[]=[];
+  const reviewTickets=new Map<string,import('../types').NavigationReviewTicketItem>();
   const currentConversationIds=new Set<string>();
   let exactOutClaimCount=0;
   let chiefRecord:Extract<(typeof records)[number],{kind:'chief'}> | undefined;
@@ -50,8 +51,9 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       if(row.worker_step_claim_out) exactOutClaimCount+=1;
       if(!row.is_backlogged && row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
         && row.gating_field!==null && row.proposal_field!==null && row.proposal_created_at!==null) {
-        reviewItems.push({review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
-          title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision});
+        const proposal:import('../types').NavigationReviewProposalItem={review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
+          title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision};
+        reviewTickets.set(record.id,{review_item_type:'ticket',ticket_id:record.id,title:row.title,waiting_since:proposal.waiting_since,proposal,messages:[]});
       }
     }
     if(record.kind==='ticket') rawTicketsById.set(record.id,record);
@@ -151,15 +153,31 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(value(view.conversations.get(address.conversation_id)?.message_for_owner)!==true)continue;
     const conversation=conversationsById.get(address.conversation_id);
     if(conversation?.first_unread_owner_message_at == null)continue;
-    const owner=address.owner_kind==='ticket' ? rawTicketsById.get(address.owner_id)?.value
-      : address.owner_kind==='manager' ? rawManagersById.get(address.owner_id)?.value : chiefRecord?.value;
-    if(!owner)continue;
+    // Select the canonical address before the owner-state filter. Never fall back
+    // to a former owner when the canonical owner is excluded.
     reviewConversations.add(address.conversation_id);
-    reviewItems.push({review_item_type:'message',conversation_id:address.conversation_id,address_id:record.id,
+    const owner=address.owner_kind==='ticket' ? rawTicketsById.get(address.owner_id)?.value
+      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : chiefRecord?.value;
+    if(!owner)continue;
+    if(address.owner_kind==='ticket' && ('stage' in owner && owner.stage==='done' || 'is_backlogged' in owner && owner.is_backlogged))continue;
+    if(address.owner_kind==='manager' && 'settled' in owner && owner.settled)continue;
+    const message:import('../types').ReviewMessageItem={review_item_type:'message',conversation_id:address.conversation_id,address_id:record.id,
       owner_kind:address.owner_kind,owner_id:address.owner_id,title:'title' in owner ? owner.title : owner.label,
       waiting_since:conversation.first_unread_owner_message_at,recap:'recap' in owner ? owner.recap : '',
-      recap_reference:'recap_reference' in owner ? owner.recap_reference as ViewContentReference|null : null});
+      recap_reference:'recap_reference' in owner ? owner.recap_reference as ViewContentReference|null : null};
+    if(address.owner_kind==='ticket') {
+      let card=reviewTickets.get(address.owner_id);
+      if(!card) {
+        card={review_item_type:'ticket',ticket_id:address.owner_id,title:message.title,waiting_since:message.waiting_since,proposal:null,messages:[]};
+        reviewTickets.set(address.owner_id,card);
+      }
+      card.messages.push(message);
+      // A card represents the oldest thing waiting on the owner. Proposal identity
+      // retains its own timestamp even when an older message sets queue position.
+      card.waiting_since=Math.min(card.waiting_since,message.waiting_since);
+    } else reviewItems.push(message);
   }
+  reviewItems.push(...reviewTickets.values());
   const addressesById=new Map([...addressesByConversation.values()].flat().map(record=>[record.id,record]));
   const unreadConversationIdsByWindow=new Map<string,ReadonlySet<string>>();
   for(const window of view.publication.view?.windows ?? []) {

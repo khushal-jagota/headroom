@@ -57,14 +57,14 @@ import {viewWindow} from '../src/lib/navigation/views/owner';
   const previous=current.publication!;
   if(response.coverage.revision===previous.continuity.revision)return;
   const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
-  const frame:any={event:'patch',wire_version:3,projection_version:5,view_id:response.view_id,
+  const frame:any={event:'patch',wire_version:3,projection_version:6,view_id:response.view_id,
     scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
     coverage:response.coverage,previous_coverage:previous.continuity,authority:response.authority,
     content_version:response.content_version,previous_content_version:previous.view!.contentVersion,
     upserts:response.content.records,evictions:previous.records.filter(row=>!keys.has(JSON.stringify([row.kind,row.id]))).map(row=>({kind:row.kind,id:row.id})),
-    windows:response.content.windows,counts:response.content.counts};
+    windows:response.content.windows,counts:response.content.counts,review_context:response.content.review_context};
   const event=response.content_version===previous.view!.contentVersion?'checkpoint':'patch';
-  if(event==='checkpoint'){delete frame.upserts;delete frame.evictions;delete frame.windows;delete frame.counts;delete frame.previous_content_version;frame.event=event;}
+  if(event==='checkpoint'){delete frame.upserts;delete frame.evictions;delete frame.windows;delete frame.counts;delete frame.review_context;delete frame.previous_content_version;frame.event=event;}
   (window as any).__navigationSource.dispatchEvent(new MessageEvent(event,{data:JSON.stringify(frame)}));
   await tick();return;
  }

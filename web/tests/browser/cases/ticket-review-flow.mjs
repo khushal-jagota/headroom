@@ -51,14 +51,14 @@ navigation.owner.waitForVisibility=(fence,options)=>{
  const before=navigation.owner.getState().publication!;
  if(response.coverage.revision===before.continuity.revision)return;
  const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
- const frame:any={event:'patch',wire_version:3,projection_version:5,view_id:response.view_id,
+ const frame:any={event:'patch',wire_version:3,projection_version:6,view_id:response.view_id,
  scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
  coverage:response.coverage,previous_coverage:before.continuity,authority:response.authority,
  content_version:response.content_version,previous_content_version:before.view!.contentVersion,
  upserts:response.content.records,evictions:before.records.filter(row=>!keys.has(JSON.stringify([row.kind,row.id]))).map(row=>({kind:row.kind,id:row.id})),
- windows:response.content.windows,counts:response.content.counts};
+ windows:response.content.windows,counts:response.content.counts,review_context:response.content.review_context};
  const event=response.content_version===before.view!.contentVersion?'checkpoint':'patch';
- if(event==='checkpoint'){delete frame.upserts;delete frame.evictions;delete frame.windows;delete frame.counts;delete frame.previous_content_version;frame.event=event;}
+ if(event==='checkpoint'){delete frame.upserts;delete frame.evictions;delete frame.windows;delete frame.counts;delete frame.review_context;delete frame.previous_content_version;frame.event=event;}
  (window as any).__navigationSource.dispatchEvent(new MessageEvent(event,{data:JSON.stringify(frame)}));
  await tick();
 };
@@ -74,7 +74,7 @@ client.setDefaultOptions({ queries: { retry: false } });
 
 let review = $state(false);
 let reviewTicketId = $state('t_review');
-let historicalIdentity=$derived(navigation.selectors.effective ? navigationReviewPresentation(navigation.selectors.effective).items.find(item=>item.review_item_type==='proposal' && item.ticket_id===reviewTicketId) : undefined);
+let historicalIdentity=$derived(navigation.selectors.effective ? navigationReviewPresentation(navigation.selectors.effective).items.find(item=>item.review_item_type==='ticket' && item.ticket_id===reviewTicketId)?.proposal : undefined);
 let reviewField = $state('success_condition');
 let config = $state(false);
 let ticketId = $state('t_review');

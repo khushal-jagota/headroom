@@ -449,6 +449,16 @@ sets the ceiling to the next stage. It does not pause the next Worker turn. Curr
 scope edits use actual lifecycle stages. The existing readiness, authority, blocker,
 claim, and user-owned collaboration rules continue unchanged.
 
+Review combines each Ticket's eligible proposal and unread conversations into one card before pagination and counts.
+Its queue position is the earliest constituent timestamp. An older unread message deliberately brings a new proposal forward.
+The proposal keeps its own timestamp and revision for approval. Each conversation retains its exact reply address and read boundary.
+Approval changes only the proposal. Reply and Mark read leave other pending parts intact.
+
+The message filter uses the owning Ticket's done and backlog state or the owning Manager's settlement state.
+A settled Manager does not exclude live child Tickets. Chief messages remain eligible because Chief cannot settle.
+State reversals restore eligible messages. Ordinary unread discovery and watermarks remain independent of the Review filter.
+Proposal eligibility stays unchanged.
+
 Review's oldest-first walk shows owner-addressed proposals independently of Today.
 A proposal addressed to an ordinary Manager or Chief creates a durable notice
 through the existing principal-aware manager queue. Kickoff, new filing and reviewer
