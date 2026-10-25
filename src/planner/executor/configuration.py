@@ -1,4 +1,4 @@
-"""Shared wire, journal, and resident interface configuration."""
+"""Shared wire, journal, and executor interface configuration."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ RECONNECT_INTERVAL_SECONDS: Final = 5.0
 EXIT_QUEUED: Final = 3
 EXECUTOR_ROOT_ENV: Final = "PLAN_EXECUTOR_ROOT"
 TICKET_FILES_DIR_ENV: Final = "PLAN_TICKET_FILES_DIR"
-EXECUTOR_CODE_RELATIVE_PATH: Final = Path("Deployments/PanelsExecutor/current/app")
 EXECUTOR_IPC_NAME: Final = "executor.sock"
 
 

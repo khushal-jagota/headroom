@@ -75,6 +75,8 @@ path. The supervisor reads canonical Item and Ticket state before it acts on a n
   shows a conversation — a Ticket's and the Chief of Staff's.
 - **The Mac executor** (`executor.md`) — host-local children, one outbound journal,
   complete files, and reconciliation against the authoritative VPS record.
+- **Mac installation and updates** (`mac-executor-installation.md`) — fixed native environment,
+  explicit LaunchAgent inputs, graceful shutdown, and operator recovery.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.

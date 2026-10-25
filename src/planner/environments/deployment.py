@@ -18,8 +18,8 @@ import httpx
 
 from planner.environments.app import AppManifest, AppValidationError, validate_app_manifest
 from planner.environments.backup import SNAPSHOT_METADATA_NAME, is_verified_snapshot
-from planner.environments.resident.contracts import VpsExecutorLaunchConfiguration
-from planner.environments.resident.vps_launch import (
+from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
+from planner.environments.vps_launch import (
     read_vps_launch,
     restore_vps_launch,
     snapshot_vps_launch,

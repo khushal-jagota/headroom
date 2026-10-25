@@ -1,4 +1,4 @@
-"""Resident-facing executor commands; none start a local Panels database."""
+"""Executor commands; none start a local Panels database."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def run(
     ):
         raise click.ClickException("application revision must be the full lowercase source SHA")
     if ssh_host.startswith("-") or not ssh_host:
-        raise click.ClickException("SSH host must name the resident-configured peer")
+        raise click.ClickException("SSH host must name the configured peer")
     from planner.executor.ssh import validate_ssh_config
 
     config = ExecutorSshConfig(

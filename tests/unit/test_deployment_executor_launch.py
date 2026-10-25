@@ -7,8 +7,11 @@ import pytest
 
 from planner.environments.app import digest_app_artifact, digest_app_source
 from planner.environments.deployment import DeploymentResult, deploy_app
-from planner.environments.resident.contracts import ResidentError, VpsExecutorLaunchConfiguration
-from planner.environments.resident.vps_launch import read_vps_launch, write_vps_launch
+from planner.environments.executor_launch_contracts import (
+    ExecutorLaunchConfigurationError,
+    VpsExecutorLaunchConfiguration,
+)
+from planner.environments.vps_launch import read_vps_launch, write_vps_launch
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -146,7 +149,7 @@ def test_invalid_prior_refuses_before_service_disruption(tmp_path: Path, unsafe:
         path.unlink()
         path.symlink_to(tmp_path / "missing")
     service = Service(path)
-    with pytest.raises(ResidentError):
+    with pytest.raises(ExecutorLaunchConfigurationError):
         deploy_app(
             candidate_app=candidate,
             current_root=current,
@@ -263,7 +266,7 @@ def test_unsafe_desired_target_directory_refuses_before_stop(tmp_path: Path) -> 
     path.parent.mkdir()
     path.parent.chmod(0o770)
     service = Service(path)
-    with pytest.raises(ResidentError, match="owner controlled"):
+    with pytest.raises(ExecutorLaunchConfigurationError, match="owner controlled"):
         deploy_app(
             candidate_app=candidate,
             current_root=current,

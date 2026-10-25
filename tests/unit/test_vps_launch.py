@@ -5,10 +5,14 @@ import json
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
-from planner.environments.resident.cli import main
-from planner.environments.resident.contracts import ResidentError, VpsExecutorLaunchConfiguration
-from planner.environments.resident.vps_launch import (
+from planner.environments.cli import environment
+from planner.environments.executor_launch_contracts import (
+    ExecutorLaunchConfigurationError,
+    VpsExecutorLaunchConfiguration,
+)
+from planner.environments.vps_launch import (
     MAX_VPS_LAUNCH_CONFIGURATION_BYTES,
     read_vps_launch,
     restore_vps_launch,
@@ -53,7 +57,7 @@ def test_malformed_configuration_refuses(tmp_path: Path, payload: str) -> None:
     path = tmp_path / "executor-launch.json"
     path.write_text(payload)
     path.chmod(0o600)
-    with pytest.raises(ResidentError):
+    with pytest.raises(ExecutorLaunchConfigurationError):
         read_vps_launch(path)
 
 
@@ -61,25 +65,40 @@ def test_nonowner_access_or_symlink_refuses_read_and_write(tmp_path: Path) -> No
     path = tmp_path / "executor-launch.json"
     write_vps_launch(path, VpsExecutorLaunchConfiguration("local"))
     path.chmod(0o644)
-    with pytest.raises(ResidentError, match="owner-only"):
+    with pytest.raises(ExecutorLaunchConfigurationError, match="owner-only"):
         read_vps_launch(path)
-    with pytest.raises(ResidentError, match="owner-only"):
+    with pytest.raises(ExecutorLaunchConfigurationError, match="owner-only"):
         write_vps_launch(path, VpsExecutorLaunchConfiguration("local"))
     path.chmod(0o600)
     alias = tmp_path / "link"
     alias.symlink_to(path)
-    with pytest.raises(ResidentError, match="symbolic link"):
+    with pytest.raises(ExecutorLaunchConfigurationError, match="symbolic link"):
         read_vps_launch(alias)
-    with pytest.raises(ResidentError, match="symbolic link"):
+    with pytest.raises(ExecutorLaunchConfigurationError, match="symbolic link"):
         write_vps_launch(alias, VpsExecutorLaunchConfiguration("local"))
 
 
 def test_configuration_cli_requires_explicit_remote_socket(tmp_path: Path) -> None:
     path = tmp_path / "executor-launch.json"
-    assert main(["configure-vps-launch", "--path", str(path), "--mode", "remote"]) == 2
+    runner = CliRunner()
+    remote = runner.invoke(
+        environment, ["configure-vps-launch", "--path", str(path), "--mode", "remote"]
+    )
+    assert remote.exit_code != 0
+    assert "absolute socket path" in remote.output
     assert not path.exists()
-    assert main(["configure-vps-launch", "--path", str(path), "--mode", "local"]) == 0
+    local = runner.invoke(
+        environment, ["configure-vps-launch", "--path", str(path), "--mode", "local"]
+    )
+    assert local.exit_code == 0, local.output
     assert json.loads(path.read_bytes()) == {"version": 1, "mode": "local", "socket": None}
+    socket = tmp_path / "executor.sock"
+    remote = runner.invoke(
+        environment,
+        ["configure-vps-launch", "--path", str(path), "--mode", "remote", "--socket", str(socket)],
+    )
+    assert remote.exit_code == 0, remote.output
+    assert read_vps_launch(path) == VpsExecutorLaunchConfiguration("remote", socket)
 
 
 def test_explicit_relay_socket_wins_over_absent_or_hostile_ambient(

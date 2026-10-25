@@ -161,132 +161,48 @@ The operator must establish the single-user filesystem layout, user units, runne
 persistent paths before enabling automatic deployment. Repository deployment does not
 perform that host setup or change the existing Tailscale Serve route.
 
-## Mac executor deployment
+## Mac executor installation
 
-`python -m planner.environments.resident.cli` supplies the production source-build,
-native preparation, owner-only activation, and pinned-host delivery commands. These
-commands change a host only after explicit invocation. Code review does not authorize
-their live use.
+The VPS workflow deploys only the VPS application. Mac installation and updates use
+ordinary pip, npm, and launchctl commands in the signed-in owner's GUI session.
+The [Mac operator runbook](mac-executor-installation.md) owns that procedure.
+The workflow has no Mac delivery, packaging, preflight, or aggregate deployment report.
+A VPS deployment result supplies no evidence about the installed Mac revision.
 
-The executor authentication mode must be explicit in resident launch inputs and
-workflow configuration. Set `PANELS_EXECUTOR_SSH_AUTH_MODE` before a resident-enabled
-workflow runs. The selected mode never follows from the presence of a key.
-See [runtime environments](environments.md#mac-executor-packages) for the conditional
-Mac key and Tailscale binary inputs.
+## Explicit VPS executor configuration
 
-The resident delivery arguments `--identity` and `--known-hosts` still authenticate
-the separate VPS-to-Mac deployment connection. Tailscale executor mode does not
-remove those requirements or alter the installed job without an explicit update.
-Review and tests do not change the existing installation or endpoint policy.
+The managed VPS launcher reads `current/data/executor-launch.json`.
+This owner-only file accepts only version, mode, and socket fields.
+An absent file keeps the local default. Invalid explicit configuration refuses launch.
+The launcher scrubs ambient settings before it applies the validated
+`PLAN_EXECUTOR_MODE` and optional `PLAN_EXECUTOR_VPS_SOCKET`.
+Ambient flags cannot enable the remote endpoint.
 
-The code location is `~/Deployments/PanelsExecutor/current/app`. The stable data root
-is `~/Library/Application Support/Panels/executor`, selected by `PLAN_EXECUTOR_ROOT`.
-Its spool, artifacts, logs, and IPC socket remain outside replaceable code. The account
-HOME and provider homes remain unchanged. Worker shells find the installed `panels`
-wrapper through a stable app path.
+Prepare an explicit remote configuration with the current environment CLI:
 
-`package-spec` records standard package input roots from the requested Git revision.
-The checked build contract preserves the original executor commit and import provenance.
-Setuptools owns Python discovery and declared package data. No parallel Python file
-inventory exists. Exact source export excludes checkout changes, databases, credentials,
-and web output. Pinned tools build a standard wheel from a temporary copy of that export.
+```sh
+panels environment configure-vps-launch \
+  --path /absolute/private/executor-launch.json \
+  --mode remote \
+  --socket /absolute/persistent/executor-vps.sock
+```
 
-The native permanent runtime installs the wheel and the complete pinned dependency
-closure without implicit resolution. Native dependencies require compatible wheels.
-The sole source exception is the pinned pure-Python `http_ece` archive, with checked
-source digest, wheel metadata and contents, and retained provenance. A separate clean
-environment checks dependencies before permanent installation. A standard generated
-console supports the executor and Worker CLI. The minimal isolated resident wrapper
-refuses `serve`, injects the exact revision, and refuses caller revision overrides.
-Read-only artifact checks bind installed code, scripts, metadata, dependencies, bytecode,
-and the application wheel to the source manifest and permanent runtime path.
-See [Mac executor packages](environments.md#mac-executor-packages) for the locks and limits.
+Use `--mode local` without `--socket` for an explicit local configuration.
+The `app-deploy --executor-launch-config /absolute/private/executor-launch.json`
+input applies a prepared file during deployment.
+An ordinary deployment without that input preserves the existing configuration.
+The workflow does not infer a mode from a Mac deployment flag.
 
-Preview forwarding requires protocol 4 on both peers. The existing full planner
-source closure includes `src/planner/previews/` and the executor stream handlers.
-Build both peers from the same reviewed revision. Fresh Mac installations use the
-SQLite outbox in spool format 2. Ordinary deployment refuses incompatible formats
-or protocols before mutation. Automatic or in-place upgrades between formats and
-rollback across conversion are unsupported. A stopped-process offline converter
-provides the explicit legacy conversion procedure described in [Executor](executor.md).
-Protocol 3 peers refuse the handshake before work or preview admission.
-
-The Mac target requires native ordinary CPython 3.14.3 on Apple Silicon. The actual
-macOS version, ABI, and compatible wheel tags must qualify before installation.
-Intel macOS is explicitly unsupported for this pinned dependency set. No Intel
-source-build or toolchain fallback exists. Linux VPS builds remain supported.
-Native Python and Node probes must match their requested architectures and versions.
-The builder creates Python and native backend dependencies directly at a permanent
-versioned runtime path. It never copies a VPS environment. The package launcher maps
-the managed Claude executable to that runtime and injects its own exact source revision.
-The registered LaunchAgent therefore keeps stable arguments across code updates.
-
-The dedicated GUI LaunchAgent uses `KeepAlive={SuccessfulExit:false}`. An abnormal
-exit requests restart. A successful intentional maintenance exit stays stopped unless
-another demand starts the job. The generated job has no additional automatic demand
-triggers beyond its initial RunAtLoad. This design follows Apple's
-[launchd property-list documentation](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5).
-It does not prove behavior on the target Mac.
-
-Before quiescence, the service records the expected launchd PID and run count. The
-owner-only IPC request names the full executor identity and PID. Cutover requires a
-matching zero-work receipt, committed exit, unchanged run count, no live PID, and status
-zero. A replacement process or missing evidence refuses cutover. The adapter never
-kills or boots out a replacement. It checks executor-owned spool compatibility again
-after exit and before source mutation. Rollback requires a separate fresh candidate
-receipt and another stable-boundary compatibility check.
-
-`deploy-local` prepares a committed source package on the native host. `deploy-remote`
-streams exact source and separate deployment tooling through SSH with an explicit
-identity and pinned known_hosts. Native preparation needs no preexisting Mac Panels
-installation or Git checkout. The remote code performs the native build, then uses its
-new interpreter for the owner-only control path. An interrupted first install can
-resume only under the recorded same-package intent and positive safety checks.
-
-The workflow enables this path only when `PANELS_RESIDENT_DEPLOY_ENABLED=true` and
-all explicit Mac, interpreter, backend, and transport configuration passes preflight.
-With opt-in, preflight reads installed protocol and journal versions from both hosts
-before the deployment lifecycle starts. It compares those versions with the exact
-requested source revision. Unsupported transitions and unknown installed evidence
-refuse before either host changes. Confirmed first installation and same-protocol
-updates keep their existing safety checks. The authenticated Mac inspection is
-read-only. Current deployment tooling stays separate from the exact candidate app.
-Without opt-in, the existing VPS workflow remains unchanged. The resident step records
-both observed hosts under the deployment identity. Both observed revisions must match
-the request before aggregate success. One successful host stays installed after its
-peer fails. A later explicit deployment retries the request.
-
-The managed VPS launcher reads `current/data/executor-launch.json`. This bounded,
-owner-only file accepts only version, mode, and socket fields. Missing configuration
-means the existing local default. Malformed or unauthorized explicit configuration
-fails. The launcher first scrubs the ambient environment, then applies only the
-validated `PLAN_EXECUTOR_MODE` and optional `PLAN_EXECUTOR_VPS_SOCKET` values. Ambient
-executor flags cannot enable the endpoint.
-
-The workflow prepares the desired settings in runner-temporary storage. The VPS
-deployment transaction applies them after service stop and restores the prior bytes
-or absence before fallback restart. Opt-out changes a stale remote selection to local.
-An absent local configuration leaves an unchanged deployment on its existing fast
-path. The SSH relay receives an explicit deployed executable and `--socket-path`
-equal to the server setting, independent of SSH environment propagation.
-
-An SSH failure before remote invocation leaves the existing installation untouched.
-A timeout or lost SSH connection after invocation leaves the remote outcome unknown.
-The report keeps the requested revision unverified and never infers cancellation or
-retention of the old version. It queues no automatic deployment retry. `verify-report`
-checks the recorded identity, revisions, and outcomes without host contact.
-
-Native builder, IPC, transfer, service, and restart-race checks use synthetic fixtures
-and local processes until a live test is separately authorized. Installed-agent
-credential access before and after interaction/keychain unlock, sleep recovery,
-unattended reboot, and the VPS-after-Mac grant check remain unproved. The full
-unattended outcome remains required.
+The deployment transaction validates the requested configuration before downtime.
+After service stop, it saves the previous bytes or absence and applies the requested settings.
+On failure, recovery restores the prior configuration before the fallback service starts.
+The Mac relay command must name the deployed executable and the same absolute socket.
+SSH environment propagation supplies neither setting.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
-`src/planner/environments/deployment.py`,
+`src/planner/environments/deployment.py`, `src/planner/environments/vps_launch.py`,
+`src/planner/environments/executor_launch_contracts.py`,
 `src/planner/environments/deployment_lifecycle.py`,
 `src/planner/environments/cli.py`, and `src/planner/skill_sources.py`.
 
----
-
-_Last verified: 2026-08-09._
+_Last verified: 2026-10-25._

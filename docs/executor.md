@@ -175,8 +175,8 @@ Code paths: `src/planner/executor/runtime.py`, `store.py`, `logic/reconciliation
 
 ## Replacement keeps code apart from data
 
-The resident owns installation and service control. Replaceable application code
-and persistent executor data have separate roots. The lightweight executor entry
+The operator owns installation and service control. Replaceable source and the
+Python environment stay separate from persistent executor data. The lightweight executor entry
 path does not start a Mac Panels server or create a Panels database. A protocol
 or journal-format mismatch refuses work before replay.
 
@@ -191,9 +191,9 @@ before it waits for the journal to drain. Final native events remain admitted
 and every unaccepted entry still blocks exit. Quiescence rechecks the process
 identity after awaited shutdown work.
 
-A committed controlled exit returns zero. The resident's successful-exit restart
-policy and process observations must prevent a replacement process from being
-stopped under an old receipt. Missing or changed process evidence refuses cutover.
+A committed controlled exit returns zero. The LaunchAgent keeps successful intentional exits stopped. The operator must
+check process evidence before service removal. An old receipt cannot authorize
+action against a replacement process. Missing or changed process evidence refuses cutover.
 An incompatible rollback preserves the journal and refuses mutation.
 
 Code paths: `src/planner/executor/entrypoint.py`, `cli.py`, `preflight.py`,
@@ -215,26 +215,23 @@ New destination children receive fresh identities, including a later return to M
 Failure after retirement begins reports retired or uncertain source state separately
 from an admission refusal.
 
-## Unsupported upgrade transitions
+## Installation compatibility
 
-Resident preflight compares the exact requested candidate protocol and journal
-versions with read-only installed evidence from both hosts. It runs before the VPS
-lifecycle write or any Mac staging, runtime preparation, or service mutation. A
-protocol mismatch refuses even when the journal format stays unchanged. Unknown
-installed evidence refuses instead of counting as first installation.
+The operator compares candidate protocol and journal constants with fresh installed
+Mac evidence and constants from the intended VPS package before installation changes.
+The VPS health API reports the Mac identity. It supplies no independent VPS version evidence.
+Missing or incompatible evidence defers the operation. The handshake remains the final protocol guard.
 
-A confirmed first installation and a supported same-protocol update keep their
-existing paths and safety checks. Current deployment tooling stays separate from
-the exact candidate source, so an earlier supported revision remains a candidate.
-A Mac inspection uses the pinned SSH identity and does not execute installed code.
-Direct deployment paths repeat the relevant checks before their own mutations.
-No migration or general retarget mechanism is part of this refusal policy.
+Read-only spool inspection establishes compatibility without migration or recovery.
+The [Mac operator runbook](mac-executor-installation.md) supplies the concrete checks.
+No automatic two-host update or general migration mechanism exists.
 
 ## Fresh installation and offline legacy conversion
 
-The production installation path is a fresh format-2 journal. No existing resident
-on the target Mac is required. Ordinary deployment continues to refuse incompatible
-journal or protocol versions before changing either installation.
+The production installation path is a fresh format-2 journal. No previous executor
+installation on the target Mac is required. The Mac runbook requires compatible
+protocol and journal evidence before installation changes, then read-only spool inspection before startup.
+The handshake refuses incompatible protocols before work. The VPS workflow performs no Mac compatibility check.
 
 An existing format-1 journal has one supported conversion boundary: stop every
 process that can open it, disable automatic restarts, and run the explicit offline
@@ -380,10 +377,10 @@ file ordering, and identity-fenced exit. They do not establish installed-account
 credentials, unattended reboot or pre-unlock operation, or real provider action
 timing. Those remain explicit requirements before a live success claim.
 
-Deployment and installation belong to the resident work. See
-[runtime environments](environments.md) and [deployment](deployment.md).
+Installation and updates use the [Mac operator runbook](mac-executor-installation.md).
+See [runtime environments](environments.md) and [VPS deployment](deployment.md) for their separate operating boundaries.
 
-_Last verified: 2026-10-18._
+_Last verified: 2026-10-25._
 
 ## Machine display reads
 

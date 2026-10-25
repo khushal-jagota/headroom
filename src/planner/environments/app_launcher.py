@@ -8,8 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from planner.environments.app import validate_app_manifest
-from planner.environments.resident.contracts import VpsExecutorLaunchConfiguration
-from planner.environments.resident.vps_launch import read_vps_launch, validate_vps_launch
+from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
+from planner.environments.vps_launch import read_vps_launch, validate_vps_launch
 
 EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
     {

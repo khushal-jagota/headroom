@@ -1,4 +1,4 @@
-"""Read-only resident preflight for the executor's existing journal format.
+"""Read-only preflight for the executor's existing journal format.
 
 The public root is PLAN_EXECUTOR_ROOT, not its spool subdirectory. Inspection
 never creates a directory, opens for writing, takes a lock, or migrates state.

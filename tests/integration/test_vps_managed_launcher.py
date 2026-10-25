@@ -9,9 +9,8 @@ import sys
 from pathlib import Path
 
 from planner.environments.app import _write_app_entrypoints, digest_app_artifact, digest_app_source
-from planner.environments.resident.contracts import VpsExecutorLaunchConfiguration
-from planner.environments.resident.transport import _TOOL_SHARED
-from planner.environments.resident.vps_launch import write_vps_launch
+from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
+from planner.environments.vps_launch import write_vps_launch
 
 SHA = "a" * 40
 
@@ -20,12 +19,14 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     checkout = Path(__file__).resolve().parents[2]
     app = tmp_path / "current/app"
     app.mkdir(parents=True)
-    source_files = set(_TOOL_SHARED) | {
+    # This launcher needs only its environment modules, independent of Mac tooling.
+    source_files = {
+        "src/planner/__init__.py",
+        "src/planner/environments/__init__.py",
         "src/planner/environments/app.py",
         "src/planner/environments/app_launcher.py",
-        "src/planner/environments/resident/__init__.py",
-        "src/planner/environments/resident/contracts.py",
-        "src/planner/environments/resident/vps_launch.py",
+        "src/planner/environments/executor_launch_contracts.py",
+        "src/planner/environments/vps_launch.py",
     }
     for name in source_files:
         target = app / name

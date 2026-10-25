@@ -9,8 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import Literal, cast
 
-from planner.environments.resident.contracts import (
-    ResidentError,
+from planner.environments.executor_launch_contracts import (
+    ExecutorLaunchConfigurationError,
     VpsExecutorLaunchConfiguration,
 )
 
@@ -19,30 +19,42 @@ MAX_VPS_LAUNCH_CONFIGURATION_BYTES = 4096
 
 def validate_vps_launch(configuration: VpsExecutorLaunchConfiguration) -> None:
     if type(configuration.version) is not int or configuration.version != 1:
-        raise ResidentError("unsupported VPS executor launch configuration version")
+        raise ExecutorLaunchConfigurationError(
+            "unsupported VPS executor launch configuration version"
+        )
     if configuration.mode not in {"local", "remote"}:
-        raise ResidentError("unsupported VPS executor launch mode")
+        raise ExecutorLaunchConfigurationError("unsupported VPS executor launch mode")
     path = configuration.socket_path
     if configuration.mode == "local" and path is not None:
-        raise ResidentError("local executor launch configuration cannot set a VPS socket")
+        raise ExecutorLaunchConfigurationError(
+            "local executor launch configuration cannot set a VPS socket"
+        )
     if configuration.mode == "remote" and (
         not isinstance(path, Path)
         or not path.is_absolute()
         or any(ord(char) < 32 for char in str(path))
         or any(part == ".." for part in path.parts)
     ):
-        raise ResidentError("remote VPS executor launch requires a concrete absolute socket path")
+        raise ExecutorLaunchConfigurationError(
+            "remote VPS executor launch requires a concrete absolute socket path"
+        )
 
 
 def _safe_path(path: Path) -> None:
     if not path.is_absolute():
-        raise ResidentError("VPS executor launch configuration path must be absolute")
+        raise ExecutorLaunchConfigurationError(
+            "VPS executor launch configuration path must be absolute"
+        )
     if any(component.is_symlink() for component in (path, *path.parents)):
-        raise ResidentError("VPS executor launch configuration path contains a symbolic link")
+        raise ExecutorLaunchConfigurationError(
+            "VPS executor launch configuration path contains a symbolic link"
+        )
     if path.parent.exists():
         parent = path.parent.stat()
         if parent.st_uid != os.getuid() or parent.st_mode & 0o022:
-            raise ResidentError("VPS executor launch directory must be owner controlled")
+            raise ExecutorLaunchConfigurationError(
+                "VPS executor launch directory must be owner controlled"
+            )
 
 
 def validate_vps_launch_path(path: Path) -> None:
@@ -56,7 +68,7 @@ def _read_bytes(path: Path) -> bytes | None:
         # An absent explicit configuration preserves the existing local default,
         # including older installations whose data directory is shared.
         if not path.is_absolute() or any(item.is_symlink() for item in path.parents):
-            raise ResidentError("unsafe VPS executor launch configuration path")
+            raise ExecutorLaunchConfigurationError("unsafe VPS executor launch configuration path")
         return None
     _safe_path(path)
     try:
@@ -70,12 +82,14 @@ def _read_bytes(path: Path) -> bytes | None:
             or info.st_uid != os.getuid()
             or stat.S_IMODE(info.st_mode) & 0o077
         ):
-            raise ResidentError(
+            raise ExecutorLaunchConfigurationError(
                 "VPS executor launch configuration must be an owner-only regular file"
             )
         value = stream.read(MAX_VPS_LAUNCH_CONFIGURATION_BYTES + 1)
     if len(value) > MAX_VPS_LAUNCH_CONFIGURATION_BYTES:
-        raise ResidentError("VPS executor launch configuration exceeds its size limit")
+        raise ExecutorLaunchConfigurationError(
+            "VPS executor launch configuration exceeds its size limit"
+        )
     return value
 
 
@@ -95,7 +109,9 @@ def _decode(raw: bytes) -> VpsExecutorLaunchConfiguration:
         validate_vps_launch(configuration)
         return configuration
     except (ValueError, TypeError) as exc:
-        raise ResidentError("malformed VPS executor launch configuration") from exc
+        raise ExecutorLaunchConfigurationError(
+            "malformed VPS executor launch configuration"
+        ) from exc
 
 
 def read_vps_launch(path: Path) -> VpsExecutorLaunchConfiguration | None:
@@ -114,7 +130,9 @@ def restore_vps_launch(path: Path, raw: bytes | None) -> None:
     """Restore exact validated prior bytes, or the prior absence, under deploy lock."""
     if raw is not None:
         if len(raw) > MAX_VPS_LAUNCH_CONFIGURATION_BYTES:
-            raise ResidentError("VPS executor launch configuration exceeds its size limit")
+            raise ExecutorLaunchConfigurationError(
+                "VPS executor launch configuration exceeds its size limit"
+            )
         _decode(raw)
         _write_bytes(path, raw)
         return

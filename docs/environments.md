@@ -151,85 +151,40 @@ path.
 - **The conversation system** (`conversation-system.md`) — the three agent backends
   that use the configured provider homes.
 
-## Mac executor packages
+## Mac executor installation
 
-The executor uses a standard wheel from the exact committed source. Setuptools
-selects Python packages and declared data from `pyproject.toml`. The cold source
-export includes package input roots, runtime and build locks, and backend manifests.
-An immutable manifest records the requested revision and exported file hashes.
-Build output stays in temporary source copies, outside that manifest.
+The Mac uses one ordinary native virtual environment and one exact source checkout:
 
-The permanent native runtime contains the wheel and its pinned dependencies.
-The build uses `requirements-build.txt` and `requirements-executor.txt` without
-implicit dependency resolution. A separate clean environment checks the complete
-dependency closure before installation into the permanent runtime. All native
-dependencies use compatible binary wheels. The only source exception is
-`http_ece==1.2.1`, which publishes no wheel. Its exact source digest, locked build
-tools, pure wheel metadata and contents, and output digest receive explicit checks.
-No native toolchain installation or broad source fallback exists.
+```text
+~/Deployments/PanelsExecutor/
+├── source/   reviewed source and native backend packages
+└── venv/     installed Python package and pinned dependencies
 
-Backend npm installation uses two distinct empty user and global configuration
-files inside the wheel-build temporary directory. Ambient npm settings are
-excluded; the files remain present until npm completes and are removed after
-success or failure. The owner HOME and provider settings stay intact. Failed
-builds retain their uncertified permanent runtime for inspection and refuse reuse.
+~/Library/Application Support/Panels/executor/
+└── persistent spool, artifacts, logs, and IPC
+```
 
-Native command output and cleanup time are bounded. Timeout or output overflow
-kills only that command's owned process group. Native build failures carry fixed
-phase, operation, failure kind, and optional exit status through the existing
-host result detail and version 1 deployment report. Captured output, command
-arguments, paths, and exception text are excluded. Remote results and saved
-reports validate that diagnostic before accepting it as evidence.
+Create the environment at its final path. Keep the source and environment at those paths.
+Install the full Python package with standard pip commands and backend packages with `npm ci`.
+No custom wrapper, runtime receipt, source manifest, or versioned runtime directory controls installation.
+The standard `venv/bin/panels` console supports the executor and Worker CLI.
 
-The standard generated `panels` entrypoint serves the executor and Worker CLI.
-The resident wrapper uses the isolated permanent interpreter and installed package.
-It refuses `serve` and caller-supplied revision overrides. It injects the exact
-committed revision for `executor run`. It does not add source paths to `sys.path`.
-The separate deployment-tool bootstrap remains a standard-library cold tool.
+The supported target is native ordinary CPython 3.14.3 on Apple Silicon, macOS 11 or later,
+and native Node 22 or newer. Intel support remains outside this dependency set.
+Pinned dependencies use compatible wheels, except the pinned `http-ece` source distribution.
+Pip selects compatible distributions. No broad source-build fallback exists.
 
-Read-only preflight checks the installed wheel, distribution metadata, scripts,
-Python files, native extensions, and bytecode against the receipt. The runtime
-marker binds that receipt to the source manifest and permanent runtime path.
-Changed or extra installed files refuse reuse and activation. Existing identity
-fences, native Node locks, launchd quiescence, rollback, persistent data, normal
-HOME, and provider credentials keep their existing boundaries.
+One GUI LaunchAgent runs the console with explicit source SHA, SSH inputs, and server URL.
+Its environment retains the owner's HOME and reviewed backend PATH, with `venv/bin` first.
+The Claude executable points explicitly into the source's `agent_backends/node_modules`.
+The installed Python package cannot infer that source path.
 
-The supported Mac target is Apple Silicon with native ordinary CPython 3.14.3.
-The interpreter probe checks its actual OS, architecture, implementation, and ABI.
-Every selected wheel must fit the real OS and interpreter before installation.
-The native wheels require macOS 11 or later. Tags alone do not qualify a host.
-Intel macOS is explicitly unsupported for this pinned dependency set because
-cryptography 49 removes that target. The package refuses Intel before host mutation.
-Linux VPS builds remain supported on their matching native interpreter and architecture.
+The small plist renderer prints configuration only. The operator owns installation and service commands.
+The [Mac operator runbook](mac-executor-installation.md) owns inputs, shutdown, updates, and failed-install recovery.
+[VPS deployment](deployment.md#explicit-vps-executor-configuration) owns the independent server mode and socket configuration.
+Physical Mac installation, provider credentials, reboot, and pre-unlock behavior require separate live evidence.
 
-The capability readout in `ops/panels-environments/executor-build-contract.json`
-separates required support from verified host evidence. Its original handoff
-provenance remains unchanged. Current packaging inputs live in `current_packaging`.
-Physical Mac support, installed credentials, reboot, and pre-unlock behavior remain
-unverified. The implementation does not authorize host installation or live probes.
+Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/`,
+`requirements-build.txt`, `requirements-executor.txt`, `agent_backends/`.
 
-The Mac-initiated executor connection requires explicit host, port, user,
-authentication mode, and known-hosts file. `public_key` requires a Mac identity file.
-`tailscale` forbids that file and requires an explicit executable Tailscale CLI path
-on the Mac, plus port 22. See [executor authentication](executor.md#ssh-prerequisites-and-boundaries)
-for peer association, host pins, and trust assumptions.
-
-Resident launch commands use `--executor-ssh-auth-mode public_key` with
-`--executor-ssh-identity-file /absolute/key`, or `--executor-ssh-auth-mode tailscale`
-with `--executor-tailscale-binary /absolute/tailscale`. Both retain
-`--executor-ssh-host`, `--executor-ssh-port`, `--executor-ssh-user`, and
-`--executor-ssh-known-hosts`. The generated LaunchAgent carries only the selected
-mode's arguments. Ambient configuration does not supply missing inputs.
-
-The deployment workflow requires `PANELS_EXECUTOR_SSH_AUTH_MODE` explicitly.
-For public-key mode, set `PANELS_EXECUTOR_SSH_IDENTITY_FILE` and leave
-`PANELS_EXECUTOR_TAILSCALE_BINARY` empty. For Tailscale mode, set
-`PANELS_EXECUTOR_TAILSCALE_BINARY` and leave the identity variable empty.
-`PANELS_EXECUTOR_SSH_PORT`, `PANELS_EXECUTOR_SSH_USER`, and
-`PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE` remain explicit.
-These paths belong to the Mac. VPS-to-Mac delivery uses separate credentials.
-
-
----
-
-_Last verified: 2026-08-09._
+_Last verified: 2026-10-25._
