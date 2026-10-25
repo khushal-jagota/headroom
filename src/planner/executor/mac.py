@@ -27,6 +27,7 @@ from planner.executor.configuration import (
     CLI_RESULT_TIMEOUT_SECONDS,
     PROTOCOL_VERSION,
     RECONNECT_INTERVAL_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
     SFTP_MAX_TRANSFERS,
     SPOOL_FORMAT_VERSION,
     ExecutorPaths,
@@ -202,12 +203,24 @@ class MacExecutor:
         request_id = uuid4().hex
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        writer = self._writer
         try:
-            await self._send(WireMessage(kind, request_id, payload))
-            response = await future
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                async with self._write_lock:
+                    if writer is None or self._writer is not writer:
+                        raise ConnectionError("executor link unavailable")
+                    writer.write(encode_frame(WireMessage(kind, request_id, payload)))
+                    await writer.drain()
+                response = await future
             if response.kind in (WireMessageKind.error, WireMessageKind.protocol_refused):
                 raise ValueError(str(response.payload))
             return response
+        except TimeoutError:
+            # The operation may have committed. Disconnect this generation so
+            # reconciliation recovers its receipt, without retrying it here.
+            if writer is not None:
+                writer.close()
+            raise
         finally:
             self._pending.pop(request_id, None)
 
@@ -371,7 +384,7 @@ class MacExecutor:
                 try:
                     await self._replay_envelope(envelope)
                     return True
-                except (ConnectionError, BrokenPipeError, asyncssh.Error):
+                except (TimeoutError, ConnectionError, BrokenPipeError, asyncssh.Error):
                     raise
                 except (ValueError, OSError):
                     logging.getLogger(__name__).exception(

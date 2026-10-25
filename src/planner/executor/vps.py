@@ -941,6 +941,16 @@ class ExecutorEndpoint:
     async def _handle(
         self, message: WireMessage, identity: ExecutorIdentity, writer: asyncio.StreamWriter
     ) -> None:
+        try:
+            await self._handle_message(message, identity, writer)
+        except Exception:
+            # An unanswered operation may already have committed. Close only
+            # its original generation and recover through ordinary replay.
+            writer.close()
+
+    async def _handle_message(
+        self, message: WireMessage, identity: ExecutorIdentity, writer: asyncio.StreamWriter
+    ) -> None:
         if self.writer is not writer or self.identity != identity:
             return
         try:

@@ -127,6 +127,13 @@ output cannot extend either pass indefinitely. Each captured prefix still needs
 its ordinary delivery and receipts; there is no wall-clock readiness bound. After readiness,
 ordinary replay passes continue delivering the retained work in conversation order.
 
+Each Mac control request has one 30-second deadline covering send admission,
+transmission, and its response. A timeout closes that request's connection and
+leaves its operation unconfirmed; it does not mean refusal. Unexpected VPS request
+failures also close their original connection. Ordinary reconnect and replay
+recover durable receipts using the original submission identity and content hash.
+Neither failure retries a native operation in place or invents its outcome.
+
 An accepted answer and callback application are different durable facts. Panels
 saves the permission choice or complete question answer map before transmission.
 Reconciliation can give an old answer to its original surviving callback.

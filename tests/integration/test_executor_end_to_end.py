@@ -646,13 +646,44 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("receipt_failure", ["disconnect", "unexpected", "silent"])
 def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    receipt_failure: str,
 ) -> None:
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         try:
+            if receipt_failure != "disconnect":
+                original_send = harness.endpoint._send
+
+                async def fail_receipt(message: WireMessage) -> None:
+                    if (
+                        message.kind is WireMessageKind.receipt
+                        and message.payload.get("submission_id") == harness.endpoint.cut_submission
+                    ):
+                        harness.endpoint.cut_submission = None
+                        harness.endpoint.cut_count += 1
+                        if receipt_failure == "unexpected":
+                            raise RuntimeError("receipt handler failed after durable acceptance")
+                        return
+                    await original_send(message)
+
+                monkeypatch.setattr(harness.endpoint, "_send", fail_receipt)
+                if receipt_failure == "silent":
+                    monkeypatch.setattr("planner.executor.mac.REQUEST_TIMEOUT_SECONDS", 0.2)
+                    writer = harness.mac._writer
+                    assert writer is not None
+                    close = writer.close
+
+                    def restore_budget_and_close() -> None:
+                        # Accelerate only the missing receipt, not the fresh
+                        # generation's real SSH and reconciliation setup.
+                        monkeypatch.setattr("planner.executor.mac.REQUEST_TIMEOUT_SECONDS", 30.0)
+                        close()
+
+                    monkeypatch.setattr(writer, "close", restore_budget_and_close)
             await harness.native.raise_ask()
             pending = [
                 entry
@@ -664,6 +695,11 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
             await eventually(
                 lambda: harness.endpoint.cut_count == 1, "Receipt cut was not exercised"
             )
+            first_receipt = harness.endpoint.store.lookup_receipt(
+                pending[0].sender_id, pending[0].submission_id
+            )
+            assert first_receipt is not None
+            assert first_receipt.payload_sha256 == pending[0].payload_sha256
             await eventually(
                 lambda: not harness.mac.spool.pending() and harness.endpoint.ready,
                 "Committed entry did not replay and acknowledge",
@@ -673,7 +709,19 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
             receipt = harness.endpoint.store.lookup_receipt(
                 pending[0].sender_id, pending[0].submission_id
             )
-            assert receipt is not None
+            assert receipt == first_receipt
+
+            async def duplicate_effect(*args: object, **kwargs: object) -> None:
+                raise AssertionError("duplicate submission invoked backend event writer")
+
+            monkeypatch.setattr(
+                harness.endpoint.runtime.system, "receive_remote_backend_event", duplicate_effect
+            )
+            assert (
+                await harness.endpoint.accept_envelope(pending[0], harness.mac.identity)
+                == first_receipt
+            )
+            assert harness.native.start_count == harness.native.prompt_count == 1
         finally:
             await harness.close()
 
