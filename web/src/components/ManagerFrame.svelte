@@ -37,11 +37,13 @@
   const dismissOutsideConversation = dismissal.surface;
 
   let heldFile = $state<ManagedFileTarget | null>(null);
+  let paneRoot = $state<HTMLElement | null>(null);
   const artifact = createArtifactOnThePage({
     shown: () => (onOpenFile ? openedFile : heldFile),
     keep: (file) => { if (onOpenFile) onOpenFile(file); else heldFile = file; },
     conversationState: () => conversationState,
-    dismissConversation: () => { conversationState = "rest"; }
+    dismissConversation: () => { conversationState = "rest"; },
+    root: () => paneRoot
   });
 </script>
 
@@ -51,7 +53,7 @@
      claim needs no key handling of its own. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div use:conversationDock use:dismissOutsideConversation class={`manager-page ${className}`} {...attributes} onclick={artifact.claimPress}>
+<div bind:this={paneRoot} use:conversationDock use:dismissOutsideConversation class={`manager-page ${className}`} {...attributes} onclick={artifact.claimPress}>
   <div class="manager-reading">
     <main class="manager-doc">
       <div class="manager-column">{@render children()}</div>

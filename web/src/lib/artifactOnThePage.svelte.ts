@@ -18,19 +18,78 @@ export function createArtifactOnThePage(host: {
   keep: (file: ManagedFileTarget | null) => void;
   conversationState: () => ConversationState;
   dismissConversation: () => void;
+  /** The pane this artifact is drawn in, so the keyboard can be given back to something
+   *  in it that the reader can still see. */
+  root: () => HTMLElement | null;
 }) {
   let reloadSignal = $state(0);
   let element = $state<HTMLElement | null>(null);
   let whatHadFocus: HTMLElement | null = null;
 
-  /** The artifact takes focus when it opens, so the keyboard is where the reading is.
+  /** Hand the keyboard to the artifact as soon as the artifact can hold it.
    *
-   * It is also what makes Escape reach this pane: a field is an editable surface and
-   * Escape belongs to the editor while the caret is in one, so an artifact opened from a
-   * link inside a field must move the focus out of it. */
+   * It cannot always hold it at once. A full conversation covers the reading layer and
+   * the dock makes that layer inert while it does, and the link the reader pressed is in
+   * that conversation, so the artifact is drawn into a layer that refuses focus. The dock
+   * clears inert on its next measurement, a frame later, which is not a change this piece
+   * can see. A single focus() at open is thrown away there and the keyboard is left on the
+   * page. So wait for the layer to let go, then take it.
+   *
+   * Taking it is also what makes Escape reach this pane: a field is an editable surface
+   * and Escape belongs to the editor while the caret is in one, so an artifact opened from
+   * a link inside a field must move the focus out of it.
+   *
+   * Returns the way to call the hand-off off, which the effect does whenever the artifact
+   * closes or another one replaces it. A hand-off nobody is waiting for any more must
+   * never arrive: a reader who moved on keeps the keyboard where they put it. */
+  function handOverTheKeyboard(target: HTMLElement): () => void {
+    let cancelled = false;
+    let waitingOn: MutationObserver | null = null;
+    function give(): void {
+      if (cancelled || !target.isConnected) return;
+      const shut = target.closest("[inert]");
+      if (shut) {
+        // Watch whatever is holding the layer shut, and look again when it lets go,
+        // because by then a different ancestor can be the one holding it.
+        waitingOn?.disconnect();
+        waitingOn = new MutationObserver(give);
+        waitingOn.observe(shut, { attributes: true, attributeFilter: ["inert"] });
+        return;
+      }
+      cancelled = true;
+      waitingOn?.disconnect();
+      target.focus();
+    }
+    give();
+    return () => {
+      cancelled = true;
+      waitingOn?.disconnect();
+    };
+  }
+
   $effect(() => {
-    if (host.shown() && element) element.focus();
+    const target = host.shown() ? element : null;
+    if (!target) return;
+    return handOverTheKeyboard(target);
   });
+
+  /** Give the keyboard back to something the reader can see and use.
+   *
+   * Usually that is the link the artifact was opened from. When the link was read in the
+   * conversation, it leaves the screen with the transcript as the conversation returns to
+   * its bar, and focusing something nobody can see drops the keyboard on the page. The
+   * conversation's own bar takes it instead: the same conversation the artifact was opened
+   * from, one press away from the words it was named in. */
+  function giveTheKeyboardBack(had: HTMLElement | null): void {
+    if (had?.isConnected && !had.closest("[inert]")) {
+      had.focus();
+      if (document.activeElement === had) return;
+    }
+    host
+      .root()
+      ?.querySelector<HTMLElement>("[data-conversation-rest-bar], [data-conversation-expand]")
+      ?.focus();
+  }
 
   function show(file: ManagedFileTarget | null): void {
     if (file && !host.shown()) {
@@ -41,9 +100,9 @@ export function createArtifactOnThePage(host: {
     // artifact nobody can see, so the conversation steps out of the way to let it through.
     if (file && host.conversationState() === "opened") host.dismissConversation();
     if (!file) {
-      const restoreFocus = whatHadFocus;
+      const had = whatHadFocus;
       whatHadFocus = null;
-      queueMicrotask(() => restoreFocus?.focus());
+      queueMicrotask(() => giveTheKeyboardBack(had));
     }
   }
 

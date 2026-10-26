@@ -212,7 +212,8 @@
     shown: () => (onOpenFile ? openFile : heldFile),
     keep: (file) => { if (onOpenFile) onOpenFile(file); else heldFile = file; },
     conversationState: () => conversationState,
-    dismissConversation: () => { conversationState = "rest"; }
+    dismissConversation: () => { conversationState = "rest"; },
+    root: () => screenElement
   });
   // Which stages the reader has opened or closed with their own hands, by field name. A
   // stage that settles moves into the fold above and is rebuilt there, so the answer

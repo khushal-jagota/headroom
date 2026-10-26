@@ -605,7 +605,11 @@ or locale produces identical arbitrary-text ordering.
   preserves its viewport size and state. An opened conversation is the whole page, so a
   file link returns to the dock. Escape closes the file, unless the conversation is open
   over it: then Escape is the conversation's, because one press belongs to one thing and
-  the thing on top answers for it. This is the same on every screen width. A click asking
+  the thing on top answers for it. The keyboard follows the reading: the file takes it
+  once the pane will let it, which is after a full conversation has returned to its bar,
+  and closing gives it back to the link it was opened from. A link read in the
+  conversation leaves the screen with the transcript, so the conversation's own bar takes
+  the keyboard instead and the reader is one press from the words the file was named in. This is the same on every screen width. A click asking
   for a new tab or window is left alone, and so is a link marked as a download or one
   whose format has nothing to show. On the Workspace the open file rides in the address
   beside the Ticket and beside the Chief, so a reload, Back, and a shared link all show

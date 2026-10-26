@@ -429,13 +429,50 @@ def run(browser, urls):
     assert box.input_value() == "Half a thought and the rest of it.", box.input_value()
     box.fill("")
 
+    # 5a. The owner's own path, from the keyboard, end to end. The link is read and
+    #     pressed inside the full conversation, which makes the reading layer inert while
+    #     it covers it. The artifact is drawn into that inert layer, and the dock only
+    #     clears inert on its next measurement, so the hand-off has to wait for the layer
+    #     to let go rather than take the keyboard once and lose it.
+    open_the_conversation()
+    link.focus()
+    page.keyboard.press("Enter")
+    expect(artifact).to_have_attribute("aria-label", "plan.md")
+    expect(conversation).to_have_attribute("data-conversation-state", "rest")
+    page.wait_for_function(
+        "() => document.activeElement?.hasAttribute('data-ticket-artifact')"
+    )
+
+    #     Escape hands the keyboard back to something the reader can see and use. The link
+    #     it came from is in the transcript, which leaves the screen when the conversation
+    #     returns to its bar, so the bar itself takes it: still the conversation the
+    #     artifact was opened from, and one press from the words it was named in.
+    rest_bar = conversation.locator("[data-conversation-rest-bar]")
+    page.keyboard.press("Escape")
+    expect(artifact).to_have_count(0)
+    expect(rest_bar).to_be_focused()
+    expect(conversation).to_have_attribute("data-conversation-id", MANAGER_CONVERSATION)
+    open_the_conversation()
+    expect(transcript).to_be_visible()
+    dock_the_conversation()
+
+    #     Close does the same as Escape.
+    open_the_conversation()
+    link.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "() => document.activeElement?.hasAttribute('data-ticket-artifact')"
+    )
+    artifact.get_by_role("button", name="Close", exact=True).click()
+    expect(artifact).to_have_count(0)
+    expect(rest_bar).to_be_focused()
+
     # 5. Escape belongs to whatever is on top, and focus is lent and given back.
     #
-    #    Pressed from the Manager's own Artifacts band rather than its conversation,
-    #    because an open conversation makes the reading layer inert while it covers it:
-    #    an artifact opened from there cannot take the keyboard until the dock measures
-    #    again, and the link it was opened from leaves the screen with the transcript. A
-    #    press in the document is the same claim with both ends on the screen.
+    #    Pressed from the Manager's own Artifacts band this time. The link is in the
+    #    document rather than the conversation, so it is still on the screen when the
+    #    artifact closes and the keyboard goes back to the link itself. 5a above is the
+    #    other half: a link that leaves the screen, where the conversation's bar takes it.
     document_area.locator("[data-artifacts-band] > summary").click()
     chip = document_area.locator('[data-artifact-chip="notes.md"]')
     expect(chip).to_be_visible()
