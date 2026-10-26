@@ -3035,6 +3035,114 @@ def _position_commit(browser, url):
         (output/'position-commit-latest.json').write_text(json.dumps(proof,indent=2))
         page.close()
 
+def _text_tab_return(browser, url, output):
+    """Protect actual character lines, which row offsets cannot identify after lazy layout."""
+    import json
+    import time
+
+    started = time.perf_counter()
+    proof = []
+    page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
+    # This observer reads native text nodes and Range geometry. No product anchor,
+    # rendering marker or wrapper identity supplies the correctness assertion.
+    page.add_init_script('''window.__readCharacter = (held=null) => {
+      const thread=document.querySelector('[data-conversation-thread]');
+      if(!thread)return null;
+      const viewport=thread.getBoundingClientRect();
+      const walker=document.createTreeWalker(thread,NodeFilter.SHOW_TEXT);
+      for(let node;node=walker.nextNode();){
+        if(!node.parentElement.closest('.markdown-block')||!node.textContent.trim())continue;
+        if(held&&node.textContent!==held.text)continue;
+        const range=document.createRange();range.selectNodeContents(node);
+        if(!held&&!Array.from(range.getClientRects()).some(rect=>rect.bottom>viewport.top+24&&rect.top<viewport.bottom))continue;
+        const begin=held?held.character:0,end=held?begin+1:node.length;
+        for(let character=begin;character<end;character++){
+          range.setStart(node,character);range.setEnd(node,character+1);
+          const rect=range.getBoundingClientRect();
+          if(rect.width&&rect.height&&(held||rect.top>=viewport.top+24&&rect.bottom<=viewport.bottom))
+            return {text:node.textContent,character,offset:rect.top-viewport.top,
+              visible:rect.bottom>viewport.top&&rect.top<viewport.bottom};
+        }
+      }return null;
+    };''')
+    try:
+        for variant, backlog, order in (
+            ('paragraphs',20,'history-first'),('paragraphs',20,'body-first'),
+            ('paragraphs',0,'history-first'),('tall',20,'body-first'),
+        ):
+            case = {'variant':variant,'backlog':backlog,'order':order}
+            proof.append(case)
+            page.goto(url+'?reader=1&text-restoration='+variant)
+            page.wait_for_function("document.querySelector('.conversation-transcript-region')?.getAttribute('aria-busy')==='false'")
+            _settle_conversation_layout(page)
+            thread=page.locator('[data-conversation-thread]')
+            thread.hover()
+            page.mouse.wheel(0,-600 if backlog==0 else -2400)
+            _settle_conversation_layout(page)
+            held=page.evaluate('window.__readCharacter()')
+            assert held and ('Late paragraph 2000.' in held['text'] or 'Interior code line' in held['text']),held
+            case['held']=held
+            page.screenshot(path=str(output/f'text-return-{variant}-{backlog}-{order}-before.png'))
+            page.evaluate('''() => {
+              window.__fixtureVisible=false;
+              Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__fixtureVisible?'visible':'hidden'});
+              document.dispatchEvent(new Event('visibilitychange'));
+            }''')
+            page.wait_for_timeout(100)
+            page.evaluate('''count=>{
+              window.__backlog(count);Object.assign(window.__returnProbe,{hold:true,bodies:true,bodyHold:true});
+              window.__textFrames=[];window.__stopTextFrames=false;
+            }''',backlog)
+            page.evaluate('''held=>{
+              const sample=()=>{
+                const thread=document.querySelector('[data-conversation-thread]');
+                const region=document.querySelector('.conversation-transcript-region');
+                const visible=thread&&region&&getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
+                const roots=[...document.querySelectorAll('[data-visible-content-state=retained]')]
+                  .filter(node=>!node.parentElement?.closest('[data-visible-content-state=retained]')).length;
+                window.__textFrames.push({ms:performance.now(),visible,character:window.__readCharacter(held),
+                  retainedRoots:roots,rows:document.querySelectorAll('[data-conversation-view-key]').length});
+                if(!window.__stopTextFrames)requestAnimationFrame(sample);
+              };window.__fixtureVisible=true;requestAnimationFrame(sample);document.dispatchEvent(new Event('visibilitychange'));
+            }''',held)
+            if backlog:
+                page.wait_for_function('window.__returnProbe.waiting>0')
+            if order=='body-first':
+                page.evaluate('window.__returnProbe.release()')
+                # The snapshot's body admission can finish while anchor history is held.
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.evaluate('window.__returnProbe.releaseBodies()')
+                page.wait_for_timeout(150)
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+            else:
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.wait_for_timeout(150)
+                page.evaluate('window.__returnProbe.releaseBodies()')
+            page.wait_for_function('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+              return thread&&region&&getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
+            }''',timeout=15000)
+            page.wait_for_timeout(500)
+            if variant=='tall':
+                # A late font metric change moves the saved interior line inside one block.
+                page.add_style_tag(content='[data-conversation-thread] pre code { line-height: 1.8; }')
+                page.wait_for_timeout(400)
+            case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+            case['after']=page.evaluate('window.__readCharacter()')
+            page.screenshot(path=str(output/f'text-return-{variant}-{backlog}-{order}-after.png'))
+            visible=[frame for frame in case['frames'] if frame['visible']]
+            assert visible,case
+            bad=[frame for frame in visible if frame['character'] is None or not frame['character']['visible'] or abs(frame['character']['offset']-held['offset'])>1]
+            assert not bad, f"Visible text line changed after lazy restoration: held={held!r}, first_bad={bad[:1]!r}, after={case['after']!r}"
+            assert all(frame['retainedRoots']<=4 and frame['rows']<=300 for frame in case['frames']),case
+        print('TEXT_TAB_RETURN_PROOF '+json.dumps({'cases':len(proof),'seconds':round(time.perf_counter()-started,3),'newHosts':0}),flush=True)
+    finally:
+        page.screenshot(path=str(output/'text-return-last.png'))
+        (output/'text-tab-return-proof.json').write_text(json.dumps({'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0},indent=2))
+        page.close()
+
+
 def _tab_return(browser, url):
     """A remembered row and its pixel offset survive hidden backlog admission."""
     import json
@@ -3045,6 +3153,7 @@ def _tab_return(browser, url):
     started = time.perf_counter()
     output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
     output.mkdir(parents=True, exist_ok=True)
+    _text_tab_return(browser, url, output)
     proof = []
     page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
     reading = """() => {
