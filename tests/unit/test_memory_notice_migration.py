@@ -2,6 +2,7 @@
 
 import shutil
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,12 +10,35 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from tests.unit.test_worker_memory import _add_prompt, _add_ticket, _make_conversation
+from tests.unit.test_worker_memory import _add_ticket, _make_conversation
 
+from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.events import (
+    PromptEventPayload,
+    conversation_event_payload_to_canonical_json,
+)
+from planner.conversation.message_content import text_message_content
 from planner.core import db
 from planner.core.db import connect, create_schema
 from planner.core.migrations.versions import consume_memory_notice_authorization as migration
 from planner.runtime import worker_memory
+
+
+def _add_prompt(
+    conn: sqlite3.Connection, conversation_id: str, *, sequence: int, sender_message_id: str
+) -> None:
+    # Current projection migrations parse historical events, so use a real prompt
+    # rather than the minimal sender-only sentinel sufficient for memory rules.
+    payload = PromptEventPayload(
+        text_message_content("Synthetic memory prompt"),
+        "loop",
+        PromptDeliveryMode.queue,
+        sender_message_id=sender_message_id,
+    )
+    conn.execute(
+        "INSERT INTO conversation_events VALUES (?, ?, 'prompt', ?, 0)",
+        (conversation_id, sequence, conversation_event_payload_to_canonical_json(payload)),
+    )
 
 
 def _database_at_revision(tmp_path: Path, revision: str) -> str:
@@ -27,7 +51,7 @@ def _database_at_revision(tmp_path: Path, revision: str) -> str:
     for ancestor in ScriptDirectory(str(original)).walk_revisions(base="base", head=revision):
         source = Path(ancestor.path)
         shutil.copy(source, tree / "versions" / source.name)
-    with patch.object(db, "MIGRATIONS_DIRECTORY", tree), connect(path) as conn:
+    with patch.object(db, "MIGRATIONS_DIRECTORY", tree), closing(connect(path)) as conn:
         create_schema(conn)
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == revision
     return path
@@ -39,7 +63,7 @@ def _legacy_database(tmp_path: Path) -> str:
 
 def test_cutover_holds_known_events_missing_events_and_former_links(tmp_path: Path) -> None:
     path = _legacy_database(tmp_path)
-    with connect(path) as conn:
+    with closing(connect(path)) as conn:
         for index, mode in enumerate(("known", "missing", "answered", "event_only", "former")):
             _make_conversation(conn, mode, compacted=7)
             _add_prompt(conn, mode, sequence=3, sender_message_id="worker_step_message_initial")
@@ -59,7 +83,7 @@ def test_cutover_holds_known_events_missing_events_and_former_links(tmp_path: Pa
         )
         conn.execute("INSERT INTO ticket_conversations VALUES ('former','t_4')")
         conn.execute("UPDATE tickets SET conversation_id=NULL WHERE id='t_4'")
-    with connect(path) as conn:
+    with closing(connect(path)) as conn:
         create_schema(conn)
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
             ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_current_head()
@@ -106,7 +130,7 @@ def test_failed_cutover_rolls_back_tables_and_holds(tmp_path: Path) -> None:
                     raise RuntimeError("synthetic cutover failure")
     finally:
         engine.dispose()
-    with connect(path) as conn:
+    with closing(connect(path)) as conn:
         assert (
             conn.execute(
                 "SELECT name FROM sqlite_master WHERE name LIKE 'worker_memory_notice_%'"
@@ -126,7 +150,7 @@ def test_combined_migration_upgrades_either_reviewed_head_without_losing_rows(
     tmp_path: Path, previous_head: str
 ) -> None:
     path = _database_at_revision(tmp_path, previous_head)
-    with connect(path) as conn:
+    with closing(connect(path)) as conn:
         _make_conversation(conn, "preserved", compacted=7)
         _add_ticket(conn, "t_preserved", claim="out", conversation_id="preserved")
         ticket_before = dict(
@@ -143,14 +167,20 @@ def test_combined_migration_upgrades_either_reviewed_head_without_losing_rows(
                 "INSERT INTO worker_memory_notice_holds VALUES "
                 "('t_preserved','preserved',NULL,2,'legacy_unresolved_boundary')"
             )
-    with connect(path) as conn:
+    with closing(connect(path)) as conn:
         create_schema(conn)
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall()[0][0] == (
             ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_current_head()
         )
-        assert dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone()) == (
-            ticket_before
-        )
+        ticket_after = dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone())
+        # Staging intentionally renames Manager assignment, removes calendar and
+        # priority columns, and adds field approval metadata. All other facts survive.
+        assert ticket_after.pop("manager_id") == ticket_before.pop("sprint_item_id")
+        assert ticket_after.pop("manager_kind") == ticket_before.pop("orchestrator_kind")
+        assert ticket_after.pop("field_approvals") == "{}"
+        ticket_before.pop("sprint_id")
+        ticket_before.pop("priority")
+        assert ticket_after == ticket_before
         if previous_head == "executor_authoritative_acceptance":
             assert tuple(conn.execute("SELECT * FROM executor_connections").fetchone()) == (
                 "retained",
@@ -189,7 +219,7 @@ def test_native_usage_merge_preserves_branch_rows_and_reopens(
 ) -> None:
     path = _database_at_revision(tmp_path, previous_head)
     preserved_tables = ["tickets", "conversations", "conversation_events"]
-    with connect(path) as conn:
+    with closing(connect(path)) as conn:
         _make_conversation(conn, "preserved", compacted=7)
         _add_ticket(conn, "t_preserved", claim="out", conversation_id="preserved")
         if previous_head == "merge_executor_memory_notice":
@@ -218,18 +248,32 @@ def test_native_usage_merge_preserves_branch_rows_and_reopens(
                 "native_usage_files",
                 "native_usage_prices",
             ]
+        retained_columns = {
+            "tickets": "id,title,worker_type,employee_backend,stage,conversation_id,"
+            "worker_step_claim,locale,field_values,pending_proposal",
+            "conversations": "conversation_id,backend_key,workspace_folder,access,created_at,"
+            "automatically_compacted_through_sequence",
+        }
         before = {
-            table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            table: [
+                tuple(row)
+                for row in conn.execute(f"SELECT {retained_columns.get(table, '*')} FROM {table}")
+            ]
             for table in preserved_tables
         }
     for _ in range(2):
-        with connect(path) as conn:
+        with closing(connect(path)) as conn:
             create_schema(conn)
             assert [tuple(row) for row in conn.execute("SELECT * FROM alembic_version")] == [
-                ("merge_resident_native_usage",)
+                (ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_current_head(),)
             ]
             for table, rows in before.items():
-                assert [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")] == rows
+                assert [
+                    tuple(row)
+                    for row in conn.execute(
+                        f"SELECT {retained_columns.get(table, '*')} FROM {table}"
+                    )
+                ] == rows
             if previous_head != "merge_executor_memory_notice":
                 assert [
                     tuple(row)

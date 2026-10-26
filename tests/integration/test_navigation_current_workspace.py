@@ -148,6 +148,11 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
         before = snapshot(conn)
         conn.execute("BEGIN")
         conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
+        # This synthetic fixture already contains the independent executor and
+        # workspace branch. Retain its applied marker while rewinding only Review.
+        conn.execute(
+            "INSERT INTO alembic_version(version_num) VALUES ('conversation_workspace_policy')"
+        )
         conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
         conn.execute(
             "UPDATE navigation_view_meta SET projection_version=?,ordering_generation='review-v2'",

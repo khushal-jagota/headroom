@@ -68,6 +68,18 @@ Require Node platform `darwin`, architecture `arm64`, and major version 22 or ne
 Intel and free-threaded Python remain outside this target.
 Do not copy a VPS virtual environment to the Mac.
 
+The complete package includes PyICU for workspace ordering. Its native build requires ICU libraries and headers, `pkg-config`, and a C++ compiler compatible with the selected Python. ICU 75 or newer also requires C++17. Keep the matching ICU shared libraries available after installation. These are operator prerequisites, not packages that the executor installs.
+
+For a Homebrew-managed native environment, prepare ICU and `pkg-config` before the Python dependency installation:
+
+```sh
+brew install icu4c pkg-config
+export PKG_CONFIG_PATH="$(brew --prefix icu4c)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+pkg-config --cflags --libs icu-i18n
+```
+
+Use ICU and compiler builds compatible with the actual Mac and Python. A cached PyICU wheel from another host does not establish compatibility. The [PyICU build instructions](https://pypi.org/project/pyicu/2.16.2/) describe compiler selection and library paths. The isolated Linux installer test does not establish these Mac prerequisites.
+
 ## Prepare exact source and compare compatibility
 
 Prepare a temporary source copy without changing installed code:
@@ -246,7 +258,7 @@ Install from the selected source:
 cd "$SOURCE"
 "$VENV/bin/python" -m pip install -r requirements-build.txt
 "$VENV/bin/python" -m pip install --no-build-isolation \
-  --only-binary=:all: --no-binary=http-ece -r requirements-executor.txt
+  --only-binary=:all: --no-binary=http-ece,PyICU -r requirements-executor.txt
 rm -rf -- "$SOURCE/build"
 "$VENV/bin/python" -m pip install --force-reinstall --no-deps --no-build-isolation "$SOURCE"
 "$VENV/bin/python" -m pip check
@@ -254,7 +266,8 @@ PATH="$BACKEND_PATH" npm ci --prefix "$SOURCE/agent_backends"
 ```
 
 Require every command to succeed before continuation.
-Pinned `http-ece` is the sole ordinary source-build exception.
+Pinned `http-ece` and `PyICU` are the two ordinary source-build exceptions.
+All other pinned packages retain the binary-only requirement.
 The generated `source/build` cache can retain removed modules, so clear only that cache before each source reinstall.
 This command preserves the source inputs, persistent data, and retained evidence.
 Forced source replacement matters because successive revisions share project version `2.0.0`.

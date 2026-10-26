@@ -18,7 +18,10 @@ from uuid import uuid4
 
 from planner.conversation.deploy_interruptions.contracts import CapturedTurn, CaptureManifest
 from planner.conversation.deploy_interruptions.files import write_manifest
-from planner.conversation.lifecycle_storage import acquire_runtime_ownership
+from planner.conversation.lifecycle_storage import (
+    acquire_runtime_ownership,
+    native_execution_is_unresolved,
+)
 from planner.environments.interruption_capture_configuration import (
     INTERRUPTION_CAPTURE_BUDGET_SECONDS,
 )
@@ -92,7 +95,7 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
     captured: list[CapturedTurn] = []
     for fact in facts:
         conversation_id = str(fact["conversation_id"])
-        if _remote_turn_may_survive(conn, tables, conversation_id):
+        if native_execution_is_unresolved(conn, conversation_id):
             continue
         occurrence = (
             conn.execute(
@@ -177,48 +180,6 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
             )
         )
     return tuple(captured)
-
-
-def _remote_turn_may_survive(
-    conn: sqlite3.Connection, tables: set[str], conversation_id: str
-) -> bool:
-    """A VPS stop supplies no evidence that a native child terminated.
-
-    Persisted child identity takes precedence over current Ticket routing. Missing
-    or corrupt native metadata remains uncertain, so it cannot authorize recovery.
-    Inventory reconciliation, rather than this stopped-database reader, owns that
-    decision. Old schemas without the executor tables retain local-only behavior.
-    """
-    if "executor_core_turns" in tables:
-        metadata = conn.execute(
-            "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-            (conversation_id,),
-        ).fetchone()
-        if metadata is not None:
-            try:
-                runtime = json.loads(metadata[0])
-            except (TypeError, ValueError):
-                return True
-            if not isinstance(runtime, dict) or runtime.get("source_retired") is not True:
-                return True
-        # Assignment identity also protects pre-adoption and incomplete metadata.
-    if "executor_child_assignments" in tables:
-        assignment = conn.execute(
-            "SELECT 1 FROM executor_child_assignments "
-            "WHERE conversation_id=? AND closed_at_ms IS NULL LIMIT 1",
-            (conversation_id,),
-        ).fetchone()
-        if assignment is not None:
-            return True
-    ticket_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(tickets)")}
-    if "locale" in ticket_columns:
-        ticket = conn.execute(
-            "SELECT 1 FROM tickets WHERE conversation_id=? AND locale='macos' LIMIT 1",
-            (conversation_id,),
-        ).fetchone()
-        if ticket is not None:
-            return True
-    return False
 
 
 def capture_after_stop(

@@ -539,6 +539,135 @@ class ExecutorStore:
         except (ValueError, TypeError, KeyError):
             return None
 
+    @staticmethod
+    def retain_legacy_request_ids_in_transaction(connection: sqlite3.Connection) -> None:
+        """Retain original public IDs from the feature schema without rewriting events.
+
+        Only legacy metadata lacks both explicit provider maps. Its exact ask rows
+        prove the original raw public identities, including previously saved choices.
+        The finite compatibility archive survives later turn metadata replacements.
+        """
+        from planner.conversation.lifecycle import (
+            LifecycleFact,
+            LifecycleKind,
+            LifecycleOperation,
+            LifecycleStatus,
+        )
+        from planner.conversation.lifecycle_storage import apply_facts, read_facts
+
+        for row in connection.execute(
+            "SELECT e.* FROM executor_core_turns e JOIN conversations c "
+            "ON c.conversation_id=e.conversation_id"
+        ).fetchall():
+            runtime = json.loads(str(row["runtime_json"]))
+            if "permission_provider_ids" in runtime or "user_input_provider_ids" in runtime:
+                continue
+            child = _parse(ChildReference, str(row["child_json"]))
+            turn = _parse(TurnToken, str(row["turn_json"]))
+            archive = dict(runtime.get("legacy_request_public_ids", {}))
+            permission = runtime.get("pending_permission_ask_ids", [])
+            questions = runtime.get("pending_user_input_questions", {})
+            runtime["permission_provider_ids"] = {identity: identity for identity in permission}
+            runtime["user_input_provider_ids"] = {identity: identity for identity in questions}
+            facts = read_facts(connection, child.conversation_id)
+            for evidence in connection.execute(
+                "SELECT ask_key,reference_json,applied_at_mac_ms FROM executor_asks "
+                "WHERE conversation_id=?",
+                (child.conversation_id,),
+            ).fetchall():
+                ask = _parse(AskReference, str(evidence["reference_json"]))
+                archive.setdefault(str(evidence["ask_key"]), ask.ask_id)
+                identity = f"{ask.turn.turn_number}:{ask.kind.value}:{ask.ask_id}"
+                if any(f.kind is LifecycleKind.request and f.identity == identity for f in facts):
+                    continue
+                pending = questions if ask.kind is AskKind.user_input else permission
+                status = (
+                    LifecycleStatus.answered
+                    if evidence["applied_at_mac_ms"] is not None
+                    else LifecycleStatus.pending
+                    if ask.child == child
+                    and ask.turn == turn
+                    and ask.ask_id in pending
+                    and not runtime.get("ended", False)
+                    and not runtime.get("callbacks_revoked", False)
+                    else LifecycleStatus.unavailable
+                )
+                apply_facts(
+                    connection,
+                    child.conversation_id,
+                    (
+                        LifecycleFact(
+                            LifecycleKind.request,
+                            identity,
+                            ask.turn.turn_number,
+                            LifecycleOperation(ask.kind.value),
+                            status,
+                            ask.ask_id,
+                        ),
+                    ),
+                )
+            runtime["legacy_request_public_ids"] = archive
+            connection.execute(
+                "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                (_json(runtime), child.conversation_id),
+            )
+
+    def public_request_id(self, ask: AskReference) -> str | None:
+        """Resolve one persisted original public identity for an exact native ask."""
+        connection = connect(self.db_path)
+        try:
+            evidence = connection.execute(
+                "SELECT reference_json FROM executor_asks WHERE ask_key=?",
+                (_ask_key(ask),),
+            ).fetchone()
+            if evidence is None or _parse(AskReference, str(evidence[0])) != ask:
+                return None
+            row = connection.execute(
+                "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
+                "WHERE conversation_id=?",
+                (ask.child.conversation_id,),
+            ).fetchone()
+            if row is not None:
+                runtime = json.loads(str(row[2]))
+                archived = runtime.get("legacy_request_public_ids", {}).get(_ask_key(ask))
+                if isinstance(archived, str):
+                    return archived
+                if (
+                    _parse(ChildReference, str(row[0])) == ask.child
+                    and _parse(TurnToken, str(row[1])) == ask.turn
+                ):
+                    field = (
+                        "user_input_provider_ids"
+                        if ask.kind is AskKind.user_input
+                        else "permission_provider_ids"
+                    )
+                    if field in runtime:
+                        matches = [
+                            public
+                            for public, provider in runtime[field].items()
+                            if provider == ask.ask_id
+                        ]
+                        if len(matches) == 1:
+                            return str(matches[0])
+                    else:
+                        # An isolated legacy reader can precede runtime reconciliation.
+                        pending = runtime.get(
+                            "pending_user_input_questions"
+                            if ask.kind is AskKind.user_input
+                            else "pending_permission_ask_ids",
+                            (),
+                        )
+                        if ask.ask_id in pending:
+                            return ask.ask_id
+            matches = connection.execute(
+                "SELECT identity FROM conversation_lifecycle_facts WHERE conversation_id=? "
+                "AND kind='request' AND turn_number=? AND operation=? AND provider_identity=?",
+                (ask.child.conversation_id, ask.turn.turn_number, ask.kind.value, ask.ask_id),
+            ).fetchall()
+            return str(matches[0][0]) if len(matches) == 1 else None
+        finally:
+            connection.close()
+
     def turn_context(self, conversation_id: str) -> ExecutorTurnContext | None:
         connection = connect(self.db_path)
         try:

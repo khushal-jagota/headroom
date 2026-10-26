@@ -44,7 +44,10 @@ _Code paths:_ `src/planner/runtime/conversation_start.py`, `src/planner/conversa
 ## Native execution and answer receipts
 
 Native events use the same lifecycle facts and publication transaction as local events.
-Public request IDs include the turn number. Provider IDs remain bound to the original native child and callback.
+New public request IDs include the turn number. Provider IDs remain bound to the original native child and callback.
+Existing native requests retain their original public IDs through an upgrade and later restarts.
+Panels retains their exact reference mapping without changes to notebook rows or saved choices.
+Permission callbacks and user-input callbacks keep separate identities, even when their provider IDs match.
 The owner can save an exact pending answer during a Mac connection outage.
 VPS acceptance does not prove native callback delivery. Native application is a separate durable fact.
 A VPS restart retains native turn knowledge until executor reconciliation supplies evidence.

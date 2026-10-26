@@ -55,7 +55,7 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
         "install",
         "--no-build-isolation",
         "--only-binary=:all:",
-        "--no-binary=http-ece",
+        "--no-binary=http-ece,PyICU",
         "-r",
         str(source / "requirements-executor.txt"),
     )
@@ -124,8 +124,15 @@ assert (
 sites = {Path(sysconfig.get_path(key)).resolve() for key in ('purelib', 'platlib')}
 for name, module in tuple(sys.modules.items()):
     if name.split('.')[0] in {'planner', 'asyncssh', 'cryptography', 'cffi'}:
-        origin = Path(module.__file__).resolve()
-        assert any(origin.is_relative_to(site) for site in sites), (name, str(origin))
+        # Namespace packages have search paths instead of a module file.
+        origins = (
+            (module.__file__,) if module.__file__ is not None
+            else tuple(module.__spec__.submodule_search_locations or ())
+        )
+        assert origins, name
+        for value in origins:
+            origin = Path(value).resolve()
+            assert any(origin.is_relative_to(site) for site in sites), (name, str(origin))
 print(json.dumps({name: module.__file__ for name, module in modules.items()}))
 """,
         ],

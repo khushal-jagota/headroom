@@ -33,6 +33,7 @@ multidict==6.7.1
 propcache==0.5.2
 py-vapid==1.9.4
 pycparser==3.0
+PyICU==2.16.2
 pydantic==2.13.4
 pydantic-core==2.46.4
 pydantic-settings==2.14.2

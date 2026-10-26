@@ -4580,8 +4580,14 @@ class SqliteProcessConversationSystem:
             automatic_notice=runtime.get("automatic_notice", False),
             callbacks_revoked=runtime.get("callbacks_revoked", False),
             pending_permission_ask_ids=set(runtime["pending_permission_ask_ids"]),
-            permission_provider_ids=runtime.get("permission_provider_ids", {}),
-            user_input_provider_ids=runtime.get("user_input_provider_ids", {}),
+            permission_provider_ids=runtime.get(
+                "permission_provider_ids",
+                {identity: identity for identity in runtime["pending_permission_ask_ids"]},
+            ),
+            user_input_provider_ids=runtime.get(
+                "user_input_provider_ids",
+                {identity: identity for identity in runtime["pending_user_input_questions"]},
+            ),
             pending_user_input_questions=TypeAdapter(
                 dict[str, tuple[UserInputQuestion, ...]]
             ).validate_python(runtime["pending_user_input_questions"]),
@@ -4637,21 +4643,39 @@ class SqliteProcessConversationSystem:
             if token is not None:
                 running = state.running_turn
                 predicted = _RunningTurn(token=token) if running is None else replace(running)
-                predicted.pending_permission_ask_ids = {
-                    f"{token.turn_number}:permission:{ask.ask_id}"
-                    for ask in inventory.pending_asks
-                    if ask.kind is AskKind.permission
-                }
-                predicted.permission_provider_ids = {
-                    f"{token.turn_number}:permission:{ask.ask_id}": ask.ask_id
-                    for ask in inventory.pending_asks
-                    if ask.kind is AskKind.permission
-                }
-                input_ids = {
-                    f"{token.turn_number}:user_input:{ask.ask_id}": ask.ask_id
-                    for ask in inventory.pending_asks
-                    if ask.kind is AskKind.user_input
-                }
+                permission_ids = {}
+                for ask in inventory.pending_asks:
+                    if ask.kind is AskKind.permission:
+                        public = self._store.executor_public_request_id(ask)
+                        if public is None:
+                            providers = predicted.permission_provider_ids.items()
+                            public = next(
+                                (
+                                    identity
+                                    for identity, provider in providers
+                                    if provider == ask.ask_id
+                                ),
+                                f"{token.turn_number}:permission:{ask.ask_id}",
+                            )
+                        permission_ids[public] = ask.ask_id
+                predicted.pending_permission_ask_ids = set(permission_ids)
+                predicted.permission_provider_ids = permission_ids
+                input_ids = {}
+                from planner.executor.contracts import AskReference
+
+                for provider in inventory.pending_user_input_ids:
+                    ask = AskReference(inventory.child, token, provider, AskKind.user_input)
+                    public = self._store.executor_public_request_id(ask)
+                    if public is None:
+                        public = next(
+                            (
+                                identity
+                                for identity, native in predicted.user_input_provider_ids.items()
+                                if native == provider
+                            ),
+                            f"{token.turn_number}:user_input:{provider}",
+                        )
+                    input_ids[public] = provider
                 predicted.user_input_provider_ids = input_ids
                 predicted.pending_user_input_questions = {
                     key: value
@@ -4660,7 +4684,12 @@ class SqliteProcessConversationSystem:
                 }
                 await self._persist(
                     state,
-                    partial(self._store.transition_lifecycle, state.record.conversation_id, ()),
+                    partial(
+                        self._store.transition_lifecycle,
+                        state.record.conversation_id,
+                        (),
+                        executor_turn=self._executor_turn_metadata(state, predicted),
+                    ),
                     runtime_mutation=self._runtime_mutation(
                         state, PlainFieldMutation(state, "running_turn", predicted)
                     ),
@@ -4692,17 +4721,24 @@ class SqliteProcessConversationSystem:
             operation = (
                 LifecycleOperation.user_input if user_input else LifecycleOperation.permission
             )
-            public_id = f"{ask.turn.turn_number}:{operation.value}:{ask.ask_id}"
+            lifecycle_id = f"{ask.turn.turn_number}:{operation.value}:{ask.ask_id}"
+            public_id = self._store.executor_public_request_id(ask)
+            if public_id is None:
+                raise ValueError("answer application lacks an original public request identity")
             running = state.running_turn
             predicted = None
             if running is not None and running.token == ask.turn:
                 predicted = replace(
                     running,
-                    pending_permission_ask_ids=running.pending_permission_ask_ids - {public_id},
+                    pending_permission_ask_ids=(
+                        set(running.pending_permission_ask_ids)
+                        if user_input
+                        else running.pending_permission_ask_ids - {public_id}
+                    ),
                     pending_user_input_questions={
                         key: value
                         for key, value in running.pending_user_input_questions.items()
-                        if key != public_id
+                        if not user_input or key != public_id
                     },
                 )
             mutation = (
@@ -4742,7 +4778,7 @@ class SqliteProcessConversationSystem:
                             for fact in self._store.lifecycle_facts_in_transaction(
                                 connection, state.record.conversation_id
                             )
-                            if fact.kind is LifecycleKind.request and fact.identity == public_id
+                            if fact.kind is LifecycleKind.request and fact.identity == lifecycle_id
                         ),
                         None,
                     )
@@ -4752,7 +4788,7 @@ class SqliteProcessConversationSystem:
                         else (
                             LifecycleFact(
                                 LifecycleKind.request,
-                                public_id,
+                                lifecycle_id,
                                 ask.turn.turn_number,
                                 operation,
                                 LifecycleStatus.answered,

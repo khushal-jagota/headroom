@@ -1066,7 +1066,16 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
             ask = AskReference(
                 ChildReference("inc", "child", "c"), TurnToken("c", 1), "ask", AskKind(kind)
             )
-            persist_pending_turn(endpoint.store, ask)
+            public_id = f"1:{kind}:ask"
+            persist_pending_turn(
+                endpoint.store,
+                ask,
+                runtime_overrides={
+                    "pending_permission_ask_ids": [public_id] if kind == "permission" else [],
+                    "permission_provider_ids": {public_id: "ask"} if kind == "permission" else {},
+                    "user_input_provider_ids": {public_id: "ask"} if kind == "user_input" else {},
+                },
+            )
             if kind == "permission":
                 endpoint.store.publish_ask(ask, ("allow", "deny"), 100)
                 route = "permission-answers"
@@ -1077,7 +1086,9 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
                     endpoint.store,
                     ask,
                     runtime_overrides={
-                        "pending_user_input_questions": {ask.ask_id: encode_value(questions)},
+                        "pending_user_input_questions": {public_id: encode_value(questions)},
+                        "permission_provider_ids": {},
+                        "user_input_provider_ids": {public_id: "ask"},
                     },
                 )
                 endpoint.store.publish_user_input_request(ask, questions, 100)

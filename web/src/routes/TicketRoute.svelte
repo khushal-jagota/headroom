@@ -2,7 +2,11 @@
   import { machineRows } from "../lib/machines/visibility";
   const machineRegistry=machineRows();
   const machinePageKey=Symbol();
-  $effect(() => { machineRegistry?.set(machinePageKey,ticket.data?.locale,false); return () => machineRegistry?.delete(machinePageKey); });
+  $effect(() => {
+    const locale=ticket.data?.locale;
+    untrack(() => machineRegistry?.set(machinePageKey,locale,false));
+    return () => untrack(() => machineRegistry?.delete(machinePageKey));
+  });
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
   import MachineKey from "../components/machines/MachineKey.svelte";

@@ -283,6 +283,9 @@ class ConversationStore:
 
     def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
         conn.execute("BEGIN IMMEDIATE")
+        from planner.executor.store import ExecutorStore
+
+        ExecutorStore.retain_legacy_request_ids_in_transaction(conn)
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
@@ -504,18 +507,27 @@ class ConversationStore:
         return await asyncio.to_thread(read)
 
     async def transition_lifecycle(
-        self, conversation_id: str, facts: tuple[LifecycleFact, ...]
+        self,
+        conversation_id: str,
+        facts: tuple[LifecycleFact, ...],
+        *,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> None:
-        await self._write(self._transition_lifecycle_sync, conversation_id, facts)
+        await self._write(self._transition_lifecycle_sync, conversation_id, facts, executor_turn)
 
     def _transition_lifecycle_sync(
-        self, conversation_id: str, facts: tuple[LifecycleFact, ...]
+        self,
+        conversation_id: str,
+        facts: tuple[LifecycleFact, ...],
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> None:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
             apply_facts(conn, conversation_id, facts)
+            if executor_turn is not None:
+                self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
             interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
                 conn,
@@ -1936,6 +1948,13 @@ class ConversationStore:
             "WHERE conversation_id=?",
             (conversation_id,),
         ).fetchone()
+        if previous is not None:
+            committed = json.loads(previous[2])
+            archive = committed.get("legacy_request_public_ids")
+            if archive:
+                current = json.loads(metadata[2])
+                current["legacy_request_public_ids"] = archive
+                metadata = (metadata[0], metadata[1], json.dumps(current))
         if (
             previous is not None
             and json.loads(previous[0]) == json.loads(metadata[0])
@@ -1997,86 +2016,77 @@ class ConversationStore:
                 (json.dumps(runtime), turn.conversation_id),
             )
 
+    def _executor_mutation_sync[T](self, operation: Callable[[sqlite3.Connection], T]) -> T:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            self._apply_signal_mutation(conn, admission)
+            result = operation(conn)
+            self._record_signal_result(conn, result)
+            self._commit_rows(conn, ())
+            return result
+
     async def save_move_retirement(self, conversation_id: str, *, uncertain: bool) -> None:
         """Retain remote turn history while retiring its live source association."""
 
-        def write() -> None:
-            conn = self._connect()
-            try:
-                with conn:
-                    row = conn.execute(
-                        "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
-                        (conversation_id,),
-                    ).fetchone()
-                    if row is not None:
-                        runtime = json.loads(row[0])
-                        runtime["source_retired"] = not uncertain
-                        runtime["move_retirement_uncertain"] = uncertain
-                        conn.execute(
-                            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
-                            (json.dumps(runtime), conversation_id),
-                        )
-            finally:
-                conn.close()
+        def write(conn: sqlite3.Connection) -> None:
+            row = conn.execute(
+                "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if row is not None:
+                runtime = json.loads(row[0])
+                runtime["source_retired"] = not uncertain
+                runtime["move_retirement_uncertain"] = uncertain
+                conn.execute(
+                    "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                    (json.dumps(runtime), conversation_id),
+                )
 
-        await self._write(write)
+        await self._write(self._executor_mutation_sync, write)
 
     async def revoke_executor_turn_asks(self, child: ChildReference, turn: TurnToken) -> None:
         """Close callbacks before a remote cancellation can await transport."""
 
-        def write() -> None:
-            conn = self._connect()
-            try:
-                with conn:
-                    context = conn.execute(
-                        "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
-                        "WHERE conversation_id=?",
-                        (child.conversation_id,),
-                    ).fetchone()
-                    if (
-                        context is not None
-                        and json.loads(context[0]) == asdict(child)
-                        and json.loads(context[1]) == asdict(turn)
-                    ):
-                        runtime = json.loads(context[2])
-                        runtime["callbacks_revoked"] = True
-                        conn.execute(
-                            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
-                            (json.dumps(runtime), child.conversation_id),
-                        )
-                    for row in conn.execute(
-                        "SELECT ask_key,reference_json FROM executor_asks WHERE conversation_id=?",
-                        (child.conversation_id,),
-                    ).fetchall():
-                        reference = json.loads(row[1])
-                        token = reference["turn"]
-                        if (
-                            reference["child"] == asdict(child)
-                            and token["conversation_id"] == turn.conversation_id
-                            and token["turn_number"] == turn.turn_number
-                        ):
-                            conn.execute(
-                                "UPDATE executor_asks SET reachability='callback_gone' "
-                                "WHERE ask_key=? AND reachability IN ('reachable','uncertain')",
-                                (row[0],),
-                            )
-            finally:
-                conn.close()
+        def write(conn: sqlite3.Connection) -> None:
+            context = conn.execute(
+                "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
+                "WHERE conversation_id=?",
+                (child.conversation_id,),
+            ).fetchone()
+            if (
+                context is not None
+                and json.loads(context[0]) == asdict(child)
+                and json.loads(context[1]) == asdict(turn)
+            ):
+                runtime = json.loads(context[2])
+                runtime["callbacks_revoked"] = True
+                conn.execute(
+                    "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                    (json.dumps(runtime), child.conversation_id),
+                )
+            for row in conn.execute(
+                "SELECT ask_key,reference_json FROM executor_asks WHERE conversation_id=?",
+                (child.conversation_id,),
+            ).fetchall():
+                reference = json.loads(row[1])
+                token = reference["turn"]
+                if (
+                    reference["child"] == asdict(child)
+                    and token["conversation_id"] == turn.conversation_id
+                    and token["turn_number"] == turn.turn_number
+                ):
+                    conn.execute(
+                        "UPDATE executor_asks SET reachability='callback_gone' "
+                        "WHERE ask_key=? AND reachability IN ('reachable','uncertain')",
+                        (row[0],),
+                    )
 
-        await self._write(write)
+        await self._write(self._executor_mutation_sync, write)
 
     async def save_executor_turn(
         self, conversation_id: str, metadata: tuple[str, str, str]
     ) -> None:
-        def write() -> None:
-            conn = self._connect()
-            try:
-                with conn:
-                    self.save_executor_turn_in_transaction(conn, conversation_id, metadata)
-            finally:
-                conn.close()
-
-        await self._write(write)
+        await self.transition_lifecycle(conversation_id, (), executor_turn=metadata)
 
     async def executor_held_targets(self) -> tuple[str, ...]:
         def read() -> tuple[str, ...]:
@@ -2123,31 +2133,29 @@ class ConversationStore:
     def _mark_executor_held_dispatching_sync(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
     ) -> bool:
-        changed = False
-        conn = self._connect()
-        try:
-            with conn:
-                for sender_id in sender_message_ids:
-                    if (
-                        conn.execute(
-                            "SELECT 1 FROM executor_native_messages WHERE "
-                            "held_target_conversation_id=? AND submission_id=? "
-                            "AND held_state='pending'",
-                            (conversation_id, sender_id),
-                        ).fetchone()
-                        is None
-                    ):
-                        continue
-                    cursor = conn.execute(
-                        "UPDATE executor_native_messages SET held_state='dispatching' WHERE "
+        def write(conn: sqlite3.Connection) -> bool:
+            changed = False
+            for sender_id in sender_message_ids:
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM executor_native_messages WHERE "
                         "held_target_conversation_id=? AND submission_id=? "
                         "AND held_state='pending'",
                         (conversation_id, sender_id),
-                    )
-                    changed = changed or cursor.rowcount > 0
+                    ).fetchone()
+                    is None
+                ):
+                    continue
+                cursor = conn.execute(
+                    "UPDATE executor_native_messages SET held_state='dispatching' WHERE "
+                    "held_target_conversation_id=? AND submission_id=? "
+                    "AND held_state='pending'",
+                    (conversation_id, sender_id),
+                )
+                changed = changed or cursor.rowcount > 0
             return changed
-        finally:
-            conn.close()
+
+        return self._executor_mutation_sync(write)
 
     def requeue_executor_held_prompt(self, conversation_id: str, held: object) -> None:
         """Persist a known non-delivery before its replacement enters the held line."""
@@ -2234,6 +2242,11 @@ class ConversationStore:
                 conn.close()
 
         return await asyncio.to_thread(read)
+
+    def executor_public_request_id(self, ask: Any) -> str | None:
+        from planner.executor.store import ExecutorStore
+
+        return ExecutorStore(self._db_path).public_request_id(ask)
 
     def accept_executor_effect(
         self,

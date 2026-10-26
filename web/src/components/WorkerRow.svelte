@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { machineRows } from "../lib/machines/visibility";
   const registry = machineRows();
   const machineRowKey = Symbol();
   let rowElement = $state<HTMLElement>();
-  $effect(() => { if (rowElement) registry?.set(machineRowKey,locale,Boolean(rowElement.closest('.approved-rail'))); });
+  $effect(() => { const element=rowElement, machine=locale; if (element) untrack(() => registry?.set(machineRowKey,machine,Boolean(element.closest('.approved-rail')))); });
   onMount(() => () => registry?.delete(machineRowKey));
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";

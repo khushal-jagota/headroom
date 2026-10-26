@@ -853,7 +853,7 @@ class ExecutorEndpoint:
             return None
         for evidence in reversed(self.store.evidence_for_conversation(conversation_id)):
             if (
-                f"{evidence.ask.turn.turn_number}:{kind.value}:{evidence.ask.ask_id}" == ask_id
+                self.store.public_request_id(evidence.ask) == ask_id
                 and evidence.ask.child == context.child
                 and evidence.ask.turn == context.turn
                 and evidence.ask.kind is kind
@@ -883,7 +883,7 @@ class ExecutorEndpoint:
         if (
             executor_ask is None
             or executor_ask.child.conversation_id != conversation_id
-            or f"{executor_ask.turn.turn_number}:permission:{executor_ask.ask_id}" != ask_id
+            or self.store.public_request_id(executor_ask) != ask_id
             or executor_ask.kind is not AskKind.permission
         ):
             return False
@@ -906,7 +906,7 @@ class ExecutorEndpoint:
         if (
             executor_ask is None
             or executor_ask.child.conversation_id != conversation_id
-            or f"{executor_ask.turn.turn_number}:user_input:{executor_ask.ask_id}" != request_id
+            or self.store.public_request_id(executor_ask) != request_id
             or executor_ask.kind is not AskKind.user_input
         ):
             return False

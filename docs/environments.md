@@ -200,8 +200,9 @@ The standard `venv/bin/panels` console supports the executor and Worker CLI.
 
 The supported target is native ordinary CPython 3.14.3 on Apple Silicon, macOS 11 or later,
 and native Node 22 or newer. Intel support remains outside this dependency set.
-Pinned dependencies use compatible wheels, except the pinned `http-ece` source distribution.
-Pip selects compatible distributions. No broad source-build fallback exists.
+Pinned dependencies use compatible wheels, except the pinned `http-ece` and `PyICU` source distributions.
+PyICU requires native ICU libraries, headers, `pkg-config`, and a compatible C++ compiler.
+The operator runbook defines these prerequisites. No broad source-build fallback exists.
 
 One GUI LaunchAgent runs the console with explicit source SHA, SSH inputs, and server URL.
 Its environment retains the owner's HOME and reviewed backend PATH, with `venv/bin` first.

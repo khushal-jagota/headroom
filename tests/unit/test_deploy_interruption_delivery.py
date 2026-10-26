@@ -334,6 +334,11 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM conversation_turn_occurrences").fetchone()[0] == 0
     assert conn.execute("SELECT status FROM conversation_lifecycle_facts").fetchone()[0] == "intent"
+    # The historical phase above proves the legacy occurrence fallback. A current
+    # runtime requires the complete supported schema, including native execution
+    # evidence and persisted workspace policy. Upgrade before constructing it.
+    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
+    create_schema(conn)
     conn.close()
 
     async def exercise() -> None:
