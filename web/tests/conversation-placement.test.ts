@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { currentPlacement, streamArrivalBudget, streamTravelFits, threadPlacement } from '../src/components/conversation/viewport/placement';
+import { currentPlacement, rowRestorationAnchor, streamArrivalBudget, streamTravelFits, threadPlacement } from '../src/components/conversation/viewport/placement';
 
 describe('conversation placement causes', () => {
   it('allows a multi-line arrival but cannot spend its budget on a larger layout gap', () => {
@@ -38,4 +38,7 @@ it('copies an anchor from reactive proxies without retaining mutable address fie
   expect(saved.content?.text.textLeafPath).toEqual([0,2]);
   expect(saved.content?.text.contentIdentity.digest).toBe('exact');
   expect(Object.isFrozen(saved.content?.text)).toBe(true);
+  const fallback = rowRestorationAnchor(saved);
+  expect(fallback).toEqual({key:'row',order:{sequence:8,slot:0},offset:-12,following:false});
+  expect(saved.content?.text.contentIdentity.digest).toBe('exact');
 });

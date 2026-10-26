@@ -439,7 +439,7 @@ it('retains the parked unread target when expanded scopes reach the shared item 
   expect(reader.entryHeld).toBe(false);
 });
 
-it('keeps restoration pending when the newer half fails and retries that context before placement', async () => {
+it('releases placement when the newer half fails and retries the original context', async () => {
   vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
   const anchorPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
   anchorPage.newer = cursor(11);
@@ -458,7 +458,7 @@ it('keeps restoration pending when the newer half fails and retries that context
   pending[1].complete(Response.json({ error: 'offline' }, { status: 503 }));
   await ready;
   await vi.waitFor(() => expect(reader.restorationFailed).toBe(true));
-  expect(reader.restoring).toBe(true);
+  expect(reader.restoring).toBe(false);
   reader.retryRestoration();
   await vi.waitFor(() => expect(pending).toHaveLength(3));
   expect(JSON.parse(new URL(fetch.mock.calls[2][0], 'http://local').searchParams.get('cursor')!).order.sequence).toBe(11);
@@ -466,6 +466,66 @@ it('keeps restoration pending when the newer half fails and retries that context
   await vi.waitFor(() => expect(reader.restoring).toBe(false));
   expect(reader.restorationFailed).toBe(false);
   expect(reader.pages.flatMap(page => page.items).map(item => item.key)).toEqual([anchorPage.items[0].key, newerPage.items[0].key]);
+});
+
+it('retires timed-out restoration history without canceling unrelated demand or accepting late pages', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const oldPage = viewSnapshot('c', 'focus', [{...rows[0],sequence:11}]).page;
+  const {pending} = holdPages();
+  const anchor = {key:oldPage.items[0].key,order:oldPage.items[0].order,offset:-17,following:false};
+  const reader = new ConversationViewReader('c','focus',true,undefined,anchor);
+  readers.push(reader);
+  const ready = reader.connect();
+  Source.all.at(-1)!.send('snapshot',snapshot());
+  await flushDemand();
+  const scope = {kind:'turn' as const,key:'unrelated'};
+  const ordinary = reader.load(scope);
+  const original = reader.restorationAnchor;
+  reader.failTextRestoration(anchor.key);
+  expect(reader.restoring).toBe(false);
+  expect(pending[0].signal.aborted).toBe(true);
+  expect(reader.restorationAnchor).toBe(original);
+  await ready;
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  expect(reader.pages.flatMap(page=>page.items).some(item=>item.key===anchor.key)).toBe(false);
+  expect(pending).toHaveLength(2);
+  expect(pending[1].signal.aborted).toBe(false);
+  pending[1].complete(Response.json({...snapshot().page,scope}));
+  expect(await ordinary).toBe(true);
+  reader.retryRestoration();
+  await flushDemand();
+  expect(reader.restorationAttempt).toBe(1);
+  expect(reader.restorationOutcome).toBe('pending');
+  expect(pending).toHaveLength(3);
+  expect(pending[2].signal.aborted).toBe(false);
+  pending[2].complete(Response.json(oldPage));
+  await vi.waitFor(() => expect(reader.restoring).toBe(false));
+  expect(reader.restorationAnchor).toBe(original);
+  expect(reader.pages.flatMap(page=>page.items).some(item=>item.key===anchor.key)).toBe(true);
+  const pages = reader.pages;
+  pending[0].complete(Response.json({...oldPage,items:[]}));
+  await flushDemand();
+  expect(reader.pages).toBe(pages);
+});
+
+it('preserves an ordinary caller that shares the exact restoration history request', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const oldPage = viewSnapshot('c','focus',[{...rows[0],sequence:11}]).page;
+  const {pending} = holdPages();
+  const anchor = {key:oldPage.items[0].key,order:oldPage.items[0].order,offset:-17,following:false};
+  const reader = new ConversationViewReader('c','focus',true,undefined,anchor);
+  readers.push(reader);
+  const ready = reader.connect();
+  Source.all.at(-1)!.send('snapshot',snapshot());
+  await flushDemand();
+  const ordinary = reader.load(timeline,{...cursor(11),order:{...anchor.order,slot:anchor.order.slot+1}},'older',true);
+  reader.failTextRestoration(anchor.key);
+  expect(pending[0].signal.aborted).toBe(false);
+  pending[0].complete(Response.json(oldPage));
+  expect(await ordinary).toBe(true);
+  await ready;
+  expect(reader.restorationOutcome).toBe('failed');
+  expect(reader.restoring).toBe(false);
 });
 
 it('ignores a restoration read after cancellation and leaves ordinary history reads active', async () => {

@@ -33,7 +33,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   (window as any).__backlog=(count:number)=>{sequence+=count;};
   const returnBodies=new Map<string,string>();
   const returnBodyReleases:Array<()=>void>=[];
-  const returnProbe={hold:false,fail:false,inlineTarget:false,bodies:false,bodyHold:false,holdTargetOnly:false,changedSource:false,bodyWaiting:0,targetBodyWaiting:0,waiting:0,release:()=>{},
+  const returnProbe={hold:false,fail:false,inlineTarget:false,bodies:false,bodyHold:false,holdTargetOnly:false,changedSource:false,ignoreAbort:false,bodyWaiting:0,targetBodyWaiting:0,waiting:0,release:()=>{},
     releaseBodies:()=>{returnProbe.bodyHold=false;for(const release of returnBodyReleases.splice(0))release();}};
   (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
@@ -190,7 +190,9 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
         await new Promise<void>((resolve,reject)=>{
           const abort=()=>reject(new DOMException('Aborted','AbortError'));
           returnProbe.release=()=>{init?.signal?.removeEventListener('abort',abort);resolve();};
-          if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});
+          if(!returnProbe.ignoreAbort){
+            if(init?.signal?.aborted)abort();else init?.signal?.addEventListener('abort',abort,{once:true});
+          }
         });
       }
       if(returnProbe.fail)return Response.json({error:'Return admission failed'},{status:503});

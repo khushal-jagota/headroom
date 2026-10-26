@@ -838,10 +838,17 @@ for its parent message.
 Restoration admits the target Markdown host and group through the existing bounded
 presentation policy. Placeholder geometry cannot replace the saved destination. The
 conversation waits for the actual character and relevant geometry before it reveals the
-restored position. Later layout changes preserve that character until the reader navigates.
+restored position. Each attempt gets five seconds while the tab is visible and the
+conversation is open. History and text presentation share this budget. Hidden tabs and
+the dock pause it. Later layout changes preserve a successfully restored character until
+the reader navigates.
 
-A pending or failed restoration uses the existing notice and controls. Retry retains the
-original destination. Changed, deleted, or expired text produces an unavailable result.
+A pending or failed restoration uses the existing notice and controls. Failure, unavailable
+text, or an exhausted budget automatically reveals the transcript at an available row.
+This fallback does not wait for the unresolved text or require Retry. The original text
+destination stays separate from the active row anchor. Retry uses that original destination
+with a fresh budget. Late results cannot reclaim a failed attempt. Attempt cancellation
+preserves unrelated reader requests. Changed, deleted, or expired text produces an unavailable result.
 Latest abandons the saved destination and admits the newest page. Reader replacement and
 navigation cancel stale placement work and release its target demand.
 

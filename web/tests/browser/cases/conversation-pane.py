@@ -3071,7 +3071,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
 
     started = time.perf_counter()
     proof = []
-    if completion_order not in (None, 'history-first', 'body-first'):
+    if completion_order not in (None, 'history-first', 'body-first', 'bounded'):
         raise ValueError('Unknown text restoration completion order')
     page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
     # This observer reads native text nodes and Range geometry. No product anchor,
@@ -3130,8 +3130,12 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             ('paragraphs',0,'history-first'),('tall',20,'body-first'),
             ('paragraphs',20,'cancel'),('paragraphs',20,'changed-source'),
             ('paragraphs',20,'inline-parser-retry'),('paragraphs',20,'inline-digest-retry'),
+            ('paragraphs',0,'full-timeout'),('paragraphs',20,'history-timeout'),
         ):
-            if completion_order is not None and (variant, backlog, order) != ('paragraphs', 20, completion_order):
+            if completion_order == 'bounded':
+                if order not in ('full-timeout', 'history-timeout'):
+                    continue
+            elif completion_order is not None and (variant, backlog, order) != ('paragraphs', 20, completion_order):
                 continue
             case = {'variant':variant,'backlog':backlog,'order':order}
             proof.append(case)
@@ -3175,6 +3179,13 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
               window.__backlog(count);Object.assign(window.__returnProbe,{hold:true,bodies:true,bodyHold:true});
               window.__textFrames=[];window.__stopTextFrames=false;
             }''',backlog)
+            if order=='history-timeout':
+                page.evaluate('window.__returnProbe.ignoreAbort=true')
+            if order=='full-timeout':
+                # Switching the real lens replaces the reader and its Markdown
+                # registration while the original text location remains saved.
+                page.locator('[data-conversation-lens-choice="full"]').click(force=True)
+                page.evaluate('window.__returnProbe.hold=false')
             if order=='cancel':
                 page.evaluate('window.__returnProbe.holdTargetOnly=true')
             if order.startswith('inline-'):
@@ -3196,6 +3207,57 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             }''',held)
             if backlog:
                 page.wait_for_function('window.__returnProbe.waiting>0')
+            if order in ('full-timeout', 'history-timeout'):
+                if order == 'full-timeout':
+                    page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
+                # No Retry or latest action can supply the first reveal. Native
+                # visibility catches the old final-layout text dependency too.
+                page.wait_for_function('''() => {
+                  const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+                  return thread&&region&&getComputedStyle(thread).visibility!=='hidden'
+                    &&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true'
+                    &&document.querySelector('[data-conversation-restoration-status="failed"]');
+                }''',timeout=6500)
+                frames=page.evaluate('window.__textFrames')
+                revealed=next(frame for frame in frames if frame['visible'])
+                elapsed=revealed['ms']-frames[0]['ms']
+                assert 4800 <= elapsed <= 5500, ('The active restoration budget must be 5000 ms',elapsed)
+                case['automaticRevealMs']=elapsed
+                page.screenshot(path=str(output/f'text-return-{order}-automatic.png'))
+                if order == 'full-timeout':
+                    # The old failed attempt must not consume the Retry budget.
+                    # A hidden tab consumes none of its fresh active budget.
+                    page.get_by_role('button',name='Retry conversation position',exact=True).click()
+                    page.locator('[data-conversation-restoration-status="pending"]').wait_for(state='visible')
+                    page.evaluate('window.__fixtureVisible=false;document.dispatchEvent(new Event("visibilitychange"))')
+                    page.wait_for_timeout(5200)
+                    page.evaluate('window.__fixtureVisible=true;document.dispatchEvent(new Event("visibilitychange"))')
+                    page.wait_for_timeout(600)
+                    assert page.locator('[data-conversation-restoration-status="pending"]').count()==1
+                    page.evaluate('window.__returnProbe.releaseBodies()')
+                    page.wait_for_function('''held => {
+                      const target=window.__readCharacter(held),thread=document.querySelector('[data-conversation-thread]');
+                      return target?.visible&&Math.abs(target.offset-held.offset)<=1
+                        &&getComputedStyle(thread).visibility!=='hidden'
+                        &&!document.querySelector('[data-conversation-restoration-status="pending"]');
+                    }''',arg=held,timeout=10000)
+                    case['freshRetryPreservedText']=True
+                else:
+                    _settle_conversation_layout(page)
+                    snapshot='''() => {
+                      const thread=document.querySelector('[data-conversation-thread]');
+                      return {scroll:thread.scrollTop,keys:[...thread.querySelectorAll('[data-conversation-view-key]')].map(row=>row.dataset.conversationViewKey)};
+                    }'''
+                    before=page.evaluate(snapshot)
+                    # A transport can finish after abort. It cannot restore old
+                    # history pages or reclaim placement after automatic fallback.
+                    page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+                    page.wait_for_timeout(500)
+                    after=page.evaluate(snapshot)
+                    assert before==after, ('Late history reclaimed fallback placement',before,after)
+                    case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
+                case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                continue
             if order.startswith('inline-'):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release();window.__returnProbe.releaseBodies()')
                 page.locator('[data-conversation-restoration-status="failed"]').wait_for(state='visible')
@@ -3704,6 +3766,14 @@ def run(browser, urls):
             return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'card':
             _card_state_motion(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'text-bounded':
+            import os
+            from pathlib import Path
+
+            output=Path(os.environ.get('PANELS_E2E_FAILURE_DIR','/tmp'))
+            output.mkdir(parents=True,exist_ok=True)
+            _text_tab_return(browser, urls[0], output, completion_order='bounded')
             return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'tab-return':
             _tab_return(browser, urls[0])
