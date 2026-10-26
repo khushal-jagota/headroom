@@ -58,7 +58,7 @@
   let scenarioPhase = $state('initial');
   let fixtureReady = false;
   const probes = () => window as unknown as {
-    __returnProbe: {hold: boolean; fail: boolean; bodies: boolean; bodyHold: boolean; holdTargetOnly: boolean;
+    __returnProbe: {inlineTarget:boolean; hold: boolean; fail: boolean; bodies: boolean; bodyHold: boolean; holdTargetOnly: boolean;
       targetBodyWaiting: number; bodyWaiting:number; missingTarget: boolean; failLatest: boolean; changedSource: boolean; releaseBodies: () => void};
     __backlog: (count: number) => void;
   };
@@ -66,7 +66,7 @@
     if (!fixtureReady) return;
     const probe = probes().__returnProbe;
     probe.releaseBodies();
-    Object.assign(probe, {hold:false,fail:false,bodies:false,bodyHold:false,holdTargetOnly:false,
+    Object.assign(probe, {inlineTarget:true,hold:false,fail:false,bodies:false,bodyHold:false,holdTargetOnly:false,
       targetBodyWaiting:0,bodyWaiting:0,missingTarget:false,failLatest:false,changedSource:false});
   }
   function attach(anchor: ViewReaderAnchor | null) {
@@ -127,6 +127,7 @@
       // change which row this position selects. Recovery never uses this placement.
       const targetRow = previewHost.querySelector<HTMLElement>('[data-conversation-view-key="e2000"]');
       if(!targetRow)throw new Error('The synthetic target row is absent');
+      if(!await waitFor(()=>targetRow.getBoundingClientRect().height > thread.clientHeight+400,operation))return;
       thread.dispatchEvent(new WheelEvent('wheel',{deltaY:-600,bubbles:true}));
       thread.scrollTop += targetRow.getBoundingClientRect().top-thread.getBoundingClientRect().top+200;
       thread.dispatchEvent(new Event('scroll'));
@@ -143,7 +144,7 @@
       probes().__backlog(100);
       (window as unknown as {__previewBacklog?: number}).__previewBacklog = 100;
       Object.assign(probes().__returnProbe, {
-        bodies:true, bodyHold:position === 'timeout' || position === 'restored', holdTargetOnly:true,
+        inlineTarget:false,bodies:true, bodyHold:position === 'timeout' || position === 'restored', holdTargetOnly:true,
         missingTarget:position === 'unavailable' || position === 'fetch-error',
         failLatest:position === 'fetch-error'
       });
