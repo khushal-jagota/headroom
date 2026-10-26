@@ -3269,6 +3269,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                   const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
                   return getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
                 }''')
+                page.wait_for_function("window.__textFrames.some(frame=>frame.visible&&['failed','unavailable'].includes(frame.restorationStatus))")
                 case['failureFrames']=page.evaluate('window.__textFrames')
                 assert all(not frame['visible'] or frame['restorationStatus'] in ('failed','unavailable')
                            for frame in case['failureFrames']),case['failureFrames']
@@ -3424,6 +3425,7 @@ def _tab_return(browser, url):
         const row=[...thread.querySelectorAll('[data-conversation-view-key]')].find(row=>row.dataset.conversationViewKey===held.key);
         const visible=getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
         window.__returnFrames.push({ms:performance.now(),visible,scroll:thread.scrollTop,
+          restorationStatus:document.querySelector('[data-conversation-restoration-status]')?.getAttribute('data-conversation-restoration-status')??null,
           offset:row?row.getBoundingClientRect().top-thread.getBoundingClientRect().top:null});
         if(!window.__stopReturnFrames)requestAnimationFrame(sample);
       };
@@ -3452,6 +3454,7 @@ def _tab_return(browser, url):
             ('scrollback', 120, 'delayed'), ('scrollback', 120, 'failed'),
             ('scrollback', 120, 'bodies'),
         ):
+            failed=[]
             page.goto(url+'?reader=1')
             page.locator('[data-conversation-entry="complete"]').wait_for()
             _settle_conversation_layout(page)
@@ -3491,11 +3494,13 @@ def _tab_return(browser, url):
                 # Explicit retry retains the same remembered target after a failed read.
                 retry = page.get_by_role('button', name='Retry conversation position', exact=True)
                 retry.wait_for(state='visible')
+                page.wait_for_function("window.__returnFrames.some(frame=>frame.visible&&['failed','unavailable'].includes(frame.restorationStatus))")
                 failed = page.evaluate('window.__returnFrames')
                 visible = [frame for frame in failed if frame['visible']]
-                if visible:
-                    assert_frames(held, visible)
+                assert visible, failed
+                assert all(frame['restorationStatus'] in ('failed','unavailable') for frame in visible),failed
                 page.evaluate('window.__returnProbe.fail=false')
+                retry.evaluate("button=>button.addEventListener('click',()=>{window.__returnFrames=[];},{capture:true,once:true})")
                 retry.click()
             wait_for_reveal()
             frames = page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
@@ -3504,7 +3509,7 @@ def _tab_return(browser, url):
             assert after['key'] == held['key'] and abs(after['offset']-held['offset']) <= 1, (held, after)
             assert page.locator('[data-conversation-view-key]').count() <= 300
             page.screenshot(path=str(output / f'tab-return-{position}-{backlog}-{admission}.png'))
-            proof.append({'position':position,'backlog':backlog,'admission':admission,'held':held,'after':after,'frames':frames})
+            proof.append({'position':position,'backlog':backlog,'admission':admission,'held':held,'after':after,'frames':frames,'failureFrames':failed})
         # A hidden transition can interrupt a visible 240ms Latest move between frames.
         page.goto(url+'?reader=1')
         page.locator('[data-conversation-entry="complete"]').wait_for()
