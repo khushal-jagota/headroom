@@ -129,6 +129,9 @@ it('publishes unknown runtime status when an established stream fails', async ()
   expect(reader.status?.turn_running).toBeNull();
   expect(reader.status?.live_output).toBeNull();
   expect(reader.pages).toHaveLength(1);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot().page)));
+  expect(await reader.load()).toBe(true);
+  expect(reader.trouble).toBe(true); // A successful page does not repair the tail.
 });
 
 it('keeps every held scope when a reconnect brings a snapshot of the same conversation', async () => {
@@ -190,7 +193,7 @@ it('distinguishes a canonical expired body from an unrelated HTTP 410 failure', 
 });
 
 // These reader proofs cover admission and ownership. Visible placement belongs to
-// the browser destination proof, which must keep automatic recovery unavailable.
+// the browser destination proof, which checks actual newest admission and placement.
 const timeline = { kind: 'timeline' as const, key: null };
 const cursor = (sequence: number) => ({ projection_version: snapshot().page.projection_version, lens: 'focus' as const, scope: { ...timeline }, order: { sequence, slot: 0 } });
 function holdPages() {
@@ -595,6 +598,126 @@ it('reports a missing direct text piece after body admission, including after a 
   expect(reader.restorationAnchor?.content).toEqual(anchor.content);
 });
 
+function recoveryOwner() {
+  const controller = new AbortController();
+  let current = true;
+  return { controller, retire: () => { current = false; }, owner: {
+    kind: 'restoration-fallback' as const, signal: controller.signal, isCurrent: () => current
+  } };
+}
+
+it('rejects obsolete recovery admission before replacing retained history, even without transport abort', async () => {
+  const reader = await start();
+  const pages = reader.pages;
+  const { pending } = holdPages();
+  const attempt = recoveryOwner();
+  const recovery = reader.loadLatest(attempt.owner);
+  await flushDemand();
+  attempt.retire();
+  pending[0].complete(Response.json(snapshot().page));
+  expect(await recovery).toBe(false);
+  expect(reader.pages).toBe(pages);
+  expect(reader.trouble).toBe(false);
+});
+
+it('retires a canceled recovery queue slot while an ignored-abort transport remains unresolved', async () => {
+  const reader = await start();
+  const { pending } = holdPages();
+  const attempt = recoveryOwner();
+  const recovery = reader.loadLatest(attempt.owner);
+  await flushDemand();
+  attempt.controller.abort();
+  expect(await recovery).toBe(false);
+  const ordinary = reader.load({kind:'turn', key:'after-cancel'});
+  await flushDemand();
+  expect(pending).toHaveLength(2);
+  pending[1].complete(Response.json({...snapshot().page, scope:{kind:'turn',key:'after-cancel'}}));
+  expect(await ordinary).toBe(true);
+  const pages = reader.pages;
+  pending[0].complete(Response.json(snapshot().page));
+  await flushDemand();
+  expect(reader.pages).toBe(pages);
+});
+
+it('preserves ordinary demand that shares recovery admission when recovery cancels', async () => {
+  const reader = await start(readSnapshot(100));
+  await readHistory(reader);
+  sendReadChanges(101, 100);
+  const { pending } = holdPages();
+  const attempt = recoveryOwner();
+  const recovery = reader.loadLatest(attempt.owner);
+  const ordinary = reader.load(timeline, null, 'older', true);
+  await flushDemand();
+  attempt.controller.abort();
+  expect(await recovery).toBe(false);
+  expect(pending[0].signal.aborted).toBe(false);
+  pending[0].complete(Response.json(readSnapshot(101).page));
+  expect(await ordinary).toBe(true);
+  expect(reader.safeReadThroughSequence).toBe(101);
+});
+
+it('waits for incompatible ordinary history before admitting automatic newest demand', async () => {
+  const reader = await start();
+  const { pending } = holdPages();
+  const ordinary = reader.load(timeline, cursor(11));
+  await flushDemand();
+  const attempt = recoveryOwner();
+  const recovery = reader.loadLatest(attempt.owner);
+  expect(pending[0].signal.aborted).toBe(false);
+  pending[0].complete(Response.json(snapshot().page));
+  expect(await ordinary).toBe(true);
+  await flushDemand();
+  expect(pending).toHaveLength(2);
+  pending[1].complete(Response.json(snapshot().page));
+  expect(await recovery).toBe(true);
+});
+
+it('wakes pending recovery at capacity and retires canceled pending admission before scope collapse', async () => {
+  const reader = await start();
+  const { pending } = holdPages();
+  const scopes = Array.from({length:20}, (_, i) => ({kind:'turn' as const,key:`capacity:${i}`}));
+  const reads = scopes.map(scope => reader.load(scope));
+  await flushDemand();
+  const canceled = recoveryOwner();
+  const canceledRead = reader.loadLatest(canceled.owner);
+  canceled.controller.abort();
+  expect(await canceledRead).toBe(false);
+  const active = recoveryOwner();
+  const recovery = reader.loadLatest(active.owner);
+  await reader.expand(scopes[19], false);
+  for (let i = 0; i < 19; i++) {
+    await flushDemand();
+    pending[i].complete(Response.json({...snapshot().page,scope:scopes[i]}));
+    expect(await reads[i]).toBe(true);
+  }
+  expect(await reads[19]).toBe(false);
+  await flushDemand();
+  expect(pending).toHaveLength(20);
+  pending[19].complete(Response.json(snapshot().page));
+  expect(await recovery).toBe(true);
+});
+
+it('keeps genuine newest-page failure through target retirement, reconnect, and unrelated admission', async () => {
+  const reader = await start();
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('newest unavailable'); }));
+  expect(await reader.loadLatest(recoveryOwner().owner)).toBe(false);
+  expect(reader.trouble).toBe(true);
+  reader.cancelRestoration();
+  const reconnect = reader.connect();
+  Source.all.at(-1)!.send('snapshot', snapshot());
+  await reconnect;
+  expect(reader.trouble).toBe(true);
+  const scope = {kind:'turn' as const,key:'unrelated-success'};
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({...snapshot().page,scope})));
+  expect(await reader.load(scope)).toBe(true);
+  expect(reader.trouble).toBe(true);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot().page)));
+  expect(await reader.load(timeline, cursor(11), 'older')).toBe(true);
+  expect(reader.trouble).toBe(true); // Historical success does not retry newest admission.
+  expect(await reader.load(timeline,null,'older',true)).toBe(true);
+  expect(reader.trouble).toBe(false);
+});
+
 function readSnapshot(...sequences: number[]) {
   return viewSnapshot('c', 'focus', sequences.map(sequence => ({ ...rows[0], sequence })));
 }
@@ -747,4 +870,53 @@ it('retires old read evidence when a reconnect snapshot loses its new rows durin
   expect(reader.safeReadThroughSequence).toBe(300);
   sendReadChanges(302, 301, false);
   expect(reader.safeReadThroughSequence).toBe(300);
+});
+
+
+it.each(['abort', 'stale', 'fetch-failure'] as const)('grants no read credit to %s recovery admission or its late response', async cause => {
+  const reader = await start(readSnapshot(100));
+  await readHistory(reader);
+  sendReadChanges(101, 100);
+  const pages = reader.pages;
+  const { pending } = holdPages();
+  const attempt = recoveryOwner();
+  const recovery = reader.loadLatest(attempt.owner);
+  await flushDemand();
+  if (cause === 'abort') attempt.controller.abort();
+  if (cause === 'stale') attempt.retire();
+  pending[0].complete(cause === 'fetch-failure' ? new Response('unavailable', {status:503})
+    : Response.json(readSnapshot(101).page));
+  expect(await recovery).toBe(false);
+  expect(reader.pages).toBe(pages);
+  expect(reader.safeReadThroughSequence).toBe(100);
+  // A status frame after reconnect cannot turn the rejected page into delivery.
+  await vi.advanceTimersByTimeAsync(0);
+  sendReadChanges(102, 101, false);
+  expect(reader.coverage).toBe(102);
+  expect(reader.safeReadThroughSequence).toBe(100);
+});
+
+it('retires an expired saved target without credit and credits only valid newest recovery after admission', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const initial = readSnapshot(100);
+  const item = initial.page.items[0];
+  const anchor = {key:item.key,order:item.order,offset:-17,following:false};
+  const reader = new ConversationViewReader('c','focus',true,undefined,anchor);
+  readers.push(reader);
+  const ready = reader.connect(); Source.all.at(-1)!.send('snapshot',initial); await ready;
+  await readHistory(reader);
+  sendReadChanges(101,100);
+  reader.failTextRestoration(anchor.key, true);
+  reader.cancelRestoration();
+  expect(reader.restorationAnchor).toBeNull();
+  expect(reader.safeReadThroughSequence).toBe(100);
+  const { pending } = holdPages();
+  const recovery = reader.loadLatest(recoveryOwner().owner);
+  await flushDemand();
+  expect(reader.safeReadThroughSequence).toBe(100);
+  pending[0].complete(Response.json(readSnapshot(101).page));
+  expect(await recovery).toBe(true);
+  expect(reader.safeReadThroughSequence).toBe(101);
+  expect(reader.pages.flatMap(page=>page.items).map(item=>item.key)).toEqual(['row:101']);
+  expect(reader.pages.flatMap(page=>page.items).length).toBeLessThanOrEqual(300);
 });

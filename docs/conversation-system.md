@@ -766,8 +766,9 @@ Returning to a browser tab restores the line the person left and its offset in t
 view, even if they were at the newest message. The existing logical anchor carries
 that position. Content that arrived while the tab was hidden stays below it and
 does not start live follow. The reader restores a bounded neighborhood around the
-anchor before the viewport places it. If that read fails, the position stays pending
-and the person can retry. Visible live text keeps its normal line-by-line follow.
+anchor before the viewport places it. If restoration fails, the reader retires the
+saved target and admits the newest content before automatic bottom placement.
+Visible live text keeps its normal line-by-line follow.
 
 ## Reading a turn
 
@@ -857,15 +858,21 @@ conversation is open. History and text presentation share this budget. Hidden ta
 the dock pause it. Later layout changes preserve a successfully restored character until
 the reader navigates.
 
-A pending or failed restoration uses the existing notice and controls. Failure, unavailable
-text, or an exhausted budget automatically reveals the transcript at an available row.
-This fallback does not wait for the unresolved text or require Retry. The original text
-destination stays separate from the active row anchor. Retry uses that original destination
-with a fresh budget. Late results cannot reclaim a failed attempt. Attempt cancellation
-preserves unrelated reader requests. Changed, deleted, or expired text produces an unavailable result.
-If settled text cannot fit its saved offset within the available scroll range, fallback starts immediately.
-Latest abandons the saved destination and admits the newest page. Reader replacement and
-navigation cancel stale placement work and release its target demand.
+Saved-position restoration displays no notice, progress text, warning, or restoration controls.
+Ordinary Latest navigation remains available when content lies below the current position.
+Failure, unavailable text, or an exhausted budget
+retires the saved target and automatically admits the newest conversation page.
+The viewport then places the actual final content at the bottom, without a warning,
+restoration Retry control, or focus change. Request capacity delays this operation
+until a slot becomes available. A failed newest fetch preserves readable content,
+real errors, and ordinary Latest access without an automatic retry loop.
+
+Late results cannot reclaim a retired attempt. Explicit movement, navigation, reader
+replacement, a newer Latest command, or an accepted send cancels automatic recovery.
+Cancellation preserves shared ordinary reader requests. Changed, deleted, or expired
+text produces an unavailable result. If settled text cannot fit its saved offset,
+automatic recovery starts immediately. Successful text restoration retains its exact
+character and line offset. Reader replacement and navigation release target demand.
 
 Scrolling back asks for one page at a time. Before each page the browser closes its live
 stream and re-opens it once the page has arrived. That looks wasteful and is not: a

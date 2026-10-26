@@ -1,3 +1,4 @@
+import type { ViewPageRequestOwner } from './requestContracts';
 import { copyViewReaderAnchor } from './copyAnchor';
 import { DiagnosticExpiredError, isDiagnosticExpiry } from '../diagnosticExpiry';
 /** One selected view: bounded pages, one stream, and cancellable demand reads. */
@@ -43,6 +44,7 @@ export class ConversationViewReader {
     restorationAnchor = $state.raw<ViewReaderAnchor | null>(null);
     restorationAttempt = $state(0);
     private restorationOperation = 0;
+    private restorationOwner: AbortController | null = null;
     failTextRestoration(key: string, unavailable = false): void {
         if (this.disposed || this.restorationAnchor?.key !== key) return;
         this.restorationOperation++;
@@ -127,8 +129,45 @@ export class ConversationViewReader {
     private retry: ReturnType<typeof setTimeout> | null = null;
     private disposed = false;
     private reconnecting: Promise<void> | null = null;
-    private requests = new Map<string, { operation: Promise<boolean>; abort: AbortController; scope: ViewHistoryScope; cursor: ViewPageCursor | null; direction: 'older' | 'newer'; replace: boolean; restoration: number | null }>();
+    private requests = new Map<string, { operation: Promise<boolean>; abort: AbortController; scope: ViewHistoryScope; cursor: ViewPageCursor | null; direction: 'older' | 'newer'; replace: boolean; owner: ViewPageRequestOwner | null }>();
     private pageQueue: Promise<void> = Promise.resolve();
+    private tailTrouble = false;
+    private failedPageReads = new Set<string>();
+    private pendingLatest: { owner: ViewPageRequestOwner; finish: (admitted: boolean) => void } | null = null;
+    private updateTrouble(): void { this.trouble = this.tailTrouble || this.failedPageReads.size > 0; }
+    private wakeLatest(): void {
+        const pending = this.pendingLatest;
+        if (!pending) return;
+        if (this.disposed || pending.owner.signal.aborted || !pending.owner.isCurrent()) {
+            pending.finish(false);
+            return;
+        }
+        const held = this.requests.get(scopeKey(timeline));
+        // An automatic destination waits for independently owned history demand.
+        if (held && (held.cursor !== null || held.direction !== 'older' || !held.replace)) return;
+        if (!held && this.requests.size >= 20) return;
+        this.pendingLatest = null;
+        void this.load(timeline, null, 'older', true, pending.owner).then(pending.finish);
+    }
+    /** One pending destination reuses the page queue when its bounded slot is free. */
+    loadLatest(owner: ViewPageRequestOwner): Promise<boolean> {
+        this.pendingLatest?.finish(false);
+        if (this.disposed || owner.signal.aborted || !owner.isCurrent()) return Promise.resolve(false);
+        return new Promise(resolve => {
+            let settled = false;
+            const pending = { owner, finish: (admitted: boolean) => {
+                if (settled) return;
+                settled = true;
+                owner.signal.removeEventListener('abort', cancel);
+                if (this.pendingLatest === pending) this.pendingLatest = null;
+                resolve(admitted && !owner.signal.aborted && owner.isCurrent());
+            } };
+            const cancel = () => pending.finish(false);
+            owner.signal.addEventListener('abort', cancel, { once: true });
+            this.pendingLatest = pending;
+            this.wakeLatest();
+        });
+    }
     /** Close the live stream so a history read is not racing a writer.
      *
      * Every page read calls this and then schedules a reconnect in its `finally`, so the
@@ -156,15 +195,14 @@ export class ConversationViewReader {
         this.retry = null;
     }
     private cancelPages(): void {
+        this.pendingLatest?.finish(false);
         for (const request of this.requests.values()) request.abort.abort();
         this.requests.clear();
     }
     private cancelRestorationRequests(): void {
-        for (const [key, request] of this.requests) {
-            if (request.restoration === null) continue;
-            request.abort.abort();
-            this.requests.delete(key);
-        }
+        this.restorationOwner?.abort();
+        this.restorationOwner = null;
+        this.wakeLatest();
     }
     constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>(), private entryReadThroughSequence: number | null = null) {
         this.restoring = transcript && initialAnchor !== null && !initialAnchor.following;
@@ -179,12 +217,16 @@ export class ConversationViewReader {
         if (!this.restoring || !this.initialAnchor || this.disposed) return;
         const anchor = this.restorationAnchor ?? this.initialAnchor;
         const operation = ++this.restorationOperation;
-        const active = () => !this.disposed && operation === this.restorationOperation && this.restorationAnchor === anchor;
+        this.restorationOwner?.abort();
+        const controller = new AbortController();
+        this.restorationOwner = controller;
+        const active = () => !this.disposed && !controller.signal.aborted && operation === this.restorationOperation && this.restorationAnchor === anchor;
+        const owner: ViewPageRequestOwner = { kind: 'restoration', signal: controller.signal, isCurrent: active };
         let page = this.pages.find(page => page.scope.kind === 'timeline');
         if (!page?.items.some(item => item.key === anchor.key)) {
             const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline,
                 order: { ...anchor.order, slot: anchor.order.slot + 1 } };
-            if (!await this.load(timeline, cursor, 'older', true, operation)) {
+            if (!await this.load(timeline, cursor, 'older', true, owner)) {
                 if (active()) this.failRestoration();
                 return;
             }
@@ -192,7 +234,7 @@ export class ConversationViewReader {
             page = this.pages.find(page => page.scope.kind === 'timeline');
         }
         if (!active()) return;
-        if (page?.newer && !await this.load(timeline, page.newer, 'newer', false, operation)) {
+        if (page?.newer && !await this.load(timeline, page.newer, 'newer', false, owner)) {
             if (active()) this.failRestoration();
             return;
         }
@@ -209,7 +251,6 @@ export class ConversationViewReader {
     private failRestoration(): void {
         if (this.disposed) return;
         if (this.restorationAnchor) this.failTextRestoration(this.restorationAnchor.key);
-        this.trouble = true;
         this.changed();
     }
     retryRestoration(): void {
@@ -435,12 +476,12 @@ export class ConversationViewReader {
             const source = new EventSource(this.url('/tail', query));
             this.source = source;
             const active = () => !this.disposed && generation === this.generation;
-            const ready = () => { this.loading = false; this.trouble = this.restorationFailed; this.changed(); if (!settled) {
+            const ready = () => { this.loading = false; this.tailTrouble = false; this.updateTrouble(); this.changed(); if (!settled) {
                 settled = true;
                 resolve();
             } };
             const fail = (error: unknown) => { if (!active())
-                return; source.close(); this.source = null; this.loading = false; this.trouble = true;
+                return; source.close(); this.source = null; this.loading = false; this.tailTrouble = true; this.updateTrouble();
                 if (this.entryPhase === 'loading' && !this.entryStarted) this.failEntry();
                 if (this.status) this.status = { ...this.status, authority: 'unknown', turn_running: null, pending_permission: null, pending_user_input: null, live_output: null, live_tool_key: null, live_tool_progress: null };
                 this.changed();
@@ -576,16 +617,17 @@ export class ConversationViewReader {
             this.releaseSource = () => { this.abort.signal.removeEventListener('abort', abort); abort(); };
         });
     }
-    async load(scope: ViewHistoryScope = timeline, cursor: ViewPageCursor | null = null, direction: 'older' | 'newer' = 'older', replace = false, restoration: number | null = null): Promise<boolean> {
-        if (this.disposed) return false;
+    async load(scope: ViewHistoryScope = timeline, cursor: ViewPageCursor | null = null, direction: 'older' | 'newer' = 'older', replace = false, owner: ViewPageRequestOwner | null = null): Promise<boolean> {
+        if (this.disposed || owner && (owner.signal.aborted || !owner.isCurrent())) return false;
         const key = scopeKey(scope);
+        const failureKey = `${key}:${cursor === null ? 'newest' : 'history'}`;
         const pending = this.requests.get(key);
         if (pending) {
             if (sameScope(pending.scope, scope) && sameCursor(pending.cursor, cursor) && pending.direction === direction && pending.replace === replace) {
                 // Ordinary demand now owns the shared read too. Restoration failure
                 // must not cancel it, even if restoration requested it first.
-                if (restoration === null) pending.restoration = null;
-                return pending.operation;
+                if (owner === null) pending.owner = null;
+                return this.ownedResult(pending.operation, owner);
             }
             if (!replace) return false;
             pending.abort.abort();
@@ -594,10 +636,23 @@ export class ConversationViewReader {
         // The same bound applies to held scopes and queued demand. No response bodies queue.
         if (!pending && this.requests.size >= 20) return false;
         const controller = new AbortController();
-        const request = { operation: Promise.resolve(false), abort: controller, scope, cursor, direction, replace, restoration };
-        const active = () => !this.disposed && !controller.signal.aborted && this.requests.get(key) === request;
+        const request = { operation: Promise.resolve(false), abort: controller, scope, cursor, direction, replace, owner };
+        const active = () => !this.disposed && !controller.signal.aborted && this.requests.get(key) === request
+            && (request.owner === null || !request.owner.signal.aborted && request.owner.isCurrent());
+        const cancelOwner = () => {
+            if (request.owner !== owner || owner === null) return;
+            controller.abort();
+            if (this.requests.get(key) === request) this.requests.delete(key);
+            this.wakeLatest();
+        };
+        owner?.signal.addEventListener('abort', cancelOwner, { once: true });
         const operation = this.pageQueue.then(async () => {
-            if (!active()) return false;
+            if (!active()) {
+                owner?.signal.removeEventListener('abort', cancelOwner);
+                if (this.requests.get(key) === request) this.requests.delete(key);
+                this.wakeLatest();
+                return false;
+            }
             // Stop source admission before reading a page. Coverage stays unchanged. The
             // reconnect replays writes during this read for every retained scope, including
             // the newly admitted page. A live writer therefore cannot starve history reads.
@@ -617,17 +672,21 @@ export class ConversationViewReader {
                 if (!active()) return false;
                 if (!sameScope(page.scope, scope)) throw new Error('Conversation view scope changed');
                 this.accept(page, replace || cursor === null, direction);
+                this.failedPageReads.delete(failureKey);
+                this.updateTrouble();
                 this.acquireReadWitness(page, readCheckpoint, cursor === null);
                 this.changed();
                 return true;
             }
             catch {
-                if (active()) this.trouble = true;
+                if (active()) { this.failedPageReads.add(failureKey); this.updateTrouble(); this.changed(); }
                 return false;
             }
             finally {
                 stopAbort();
+                owner?.signal.removeEventListener('abort', cancelOwner);
                 if (this.requests.get(key) === request) this.requests.delete(key);
+                this.wakeLatest();
                 if (!this.disposed) {
                     if (this.rangeTimer !== null) clearTimeout(this.rangeTimer);
                     this.rangeTimer = setTimeout(() => { this.rangeTimer = null; void this.connect().catch(() => undefined); }, 0);
@@ -637,7 +696,20 @@ export class ConversationViewReader {
         request.operation = operation;
         this.requests.set(key, request);
         this.pageQueue = operation.then(() => undefined, () => undefined);
-        return operation;
+        return this.ownedResult(operation, owner);
+    }
+    private ownedResult(operation: Promise<boolean>, owner: ViewPageRequestOwner | null): Promise<boolean> {
+        if (owner === null) return operation;
+        return new Promise(resolve => {
+            const finish = (admitted: boolean) => {
+                owner.signal.removeEventListener('abort', canceled);
+                resolve(admitted && !owner.signal.aborted && owner.isCurrent());
+            };
+            const canceled = () => finish(false);
+            if (owner.signal.aborted) { finish(false); return; }
+            owner.signal.addEventListener('abort', canceled, { once: true });
+            void operation.then(finish);
+        });
     }
     async expand(scope: ViewHistoryScope, open: boolean): Promise<void> {
         const key = scopeKey(scope);
@@ -651,6 +723,7 @@ export class ConversationViewReader {
             this.expanded.delete(key);
             this.requests.get(key)?.abort.abort();
             this.requests.delete(key);
+            this.wakeLatest();
             this.pages = this.pages.filter(p => scopeKey(p.scope) !== key);
             this.revision++;
         }
