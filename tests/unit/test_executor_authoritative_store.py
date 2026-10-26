@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -537,7 +538,7 @@ def test_session_preview_cleanup_failure_still_releases_transport_root(
 def test_receiver_copy_is_separate_from_mutable_staging_handle(
     store: ExecutorStore, tmp_path: Path
 ) -> None:
-    """Account SFTP cannot revoke an open handle; publication owns a fresh inode."""
+    """Ordinary account access retains handles. Publication owns a fresh inode."""
     import os
 
     receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
@@ -591,8 +592,13 @@ def test_receiver_cancellation_drains_ingestion_before_transfer_cleanup(
         payload, _ = await endpoint._file(
             WireMessage(WireMessageKind.file_manifest, "begin", as_object(publication)), IDENTITY
         )
-        staged = Path(str(payload["path"]))
-        staged.write_bytes(contents)
+        transfer_id = str(payload["transfer_id"])
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield contents
+
+        await service.upload(transfer_id, chunks())
+        staged = service.root / transfer_id
         entered, settle = threading.Event(), threading.Event()
         ingest = receiver.ingest_staged
 
@@ -666,8 +672,12 @@ def test_publication_completion_retains_original_child_and_generation_authority(
         payload, _ = await endpoint._file(
             WireMessage(WireMessageKind.file_manifest, "begin", as_object(publication)), IDENTITY
         )
-        staged = Path(str(payload["path"]))
-        staged.write_bytes(contents)
+        transfer_id = str(payload["transfer_id"])
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield contents
+
+        await service.upload(transfer_id, chunks())
         replacement = replace(publication, child=replace(CHILD, child_id="replacement"))
         for kind in (WireMessageKind.file_manifest, WireMessageKind.file_complete):
             with pytest.raises(ValueError, match="assignment changed"):
@@ -735,9 +745,7 @@ def test_closed_original_child_reconciles_outcomes_without_restoring_authority(
             # A child accepted in an earlier batch can close before final merge.
             endpoint._inventory[CHILD.child_id] = child
         store.close_child(CHILD, 1100)
-        batch = ReconciliationInventory(
-            IDENTITY, () if accumulated else (child,), (), (outcome,)
-        )
+        batch = ReconciliationInventory(IDENTITY, () if accumulated else (child,), (), (outcome,))
         for value in (batch, inventory()):
             await endpoint._handle_message(
                 WireMessage(WireMessageKind.reconcile_inventory, "reconcile", as_object(value)),
