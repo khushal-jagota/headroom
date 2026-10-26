@@ -10,8 +10,10 @@ from pathlib import Path
 
 import aiohttp
 import pytest
+from starlette.responses import StreamingResponse
 from tests.integration.test_executor_end_to_end import boot, eventually
 
+from planner.executor import app_transport
 from planner.executor.app_transport import ExecutorAppClient
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
@@ -93,10 +95,30 @@ def test_native_admission_and_generation_file_slots(
                 source.write_bytes(data)
                 download = await service.create_download_async(FileSnapshot(manifest, source))
                 download_url = harness.proxy.origin + "/api/executor/files/" + download.transfer_id
-                async with client.session.get(download_url, headers=client.headers()) as response:
-                    assert response.status == 200 and await response.read() == data
+                destination = tmp_path / "download"
+                await client.download(download, destination)
+                assert destination.read_bytes() == data
                 async with client.session.get(download_url, headers=client.headers()) as response:
                     assert response.status == 409
+                encoded_download = await service.create_download_async(
+                    FileSnapshot(manifest, source)
+                )
+                encoded_destination = tmp_path / "encoded-download"
+
+                def encoded_response(
+                    chunks: AsyncIterator[bytes], *, media_type: str
+                ) -> StreamingResponse:
+                    # Label raw bytes deliberately: decompression stays disabled,
+                    # and the downloader must refuse the header before body acceptance.
+                    return StreamingResponse(
+                        chunks, media_type=media_type, headers={"Content-Encoding": "gzip"}
+                    )
+
+                with monkeypatch.context() as response_patch:
+                    response_patch.setattr(app_transport, "StreamingResponse", encoded_response)
+                    with pytest.raises(ConnectionError, match="executor download refused"):
+                        await client.download(encoded_download, encoded_destination)
+                assert encoded_destination.read_bytes() == b""
                 async with client.session.get(
                     harness.proxy.origin + "/api/executor/files/" + "f" * 32,
                     headers=client.headers(),

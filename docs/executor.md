@@ -107,6 +107,8 @@ row cannot commit first. A replay of an old publication cannot overwrite a newer
 file at the same URL.
 
 Both directions use HTTP through the app service. The Mac uploads artifact snapshots with PUT and downloads input snapshots with GET.
+Input GET requests specify `Accept-Encoding: identity`, so the server sends the original snapshot bytes without compression.
+The downloader disables automatic decompression and refuses any response with a nonempty `Content-Encoding`.
 The control connection allocates generation-owned transfer IDs with a direction and manifest. The server resolves each ID to its own staging path.
 These reservations track integrity and lifecycle. They do not restrict the account's ordinary filesystem access.
 

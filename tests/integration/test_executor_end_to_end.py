@@ -368,6 +368,10 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     native = ScriptedNativeChild()
     from fastapi import FastAPI
 
+    from planner.core.response_compression import (
+        CompressExceptEventStreams,
+        event_stream_route_patterns,
+    )
     from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
     from planner.executor.app_transport import build_executor_router
 
@@ -378,6 +382,12 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     transport_app.add_middleware(
         TrustedIngressMiddleware,
         config=TrustedIngressConfig("tailscale", "owner@example.com", "https://localhost"),
+    )
+    transport_app.add_middleware(
+        CompressExceptEventStreams,
+        event_stream_patterns=event_stream_route_patterns(transport_app.routes),
+        minimum_size=1024,
+        compresslevel=4,
     )
     transport_stack = contextlib.AsyncExitStack()
     proxy = await transport_stack.enter_async_context(

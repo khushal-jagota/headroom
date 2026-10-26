@@ -290,7 +290,7 @@ class ExecutorAppClient:
         try:
             async with self.session.get(
                 self.server_url + "/api/executor/files/" + slot.transfer_id,
-                headers=self.headers(),
+                headers=self.headers() | {"Accept-Encoding": "identity"},
                 allow_redirects=False,
             ) as response:
                 if response.status != 200 or response.headers.get("Content-Encoding"):
