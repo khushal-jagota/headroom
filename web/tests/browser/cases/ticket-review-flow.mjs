@@ -16,6 +16,7 @@ import { queryClient as client } from '../src/lib/queryClient';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
 import ReviewRoute from '../src/routes/ReviewRoute.svelte';
 import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
+import FilePreviewRoute from '../src/routes/FilePreviewRoute.svelte';
 import { navigationReviewPresentation } from '../src/lib/navigation/presentation';
 import { reviewBadgeDomMatches } from '../src/lib/shellDom';
 (window as any).__badgeProof=()=>{
@@ -78,14 +79,20 @@ let historicalIdentity=$derived(navigation.selectors.effective ? navigationRevie
 let reviewField = $state('success_condition');
 let config = $state(false);
 let ticketId = $state('t_review');
+// The one-document preview address, mounted the way the shell mounts it: the route reads
+// the file out of the hash on arrival, so each visit has to be a fresh arrival.
+let preview = $state(false);
+let previewArrival = $state(0);
 $effect(() => navigation.owner.setDemand('historical-review-fixture', review && reviewTicketId === 't_personal_pending'
   ? {selected:{kind:'ticket',id:reviewTicketId},windows:[]} : undefined));
-(window as any).__showReview = (id = "t_review", field = "success_condition") => { reviewTicketId = id; reviewField = field; review = true; };
-(window as any).__showTicket = (id: string) => { review = false; ticketId = id; };
+(window as any).__showReview = (id = "t_review", field = "success_condition") => { preview = false; reviewTicketId = id; reviewField = field; review = true; };
+(window as any).__showTicket = (id: string) => { preview = false; review = false; ticketId = id; };
+(window as any).__showPreview = (hash: string) => { location.hash = hash; previewArrival += 1; preview = true; };
 (window as any).__showConfig = () => { config = true; };
 </script>
 <QueryClientProvider {client}>
 {#if config}<ConfigRoute roleKind="worker" roleId="coding" />
+{:else if preview}{#key previewArrival}<FilePreviewRoute />{/key}
 {:else if review}{#if reviewTicketId === "t_personal_pending"}{#if historicalIdentity}<ReviewProposalCard identity={historicalIdentity} ticketId={reviewTicketId} field={reviewField} />{/if}{:else}<ShellStatus connectionState="connected" /><ReviewRoute />{/if}
 
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}

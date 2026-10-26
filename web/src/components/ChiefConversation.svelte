@@ -30,36 +30,8 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
-  import ArtifactPreview from "./ArtifactPreview.svelte";
-  import { managedFileTargetFromLinkHref } from "../lib/artifactStrip";
-  import { isPlainLinkClick } from "../lib/linkClick";
-  import { resolvePreview, targetFromPreviewHref, type ManagedFileTarget } from "../lib/filePreview";
+  import type { ManagedFileTarget } from "../lib/filePreview";
   let { showRequestErrorLine = true, requestedConversationId = null, openedFile = null, onOpenFile }: { showRequestErrorLine?: boolean; requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
-  let artifactReloadSignal = $state(0);
-  let artifactElement = $state<HTMLElement | null>(null);
-  let previousFocus: HTMLElement | null = null;
-  function showFile(file: ManagedFileTarget | null): void {
-    if (file && !openedFile) previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    onOpenFile?.(file);
-    if (file) conversationState = "rest";
-    else { const restore = previousFocus; previousFocus = null; queueMicrotask(() => restore?.focus()); }
-  }
-  $effect(() => { if (openedFile && artifactElement) artifactElement.focus(); });
-  function openManagedFileInPlace(event: MouseEvent): void {
-    if (event.defaultPrevented) return;
-    const anchor = (event.target as Element | null)?.closest?.("a[href]");
-    if (!anchor || anchor.hasAttribute("download")) return;
-    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
-    if (!isPlainLinkClick(link, event)) return;
-    const explicitPreview = targetFromPreviewHref(link.href);
-    const file = explicitPreview ?? managedFileTargetFromLinkHref(link.href);
-    if (!file || (!explicitPreview && resolvePreview(file).kind === "download")) return;
-    event.preventDefault(); showFile(file);
-  }
-  function closeFileOnEscape(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented || !openedFile || conversationState === "opened") return;
-    event.preventDefault(); showFile(null);
-  }
   const navigation = (() => {
     const value = navigationApplication();
     if (!value) throw new Error("Chief conversation requires the application navigation owner");
@@ -151,11 +123,8 @@
   });
 </script>
 
-<svelte:window onkeydown={closeFileOnEscape} />
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="chief-workspace-host" bind:this={root} onclick={openManagedFileInPlace}>
-<ManagerFrame class="chief-workspace" bind:conversationState>
+<div class="chief-workspace-host" bind:this={root}>
+<ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
@@ -163,12 +132,6 @@
   <section class="manager-workers" aria-label="Workers">
     <ManagerChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
   </section>
-  {#snippet readingAside(registerArtifactFrame)}
-    {#if openedFile}
-      <ArtifactPreview target={openedFile} {registerArtifactFrame} reloadSignal={artifactReloadSignal}
-        bind:element={artifactElement} onRefresh={() => artifactReloadSignal += 1} onClose={() => showFile(null)} />
-    {/if}
-  {/snippet}
   {#snippet conversation()}
 <!-- A failed read is a line next to the conversation, not a screen in place of it.
      Replacing it takes the transcript, and takes words somebody typed and has not
