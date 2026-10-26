@@ -9,6 +9,7 @@
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import TaskProgress from "./TaskProgress.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
+  import type { ConversationViewportControls } from './viewport/placement';
   import type { RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
@@ -197,6 +198,7 @@
 
   let placementReady = $state(false);
   let entryPresentationPending = $state(true);
+  let viewport = $state<ConversationViewportControls | null>(null);
   let paneElement = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false);
   let confirmArmed = $state(false);
@@ -294,7 +296,7 @@
     if (conversationState === "opened") { event.preventDefault(); conversationState = "rest"; }
   }
 
-  /** The arrow switches the two states and keeps keyboard focus on its counterpart. */
+  /** Preview and Return share one action and restore focus to the corresponding control. */
   function moveThroughTheStates(): void {
     const restoreControlFocus = document.activeElement instanceof HTMLElement
       && paneElement?.contains(document.activeElement)
@@ -376,7 +378,7 @@
       >Full</button>
     </div>
     <div class="chat-head-right">
-      <!-- The corresponding state control receives focus after arrow activation. -->
+      <!-- The corresponding state control receives focus after preview activation. -->
       {#if stateControl !== null && conversationState !== "rest"}
         <button
           type="button"
@@ -472,9 +474,11 @@
   </div>
 
   <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
-  {#if reader?.restorationFailed}
-    <div class="chat-receipt" role="status" data-conversation-restoration-status="error">Your conversation position did not load.
-      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>
+  {#if reader && reader.restorationOutcome !== 'idle'}
+    <div class="chat-receipt" role="status" data-conversation-restoration-status={reader.restorationOutcome}>
+      {reader.restorationOutcome === 'unavailable' ? 'This conversation position is no longer available.' : reader.restorationOutcome === 'failed' ? 'Your conversation position did not load.' : 'Restoring your conversation position…'}
+      {#if reader.restorationOutcome !== 'unavailable'}<button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>{/if}
+      <button type="button" class="chat-qrow-act" aria-label="Jump to latest message" onclick={(event) => viewport?.jumpToLatest(event.currentTarget)}>Latest</button>
     </div>
   {/if}
   <!-- The conversation is never taken off the screen to say that it is loading. A
@@ -489,6 +493,7 @@
     style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
+    bind:this={viewport}
     bind:placementReady
     bind:entryPresentationPending
     {ownerReadThroughSequence}
@@ -524,9 +529,9 @@
     />
   {/if}
 
-  <!-- At rest this one line is the whole conversation visible above the composer. -->
+  <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
-    <ConversationRestBar line={restLine} preview={unreadPreview} {roleLabel} {activityKnown}
+    <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
       {connectionTrouble} running={running && !activityUncertain} feedback={activityUncertain ? "Current activity on Mac is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
@@ -575,7 +580,7 @@
 </div>
 
 <style>
-  .conversation-reader { display:flex; flex:1; min-height:0; }
+  .conversation-reader { display:flex; flex-direction:column; flex:1; min-height:0; }
   .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side
@@ -593,7 +598,7 @@
   @container conversation-pane (max-width: 480px) {
     :global([data-conversation-pane] .chat-u) { max-width: 86%; }
   }
-  /* Inside the conversation card the well and rest line are two halves of one card. */
+  /* The activity preview owns its gap above the separate rounded input. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),

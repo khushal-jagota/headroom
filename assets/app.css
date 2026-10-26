@@ -1253,15 +1253,10 @@ button.list-row:hover .list-row-title {
 /* Message history + input. No dividers: the thread fades into a whisper header and
  * a recessed composer. One user pill; the worker is bubble-less prose. */
 
-/* The conversation's own measures, set once on the card and read by every rule below it.
- * They exist because the card's controls have to agree with each other: one glyph size for
- * every drawn icon in the head and the foot, one target for the boxes around them, and one
- * inset for the card's inner edge. Changing how big the icons read is one line here rather
- * than eight rules apart. */
+/* Shared measures keep the conversation's head and composer controls in agreement. */
 .chat-panel {
   --conversation-glyph: 22px;
   --conversation-target: 32px;
-  --conversation-card-inset: var(--space-4);
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -1565,26 +1560,21 @@ button.list-row:hover .list-row-title {
   overflow-wrap: anywhere;
 }
 
-/* composer = one recessed field; the container IS the input */
-/* The well is not a box. It is the lower band of one card: what separates it from the
- * conversation above is colour — the recessed plane the app already uses for a field —
- * and one hairline seam. It draws no second rectangle, in any host, so the card has one
- * outline and the eye has one shape to read. */
+/* The same rounded input stays distinct from the conversation in both states. */
 .chat-box {
   position: relative;   /* anchors the "/" command popover above it */
   flex: none;
-  background: var(--surface-recessed);
-  border: 0;
-  border-top: var(--border-hairline) solid var(--border-color);
-  border-radius: 0;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-  padding: var(--space-3) var(--space-3);
+  background: var(--surface-input);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+}
+.chat-box:focus-within {
+  border-color: color-mix(in srgb, var(--accent-bright) 40%, var(--border-color));
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 2px color-mix(in srgb, var(--accent-bright) 30%, transparent);
+  box-shadow: inset 0 0 0 var(--border-strong) color-mix(in srgb, var(--accent-bright) 30%, transparent);
 }
 
 /* The task-progress popover shares the raised-popover shadow; the property
@@ -3237,7 +3227,7 @@ select {
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
-  --conversation-edge-gap: max(var(--space-6), env(safe-area-inset-bottom));
+  --conversation-edge-gap: max(var(--space-4), env(safe-area-inset-bottom));
 }
 
 /* The action retains the reader height beneath full conversation. */
@@ -3397,7 +3387,7 @@ select {
   pointer-events: none;
 }
 .conversation-layer [data-conversation-pane] {
-  padding-inline: var(--conversation-card-inset);
+  padding-inline: 0;
   max-height: 100%;
   background: transparent;
   border: 0;
@@ -3407,20 +3397,7 @@ select {
 .conversation-layer .chat-thread,
 .conversation-layer .chat-head { padding-inline: 0; }
 .conversation-layer .chat-head-right { margin-right: calc(var(--space-2) * -1); }
-.conversation-layer .chat-box {
-  margin: 0;
-  padding-inline: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-[data-conversation-pane]:focus-within .chat-box {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-bright) 40%, transparent);
-}
-[data-conversation-pane] .chat-box.drag {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-bright) 30%, transparent);
-}
+.conversation-layer .chat-box { margin: 0; }
 .ticket-artifact-slot {
   height: 100%;
   min-height: 100%;
@@ -3459,22 +3436,6 @@ select {
 .conversation-layer .chat-overflow-menu {
   max-height: calc(var(--conversation-visible-height, 100vh) - 2 * var(--conversation-edge-gap) - var(--space-7));
   overflow-y: auto;
-}
-
-/* Narrow panes reduce the card's inner text inset without narrowing the card. */
-@container conversation-host (max-width: 720px) {
-  .conversation-layer [data-conversation-pane] {
-    --conversation-card-inset: var(--surface-pad);
-  }
-}
-
-/* Narrower still, and the card gives the words the width its edges were holding. This is
- * the card's own inset and nothing else: the column width is untouched, so
- * the page is exactly as wide as it was. */
-@container conversation-host (max-width: 480px) {
-  .conversation-layer [data-conversation-pane] {
-    --conversation-card-inset: var(--space-3);
-  }
 }
 
 /* The head has nothing left in it that can be squeezed: the worker's name and the
@@ -4042,7 +4003,7 @@ a.artifact-chip:hover,
   max-width: 100%;
   min-height: 0;
   overflow: hidden;
-  --conversation-edge-gap: max(var(--space-6), env(safe-area-inset-bottom));
+  --conversation-edge-gap: max(var(--space-4), env(safe-area-inset-bottom));
   container-type: inline-size;
   /* Its own name for its own rules, and `conversation-host` for the one question every
    * host of the conversation card asks of its pane. See .ticket-screen. */

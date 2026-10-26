@@ -155,7 +155,7 @@
     {@const item = slot.item}
     {#if slot.local !== null}
       <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
-      <UserMessage row={item?.kind === 'row' && (item.row.kind === 'prompt' || item.row.kind === 'prompt_refused' || item.row.kind === 'prompt_uncertain' || item.row.kind === 'prompt_discarded') ? item.row : null} local={slot.local} {conversationId} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
+      <UserMessage presentationRowKey={item?.key ?? null} row={item?.kind === 'row' && (item.row.kind === 'prompt' || item.row.kind === 'prompt_refused' || item.row.kind === 'prompt_uncertain' || item.row.kind === 'prompt_discarded') ? item.row : null} local={slot.local} {conversationId} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
       </ViewItem>
     {:else if item !== null}
     {#if item.kind === "turn"}
@@ -183,10 +183,10 @@
       />
       {/if}
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
-      <UserMessage row={item.row} {conversationId} {ownSenderLabel}/>
+      <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
     {:else if item.row.kind === "agent_message"}
       <article class="chat-a" data-conversation-row="agent_message" data-conversation-source-key={item.row.key}>
-        <MessagePieces content={item.row.content} {conversationId} />
+        <MessagePieces presentationRowKey={item.key} content={item.row.content} {conversationId} />
       </article>
     {:else if item.row.kind === "explicit_reply_missing"}
       <div class="acp-turn-end" data-conversation-row="explicit_reply_missing">

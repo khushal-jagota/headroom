@@ -4,7 +4,7 @@
    * Layout preserves the newest line or a held target without travel. Only actual
    * arriving stream text funds line travel, so a relayout cannot replay a backlog.
    */
-  import { onMount, tick, untrack, type Snippet } from "svelte";
+  import { onMount, tick, untrack, setContext, type Snippet } from "svelte";
   import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
@@ -20,6 +20,9 @@
   } from "../../../lib/conversation/wire";
   import { REPLY_LINE_MOVE_MS, SENT_MESSAGE_TOP_GAP_PIXELS } from "./viewportConfiguration";
   import { threadGeometry, type ThreadReading } from "./threadGeometry";
+  import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
+  import { conversationTextPresentations, TextPresentationRegistry } from '../../../lib/conversation/view/textPresentation';
+  import { releaseTextRestoration, type TextRestorationPlacement } from './placement';
   import { threadPlacement, currentPlacement, presentationReady, streamArrivalBudget, streamTravelFits, type ThreadPlacement } from "./placement";
 
   let {
@@ -96,6 +99,45 @@
   let disposed = false;
   let generation = 0;
   let placement: ThreadPlacement | null = null;
+  const textPresentations = new TextPresentationRegistry(() => requestReconciliation());
+  setContext(conversationTextPresentations, textPresentations);
+  let textRestoration: TextRestorationPlacement | null = null;
+  function cancelTextRestoration(): void {
+    releaseTextRestoration(textRestoration);
+    textRestoration = null;
+    reader?.cancelRestoration();
+  }
+  function alignSavedText(thread: HTMLDivElement): boolean {
+    const operation = textRestoration;
+    if (!operation || operation.reader !== reader || operation.attempt !== (reader?.restorationAttempt ?? 0) || !operation.anchor.content) return false;
+    if (reader?.restorationOutcome === 'failed' || reader?.restorationOutcome === 'unavailable') {
+      releaseTextRestoration(operation);
+      return false;
+    }
+    const location = operation.anchor.content;
+    if (!operation.demand && reader?.restorationOutcome === 'pending') {
+      operation.demand = textPresentations.demand(operation.anchor.key, location);
+      operation.unsubscribe = operation.demand?.subscribe(requestReconciliation) ?? null;
+    }
+    let state = operation.demand?.read() ?? textPresentations.measure(operation.anchor.key, location);
+    if (state.kind === 'pending' && !operation.demand) {
+      operation.demand = textPresentations.demand(operation.anchor.key, location);
+      operation.unsubscribe = operation.demand?.subscribe(requestReconciliation) ?? null;
+      state = operation.demand?.read() ?? state;
+    }
+    if (state.kind === 'failed' || state.kind === 'unavailable') {
+      reader?.failTextRestoration(operation.anchor.key, state.kind === 'unavailable');
+      releaseTextRestoration(operation);
+      return false;
+    }
+    if (state.kind !== 'ready') return false;
+    const delta = state.rect.top - thread.getBoundingClientRect().top - location.lineOffset;
+    moveTheThread(thread, thread.scrollTop + delta);
+    const measured = operation.demand?.read() ?? textPresentations.measure(operation.anchor.key, location);
+    const aligned = measured.kind === 'ready' && Math.abs(measured.rect.top - thread.getBoundingClientRect().top - location.lineOffset) <= 1;
+    if (aligned && reader?.restorationOutcome === 'idle') releaseTextRestoration(operation);
+    return aligned;
+  }
   let pendingPresentationTarget: Element | null = null;
   let heldSent: { messageId: string; displayKey: string | null; rowKey: string | null } | null = null;
   let liveArrivalPixels = 0;
@@ -176,7 +218,9 @@
     if (conversationMotion(thread).active(positionMotion)) {
       return;
     }
-    if (heldUnreadKey !== null) {
+    if (textRestoration !== null && textRestoration.anchor.content) {
+      alignSavedText(thread);
+    } else if (heldUnreadKey !== null) {
       const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === heldUnreadKey);
       if (held) moveTheThread(thread, geometry.elementAtTheTopScrollTop(held));
     } else if (heldSent !== null) {
@@ -204,6 +248,9 @@
   let heldUnreadKey = $state<string | null>(null);
   function stopAutomaticTravel(): void {
     gestureGeneration += 1;
+    cancelTextRestoration();
+    pendingOpen = false;
+    settledOnOpening = true;
     heldUnreadKey = null;
     heldSent = null;
     liveArrivalPixels = 0;
@@ -282,12 +329,12 @@
   }
 
   function saveLogicalAnchor(thread:HTMLDivElement):void{
-    if(reader===null||reader.restoring||pendingOpen||!settledOnOpening||!placementReady)return;
+    if(reader===null||reader.restoring||pendingOpen||!settledOnOpening||!placementReady||textRestoration!==null)return;
     const top=thread.getBoundingClientRect().top;
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
     const item=reader.pages.flatMap(page=>page.items).find(item=>item.key===key);
-    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:jumpVisible===false&&!latestPending&&heldUnreadKey===null};
+    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:jumpVisible===false&&!latestPending&&heldUnreadKey===null,content:textPresentations.capture(item.key,thread.getBoundingClientRect())};
   }
 
   function onThreadScroll(): void {
@@ -307,7 +354,21 @@
       intent.generation === generation && intent.reader === reader;
   }
 
+  export function jumpToLatest(button: HTMLButtonElement): void {
+    void jumpToTheNewestLine(button);
+  }
+
   async function jumpToTheNewestLine(button: HTMLButtonElement): Promise<void> {
+    // Keep the last visible address until this Latest operation actually lands.
+    // A reader replacement cancels an unfinished click and restores that address.
+    // An unfulfilled restoration destination is explicitly abandoned by Latest.
+    const abandonUnfulfilledAnchor = reader !== null && reader.restorationOutcome !== 'idle';
+    cancelTextRestoration();
+    if (abandonUnfulfilledAnchor) viewAnchor = null;
+    pendingOpen = false;
+    settledOnOpening = true;
+    placementReady = true;
+    entryPresentationPending = false;
     heldUnreadKey = null;
     heldSent = null;
     liveArrivalPixels = 0;
@@ -365,6 +426,7 @@
     const nodes = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')];
     const exact = nodes.find(node => node.dataset.conversationViewKey === viewAnchor?.key);
     if (exact) return exact;
+    if (viewAnchor.content) return null;
     const items = reader?.pages.flatMap(page => page.items) ?? [];
     const candidates = nodes.map(node => ({node,item:items.find(item => item.key === node.dataset.conversationViewKey)}))
       .filter(candidate => candidate.item !== undefined)
@@ -386,6 +448,7 @@
   }
 
   function landTheOpen(thread: HTMLDivElement): void {
+    if(textRestoration?.anchor.content && alignSavedText(thread)) return;
     if(viewAnchor!==null&&!viewAnchor.following){
       const element=restoredAnchorElement(thread);
       if(element){moveTheThread(thread,thread.scrollTop+element.getBoundingClientRect().top-thread.getBoundingClientRect().top-viewAnchor.offset);return;}
@@ -450,6 +513,13 @@
         const accepted = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]')]
           .filter(element => !settledMessageIds.has(element.dataset.conversationOutgoing!)).at(-1);
         if (accepted !== undefined && presentationReady(accepted)) {
+          if (textRestoration !== null) {
+            cancelTextRestoration();
+            viewAnchor = null;
+            pendingOpen = false;
+            settledOnOpening = true;
+            placementReady = true;
+          }
           const id = accepted.dataset.conversationOutgoing!;
           if (placement?.destination !== 'sent' || placement.messageId !== id) {
             if (placement) placement.cancelled = true;
@@ -503,7 +573,9 @@
               // line a chance to hydrate before the final placement is revealed.
               landTheOpen(thread);
             }
-            if (!restorationPresentationReady(thread)) return;
+            if (textRestoration?.anchor.content) {
+              if (!alignSavedText(thread)) return;
+            } else if (!restorationPresentationReady(thread)) return;
           }
           if (targetKey === null) landTheOpen(thread);
           const destination = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
@@ -531,6 +603,7 @@
         }
 
         if (reader?.entryPhase === 'placing') {
+          if (textRestoration !== null) { cancelTextRestoration(); viewAnchor = null; }
           if (!reader.entryTargetReady) return;
           const entryReader = reader;
           const target = reader.entryTarget;
@@ -550,6 +623,7 @@
         } else if (latestPending && isCurrentLatest(intent) && intent?.admitted) {
           await travel(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
         } else if (recoveryToPlace !== null) {
+          if (textRestoration !== null) { cancelTextRestoration(); viewAnchor = null; }
           recoveryToPlace = null;
           heldSent = null;
           answerRoomMessageId = null;
@@ -606,12 +680,44 @@
           }
         }
         if (startedIn !== generation || gesture !== gestureGeneration || thread !== threadElement) return;
+        if (!provisionalNewest && reader?.restorationOutcome === 'pending') {
+          // Removing the notice changes the reader's available layout. Keep the
+          // transcript hidden until the original address fits that final geometry.
+          const entryReader = reader;
+          const operation = textRestoration;
+          reader.settleTextRestoration();
+          await tick();
+          if (startedIn !== generation || gesture !== gestureGeneration || thread !== threadElement || reader !== entryReader || operation !== textRestoration || intent !== latestIntent) return;
+          let finalReady: boolean;
+          if (operation?.anchor.content) finalReady = alignSavedText(thread);
+          else {
+            landTheOpen(thread);
+            finalReady = restorationPresentationReady(thread);
+          }
+          if (!finalReady) {
+            const anchor = entryReader.restorationAnchor;
+            if (anchor && entryReader.restorationOutcome === 'idle') entryReader.failTextRestoration(anchor.key);
+            releaseTextRestoration(operation);
+            return;
+          }
+          geometry = threadGeometry(thread, reservedSpaceElement);
+          takeTheReading(geometry.read(reservedSpacePixels));
+        }
+        if (textRestoration?.anchor.content && pendingOpen && !alignSavedText(thread)) {
+          if (reader?.restorationOutcome === 'idle') reader.failTextRestoration(textRestoration.anchor.key);
+          releaseTextRestoration(textRestoration);
+          return;
+        }
         settledOnOpening = !provisionalNewest;
         pendingOpen = provisionalNewest;
         placementReady = true;
         entryPresentationPending = provisionalNewest || pendingPresentationTarget !== null && thread.contains(pendingPresentationTarget) && !presentationReady(pendingPresentationTarget);
         if (!entryPresentationPending) pendingPresentationTarget = null;
         if (!provisionalNewest && placement?.destination === 'entry') placement = null;
+        if (!provisionalNewest) {
+          reader?.settleTextRestoration();
+          releaseTextRestoration(textRestoration);
+        }
         if (sentMessageToPlace !== null && settledMessageIds.has(sentMessageToPlace)) sentMessageToPlace = null;
         else if (sentMessageToPlace !== null) dirty = true;
         takeTheReading(geometry.read(reservedSpacePixels));
@@ -644,6 +750,9 @@
     untrack(() => {
       if (conversationOnScreen === wanted && readerOnScreen === wantedReader) return;
       generation += 1;
+      releaseTextRestoration(textRestoration);
+      const anchor = wantedReader?.restorationAnchor ?? viewAnchor;
+      textRestoration = anchor?.content && !anchor.following ? {reader:wantedReader, anchor:copyViewReaderAnchor(anchor), attempt:wantedReader?.restorationAttempt ?? 0, demand:null, unsubscribe:null} : null;
       if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
       if (placement) placement.cancelled = true;
       placement = threadPlacement(wantedReader, 'entry');
@@ -693,6 +802,19 @@
     reader?.entryPhase;
     reader?.entryTargetReady;
     reader?.restoring;
+    reader?.restorationOutcome;
+    const attempt = reader?.restorationAttempt ?? 0;
+    untrack(() => {
+      if (textRestoration && textRestoration.attempt !== attempt) {
+        generation += 1;
+        releaseTextRestoration(textRestoration);
+        textRestoration = {...textRestoration, attempt, demand:null, unsubscribe:null};
+        pendingOpen = true;
+        settledOnOpening = false;
+        placementReady = false;
+      }
+      if (reader?.restorationOutcome === 'failed' || reader?.restorationOutcome === 'unavailable') releaseTextRestoration(textRestoration);
+    });
     visibleRows;
     ownerReadThroughSequence;
     lens;
@@ -759,6 +881,7 @@
     document.addEventListener("focusin", onFocusIn);
     return () => {
       disposed = true;
+      releaseTextRestoration(textRestoration);
       generation += 1;
       document.removeEventListener("visibilitychange", onVisible);
       document.removeEventListener("focusin", onFocusIn);
@@ -821,7 +944,7 @@
       ></div>
     {/if}
   </div>
-  {#if jumpVisible || newerHistory || latestPending}
+  {#if (reader === null || reader.restorationOutcome === 'idle') && (jumpVisible || newerHistory || latestPending)}
     <button
       type="button"
       class="chat-jump"

@@ -22,14 +22,16 @@
   let deferred = $state.raw<{ body: ViewRowBody; reference: ViewBodyReference } | null>(null);
   let error = $state<string | null>(null);
   let progress = $state<string | null>(null);
+  const presentationAttempt = $derived(reader.restorationAnchor?.key === item.key ? reader.restorationAttempt : 0);
   const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
   const row = $derived(body === null ? null : rowForBody(item, body));
-  $effect(() => { if (body !== null) reader.entryBodyReady(item.key); if (error && reader.entryTarget?.key === item.key) reader.failEntry(); });
+  $effect(() => { if (body !== null) { reader.entryBodyReady(item.key); reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); } if (error && reader.entryTarget?.key === item.key) reader.failEntry(); });
   $effect(() => {
       if (item.body.kind === 'deferred' && body?.kind === 'turn_ended' && body.ending === 'completed' && body.automatic_compaction_result !== 'not_compacted')
           onEmptyEnding(item.body.reference);
   });
   $effect(() => {
+      presentationAttempt;
       if (item.body.kind !== 'deferred')
           return;
       const reference = item.body.reference;
@@ -38,7 +40,7 @@
       error = null;
       void reader.body(reference, abort.signal).then(text => parseDeferredViewBody(text, abort.signal)).then(body => { if (!abort.signal.aborted)
           deferred = { body, reference }; }).catch(reason => { if (!abort.signal.aborted)
-          error = reason instanceof DiagnosticExpiredError ? DIAGNOSTIC_EXPIRED_MESSAGE : "This detail did not load."; });
+           { error = reason instanceof DiagnosticExpiredError ? DIAGNOSTIC_EXPIRED_MESSAGE : "This detail did not load."; reader.failTextRestoration(item.key, reason instanceof DiagnosticExpiredError); } });
       return () => { abort.abort(); deferred = null; };
   });
   $effect(() => {
@@ -58,7 +60,9 @@
 {#if row?.kind==='tool_call' && reader.lens==='full'}
   <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow {activityUncertain} row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
 {:else if row!==null}
+  {#key presentationAttempt}
   <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
+  {/key}
 {:else}
   <div aria-busy={!error} role="status">{error ?? ""}</div>
 {/if}
