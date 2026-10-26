@@ -187,12 +187,19 @@ def _interrupted_server(
         conn.execute("INSERT INTO conversation_runtime_epoch VALUES (1,'old-epoch')")
         if ticket_owned:
             conn.execute(
+                "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Project',0,0)"
+            )
+            conn.execute(
+                "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
+                "created_at,updated_at) VALUES ('m','Manager','p','codex','model',0,0)"
+            )
+            conn.execute(
                 "INSERT INTO "
                 "tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,"
                 "created_at,updated_at,conversation_id,worker_step_claim,"
-                "worker_step_claim_revision) VALUES "
+                "worker_step_claim_revision,manager_kind,manager_id) VALUES "
                 "('t','Worker','coding','claude','needs_implementation',"
-                "'needs_implementation','{}',0,0,'interrupted','out',7)"
+                "'needs_implementation','{}',0,0,'interrupted','out',7,'manager','m')"
             )
         conn.commit()
     write_manifest(
@@ -269,6 +276,10 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(tmp_path
             assert conn.execute(
                 "SELECT status FROM deploy_interruption_deliveries"
             ).fetchone()[0] == "context_not_delivered"
+            assert [
+                str(row[0])
+                for row in conn.execute("SELECT source_kind FROM manager_wakes WHERE ticket_id='t'")
+            ] == ["worker_error"]
         conversation = client.get("/api/conversation/conversations/interrupted")
         assert conversation.status_code == 200, conversation.text
         tickets = client.get("/api/tickets?detail=summary")
