@@ -18,11 +18,12 @@
   import type {
     BackendModel,
   } from "../../../lib/conversation/wire";
-  import { REPLY_LINE_MOVE_MS, SENT_MESSAGE_TOP_GAP_PIXELS } from "./viewportConfiguration";
+  import { REPLY_LINE_MOVE_MS, SENT_MESSAGE_TOP_GAP_PIXELS, TEXT_RESTORATION_WAIT_MS } from "./viewportConfiguration";
+  import { restorationWait } from './restorationWait';
   import { threadGeometry, type ThreadReading } from "./threadGeometry";
   import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
   import { conversationTextPresentations, TextPresentationRegistry } from '../../../lib/conversation/view/textPresentation';
-  import { releaseTextRestoration, type TextRestorationPlacement } from './placement';
+  import { releaseTextRestoration, rowRestorationAnchor, type TextRestorationPlacement } from './placement';
   import { threadPlacement, currentPlacement, presentationReady, streamArrivalBudget, streamTravelFits, type ThreadPlacement } from "./placement";
 
   let {
@@ -100,7 +101,44 @@
   const textPresentations = new TextPresentationRegistry(() => requestReconciliation());
   setContext(conversationTextPresentations, textPresentations);
   let textRestoration: TextRestorationPlacement | null = null;
+  let restorationTimer: ReturnType<typeof restorationWait> | null = null;
+  let timedRestoration: TextRestorationPlacement | null = null;
+  function stopRestorationWait(): void {
+    restorationTimer?.stop();
+    restorationTimer = null;
+    timedRestoration = null;
+  }
+  function fallBackRestoration(): void {
+    const operation = textRestoration;
+    if (!operation || operation.fallback || operation.reader !== reader) return;
+    stopRestorationWait();
+    releaseTextRestoration(operation);
+    const anchor = rowRestorationAnchor(operation.anchor);
+    textRestoration = {...operation, anchor, fallback:true};
+    viewAnchor = anchor;
+    // Failure is a visible row destination, not another wait for the failed text.
+    pendingPresentationTarget = null;
+    requestReconciliation();
+  }
+  function syncRestorationWait(): void {
+    const operation = textRestoration;
+    if (!operation || operation.fallback || reader?.restorationOutcome !== 'pending') {
+      stopRestorationWait();
+      return;
+    }
+    if (timedRestoration !== operation) {
+      stopRestorationWait();
+      timedRestoration = operation;
+      restorationTimer = restorationWait(TEXT_RESTORATION_WAIT_MS, () => {
+        if (textRestoration !== operation || operation.reader !== reader || operation.attempt !== reader?.restorationAttempt) return;
+        reader?.failTextRestoration(operation.anchor.key);
+        fallBackRestoration();
+      });
+    }
+    restorationTimer?.active(document.visibilityState !== 'hidden' && conversationState !== 'rest');
+  }
   function cancelTextRestoration(): void {
+    stopRestorationWait();
     releaseTextRestoration(textRestoration);
     textRestoration = null;
     reader?.cancelRestoration();
@@ -109,7 +147,7 @@
     const operation = textRestoration;
     if (!operation || operation.reader !== reader || operation.attempt !== (reader?.restorationAttempt ?? 0) || !operation.anchor.content) return false;
     if (reader?.restorationOutcome === 'failed' || reader?.restorationOutcome === 'unavailable') {
-      releaseTextRestoration(operation);
+      fallBackRestoration();
       return false;
     }
     const location = operation.anchor.content;
@@ -125,14 +163,23 @@
     }
     if (state.kind === 'failed' || state.kind === 'unavailable') {
       reader?.failTextRestoration(operation.anchor.key, state.kind === 'unavailable');
-      releaseTextRestoration(operation);
+      fallBackRestoration();
       return false;
     }
     if (state.kind !== 'ready') return false;
     const delta = state.rect.top - thread.getBoundingClientRect().top - location.lineOffset;
-    moveTheThread(thread, thread.scrollTop + delta);
+    const wantedTop = thread.scrollTop + delta;
+    moveTheThread(thread, wantedTop);
     const measured = operation.demand?.read() ?? textPresentations.measure(operation.anchor.key, location);
     const aligned = measured.kind === 'ready' && Math.abs(measured.rect.top - thread.getBoundingClientRect().top - location.lineOffset) <= 1;
+    if (!aligned && measured.kind === 'ready' && restorationPresentationReady(thread)
+      && (wantedTop < -1 || wantedTop > thread.scrollHeight - thread.clientHeight + 1)) {
+      // A lens or padding change can put the old line outside the scroll range.
+      // Ready text cannot become reachable through another presentation callback.
+      reader?.failTextRestoration(operation.anchor.key);
+      fallBackRestoration();
+      return false;
+    }
     if (aligned && reader?.restorationOutcome === 'idle') releaseTextRestoration(operation);
     return aligned;
   }
@@ -327,7 +374,7 @@
   }
 
   function saveLogicalAnchor(thread:HTMLDivElement):void{
-    if(reader===null||reader.restoring||pendingOpen||!settledOnOpening||!placementReady||textRestoration!==null)return;
+    if(reader===null||reader.restoring||pendingOpen||!settledOnOpening||!placementReady||textRestoration?.anchor.content)return;
     const top=thread.getBoundingClientRect().top;
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
@@ -562,7 +609,7 @@
         takeTheReading(geometry.read(reservedSpacePixels));
 
         if (pendingOpen || !settledOnOpening || reader?.entryPhase === 'placing') {
-          if (reader !== null && reader.pages.length === 0 && (reader.status === null || reader.loading)) return;
+          if (!textRestoration?.fallback && reader !== null && reader.pages.length === 0 && (reader.status === null || reader.loading)) return;
           const targetKey = reader?.entryTarget?.key ?? (viewAnchor && !viewAnchor.following ? viewAnchor.key : null);
           if (viewAnchor !== null && !viewAnchor.following) {
             const held = restoredAnchorElement(thread);
@@ -572,12 +619,12 @@
               landTheOpen(thread);
             }
             if (textRestoration?.anchor.content) {
-              if (!alignSavedText(thread)) return;
-            } else if (!restorationPresentationReady(thread)) return;
+              if (!alignSavedText(thread) && !textRestoration?.fallback) return;
+            } else if (!textRestoration?.fallback && !restorationPresentationReady(thread)) return;
           }
           if (targetKey === null) landTheOpen(thread);
           const destination = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
-          const target = targetKey === null ? destination : reader?.entryTarget === null || reader?.entryTarget === undefined ? restoredAnchorElement(thread) ?? undefined : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === targetKey);
+          const target = (targetKey === null ? destination : reader?.entryTarget === null || reader?.entryTarget === undefined ? restoredAnchorElement(thread) ?? undefined : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === targetKey)) ?? (textRestoration?.fallback ? contentElement ?? thread : undefined);
           if (target === undefined) return;
           const restoringAnchor = viewAnchor !== null && !viewAnchor.following;
           if (!restoringAnchor && !presentationReady(target)) {
@@ -696,6 +743,7 @@
             const anchor = entryReader.restorationAnchor;
             if (anchor && entryReader.restorationOutcome === 'idle') entryReader.failTextRestoration(anchor.key);
             releaseTextRestoration(operation);
+            fallBackRestoration();
             return;
           }
           geometry = threadGeometry(thread, reservedSpaceElement);
@@ -704,6 +752,7 @@
         if (textRestoration?.anchor.content && pendingOpen && !alignSavedText(thread)) {
           if (reader?.restorationOutcome === 'idle') reader.failTextRestoration(textRestoration.anchor.key);
           releaseTextRestoration(textRestoration);
+          fallBackRestoration();
           return;
         }
         settledOnOpening = !provisionalNewest;
@@ -715,6 +764,7 @@
         if (!provisionalNewest) {
           reader?.settleTextRestoration();
           releaseTextRestoration(textRestoration);
+          stopRestorationWait();
         }
         if (sentMessageToPlace !== null && settledMessageIds.has(sentMessageToPlace)) sentMessageToPlace = null;
         else if (sentMessageToPlace !== null) dirty = true;
@@ -748,9 +798,10 @@
     untrack(() => {
       if (conversationOnScreen === wanted && readerOnScreen === wantedReader) return;
       generation += 1;
+      stopRestorationWait();
       releaseTextRestoration(textRestoration);
       const anchor = wantedReader?.restorationAnchor ?? viewAnchor;
-      textRestoration = anchor?.content && !anchor.following ? {reader:wantedReader, anchor:copyViewReaderAnchor(anchor), attempt:wantedReader?.restorationAttempt ?? 0, demand:null, unsubscribe:null} : null;
+      textRestoration = anchor && !anchor.following ? {reader:wantedReader, anchor:copyViewReaderAnchor(anchor), attempt:wantedReader?.restorationAttempt ?? 0, fallback:false, demand:null, unsubscribe:null} : null;
       if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
       if (placement) placement.cancelled = true;
       placement = threadPlacement(wantedReader, 'entry');
@@ -789,6 +840,7 @@
         pendingOpen = true;
         withTheNewestLineBeforeTheWrite = true;
       }
+      syncRestorationWait();
       requestReconciliation();
     });
   });
@@ -806,12 +858,15 @@
       if (textRestoration && textRestoration.attempt !== attempt) {
         generation += 1;
         releaseTextRestoration(textRestoration);
-        textRestoration = {...textRestoration, attempt, demand:null, unsubscribe:null};
+        const anchor = reader?.restorationAnchor ?? textRestoration.anchor;
+        textRestoration = {...textRestoration, anchor:copyViewReaderAnchor(anchor), attempt, fallback:false, demand:null, unsubscribe:null};
+        viewAnchor = copyViewReaderAnchor(anchor);
         pendingOpen = true;
         settledOnOpening = false;
         placementReady = false;
       }
-      if (reader?.restorationOutcome === 'failed' || reader?.restorationOutcome === 'unavailable') releaseTextRestoration(textRestoration);
+      if (reader?.restorationOutcome === 'failed' || reader?.restorationOutcome === 'unavailable') fallBackRestoration();
+      syncRestorationWait();
     });
     visibleRows;
     ownerReadThroughSequence;
@@ -833,6 +888,7 @@
       const moved = stateHasBeenDrawn && previous !== wanted;
       stateHasBeenDrawn = true;
       stateOnScreen = wanted;
+      syncRestorationWait();
       if (!moved) return;
       // Changing height is not a reason to move the thread. Only coming back from
       // rest is, because the thread was not there to be read a moment ago.
@@ -873,12 +929,14 @@
 
   onMount(() => {
     const onVisible = (): void => {
+      syncRestorationWait();
       if (document.visibilityState === "visible" && dirty) requestReconciliation();
     };
     document.addEventListener("visibilitychange", onVisible);
     document.addEventListener("focusin", onFocusIn);
     return () => {
       disposed = true;
+      stopRestorationWait();
       releaseTextRestoration(textRestoration);
       generation += 1;
       document.removeEventListener("visibilitychange", onVisible);

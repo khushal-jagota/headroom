@@ -41,9 +41,12 @@ export class ConversationViewReader {
     private restorationOperation = 0;
     failTextRestoration(key: string, unavailable = false): void {
         if (this.disposed || this.restorationAnchor?.key !== key) return;
+        this.restorationOperation++;
+        this.cancelRestorationRequests();
         this.restorationOutcome = unavailable ? 'unavailable' : 'failed';
         this.restorationFailed = !unavailable;
         this.restoring = false;
+        this.loading = false;
         this.changed();
     }
     textBodyReady(key: string, pieces: readonly { piece: string }[]): void {
@@ -60,7 +63,7 @@ export class ConversationViewReader {
     }
     cancelRestoration(): void {
         if (!this.restorationAnchor && !this.restoring && !this.restorationFailed) return;
-        if (this.restoring) this.cancelPages();
+        this.cancelRestorationRequests();
         this.restorationOperation++;
         this.restoring = false;
         this.restorationFailed = false;
@@ -119,7 +122,7 @@ export class ConversationViewReader {
     private retry: ReturnType<typeof setTimeout> | null = null;
     private disposed = false;
     private reconnecting: Promise<void> | null = null;
-    private requests = new Map<string, { operation: Promise<boolean>; abort: AbortController; scope: ViewHistoryScope; cursor: ViewPageCursor | null; direction: 'older' | 'newer'; replace: boolean }>();
+    private requests = new Map<string, { operation: Promise<boolean>; abort: AbortController; scope: ViewHistoryScope; cursor: ViewPageCursor | null; direction: 'older' | 'newer'; replace: boolean; restoration: number | null }>();
     private pageQueue: Promise<void> = Promise.resolve();
     /** Close the live stream so a history read is not racing a writer.
      *
@@ -151,6 +154,13 @@ export class ConversationViewReader {
         for (const request of this.requests.values()) request.abort.abort();
         this.requests.clear();
     }
+    private cancelRestorationRequests(): void {
+        for (const [key, request] of this.requests) {
+            if (request.restoration === null) continue;
+            request.abort.abort();
+            this.requests.delete(key);
+        }
+    }
     constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>(), private entryReadThroughSequence: number | null = null) {
         this.restoring = transcript && initialAnchor !== null && !initialAnchor.following;
         this.restorationAnchor = this.restoring ? initialAnchor ? copyViewReaderAnchor(initialAnchor) : null : null;
@@ -169,7 +179,7 @@ export class ConversationViewReader {
         if (!page?.items.some(item => item.key === anchor.key)) {
             const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline,
                 order: { ...anchor.order, slot: anchor.order.slot + 1 } };
-            if (!await this.load(timeline, cursor, 'older', true)) {
+            if (!await this.load(timeline, cursor, 'older', true, operation)) {
                 if (active()) this.failRestoration();
                 return;
             }
@@ -177,7 +187,7 @@ export class ConversationViewReader {
             page = this.pages.find(page => page.scope.kind === 'timeline');
         }
         if (!active()) return;
-        if (page?.newer && !await this.load(timeline, page.newer, 'newer')) {
+        if (page?.newer && !await this.load(timeline, page.newer, 'newer', false, operation)) {
             if (active()) this.failRestoration();
             return;
         }
@@ -193,9 +203,7 @@ export class ConversationViewReader {
     }
     private failRestoration(): void {
         if (this.disposed) return;
-        this.restorationFailed = true;
-        this.restorationOutcome = 'failed';
-        this.loading = false;
+        if (this.restorationAnchor) this.failTextRestoration(this.restorationAnchor.key);
         this.trouble = true;
         this.changed();
     }
@@ -206,7 +214,7 @@ export class ConversationViewReader {
         this.restorationFailed = false;
         this.restorationOutcome = 'pending';
         this.restoring = true;
-        this.cancelPages();
+        this.cancelRestorationRequests();
         void this.restoreAnchor();
     }
     /** Entry is an operation, not a moving copy of the durable read watermark. */
@@ -524,13 +532,17 @@ export class ConversationViewReader {
             this.releaseSource = () => { this.abort.signal.removeEventListener('abort', abort); abort(); };
         });
     }
-    async load(scope: ViewHistoryScope = timeline, cursor: ViewPageCursor | null = null, direction: 'older' | 'newer' = 'older', replace = false): Promise<boolean> {
+    async load(scope: ViewHistoryScope = timeline, cursor: ViewPageCursor | null = null, direction: 'older' | 'newer' = 'older', replace = false, restoration: number | null = null): Promise<boolean> {
         if (this.disposed) return false;
         const key = scopeKey(scope);
         const pending = this.requests.get(key);
         if (pending) {
-            if (sameScope(pending.scope, scope) && sameCursor(pending.cursor, cursor) && pending.direction === direction && pending.replace === replace)
+            if (sameScope(pending.scope, scope) && sameCursor(pending.cursor, cursor) && pending.direction === direction && pending.replace === replace) {
+                // Ordinary demand now owns the shared read too. Restoration failure
+                // must not cancel it, even if restoration requested it first.
+                if (restoration === null) pending.restoration = null;
                 return pending.operation;
+            }
             if (!replace) return false;
             pending.abort.abort();
         }
@@ -538,7 +550,7 @@ export class ConversationViewReader {
         // The same bound applies to held scopes and queued demand. No response bodies queue.
         if (!pending && this.requests.size >= 20) return false;
         const controller = new AbortController();
-        const request = { operation: Promise.resolve(false), abort: controller, scope, cursor, direction, replace };
+        const request = { operation: Promise.resolve(false), abort: controller, scope, cursor, direction, replace, restoration };
         const active = () => !this.disposed && !controller.signal.aborted && this.requests.get(key) === request;
         const operation = this.pageQueue.then(async () => {
             if (!active()) return false;
@@ -546,8 +558,17 @@ export class ConversationViewReader {
             // reconnect replays writes during this read for every retained scope, including
             // the newly admitted page. A live writer therefore cannot starve history reads.
             this.pauseTail();
+            let stopAbort = () => {};
             try {
-                const page = await this.get<ConversationViewPage>('/pages', { scope: JSON.stringify(scope), ...(cursor ? { cursor: JSON.stringify(cursor) } : {}), direction }, controller.signal);
+                // Abort retires the queue slot even if a transport never settles.
+                // Its eventual response still cannot pass the request identity guard.
+                const canceled = new Promise<null>(resolve => {
+                    const onAbort = () => resolve(null);
+                    controller.signal.addEventListener('abort', onAbort, {once:true});
+                    stopAbort = () => controller.signal.removeEventListener('abort', onAbort);
+                });
+                const page = await Promise.race([this.get<ConversationViewPage>('/pages', { scope: JSON.stringify(scope), ...(cursor ? { cursor: JSON.stringify(cursor) } : {}), direction }, controller.signal), canceled]);
+                if (page === null) return false;
                 if (!active()) return false;
                 if (!sameScope(page.scope, scope)) throw new Error('Conversation view scope changed');
                 this.accept(page, replace || cursor === null, direction);
@@ -559,6 +580,7 @@ export class ConversationViewReader {
                 return false;
             }
             finally {
+                stopAbort();
                 if (this.requests.get(key) === request) this.requests.delete(key);
                 if (!this.disposed) {
                     if (this.rangeTimer !== null) clearTimeout(this.rangeTimer);
