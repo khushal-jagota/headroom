@@ -187,7 +187,7 @@
       whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }
     shownFile = file;
-    if (file && conversationState === "opened") conversationState = "peeked";
+    if (file && conversationState === "opened") conversationState = "rest";
     if (!file) {
       const restoreFocus = whatHadFocus;
       whatHadFocus = null;

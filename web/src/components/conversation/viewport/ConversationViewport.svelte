@@ -293,8 +293,9 @@
     if (thread === null || !canMeasure() || pendingOpen || !placementReady || conversationMotion(thread).active(positionMotion)) return;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return;
-    jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels);
-    countBelow();
+    // Native anchoring can scroll after content grows, before ResizeObserver updates
+    // the cached last-line position. Read current geometry before deciding to follow.
+    takeTheReading(geometry.read(reservedSpacePixels));
     withTheNewestLineBeforeTheWrite = !jumpVisible && heldUnreadKey === null;
     saveLogicalAnchor(thread);
   }

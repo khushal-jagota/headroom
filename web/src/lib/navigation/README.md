@@ -18,6 +18,19 @@ The Ticket masthead joins the assigned Manager's Project when a parent exists. O
 
 For a complete publication, the API deduplicates current Ticket, Chief, and Manager conversation pointers. It counts only fresh `working: true` facts. A missing, unknown, or retained working fact makes the total `null`. Historical-only and unlinked conversations do not contribute. `message_for_owner` does not affect the count.
 
+Review membership groups each Ticket's eligible proposal and unread conversations before page boundaries and counts.
+Message-only Tickets also use Ticket member keys. Manager and Chief cards retain address member keys.
+Each Ticket closure includes all eligible canonical addresses and exact conversations, with atomic budget admission.
+Review totals come from grouped membership. Ordinary unread membership and its distinct-conversation totals stay independent.
+A settled Manager excludes only its own messages. Ticket eligibility uses its own done and backlog state.
+The earliest constituent sets the Ticket card's queue position, deliberately bringing a new proposal forward beside an older message.
+Proposal timestamps and revisions remain separate approval identities. Address selection precedes owner-state filtering.
+Painted Review conversations request bounded canonical-owner context while a reply or read resolves.
+The server supplies the canonical address and owner even when unread membership clears or that owner becomes excluded.
+An explicit null address records absence. A missing address in an unrelated page does not establish canonical removal.
+This context preserves uncertain reply attempts without retaining a conversation after its canonical owner becomes excluded.
+It includes only the requested conversation identities and follows existing record, byte, and request budgets.
+
 The existing Review field `runningConversationCount` delegates to this API. The exact unfiltered Worker out-claim sum remains separate. The API adds no display or placement. A pending collection handoff retains the last coherent display without dropping local proposal edits. Explicit authority loss still suppresses runtime knowledge.
 
 Snapshots have current or degraded mode. A current response contains complete attention, an exact authority profile, and a replay cursor. A degraded response contains coherent durable attention only, with a null cursor and proof. Every batch carries the same complete authority profile as its accepted current snapshot. Producer permit scope and navigation cursor scope are independent namespaces. Authority checks precede duplicate suppression.

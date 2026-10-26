@@ -22,7 +22,7 @@ from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuth
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
-VIEW_PROJECTION_VERSION = 5
+VIEW_PROJECTION_VERSION = 6
 
 ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
 ViewGroup = Literal[
@@ -66,11 +66,14 @@ class ViewWindowRequest(TypedDict):
 
 
 class ViewRequest(TypedDict):
-    projection_version: Literal[5]
+    projection_version: Literal[6]
     scope_generation: int
     locale: str
     selected: ViewOwner | None
     selected_conversation_id: str | None
+    # Exact painted Review conversations whose canonical owners must stay visible
+    # while a bounded reply outcome resolves, even after unread membership clears.
+    review_conversation_ids: list[str]
     windows: list[ViewWindowRequest]
 
 
@@ -165,15 +168,21 @@ class ViewCounts(TypedDict):
     settled: int
 
 
+class ReviewConversationContext(TypedDict):
+    conversation_id: str
+    canonical_address_id: str | None
+
+
 class ViewContent(TypedDict):
     records: list[ViewRecord]
     windows: list[ViewWindow]
     counts: ViewCounts
+    review_context: list[ReviewConversationContext]
 
 
 class ViewIdentity(TypedDict):
     wire_version: Literal[3]
-    projection_version: Literal[5]
+    projection_version: Literal[6]
     view_id: str
     scope_generation: int
     ordering_generation: str
@@ -211,6 +220,7 @@ class ViewPatch(ViewIdentity):
     # Eviction is absence from this scope, never a claim of canonical deletion.
     windows: list[ViewWindow]
     counts: ViewCounts
+    review_context: list[ReviewConversationContext]
 
 
 class ViewCheckpoint(ViewIdentity):

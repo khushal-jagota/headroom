@@ -20,6 +20,7 @@ from tests.unit.test_conversation_api import (
 from planner.conversation.events import AgentMessageEventPayload
 from planner.conversation.message_content import text_message_content
 from planner.conversation.views.api import router
+from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
 from planner.core import db
 
 
@@ -137,7 +138,7 @@ def test_selected_body_stream_is_exact_and_obsolete_reference_is_409(harness: _H
                 ).status_code == 410
             snapshot = (await client.get(path, params={"transcript": "false"})).json()
             assert snapshot["status"]["diagnostics_expired"] is True
-            assert snapshot["page"]["projection_version"] == 1
+            assert snapshot["page"]["projection_version"] == VIEW_PROJECTION_VERSION
 
     _run(exercise)
 

@@ -40,7 +40,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
   const readerOnly=new URLSearchParams(window.location.search).has("reader");
   const readerPeek=new URLSearchParams(window.location.search).has("reader-peek");
-  let readerState=$state<"opened"|"peeked"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":readerPeek?"peeked":"opened");
+  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":readerPeek?"opened":"opened");
   if(readerOnly)installConversationViewReaderFixture();
   (window as any).__readerState=(state:typeof readerState)=>readerState=state;
 
@@ -81,7 +81,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   (window as any).__layoutUpdate=(recap:string)=>{layoutRecap=recap;};
   (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
   import ManagerFrame from "../src/components/ManagerFrame.svelte";
-  import { conversationOverlay } from "../src/lib/conversation/layout/overlay";
+  import { conversationDock } from "../src/lib/conversation/layout/dock";
   import { createConversationDismissal } from "../src/lib/conversation/dismissal";
   import ArtifactPreview from "../src/components/ArtifactPreview.svelte";
   const cardArtifact = new URLSearchParams(location.search).has("card-artifact");
@@ -213,7 +213,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   // Controlled content replay. Responses stay pending while the reader chooses a
   // position, then browser-owned image/Markdown completion changes the same rows.
   (window as any).__setupScrollRegression = (kind: string, mode = "scrollback") => {
-    conversationState = "peeked";
+    conversationState = "opened";
     lens = "full";
     running = false;
     const paragraphs = Array.from({ length: 32 }, (_, index) =>
@@ -674,10 +674,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 {/snippet}
 <div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled || ticketGestures}>
   {#if ticketGestures}
-    <div class="ticket-page" use:conversationOverlay use:dismissTicketOutside>
+    <div class="ticket-page" use:conversationDock use:dismissTicketOutside>
     <div class="ticket-reading">
     <main class="ticket-doc fixture-document">
-      <button type="button" data-ticket-behind>Ticket content</button>
+      <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
     </main>
     {#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file", ticketId:"t_cardmotion",path:"artifact.html"}}
       registerArtifactFrame={ticketDismissal.registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}
@@ -688,7 +688,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     </div>
   {:else}
     <ManagerFrame bind:conversationState>
-      <button type="button" data-ticket-behind>Ticket content</button>
+      <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
       {#snippet readingAside(registerArtifactFrame)}{#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"}}
         {registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}{/snippet}
       {#snippet conversation()}{@render conversationPane()}{/snippet}
@@ -722,10 +722,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   .fixture-ticket :global(.conversation-layer) {
     align-items: center;
   }
-  .fixture-ticket:not(.ticket-screen) :global(.conversation-column) {
-    box-sizing: border-box;
-    width: min(680px, calc(100% - 96px));
-  }
+
   .fixture-ticket.ticket-screen {
     height: 100%;
     padding: 0;

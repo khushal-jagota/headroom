@@ -4,6 +4,8 @@ import json
 import sqlite3
 from typing import Any
 
+from planner.navigation.review_logic import message_owner_is_live
+
 
 def canonical_review_address(conn: sqlite3.Connection, conversation_id: str) -> str | None:
     row = conn.execute(
@@ -17,11 +19,22 @@ def canonical_review_address(conn: sqlite3.Connection, conversation_id: str) -> 
     return None if row is None else str(row[0])
 
 
-def review_message_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def review_message_items(
+    conn: sqlite3.Connection, *, ticket_id: str | None = None
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for conversation_id, encoded in conn.execute(
+    address_order: dict[str, tuple[int, str, str]] = {}
+    candidates = conn.execute(
         "SELECT id,value FROM navigation_records WHERE kind='conversation'"
-    ):
+        if ticket_id is None
+        else "SELECT c.id,c.value FROM navigation_records c WHERE c.kind='conversation' "
+        "AND EXISTS(SELECT 1 FROM navigation_records a WHERE a.kind='address' "
+        "AND json_extract(a.value,'$.conversation_id')=c.id "
+        "AND json_extract(a.value,'$.owner_kind')='ticket' "
+        "AND json_extract(a.value,'$.owner_id')=?)",
+        () if ticket_id is None else (ticket_id,),
+    )
+    for conversation_id, encoded in candidates:
         conversation = json.loads(encoded)
         if not conversation["attention"]["durable"]["message_for_owner"]:
             continue
@@ -33,12 +46,19 @@ def review_message_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "SELECT value FROM navigation_records WHERE kind='address' AND id=?", (address_id,)
             ).fetchone()[0]
         )
+        if ticket_id is not None and (
+            address["owner_kind"] != "ticket" or address["owner_id"] != ticket_id
+        ):
+            continue
         owner = json.loads(
             conn.execute(
                 "SELECT value FROM navigation_records WHERE kind=? AND id=?",
                 (address["owner_kind"], address["owner_id"]),
             ).fetchone()[0]
         )
+        if not message_owner_is_live(address["owner_kind"], owner):
+            continue
+        address_order[address_id] = (-int(address["current"]), address_id, conversation_id)
         items.append(
             {
                 "review_item_type": "message",
@@ -52,4 +72,4 @@ def review_message_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "recap_reference": None,
             }
         )
-    return items
+    return sorted(items, key=lambda item: address_order[item["address_id"]])

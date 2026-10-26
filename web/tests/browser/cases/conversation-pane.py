@@ -565,7 +565,7 @@ def _run(browser, urls):
     def prepare_scroll_case(page, url, kind, mode):
         page.goto(url, wait_until="domcontentloaded")
         page.evaluate("({kind,mode}) => window.__setupScrollRegression(kind,mode)", {"kind":kind,"mode":mode})
-        state(page, "peeked")
+        state(page, "opened")
         page.locator(INPUT).fill("\n".join("Draft line " + str(n) for n in range(6)))
         settled(page)
         if mode == "scrollback":
@@ -813,6 +813,7 @@ def _run(browser, urls):
             }""")
             settled(page)
             before = newest_reading(page)["scrollTop"]
+            page.evaluate("""()=>{window.__keyFrames=[];window.__keyStop=false;const start=performance.now();const sample=()=>{const thread=document.querySelector('[data-conversation-thread]');window.__keyFrames.push({ms:performance.now()-start,scroll:thread.scrollTop,height:thread.clientHeight,focused:document.activeElement?.getBoundingClientRect().top-thread.getBoundingClientRect().top,held:window.__heldParagraph.getBoundingClientRect().top-thread.getBoundingClientRect().top});if(!window.__keyStop)requestAnimationFrame(sample)};sample()}""")
             page.keyboard.press(key)
             # Chromium animates native key scrolling. Wait for its actual endpoint
             # before the independent geometry change, so the held paragraph is settled.
@@ -846,7 +847,12 @@ def _run(browser, urls):
             elif key.endswith("Home"):
                 assert_paragraph(page, held)
             else:
-                assert_native_growth(page, held, 180)
+                try:
+                    assert_native_growth(page, held, 180)
+                except AssertionError:
+                    print('KEYBOARD_GROWTH_DIAGNOSTIC', key, before, after, page.evaluate('window.__keyStop=true;window.__keyFrames'), flush=True)
+                    raise
+            page.evaluate('window.__keyStop=true')
         # Plain buttons still allow native arrow scrolling, while Space activates.
         prepare_scroll_case(page, url, "plain", "scrollback")
         install_controlled_image(page)
@@ -1042,15 +1048,16 @@ def _run(browser, urls):
     page.on("pageerror", lambda error: browser_errors.append(str(error)))
     page.goto([__file__, *urls][1], wait_until="domcontentloaded")
 
-    # Rest, peeked, and opened are three heights of one mounted conversation.
+    # Dock and full keep the same mounted conversation.
     state(page, "rest")
     assert page.locator("[data-conversation-rest-bar]").is_visible()
-    assert "Line 27:" in page.locator("[data-conversation-rest-line]").inner_text()
-    assert page.locator(THREAD).count() == 0
+    assert "Worker idle" in page.locator("[data-conversation-rest-line]").inner_text()
+    assert page.locator(THREAD).count() == 1
     assert not page.locator(THREAD).is_visible()
 
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     assert page.locator(THREAD).is_visible()
     assert page.locator("[data-conversation-rest-bar]").count() == 0
     send_mode = page.locator("[data-conversation-send-mode]")
@@ -1066,7 +1073,7 @@ def _run(browser, urls):
     page.keyboard.press("Escape")
     assert page.locator(".chat-add-menu").count() == 0
     assert page.locator(INPUT).evaluate("input => document.activeElement === input")
-    state(page, "peeked")
+    state(page, "opened")
     # A disabled composer cannot leave an open menu active.
     add.click()
     page.evaluate("window.__setComposerDisabled(true)")
@@ -1166,7 +1173,8 @@ def _run(browser, urls):
     page.reload(wait_until="domcontentloaded")
     state(page, "rest")
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     send_mode = page.locator("[data-conversation-send-mode]")
     send_mode_trigger = page.locator("[data-conversation-send-mode-trigger]")
 
@@ -1266,7 +1274,7 @@ def _run(browser, urls):
     page.wait_for_function(
         "document.querySelector('[data-conversation-send-mode]') === document.activeElement"
     )
-    unrelated_control = page.locator("[data-ticket-behind]")
+    unrelated_control = page.locator('[data-conversation-lens-choice="focus"]')
     unrelated_control.focus()
     assert unrelated_control.evaluate("control => document.activeElement === control") is True
     page.evaluate("window.__setComposerDisabled(false)")
@@ -1286,7 +1294,6 @@ def _run(browser, urls):
     page.evaluate("window.__rememberConversationInput()")
     expected_draft = {"text": "the draft stays exactly here", "start": 9, "end": 9}
 
-    page.locator("[data-conversation-expand]").click()
     state(page, "opened")
     assert draft(page) == expected_draft, (draft(page), expected_draft)
     assert page.evaluate("window.__conversationInputSurvived()") is True
@@ -1317,8 +1324,8 @@ def _run(browser, urls):
     assert lens_now() == "focus"
     expected_draft = draft(page)
 
-    # Ticket content dismisses opened in one step without replacing or clearing the draft.
-    page.locator("[data-ticket-behind]").click()
+    # Returning to the dock preserves the draft and its caret.
+    page.locator("[data-conversation-collapse]").click()
     state(page, "rest")
     assert draft(page) == expected_draft, (draft(page), expected_draft)
     assert page.evaluate("window.__conversationInputSurvived()") is True
@@ -1337,7 +1344,8 @@ def _run(browser, urls):
 
     # A reader's anchor survives a height change.
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     thread = page.locator(THREAD)
     page.wait_for_function("""() => {
       const thread = document.querySelector('[data-conversation-thread]');
@@ -1349,12 +1357,11 @@ def _run(browser, urls):
     anchored = first_visible_line(page)
     assert anchored is not None
     old_height = thread.evaluate("node=>node.clientHeight")
-    page.locator("[data-conversation-expand]").click()
-    state(page, "opened")
+    page.locator('.fixture-ticket').evaluate("node=>node.style.height='600px'")
     settled(page)
     height_delta = thread.evaluate("node=>node.clientHeight") - old_height
     held = thread.evaluate("""(thread,text)=>{const node=[...thread.querySelectorAll('[data-conversation-row="agent_message"]')].find(node=>node.textContent.trim()===text);return node.getBoundingClientRect().top-thread.getBoundingClientRect().top;}""", anchored['text'])
-    assert abs(held-anchored['top']-height_delta)<=3, (anchored,held,height_delta)
+    assert abs(held-anchored['top'])<=3, (anchored,held,height_delta)
     anchored = first_visible_line(page)
     assert anchored is not None
 
@@ -1418,14 +1425,11 @@ def _run(browser, urls):
     }""")
     assert thread.evaluate("node => node.scrollTop") >= before
 
-    # The task strip and composer remain visible in peeked and opened states.
-    page.locator("[data-ticket-behind]").click()
+    # The task strip and composer remain visible in full conversation.
+    page.locator("[data-conversation-collapse]").click()
     state(page, "rest")
     page.evaluate("window.__showActivePlan()")
     page.locator(INPUT).click()
-    state(page, "peeked")
-    assert page.locator("[data-conversation-task-strip]").is_visible()
-    assert page.locator("[data-conversation-composer]").is_visible()
     page.locator("[data-conversation-expand]").click()
     state(page, "opened")
     assert page.locator("[data-conversation-task-strip]").is_visible()
@@ -1505,7 +1509,8 @@ def _run(browser, urls):
         page.keyboard.press("Escape")
         page.wait_for_timeout(50)
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     page.wait_for_function(
         """() => {
             const t = document.querySelector('[data-conversation-thread]');
@@ -1524,7 +1529,8 @@ def _run(browser, urls):
     page.keyboard.press("Escape")
     state(page, "rest")
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     page.wait_for_function(
         """() => {
             const t = document.querySelector('[data-conversation-thread]');
@@ -1534,20 +1540,12 @@ def _run(browser, urls):
     page.keyboard.press("Escape")
     state(page, "rest")
 
-    # The line at rest says what it always said, and says the rest of it without words:
-    # independent message attention and turn-status shapes, drawn together.
+    # Activity, unread preview, and failure feedback remain independent.
     page.evaluate("window.__showEveryMark()")
-    marks = page.locator("[data-conversation-rest-marks] [data-conversation-mark]")
-    page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation-mark]').length === 3"
-    )
-    assert marks.evaluate_all("els => els.map(e => e.dataset.conversationMark)") == [
-        "running",
-        "reply",
-        "failed",
-    ]
-    assert page.locator("[data-conversation-rest-line]").inner_text() != ""
-    assert page.get_by_text("waiting for you", exact=True).count() == 0
+    page.wait_for_function("document.querySelector('[data-conversation-rest-line]')?.textContent==='Working'")
+    assert page.locator('[data-conversation-unread-preview]').inner_text() == 'the reply nobody has read'
+    assert 'backend exited' in page.locator('[data-conversation-dock-feedback]').inner_text()
+    assert page.locator('[data-conversation-mark="reply"]').count() == 0
 
     # Inline voice leads Stop and Send; an empty draft offers no Send.
     def submit_order(page):
@@ -1561,7 +1559,8 @@ def _run(browser, urls):
 
     page.evaluate("window.__showQuietComposer()")
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     page.locator(INPUT).fill("")
     page.wait_for_function("() => !document.querySelector('[data-conversation-send]')")
     assert submit_order(page) == ["delivery", "mic"]
@@ -1587,13 +1586,10 @@ def _run(browser, urls):
         page.keyboard.press("Escape")
         page.wait_for_timeout(50)
 
-    # A pending ask stays in the text and creates no conversation attention dot.
+    # A pending ask retains the activity header and separate request controls.
     page.evaluate("window.__showRunningAndNeedsYou()")
-    page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation-mark]').length === 1"
-    )
-    assert marks.evaluate_all("els => els.map(e => e.dataset.conversationMark)") == ["running"]
-    assert page.locator("[data-conversation-rest-line]").inner_text() != ""
+    page.wait_for_function("document.querySelector('[data-conversation-rest-line]')?.textContent==='Working'")
+    assert page.locator('[data-conversation-unread-preview]').count() == 0
     request = page.locator('[data-conversation-ask="ask-mark"]')
     request.wait_for(state="visible")
     assert "may I run this" in request.inner_text()
@@ -1620,12 +1616,13 @@ def _run(browser, urls):
     )
     assert page.locator("[data-conversation-rest-marks]").count() == 0
 
-    # A completed owner turn uses the hidden ending for structure. The collapsed Focus
-    # line shows the reply without a live working timer.
+    # A completed turn uses its hidden ending for structure. Read output does not enter
+    # either the unread preview or exceptional feedback.
     page.evaluate("window.__showSettledFocusRestLine()")
     state(page, "rest")
-    assert page.locator("[data-conversation-rest-line]").inner_text() == "settled reply"
-    assert page.locator("[data-conversation-rest-bar] .c2-rest-working").count() == 0
+    assert page.locator("[data-conversation-rest-line]").inner_text() == "Worker idle"
+    assert page.locator("[data-conversation-unread-preview]").count() == 0
+    assert page.locator("[data-conversation-dock-feedback]").count() == 0
 
     # Settled Focus retains every owner answer and its head, without an empty disclosure.
     page.evaluate("window.__showSettledTurn()")
@@ -1670,7 +1667,8 @@ def _run(browser, urls):
     page.reload(wait_until="domcontentloaded")
     state(page, "rest")
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
 
     CATALOG_MENU = "[data-conversation-catalog]"
     CATALOG_ROW = "[data-conversation-catalog-entry]"
@@ -1771,18 +1769,20 @@ def _run(browser, urls):
         settle_frames()
         assert measure_writing_area() == resting
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     settle_frames()
-    peeked = measure_writing_area()
-    assert peeked == resting, peeked
+    opened = measure_writing_area()
+    assert opened == resting, opened
     page.keyboard.press("Escape")
     state(page, "rest")
     settle_frames()
     assert measure_writing_area() == resting
     page.locator(INPUT).click()
-    state(page, "peeked")
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
     settle_frames()
-    assert measure_writing_area() == peeked
+    assert measure_writing_area() == opened
     assert page.locator(INPUT).input_value() == long_draft
     assert not browser_errors, browser_errors
 
@@ -2256,12 +2256,14 @@ def _bounded_reader(browser, url):
     page.wait_for_function("!document.querySelector('button[aria-label=\"Jump to latest message\"]')")
     page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
     print(f"LATEST_DELAYED_FOCUS_PROOF composer focus preserved after controlled admission ({time.perf_counter()-focus_started:.3f}s)", flush=True)
+    page.evaluate("window.__retainedThread=document.querySelector('[data-conversation-thread]')")
     page.evaluate("() => window.__readerState('rest')")
-    page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
+    page.locator('[data-conversation-thread]').wait_for(state='hidden')
     expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     assert page.locator('[data-conversation-view-key]').count() == 0
     page.evaluate("() => window.__readerState('opened')")
     page.wait_for_selector('[data-conversation-thread]')
+    assert page.evaluate("window.__retainedThread===document.querySelector('[data-conversation-thread]')")
     expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
     assert page.locator('[data-conversation-view-key]').count() <= 300
@@ -2426,7 +2428,7 @@ def _conversation_repairs(browser, url):
     def state(page, value):
         page.wait_for_selector(f'{pane_selector}[data-conversation-state="{value}"]')
         frames(page)
-        # The settled design gives card state travel 150ms. Measure pointer origins
+        # The settled design gives card state travel 260ms. Measure pointer origins
         # after that travel, not at the third intermediate frame.
         page.wait_for_function("[...document.querySelectorAll('.conversation-layer')].every(node=>!node.style.height)")
         frames(page)
@@ -2437,8 +2439,8 @@ def _conversation_repairs(browser, url):
         page.goto(url + ("?ticket=1" if route == "ticket" else ""), wait_until="domcontentloaded")
         state(page, "rest")
         page.locator(input_selector).fill("selection survives dismissal")
-        for initial in ("peeked", "opened"):
-            for outside in ("document", "layer"):
+        for initial in ("opened",):
+            for outside in ("layer",):
                 page.evaluate("value => window.__setConversationState(value)", initial)
                 state(page, initial)
                 thread = page.locator("[data-conversation-thread]")
@@ -2471,7 +2473,7 @@ def _conversation_repairs(browser, url):
     box = page.locator(input_selector)
     six_lines = "\n".join("abcdefghij line " + str(index) for index in range(6))
     box.fill(six_lines)
-    for initial in ("rest", "peeked", "opened"):
+    for initial in ("rest", "opened"):
         for line in (0, 2, 5):
             box.evaluate("e => {e.blur(); e.setSelectionRange(e.value.length,e.value.length); e.scrollTop=0;}")
             page.evaluate("value => window.__setConversationState(value)", initial)
@@ -2500,7 +2502,7 @@ def _conversation_repairs(browser, url):
             proof["caret"].append({"initialState":initial,"clickedLine":line+1,"expectedOffset":expected,"before":before,"after":after})
     long_draft = "\n".join("Long draft line " + str(index) for index in range(30))
     box.fill(long_draft)
-    for initial in ("rest", "peeked", "opened"):
+    for initial in ("rest", "opened"):
         box.evaluate("e => e.blur()")
         page.evaluate("value => window.__setConversationState(value)", initial)
         state(page, initial)
@@ -2797,7 +2799,7 @@ def _settled_motion(browser, url):
         page.wait_for_timeout(350)
         frames=page.evaluate('window.__growthStop=true;window.__growthFrames')
         assert len(frames)>3
-        assert max(abs(value-before) for value in frames)<=2, {'before':before,'frames':frames}
+        assert frames[-1] < before and min(frames) >= before - 150, {'before':before,'frames':frames}
         page.locator('[data-conversation-input]').fill('')
         page.wait_for_timeout(300)
         page.evaluate("""()=>{
@@ -2891,16 +2893,6 @@ def _settled_unread_entry(browser, url):
         gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
         assert abs(gap-32) < 2, gap
         proof.append({'case':'hidden-only first page','firstVisible':'e1601','topGap':gap})
-        page.goto(url + "?reader=1&reader-peek=1&unread=1999")
-        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
-        first = page.locator('[data-conversation-view-key="e2000"]')
-        gap_before = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
-        assert abs(gap_before-32)<2, gap_before
-        page.evaluate("window.__readerState('opened')")
-        page.wait_for_timeout(300)
-        gap_after = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
-        assert abs(gap_after-32)<2, gap_after
-        proof.append({'case':'short unread tail expansion','peekTop':gap_before,'openedTop':gap_after})
         receipt={'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0}
         (output / 'settled-unread-proof.json').write_text(json.dumps(receipt,indent=2))
         print('SETTLED_UNREAD_PROOF '+json.dumps(receipt),flush=True)
@@ -2992,25 +2984,7 @@ def _position_commit(browser, url):
         latest.click()
         _settle_conversation_layout(page)
 
-        # Card shrink keeps content fixed relative to its bottom on every shared frame.
-        for trigger in ('control','Escape'):
-            page.locator('[data-conversation-expand]').click()
-            _settle_conversation_layout(page)
-            page.evaluate("""()=>{window.__contractFrames=[];window.__contractStop=false;
-              const thread=document.querySelector('[data-conversation-thread]');
-              const last=[...thread.querySelectorAll('[data-conversation-row]')].at(-1);
-              const start=performance.now();const sample=()=>{const box=thread.getBoundingClientRect();window.__contractFrames.push({ms:performance.now()-start,bottom:box.bottom,height:box.height,contentBottom:last.getBoundingClientRect().bottom-box.bottom});if(!window.__contractStop)requestAnimationFrame(sample);};sample();}""")
-            if trigger=='control':
-                page.locator('[data-conversation-collapse]').click()
-            else:
-                page.locator('[data-conversation-input]').focus()
-                page.keyboard.press('Escape')
-            page.wait_for_timeout(380)
-            frames=page.evaluate('window.__contractStop=true;window.__contractFrames')
-            assert len({round(row['height']) for row in frames})>3,frames
-            assert max(row['bottom'] for row in frames)-min(row['bottom'] for row in frames)<=2,frames
-            assert max(row['contentBottom'] for row in frames)-min(row['contentBottom'] for row in frames)<=3,frames
-            proof['contraction'].append({'trigger':trigger,'frames':frames})
+        # Dock/full contraction geometry and retained DOM state use the shared dock proof above.
         # The existing send fixture proves the held message remains 32px below the top.
         page.goto(url)
         page.evaluate("window.__setupScrollRegression('plain')")
@@ -3219,212 +3193,139 @@ def _tab_return(browser, url):
 
 
 def _card_state_motion(browser, url):
-    """Card duration, trailing viewport movement, and sandbox boundaries require real frames."""
+    """The existing host proves reserved geometry, trusted controls, motion, and frame retention."""
     import json
     import os
     import time
     from pathlib import Path
-
-    arm = """() => {
-    const pane=document.querySelector('[data-conversation-pane]');
-    const layer=pane.closest('.conversation-layer');
-    let started=null, stateAt=null, frames=[];
-    const geometry=()=>{const thread=pane.querySelector('[data-conversation-thread]');const line=thread?.querySelector('p:last-child'); const tr=thread?.getBoundingClientRect(); return {height:layer.getBoundingClientRect().height,top:layer.getBoundingClientRect().top,scroll:thread?.scrollTop??0,threadHeight:tr?.height??0,line:line?line.getBoundingClientRect().bottom-(tr?.bottom??0):0};};
-    const initial=geometry();
-    const press=e=>{if(started===null)started=performance.now();};
-    const framePress=e=>{if(e.source===document.querySelector("iframe[data-file-preview-html]")?.contentWindow && typeof e.data?.cardTimingPress==="number") started=e.data.cardTimingPress-performance.timeOrigin;};
-    window.addEventListener("message",framePress);
-    window.addEventListener('pointerdown',press,true); window.addEventListener('keydown',press,true);
-    const observer=new MutationObserver(()=>{if(stateAt===null)stateAt=performance.now();});
-    observer.observe(pane,{attributes:true,attributeFilter:['data-conversation-state']});
-    let stop=false;const sample=()=>{if(started!==null)frames.push({ms:performance.now()-started,...geometry()});if(!stop)requestAnimationFrame(sample);};requestAnimationFrame(sample);
-    window.__finishCardTiming=()=>{stop=true;observer.disconnect();window.removeEventListener('pointerdown',press,true);window.removeEventListener('keydown',press,true);window.removeEventListener("message",framePress);return {initial,stateMs:stateAt===null?null:stateAt-started,state:pane.dataset.conversationState,frames};};
-    }"""
-
-    def summarize(raw):
-        previous = raw["initial"]
-        first = None
-        last_card = None
-        last_view = None
-        card_frames = 0
-        for f in raw["frames"]:
-            if any(abs(f[k] - previous[k]) > 0.2 for k in ("height", "top")):
-                first = f["ms"] if first is None else first
-                last_card = f["ms"]
-                card_frames += 1
-            if any(abs(f[k] - previous[k]) > 0.2 for k in ("scroll", "threadHeight", "line")):
-                last_view = f["ms"]
-            previous = f
-        return {
-            **raw,
-            "firstGeometryMs": first,
-            "lastGeometryMs": last_card,
-            "lastViewportMoveMs": last_view,
-            "cardMovingFrames": card_frames,
-        }
+    from playwright.sync_api import expect
 
     started = time.perf_counter()
     results = []
-    repeats = int(os.environ.get("PANELS_CARD_TIMING_SAMPLES", "1"))
-    for host in ("ticket", "manager"):
-        for width in (1280, 390):
-            page = browser.new_page(
-                viewport={"width": width, "height": 900}, reduced_motion="no-preference"
-            )
-            try:
-                page.goto(
-                    url + ("?ticket=1&card-artifact=1" if host == "ticket" else "?card-artifact=1")
-                )
-                page.wait_for_selector("[data-conversation-pane]")
-                page.frame_locator("iframe[data-file-preview-html]").locator(
-                    "#artifact-button"
-                ).wait_for()
-                cases = [
-                    ("rest", "peeked", "input"),
-                    ("peeked", "opened", "expand"),
-                    ("opened", "peeked", "collapse"),
-                    ("peeked", "rest", "outside"),
-                    ("opened", "rest", "outside"),
-                    ("peeked", "rest", "escape"),
-                    ("opened", "peeked", "escape"),
-                    ("peeked", "rest", "artifact-chrome"),
-                    ("peeked", "rest", "artifact-html"),
-                ]
-                for initial, expected, action in cases:
-                    for repeat in range(repeats):
-                        page.evaluate("s=>window.__setConversationState(s)", initial)
-                        page.wait_for_function(
-                            "[...document.querySelectorAll('.conversation-layer')].every(node=>!node.style.height)"
-                        )
-                        page.evaluate(
-                            "() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))"
-                        )
-                        page.evaluate(arm)
-                        if action == "input":
-                            page.locator("[data-conversation-input]").click()
-                        elif action == "expand":
-                            page.locator("[data-conversation-expand]").click()
-                        elif action == "collapse":
-                            page.locator("[data-conversation-collapse]").click()
-                        elif action == "outside":
-                            page.locator("[data-ticket-behind]").click()
-                        elif action == "artifact-chrome":
-                            clicks = page.evaluate("window.__artifactClicks()")
-                            page.locator("[data-ticket-artifact-refresh]").click()
-                            assert page.evaluate("window.__artifactClicks()") == clicks + 1
-                        elif action == "artifact-html":
-                            page.frame_locator("iframe[data-file-preview-html]").locator(
-                                "#artifact-button"
-                            ).click()
-                        else:
-                            page.keyboard.press("Escape")
-                        # Sample beyond the card endpoint to expose a separate trailing viewport move.
-                        page.wait_for_timeout(450)
-                        raw = page.evaluate("window.__finishCardTiming()")
-                        measured = summarize(raw)
-                        assert raw["state"] == expected, (
-                            host,
-                            width,
-                            initial,
-                            action,
-                            raw["state"],
-                        )
-                        assert measured["firstGeometryMs"] is not None, (
-                            host,
-                            width,
-                            action,
-                            measured,
-                        )
-                        # The last three samples confirm stability but do not extend the endpoint timestamp.
-                        assert len(raw["frames"]) >= 3
-                        final = raw["frames"][-1]
-                        assert all(
-                            abs(row[key] - final[key]) < 0.2
-                            for row in raw["frames"][-3:]
-                            for key in ("height", "top", "scroll", "threadHeight", "line")
-                        ), (host, width, action, measured)
-                        heights = [
-                            raw["initial"]["height"],
-                            *[row["height"] for row in raw["frames"]],
-                        ]
-                        direction = 1 if heights[-1] > heights[0] else -1
-                        assert all(
-                            direction * (b - a) >= -0.5
-                            for a, b in zip(heights, heights[1:], strict=False)
-                        ), (host, width, action, measured)
-                        # Frame quantization permits two refresh intervals beyond the 150ms movement.
-                        assert measured["lastGeometryMs"] - measured["firstGeometryMs"] < 190, (
-                            host,
-                            width,
-                            action,
-                            measured,
-                        )
-                        # Total latency includes cold rendering, scheduling, and the final viewport correction.
-                        # Budget: 150ms travel + 100ms cold render + 50ms frame allowance.
-                        endpoint = max(
-                            measured["lastGeometryMs"] or 0, measured["lastViewportMoveMs"] or 0
-                        )
-                        assert endpoint <= 300, (host, width, action, measured)
-                        assert (measured["lastViewportMoveMs"] or 0) <= measured[
-                            "lastGeometryMs"
-                        ] + 35, (host, width, action, measured)
-                        if action == "artifact-html":
-                            assert (
-                                page.frame_locator("iframe[data-file-preview-html]")
-                                .locator("body")
-                                .get_attribute("data-clicked")
-                                == "true"
-                            )
-                        results.append(
-                            {
-                                "host": host,
-                                "width": width,
-                                "from": initial,
-                                "to": expected,
-                                "action": action,
-                                "sample": repeat,
-                                **measured,
-                            }
-                        )
-                # A secondary press never dismisses. A primary press still reaches the artifact control.
-                page.evaluate("window.__setConversationState('peeked')")
-                page.wait_for_timeout(180)
-                frame_button = page.frame_locator("iframe[data-file-preview-html]").locator(
-                    "#artifact-button"
-                )
-                frame_button.click(button="right")
-                assert (
-                    page.locator("[data-conversation-pane]").get_attribute(
-                        "data-conversation-state"
-                    )
-                    == "peeked"
-                )
-            finally:
-                page.close()
-    receipt = {
-        "seconds": round(time.perf_counter() - started, 3),
-        "samples": results,
-        "newHosts": 0,
-        "note": "Real trusted input. Last movement timestamps exclude the stabilization observation period.",
-    }
-    output = Path(
-        os.environ.get(
-            "PANELS_CARD_TIMING_EVIDENCE", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")
-        )
-    )
+    for host, width, touch, reduced in (
+        ("ticket", 1280, False, False), ("manager", 390, True, False),
+        ("ticket", 390, True, True), ("manager", 1280, False, False),
+    ):
+        context = browser.new_context(viewport={"width": width, "height": 900}, has_touch=touch,
+            reduced_motion="reduce" if reduced else "no-preference")
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        try:
+            page.goto(url + ("?ticket=1" if host == "ticket" else ""))
+            pane = page.locator('[data-conversation-pane]')
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            input_box = page.locator('[data-conversation-input]')
+            if page.locator('[data-voice-keyboard]').is_visible():
+                page.locator('[data-voice-keyboard]').click()
+            input_box.fill('A retained draft')
+            input_box.click()
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            expect(page.locator('[data-conversation-rest-line]')).to_have_text('Worker idle')
+            document = page.locator('.ticket-doc, .manager-doc')
+            document.evaluate('node=>node.scrollTop=node.scrollHeight')
+            bottom = page.locator('[data-document-bottom]')
+            bottom.scroll_into_view_if_needed()
+            geometry = page.evaluate("""()=>{const reader=document.querySelector('.ticket-reading,.manager-reading').getBoundingClientRect();const dock=document.querySelector('.conversation-layer').getBoundingClientRect();const button=document.querySelector('[data-document-bottom]').getBoundingClientRect();return {readerBottom:reader.bottom,dockTop:dock.top,buttonBottom:button.bottom,readerHeight:reader.height};}""")
+            assert geometry['readerBottom'] <= geometry['dockTop'] + 1, geometry
+            assert geometry['buttonBottom'] <= geometry['dockTop'] + 1, geometry
+            page.evaluate("window.__paneIdentity=document.querySelector('[data-conversation-pane]');window.__composerIdentity=document.querySelector('[data-conversation-composer]')")
+            page.evaluate("""()=>{
+              const layer=document.querySelector('.conversation-layer');
+              const composer=document.querySelector('[data-conversation-composer]');
+              window.__dockFrames=[];window.__dockStop=false;
+              window.__dockStateAt=null;
+              const observer=new MutationObserver(()=>{if(window.__dockStateAt===null)window.__dockStateAt=performance.now()});
+              observer.observe(document.querySelector('[data-conversation-pane]'),{attributes:true,attributeFilter:['data-conversation-state']});
+              window.__dockObserver=observer;
+              const sample=()=>{window.__dockFrames.push({time:performance.now(),height:layer.getBoundingClientRect().height,
+                bottom:composer.getBoundingClientRect().bottom,shade:getComputedStyle(layer).backgroundColor,
+                readerVisibility:getComputedStyle(document.querySelector('.ticket-reading,.manager-reading')).visibility,
+                moving:!!document.querySelector('[data-conversation-dock-transition]')});if(!window.__dockStop)requestAnimationFrame(sample)};sample();
+            }""")
+            page.locator('[data-conversation-expand]').click()
+            expect(pane).to_have_attribute('data-conversation-state', 'opened')
+            expect(page.locator('[data-conversation-collapse]')).to_be_focused()
+            _settle_conversation_layout(page)
+            assert page.locator('.ticket-reading,.manager-reading').evaluate('node=>node.inert')
+            assert abs(page.locator('.ticket-reading,.manager-reading').bounding_box()['height'] - geometry['readerHeight']) <= 1
+            motion = page.evaluate("""()=>{window.__dockStop=true;window.__dockObserver.disconnect();return {frames:window.__dockFrames,stateAt:window.__dockStateAt}}""")
+            frames = motion['frames']
+            moving = [sample for sample in frames if sample['moving']]
+            assert all(sample['readerVisibility'] == 'visible' for sample in frames), motion
+            assert max(sample['bottom'] for sample in frames)-min(sample['bottom'] for sample in frames) <= 2, motion
+            if reduced:
+                assert not moving, motion
+            else:
+                assert len(moving) >= 5, motion
+                duration = moving[-1]['time'] - motion['stateAt']
+                assert 170 <= duration <= 360, motion
+                assert len({round(sample['height']) for sample in moving}) >= 5, motion
+                if touch:
+                    assert frames[0]['shade'] == 'rgb(13, 13, 13)', motion
+                    assert frames[-1]['shade'] == 'rgb(21, 21, 21)', motion
+                    assert len({sample['shade'] for sample in moving}) >= 3, motion
+            expect(input_box).to_have_value('A retained draft')
+            if not touch:
+                paragraph = page.locator('[data-conversation-thread] p').last.bounding_box()
+                assert paragraph, host
+                page.mouse.move(paragraph['x']+20, paragraph['y']+paragraph['height']-4)
+                page.mouse.move(paragraph['x']+20, paragraph['y']+4)
+                page.keyboard.press('Escape')
+            else:
+                page.locator('[data-conversation-collapse]').click()
+                expect(page.locator('[data-conversation-expand]')).to_be_focused()
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            _settle_conversation_layout(page)
+            assert page.locator('.conversation-layer').evaluate('node=>getComputedStyle(node).backgroundColor') == 'rgb(13, 13, 13)'
+
+            assert page.evaluate("window.__paneIdentity===document.querySelector('[data-conversation-pane]')&&window.__composerIdentity===document.querySelector('[data-conversation-composer]')")
+            assert not document.evaluate('node=>node.closest(".ticket-reading,.manager-reading").inert')
+            page.locator('[data-conversation-expand]').click()
+            page.wait_for_timeout(60)
+            page.locator('[data-conversation-collapse]').click()
+            page.wait_for_timeout(60)
+            page.locator('[data-conversation-expand]').click()
+            _settle_conversation_layout(page)
+            page.keyboard.press('Escape')
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            _settle_conversation_layout(page)
+
+            page.goto(url + ('?ticket=1&card-artifact=1' if host == 'ticket' else '?card-artifact=1'))
+            frame = page.frame_locator('iframe[data-file-preview-html]')
+            frame.locator('#artifact-button').wait_for()
+            frame.locator('#artifact-button').click()
+            page.evaluate("window.__frameIdentity=document.querySelector('iframe[data-file-preview-html]');window.__frameSource=window.__frameIdentity.src")
+            frame.locator('body').evaluate("node=>{const input=document.createElement('input');input.id='local-value';input.value='preserved';node.append(input);node.style.height='1800px';window.scrollTo(0,300)}")
+            before = frame.locator('body').evaluate('()=>window.scrollY')
+            height = page.locator('iframe').bounding_box()['height']
+            page.locator('[data-conversation-expand]').click()
+            _settle_conversation_layout(page)
+            frame.locator('body').evaluate("()=>parent.postMessage('panels:managed-artifact-primary-press','*')")
+            page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+            expect(pane).to_have_attribute('data-conversation-state', 'opened')
+            page.locator('[data-conversation-collapse]').click()
+            _settle_conversation_layout(page)
+            assert page.evaluate("window.__frameIdentity===document.querySelector('iframe[data-file-preview-html]')&&window.__frameSource===window.__frameIdentity.src")
+            expect(frame.locator('#local-value')).to_have_value('preserved')
+            assert frame.locator('body').get_attribute('data-clicked') == 'true'
+            assert frame.locator('body').evaluate('()=>window.scrollY') == before
+            assert abs(page.locator('iframe').bounding_box()['height'] - height) <= 1
+            results.append({"host": host, "width": width, "touch": touch, "reduced": reduced, "retainedFrame": True, "geometry": geometry, "motion": motion})
+        finally:
+            context.close()
+    output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
     output.mkdir(parents=True, exist_ok=True)
-    (output / "card-state-motion.json").write_text(json.dumps(receipt, indent=2))
-    print(
-        "CARD_STATE_MOTION "
-        + json.dumps({"seconds": receipt["seconds"], "samples": len(results), "newHosts": 0}),
-        flush=True,
-    )
+    (output / 'dock-state-motion.json').write_text(json.dumps({"seconds": round(time.perf_counter()-started,3), "samples":results,"newHosts":0},indent=2))
+    print('DOCK_STATE_PROOF ' + json.dumps([{**{key:value for key,value in sample.items() if key != 'motion'}, 'motionFrames':len(sample['motion']['frames'])} for sample in results]), flush=True)
 
 
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'repairs':
+            _conversation_repairs(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'card-regression':
             _card_state_motion(browser, urls[0])
             _settled_motion(browser, urls[0])

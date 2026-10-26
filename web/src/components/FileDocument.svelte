@@ -24,13 +24,16 @@
   let {
     target,
     reloadSignal = 0,
-    registerArtifactFrame
-  }: { target: FilePreviewTarget; reloadSignal?: number; registerArtifactFrame?: RegisterManagedArtifactFrame } = $props();
+    registerArtifactFrame,
+    retainWhileSelected = false
+  }: { target: FilePreviewTarget; reloadSignal?: number; registerArtifactFrame?: RegisterManagedArtifactFrame; retainWhileSelected?: boolean } = $props();
 
   let visible = $state(false);
+  let selectedAdmitted = $state(false);
+  let mounted = $derived(visible || retainWhileSelected && selectedAdmitted);
   let host: HTMLElement;
   function visibility(element: HTMLElement, _identity: string) {
-    const stop = observeVisibleContent(element, next => { visible = next; }, { canRetain: () => !error });
+    const stop = observeVisibleContent(element, next => { visible = next; if (next) selectedAdmitted = true; }, { canRetain: () => !error });
     return { destroy: stop, update() { resetVisibleContentHeight(element); } };
   }
   let resolved = $derived(resolvePreview(target));
@@ -43,12 +46,12 @@
     const current = resolved;
     const currentReloadSignal = reloadSignal;
     const identity = `${current.kind}/${current.href}`;
-    const retained = visible && displayedIdentity === identity;
+    const retained = mounted && displayedIdentity === identity;
     if (!retained) {
       markdownSource = null;
     }
     error = "";
-    if (!visible || current.kind !== "markdown") return;
+    if (!mounted || current.kind !== "markdown") return;
 
     const controller = new AbortController();
     fetch(current.href, {
@@ -75,10 +78,10 @@
 </script>
 
 <div class="visible-file-document" bind:this={host} use:visibility={`${resolved.kind}/${resolved.href}`} data-visible-content-failed={Boolean(error) || undefined}>
-{#if !visible}
+{#if !mounted}
   <div aria-hidden="true"></div>
 {:else if resolved.kind === "html"}
-  <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={visible} {reloadSignal} {registerArtifactFrame} full />
+  <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={mounted} {reloadSignal} {registerArtifactFrame} full />
 {:else if resolved.kind === "markdown"}
   <SkeletonRegion shape="document" layout="fill" loading={!error && markdownSource === null} loadingText="Loading preview...">
   {#if error}

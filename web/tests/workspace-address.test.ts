@@ -109,3 +109,13 @@ it("keeps the exact conversation when review opens a historical message", () => 
   expect(address.selectedConversationId).toBe("old/conversation");
   expect(workspaceAddress(address.selection,address.view,address.openFile,address.selectedConversationId)).toBe(href);
 });
+
+it("retains a Chief artifact and selected conversation through reload and close", () => {
+  const file = {kind:"ticket-file" as const,ticketId:"t_artifact",path:"artifacts/report.html"};
+  const href = workspaceAddress({kind:"chief"}, "tickets", file, "chief-history");
+  const address = parseWorkspaceAddress(href)!;
+  expect(address.openFile).toEqual(file);
+  expect(address.selectedConversationId).toBe("chief-history");
+  expect(workspaceAddress(address.selection,address.view,address.openFile,address.selectedConversationId)).toBe(href);
+  expect(parseWorkspaceAddress(workspaceAddress(address.selection,address.view,null,address.selectedConversationId))?.openFile).toBeNull();
+});

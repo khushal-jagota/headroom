@@ -50,8 +50,6 @@ def _open_ticket_conversation(
 
 
 def _open_conversation_layer(page: Page) -> None:
-    page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
-    page.locator('[data-conversation-state="peeked"]').wait_for(timeout=WAIT_MS)
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-state="opened"]').wait_for(timeout=WAIT_MS)
 
