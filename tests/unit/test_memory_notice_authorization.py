@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,8 @@ def test_competing_connections_consume_exactly_once(prepared: tuple[_World, str]
     assert key is not None
 
     def acquire(_: int) -> bool:
-        with world.connect() as conn:
+        # The canonical consumer owns BEGIN/COMMIT, not connection.__enter__.
+        with closing(world.connect()) as conn:
             return (
                 worker_memory.consume_memory_notice_authorization(conn, key, now=1).reservation
                 is not None
@@ -173,7 +175,7 @@ def test_watermark_mutation_is_same_key_but_new_event_has_permission(
     prepared: tuple[_World, str],
 ) -> None:
     world, ticket_id = prepared
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         key = worker_memory.current_memory_notice_key(conn, ticket_id)
         assert key is not None
         first = worker_memory.consume_memory_notice_authorization(conn, key, now=1)
@@ -243,7 +245,7 @@ def test_a_new_conversation_has_separate_permission_and_keeps_old_association(
     from tests.unit.test_worker_memory import _add_prompt, _make_conversation
 
     world, ticket_id = prepared
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         old_key = worker_memory.current_memory_notice_key(conn, ticket_id)
         assert old_key is not None
         original = worker_memory.consume_memory_notice_authorization(conn, old_key, now=1)

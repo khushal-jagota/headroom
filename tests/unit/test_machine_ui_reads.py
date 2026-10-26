@@ -167,7 +167,16 @@ def test_durable_context_matches_exact_child_after_restart_and_allows_offline_an
     ask = AskReference(actual, TurnToken("conversation", 1), "ask")
     identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
     endpoint.store.begin_connection(identity, 100)
-    persist_pending_turn(endpoint.store, ask)
+    # This fixture represents a new combined-release ask with an explicit public/provider map.
+    persist_pending_turn(
+        endpoint.store,
+        ask,
+        runtime_overrides={
+            "pending_permission_ask_ids": ["1:permission:ask"],
+            "permission_provider_ids": {"1:permission:ask": "ask"},
+            "user_input_provider_ids": {},
+        },
+    )
     old = replace(ask, child=replace(actual, child_id="old"))
     endpoint.store.publish_ask(old, ("allow", "deny"), 100)
     assert endpoint._current_ask_evidence("conversation", "1:permission:ask") is None
@@ -201,12 +210,8 @@ def test_draft_inherits_project_matches_write_and_never_writes(
         TicketLocale.macos,
         locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
     )
-    project = projects.create_project(
-        tmp_db, name="Mac", requires_macos=True, now=1
-    )
-    item = managers.create_manager(
-        tmp_db, title="Parent", project_id=project.id, clock=fake_clock
-    )
+    project = projects.create_project(tmp_db, name="Mac", requires_macos=True, now=1)
+    item = managers.create_manager(tmp_db, title="Parent", project_id=project.id, clock=fake_clock)
     before = tuple(tmp_db.iterdump())
     result = asyncio.run(
         read_ticket_creation_context(

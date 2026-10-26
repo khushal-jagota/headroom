@@ -327,6 +327,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
             assert native.stops == 0
             state = h.system._conversations["c_move"]
             assert state.child_is_quarantined and state.executor_child_reference == old_ref
+            await h.system.shutdown()
             restarted = _Harness(Path(remote.db_path))
             restored = await restarted.system._conversation_state("c_move")
             assert restored is not None and restored.child_is_quarantined
@@ -358,11 +359,18 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         assert native.stops == 1
         assert await h.store.read_conversation("c_move") == before
         # A fresh VPS core must retain ended-turn posture but discard retired remote authority.
+        await h.system.shutdown()
+        # Retain fake provider observations across a real replacement of the runtime owner.
+        observed_backends = h.backends
         restarted = _Harness(Path(remote.db_path))
+        restarted.backends = observed_backends
         restored = await restarted.system._conversation_state("c_move")
         assert restored is not None and restored.executor_child_reference is None
         assert restored.last_ended_turn_token is not None
-        await restarted.system.shutdown()
+        h = restarted
+        remote.runtime = SimpleNamespace(system=h.system, message_files=h.message_files)
+        router = LocaleBackendChildFactory(remote.db_path, h._make_child, remote.factory)
+        h.system._backend_child_factories = dict.fromkeys(ConversationBackendKey, router)
         await h.system.send("c_move", text_message_content("local again"), sender_label="Owner")
         await h.complete_turn("c_move")
         assert h.backend("c_move").session_starts == 2

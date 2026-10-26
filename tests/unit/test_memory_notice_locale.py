@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -93,7 +94,7 @@ def test_mac_racing_polls_consume_once_and_reconnect_does_not_rearm(
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
 
     def acquire(_: int) -> bool:
-        with connect(db_path) as conn:
+        with closing(connect(db_path)) as conn:
             return (
                 worker_memory.consume_memory_notice_authorization(conn, key, now=3).reservation
                 is not None
@@ -129,8 +130,9 @@ def test_mac_disconnect_during_send_retains_consumption_after_reconnect(
     with world.connect() as conn:
         conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
         store = _store(conn)
-        store.begin_connection(IDENTITY, 1)
-        store.mark_ready(IDENTITY, 2)
+    # Commit fixture routing before the store opens its independent writer.
+    store.begin_connection(IDENTITY, 1)
+    store.mark_ready(IDENTITY, 2)
     sends: list[str] = []
 
     async def send(*args: object, **kwargs: object) -> conversation_start.DeliveredMessage:
@@ -185,8 +187,9 @@ def test_mac_loss_during_held_prompt_await_prevents_reservation(
     with world.connect() as conn:
         conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
         store = _store(conn)
-        store.begin_connection(IDENTITY, 1)
-        store.mark_ready(IDENTITY, 2)
+    # Commit fixture routing before the store opens its independent writer.
+    store.begin_connection(IDENTITY, 1)
+    store.mark_ready(IDENTITY, 2)
     held_reads: list[str] = []
     connections: list[Connection] = []
     original_connect = world.connect
