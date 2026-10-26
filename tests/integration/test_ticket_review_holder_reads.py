@@ -44,7 +44,7 @@ def test_ticket_reads_reflect_supported_holder_transfer(
     )
     assert edited["ceiling_holder"] == holder
     for command in commands:
-        for selected in ((), ("brief,guidance",)):
+        for selected in ((), ("brief,recap",)):
             record = cli(server, *command, *selected, ticket_id=ticket_id)
             assert record["header"]["ceiling_holder"] == holder
             assert record["header"]["stage"] == before["header"]["stage"]

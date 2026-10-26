@@ -707,7 +707,7 @@
   .machine-heading { position:sticky; top:0; z-index:4; display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) var(--space-3); background:var(--surface-1); }
   .machine-heading > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ticket-col { padding-top:0; }
-  .ticket-doc { scrollbar-gutter:auto; }
+  .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }
