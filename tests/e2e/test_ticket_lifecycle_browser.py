@@ -117,7 +117,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
     expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.reload()
     expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
-    page.locator("[data-conversation-rest-bar]").click()
+    page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-lens-choice="full"]').click()
     expect(page.get_by_text(transcript, exact=True)).to_be_visible()
 
