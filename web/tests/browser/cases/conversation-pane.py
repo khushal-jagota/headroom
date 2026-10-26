@@ -3161,6 +3161,14 @@ def _text_tab_return(browser, url, output):
             bad=[frame for frame in visible if frame['character'] is None or not frame['character']['visible'] or abs(frame['character']['offset']-held['offset'])>1]
             assert not bad, f"Visible text line changed after lazy restoration: held={held!r}, first_bad={bad[:1]!r}, after={case['after']!r}"
             assert all(frame['retainedRoots']<=4 and frame['rows']<=300 for frame in case['frames']),case
+            case['groups']=page.evaluate('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),viewport=thread.getBoundingClientRect();
+              const mounted=[...thread.querySelectorAll('[data-markdown-window]')].filter(node=>node.textContent.trim());
+              const distant=mounted.filter(node=>{const rect=node.getBoundingClientRect();return rect.bottom<viewport.top-256||rect.top>viewport.bottom+256;});
+              return {mounted:mounted.length,distant:distant.length,
+                unretainedDistant:distant.filter(node=>!node.closest('[data-visible-content-state=retained]')).length};
+            }''')
+            assert case['groups']['unretainedDistant']<=1,case['groups']
         print('TEXT_TAB_RETURN_PROOF '+json.dumps({'cases':len(proof),'seconds':round(time.perf_counter()-started,3),'newHosts':0}),flush=True)
     finally:
         page.screenshot(path=str(output/'text-return-last.png'))
