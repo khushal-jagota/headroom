@@ -765,12 +765,20 @@ from zero, and a long wait for the agent to start is counted rather than lost.
 Where the sender minted no such moment, or minted one its own row cannot be
 reconciled with, the whole second the row was written in is counted from instead.
 
-The newest plan is conversation status, not thread history. At rest, an active plan
-step shows its position, its text, and the elapsed time. The position opens the whole
-checklist on pointer hover or keyboard focus. A permission request still replaces this
-line because it needs the person. Without an active step, the line keeps its normal
-elapsed time and newest tool call. In full conversation, the same checklist sits
-in a centered 34-pixel strip between the thread and composer while unfinished work runs.
+The dock places activity and the latest unread owner preview above its rounded input.
+Activity uses the conversation typeface and shows no elapsed timer. Requests and delivery
+failures keep their own controls and feedback. The input keeps its complete border,
+recessed fill, spacing, and shape in both docked and full conversation.
+
+Hover outside the input changes the conversation surface color. Hover inside the input
+returns that surface to its resting color. Hover does not open the conversation.
+The preview button opens it through a click, Enter, or Space. A primary click on the
+surrounding surface also opens it when the press starts at rest and does not become a drag.
+An outside press that dismisses full conversation cannot reopen it on the same click.
+The input and its controls remain usable without opening the conversation.
+
+The newest plan is conversation status, not thread history. In full conversation,
+the checklist sits between the thread and composer while unfinished work runs.
 The plan never appears under the turn that first stated it.
 
 Full shows every message and tool call. Its turn and work groups expand

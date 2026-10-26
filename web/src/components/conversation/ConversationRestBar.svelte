@@ -1,72 +1,49 @@
 <script lang="ts">
-  /** The dock keeps activity separate from unread owner content.
-   * Requests and delivery failures retain their own feedback below the status.
-   * Only the arrow opens full conversation.
-   */
-  import {
-    elapsedSecondsSince,
-    formatDuration,
-    millisecondsUntilNextSecond
-  } from "../../lib/conversation/transcript";
-  import type { RestLine } from "../../lib/conversation/restLine";
-
-  let { line, preview = null, roleLabel = "Worker", activityKnown = true, connectionTrouble = false,
-    running = false, feedback = null, onOpen }: { line: RestLine | null; preview?: string | null;
+  /** Activity and the unread preview belong to the conversation surface.
+   * Delivery and request feedback remains independent of the control that opens it. */
+  let { preview = null, roleLabel = "Worker", activityKnown = true, connectionTrouble = false,
+    running = false, feedback = null, onOpen }: { preview?: string | null;
     roleLabel?: "Worker" | "Manager" | "Chief"; activityKnown?: boolean; connectionTrouble?: boolean;
     running?: boolean; feedback?: string | null; onOpen: () => void } = $props();
   let activity = $derived(running ? "Working" : activityKnown ? `${roleLabel} idle` : null);
-
-  /** The one thing on this line that changes on its own. Nothing else is touched by a
-   *  tick, and the line is redrawn from the record as the record changes. */
-  let elapsedSeconds = $state<number | null>(null);
-  // Held apart from the line itself so a record that changed under a running turn does
-  // not restart the counting.
-  let workingSince = $derived(line?.workingSinceUnixMilliseconds ?? null);
-
-  $effect(() => {
-    const begun = workingSince;
-    if (begun === null) {
-      elapsedSeconds = null;
-      return;
-    }
-    let waiting: ReturnType<typeof setTimeout> | undefined;
-    // Each tick is aimed at the next whole second since the turn began, and the number is
-    // worked out from that instant every time — so nothing drifts and nothing accumulates.
-    const tick = (): void => {
-      const now = Date.now();
-      elapsedSeconds = elapsedSecondsSince(begun, now);
-      waiting = setTimeout(tick, millisecondsUntilNextSecond(begun, now));
-    };
-    tick();
-    return () => clearTimeout(waiting);
-  });
 </script>
 
-<div class="c2-rest" data-conversation-rest-bar>
-  <div class="c2-rest-status">
-    {#if running}<span class="c2-mark--running" aria-label="working"></span>{/if}
-    {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
-    {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
-    {#if elapsedSeconds !== null}<span class="c2-rest-aside">{formatDuration(elapsedSeconds)}</span>{/if}
-    <button type="button" class="chat-overflow-btn" data-conversation-expand data-conversation-state-control
-      aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg>
-    </button>
-  </div>
-  {#if feedback}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
-  {#if preview}<div class="c2-rest-preview" data-conversation-unread-preview>{preview}</div>{/if}
-</div>
+<button type="button" class="c2-rest" data-conversation-rest-bar data-conversation-expand data-conversation-state-control
+  aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
+  <span class="c2-rest-status">
+    <span class="c2-rest-activity">
+      {#if running}<span class="c2-mark--running" aria-label="working"></span>{/if}
+      {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
+      {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
+    </span>
+    <span class="c2-rest-control" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+    </span>
+  </span>
+  {#if preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
+</button>
+{#if feedback}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
 
 <style>
-  .c2-rest { flex:none; min-width:0; padding-block:var(--space-2); color:var(--text-faint); font:var(--type-xs)/1.5 var(--font-mono); }
-  .c2-rest-status { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
-  .c2-rest-status [data-conversation-rest-line] { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .c2-rest-status button { margin-left:auto; flex:none; }
-  .c2-rest-aside { font-variant-numeric:tabular-nums; }
+  .c2-rest { display:flex; flex:none; flex-direction:column; align-items:stretch; gap:var(--space-1);
+    width:100%; min-width:0; min-height:calc(var(--conversation-target) + var(--space-2) + var(--space-3));
+    border:0; padding:var(--space-2) 0 var(--space-3); background:transparent; color:var(--text-muted);
+    text-align:left; cursor:pointer; font:var(--type-sm)/1.5 var(--font-ui); }
+  .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3);
+    min-width:0; min-height:var(--conversation-target); }
+  .c2-rest-activity { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
+  [data-conversation-rest-line] { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .c2-rest-control { display:grid; place-items:center; width:var(--conversation-target); height:var(--conversation-target);
+    flex:none; margin-right:calc(var(--space-2) * -1); }
+  .c2-rest-control svg { width:calc(var(--conversation-glyph) - var(--space-2)); height:calc(var(--conversation-glyph) - var(--space-2));
+    fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  .c2-rest:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); border-radius:var(--radius-sm); }
   .c2-rest-preview { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden;
-    white-space:pre-line; color:var(--text-strong); font:var(--type-sm)/1.5 var(--font-ui); margin-bottom:var(--space-2); }
-  .c2-mark--running { flex:none; width:11px; height:11px; border-radius:50%; border:1.5px solid var(--text-faintest);
-    border-top-color:var(--text-muted); animation:spin 900ms linear infinite; }
+    white-space:normal; color:var(--text-default); font:var(--type-md)/1.6 var(--font-ui); }
+  .c2-rest-feedback { flex:none; padding-bottom:var(--space-2); color:var(--text-faint); font:var(--type-sm)/1.5 var(--font-ui); }
+  .c2-mark--running { flex:none; width:calc(var(--space-2) + var(--border-strong)); height:calc(var(--space-2) + var(--border-strong));
+    border-radius:var(--radius-pill); border:1.5px solid var(--text-faintest); border-top-color:var(--text-muted);
+    animation:spin var(--motion-loop-spin) linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion:reduce) { .c2-mark--running { animation:none; } }
 </style>

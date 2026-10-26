@@ -2464,7 +2464,26 @@ def _conversation_repairs(browser, url):
                 state(page, initial)
                 page.mouse.click(end["x"], end["y"])
                 state(page, "rest")
-                proof["gestures"].append({"route": route, "state": initial, "outside": outside, "selectionLength": len(selection), "secondaryPreserved": True, "primaryDismissed": True})
+                # Dismissal occurs on pointerdown. The later click must not
+                # reopen the same conversation after it reaches rest.
+                page.wait_for_timeout(100)
+                state(page, "rest")
+                layer = page.locator(".conversation-layer").bounding_box()
+                pane = page.locator(pane_selector).bounding_box()
+                assert layer and pane and pane["x"] > layer["x"] + 2
+                background = {"x": layer["x"] + 2, "y": pane["y"] + 8}
+                page.mouse.click(**background, button="right")
+                state(page, "rest")
+                page.mouse.move(**background)
+                page.mouse.down()
+                page.mouse.move(background["x"] + 24, background["y"], steps=4)
+                page.mouse.up()
+                state(page, "rest")
+                page.mouse.click(**background)
+                state(page, "opened")
+                page.locator("[data-conversation-collapse]").click()
+                state(page, "rest")
+                proof["gestures"].append({"route": route, "state": initial, "outside": outside, "selectionLength": len(selection), "secondaryPreserved": True, "primaryDismissed": True, "dismissalDidNotReopen": True, "backgroundOpened": True, "backgroundDragIgnored": True})
         page.close()
         assert not errors, errors
 
@@ -3203,6 +3222,13 @@ def _card_state_motion(browser, url):
 
     started = time.perf_counter()
     results = []
+    def input_appearance(page):
+        return page.locator('[data-conversation-box]').evaluate("""node=>{const s=getComputedStyle(node);return {
+          background:s.backgroundColor, radius:s.borderRadius,
+          borders:['Top','Right','Bottom','Left'].map(side=>[s['border'+side+'Width'],s['border'+side+'Style']]),
+          padding:s.padding};}""")
+    def shade(page, expected):
+        page.wait_for_function("expected=>getComputedStyle(document.querySelector('.conversation-layer')).backgroundColor===expected", arg=expected)
     for host, width, touch, reduced in (
         ("ticket", 1280, False, False), ("manager", 390, True, False),
         ("ticket", 390, True, True), ("manager", 1280, False, False),
@@ -3222,6 +3248,43 @@ def _card_state_motion(browser, url):
             input_box.click()
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             expect(page.locator('[data-conversation-rest-line]')).to_have_text('Worker idle')
+            rest_input = input_appearance(page)
+            assert rest_input['background'] == 'rgb(17, 17, 17)', rest_input
+            assert rest_input['radius'] == '12px', rest_input
+            assert rest_input['borders'] == [['1px', 'solid']] * 4, rest_input
+            assert rest_input['padding'] == '12px 16px', rest_input
+            if width == 1280:
+                device = page.locator('[data-conversation-box]').bounding_box()
+                column = page.locator('.conversation-column').bounding_box()
+                assert device and column
+                assert abs(device['width'] - 720) <= 1, device
+                assert abs(device['x'] - column['x']) <= 1, (device, column)
+                assert abs(device['width'] - column['width']) <= 1, (device, column)
+            if not touch:
+                layer = page.locator('.conversation-layer').bounding_box()
+                surface = page.locator('[data-conversation-rest-bar]').bounding_box()
+                input_device = page.locator('[data-conversation-box]').bounding_box()
+                assert layer and surface and input_device
+                # Surface hover changes treatment without opening the reader.
+                page.mouse.move(layer['x']+2, surface['y']+8)
+                shade(page, 'rgb(21, 21, 21)')
+                expect(pane).to_have_attribute('data-conversation-state', 'rest')
+                # Include padding inside the actual rounded input boundary.
+                page.mouse.move(input_device['x']+3, input_device['y']+3)
+                shade(page, 'rgb(13, 13, 13)')
+                expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            elif reduced:
+                # Reuse one phone case to prove that background activation
+                # accepts native touch without a preceding hover.
+                layer = page.locator('.conversation-layer').bounding_box()
+                surface = page.locator('[data-conversation-rest-bar]').bounding_box()
+                assert layer and surface
+                page.touchscreen.tap(layer['x']+2, surface['y']+8)
+                expect(pane).to_have_attribute('data-conversation-state', 'opened')
+                _settle_conversation_layout(page)
+                page.locator('[data-conversation-collapse]').tap()
+                expect(pane).to_have_attribute('data-conversation-state', 'rest')
+                _settle_conversation_layout(page)
             document = page.locator('.ticket-doc, .manager-doc')
             document.evaluate('node=>node.scrollTop=node.scrollHeight')
             bottom = page.locator('[data-document-bottom]')
@@ -3266,6 +3329,7 @@ def _card_state_motion(browser, url):
                     assert frames[-1]['shade'] == 'rgb(21, 21, 21)', motion
                     assert len({sample['shade'] for sample in moving}) >= 3, motion
             expect(input_box).to_have_value('A retained draft')
+            assert input_appearance(page) == rest_input
             if not touch:
                 paragraph = page.locator('[data-conversation-thread] p').last.bounding_box()
                 assert paragraph, host
@@ -3290,6 +3354,46 @@ def _card_state_motion(browser, url):
             page.keyboard.press('Escape')
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             _settle_conversation_layout(page)
+
+            if host == 'ticket' and width == 1280:
+                # Reuse this card for activity and semantic preview activation.
+                page.evaluate("window.__showActivePlan()")
+                expect(page.locator('[data-conversation-rest-line]')).to_have_text('Working')
+                expect(page.locator('[data-conversation-rest-bar]')).to_have_text('Working')
+                activity_fonts = page.locator('[data-conversation-rest-line]').evaluate("node=>({actual:getComputedStyle(node).fontFamily,ui:getComputedStyle(node).getPropertyValue('--font-ui').trim()})")
+                assert activity_fonts['actual'] == activity_fonts['ui'], activity_fonts
+                page.evaluate("window.__showEveryMark()")
+                preview = page.locator('[data-conversation-unread-preview]')
+                expect(preview).to_have_text('the reply nobody has read')
+                preview.click()
+                expect(pane).to_have_attribute('data-conversation-state', 'opened')
+                _settle_conversation_layout(page)
+                page.locator('[data-conversation-collapse]').click()
+                _settle_conversation_layout(page)
+                expand = page.locator('[data-conversation-expand]')
+                expand.focus()
+                expand.press('Space')
+                expect(pane).to_have_attribute('data-conversation-state', 'opened')
+                _settle_conversation_layout(page)
+                page.locator('[data-conversation-collapse]').click()
+                _settle_conversation_layout(page)
+
+                # Held prompts sit inside the composer but outside the input.
+                # Return must retarget that boundary after the layout settles.
+                page.evaluate("window.__showHeldPrompt(true)")
+                held = page.locator('[data-conversation-held-row="held-1"] .chat-qrow-txt')
+                held.hover()
+                shade(page, 'rgb(21, 21, 21)')
+                expect(pane).to_have_attribute('data-conversation-state', 'rest')
+                expand.click()
+                _settle_conversation_layout(page)
+                held.hover()
+                page.keyboard.press('Escape')
+                _settle_conversation_layout(page)
+                shade(page, 'rgb(21, 21, 21)')
+                input_box.hover()
+                shade(page, 'rgb(13, 13, 13)')
+                expect(pane).to_have_attribute('data-conversation-state', 'rest')
 
             page.goto(url + ('?ticket=1&card-artifact=1' if host == 'ticket' else '?card-artifact=1'))
             frame = page.frame_locator('iframe[data-file-preview-html]')
