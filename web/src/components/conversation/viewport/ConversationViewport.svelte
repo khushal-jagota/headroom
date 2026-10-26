@@ -357,8 +357,12 @@
   }
 
   async function jumpToTheNewestLine(button: HTMLButtonElement): Promise<void> {
+    // Keep the last visible address until this Latest operation actually lands.
+    // A reader replacement cancels an unfinished click and restores that address.
+    // An unfulfilled restoration destination is explicitly abandoned by Latest.
+    const abandonUnfulfilledAnchor = reader !== null && reader.restorationOutcome !== 'idle';
     cancelTextRestoration();
-    viewAnchor = null;
+    if (abandonUnfulfilledAnchor) viewAnchor = null;
     pendingOpen = false;
     settledOnOpening = true;
     placementReady = true;
