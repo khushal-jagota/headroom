@@ -33,7 +33,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   (window as any).__backlog=(count:number)=>{sequence+=count;};
   const returnBodies=new Map<string,string>();
   const returnBodyReleases:Array<()=>void>=[];
-  const returnProbe={hold:false,fail:false,bodies:false,bodyHold:false,bodyWaiting:0,waiting:0,release:()=>{},
+  const returnProbe={hold:false,fail:false,bodies:false,bodyHold:false,changedSource:false,bodyWaiting:0,waiting:0,release:()=>{},
     releaseBodies:()=>{returnProbe.bodyHold=false;for(const release of returnBodyReleases.splice(0))release();}};
   (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
@@ -160,7 +160,9 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
       const reference=JSON.parse(url.searchParams.get('reference')!);
       if(String(reference.body_id).startsWith('return:')){
         if(returnProbe.bodyHold){returnProbe.bodyWaiting++;await new Promise<void>(resolve=>returnBodyReleases.push(resolve));}
-        return new Response(returnBodies.get(reference.body_id));
+        const body=returnBodies.get(reference.body_id);
+        return new Response(returnProbe.changedSource && reference.body_id==='return:2000'
+          ? body?.replace('Late paragraph 2000.0.', 'Changed paragraph 2000.0.') : body);
       }
     }
     if(positionRace&&url.pathname.endsWith('/view/body/content')){

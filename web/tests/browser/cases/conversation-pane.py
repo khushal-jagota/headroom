@@ -3069,6 +3069,7 @@ def _text_tab_return(browser, url, output):
         for variant, backlog, order in (
             ('paragraphs',20,'history-first'),('paragraphs',20,'body-first'),
             ('paragraphs',0,'history-first'),('tall',20,'body-first'),
+            ('paragraphs',20,'cancel'),('paragraphs',20,'changed-source'),
         ):
             case = {'variant':variant,'backlog':backlog,'order':order}
             proof.append(case)
@@ -3107,6 +3108,30 @@ def _text_tab_return(browser, url, output):
             }''',held)
             if backlog:
                 page.wait_for_function('window.__returnProbe.waiting>0')
+            if order in ('cancel','changed-source'):
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.locator('[data-conversation-restoration-status="pending"]').wait_for(state='visible')
+                if order=='cancel':
+                    page.get_by_role('button',name='Jump to latest message',exact=True).click()
+                    page.wait_for_function("!document.querySelector('[data-conversation-restoration-status=\"pending\"]')")
+                    _settle_conversation_layout(page)
+                    before=page.evaluate("({scroll:document.querySelector('[data-conversation-thread]').scrollTop,text:window.__readCharacter()})")
+                    page.evaluate('window.__returnProbe.releaseBodies()')
+                    page.wait_for_timeout(400)
+                    after=page.evaluate("({scroll:document.querySelector('[data-conversation-thread]').scrollTop,text:window.__readCharacter()})")
+                    assert before==after, ('Canceled completion moved the visible text',before,after)
+                    case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
+                else:
+                    page.evaluate('window.__returnProbe.changedSource=true;window.__returnProbe.releaseBodies()')
+                    page.locator('[data-conversation-restoration-status="unavailable"]').wait_for(state='visible')
+                    page.get_by_role('button',name='Jump to latest message',exact=True).click()
+                    _settle_conversation_layout(page)
+                    case['unavailable']=True
+                case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                assert all(frame['retainedRoots']<=4 and frame['rows']<=300 for frame in case['frames']),case
+                page.screenshot(path=str(output/f'text-return-{order}.png'))
+                continue
             if order=='body-first':
                 page.evaluate('window.__returnProbe.release()')
                 # The snapshot's body admission can finish while anchor history is held.
