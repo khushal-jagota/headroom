@@ -162,7 +162,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
         if(returnProbe.bodyHold){returnProbe.bodyWaiting++;await new Promise<void>(resolve=>returnBodyReleases.push(resolve));}
         const body=returnBodies.get(reference.body_id);
         return new Response(returnProbe.changedSource && reference.body_id==='return:2000'
-          ? body?.replace('Late paragraph 2000.0.', 'Changed paragraph 2000.0.') : body);
+          ? body?.replace('Late paragraph 2000.0.', 'Lost paragraph 2000.0.') : body);
       }
     }
     if(positionRace&&url.pathname.endsWith('/view/body/content')){
