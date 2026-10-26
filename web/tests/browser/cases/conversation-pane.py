@@ -2622,6 +2622,8 @@ def _overlay_menu_bounds(browser, url):
     proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
     def settle():
         _settle_conversation_layout(page)
+    def composer_geometry():
+        return page.locator('[data-conversation-composer]').evaluate("""el=>({height:el.clientHeight,scrollHeight:el.scrollHeight,top:el.getBoundingClientRect().top,popupRoom:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-popup-height')),target:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-target')),gap:parseFloat(getComputedStyle(el).getPropertyValue('--space-6')),constrained:el.hasAttribute('data-conversation-composer-constrained'),viewportTop:visualViewport.offsetTop,viewportHeight:visualViewport.height})""")
     def hit(item):
         item.scroll_into_view_if_needed()
         settle()
@@ -2660,7 +2662,15 @@ def _overlay_menu_bounds(browser, url):
             settle()
             input_box.fill('/')
             settle()
-            snapshot=page.locator('[data-conversation-composer]').evaluate("""el=>({height:el.clientHeight,scrollHeight:el.scrollHeight,top:el.getBoundingClientRect().top,popupRoom:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-popup-height')),target:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-target')),gap:parseFloat(getComputedStyle(el).getPropertyValue('--space-6')),constrained:el.hasAttribute('data-conversation-composer-constrained'),viewportTop:visualViewport.offsetTop,viewportHeight:visualViewport.height})""")
+            if mode == 'constrained':
+                # Derive the fixture from the actual popup boundary. Input and
+                # bottom spacing can change without changing this contract.
+                room = composer_geometry()
+                height = int(height - room['popupRoom'] + room['gap'])
+                assert height > 0, room
+                page.evaluate("([top,height])=>window.__keyboardBounds(top,height)",[top,height])
+                settle()
+            snapshot=composer_geometry()
             assert snapshot['constrained'] == (mode=='constrained'), snapshot
             assert page.locator('.chat-menu').evaluate('el=>getComputedStyle(el).position') == ('static' if mode=='constrained' else 'absolute')
             snapshot['mode']=mode
