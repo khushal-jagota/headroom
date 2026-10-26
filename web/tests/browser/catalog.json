@@ -62,6 +62,16 @@
         "vps-page"
       ],
       "companions": []
+    },
+    {
+      "id": "artifact-in-place",
+      "path": "web/tests/artifact-in-place-browser.test.mjs",
+      "cases": [
+        "artifact-keeps-its-conversation"
+      ],
+      "companions": [
+        "web/tests/artifact-press.test.ts"
+      ]
     }
   ]
 }

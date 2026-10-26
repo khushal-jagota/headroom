@@ -42,7 +42,7 @@
   const displaySlots = $derived.by(() => {
     exitRevision;
     if (ledgerConversation !== reader.id) { ledger = []; previousDisplay = []; ledgerConversation = reader.id; }
-    const next = reconcileDisplaySlots(ledger, items, outgoingMessages, acknowledgedMessageIds, withdrawnDisplayIds);
+    const next = reconcileDisplaySlots(ledger, items, outgoingMessages, acknowledgedMessageIds, withdrawnDisplayIds, reader.coverage);
     // A confirmed queue destination transfers the display slot immediately. It is
     // not a dismissal, so retaining a fading transcript copy would draw it twice.
     const previous = previousDisplay.filter(slot => !withdrawnDisplayIds.has(slot.key));

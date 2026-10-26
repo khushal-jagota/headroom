@@ -46,13 +46,8 @@
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
   import { workerPageHistory } from "../lib/workerPageHistory";
-  import { managedFileTargetFromLinkHref } from "../lib/artifactStrip";
-  import { isPlainLinkClick } from "../lib/linkClick";
-  import {
-    resolvePreview,
-    targetFromPreviewHref,
-    type ManagedFileTarget
-  } from "../lib/filePreview";
+  import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
+  import { type ManagedFileTarget } from "../lib/filePreview";
 
   let {
     id,
@@ -211,10 +206,15 @@
   const dismissal = createConversationDismissal(() => { conversationState = "rest"; });
   const dismissOutsideConversation = dismissal.surface;
 
-  /** The artifact this screen is showing, when the host does not keep it in an address. */
+  /** The artifact this screen is showing, kept in the address when the host keeps one. */
   let heldFile = $state<ManagedFileTarget | null>(null);
-  let shownFile = $derived(onOpenFile ? openFile : heldFile);
-  let artifactReloadSignal = $state(0);
+  const artifact = createArtifactOnThePage({
+    shown: () => (onOpenFile ? openFile : heldFile),
+    keep: (file) => { if (onOpenFile) onOpenFile(file); else heldFile = file; },
+    conversationState: () => conversationState,
+    dismissConversation: () => { conversationState = "rest"; },
+    root: () => screenElement
+  });
   // Which stages the reader has opened or closed with their own hands, by field name. A
   // stage that settles moves into the fold above and is rebuilt there, so the answer
   // cannot live in the stage. It lives here, where it outlives the move.
@@ -228,71 +228,6 @@
       draft = created; fieldDrafts.set(name, draft);
     }
     return draft;
-  }
-
-  /** Show a file on this screen, or close the one it is showing.
-   *
-   * The Ticket stays where it is underneath, so the person who came to read an artifact
-   * has not left the work it belongs to. An opened conversation is the whole page, and
-   * an artifact opened behind it would be an artifact nobody can see, so the
-   * conversation steps back one to let it through.
-   */
-  function showFile(file: ManagedFileTarget | null): void {
-    if (file && !shownFile) {
-      whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    }
-    if (onOpenFile) onOpenFile(file);
-    else heldFile = file;
-    if (file && conversationState === "opened") conversationState = "rest";
-    if (!file) {
-      const restoreFocus = whatHadFocus;
-      whatHadFocus = null;
-      queueMicrotask(() => restoreFocus?.focus());
-    }
-  }
-
-  /** The artifact takes focus when it opens, and gives it back when it closes.
-   *
-   * The reader is now reading the artifact, so that is where the keyboard should be. It
-   * is also what makes Escape reach this screen: a Ticket field is an editable surface
-   * and Escape belongs to the editor while the caret is in one, so an artifact opened
-   * from a link inside a field must move the focus out of it.
-   */
-  let artifactElement = $state<HTMLElement | null>(null);
-  let whatHadFocus: HTMLElement | null = null;
-  $effect(() => {
-    if (shownFile && artifactElement) artifactElement.focus();
-  });
-
-  /** A click on a link to a managed file opens the file here.
-   *
-   * Explicit preview addresses always open here. Raw managed links use the same viewer
-   * when their format supports a preview. Downloads and requests for another tab stay
-   * with the browser.
-   */
-  function openManagedFileInPlace(event: MouseEvent): void {
-    if (event.defaultPrevented) return;
-    const anchor = (event.target as Element | null)?.closest?.("a[href]");
-    if (!anchor || anchor.hasAttribute("download")) return;
-    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
-    if (!isPlainLinkClick(link, event)) return;
-    const explicitPreview = targetFromPreviewHref(link.href);
-    const file = explicitPreview ?? managedFileTargetFromLinkHref(link.href);
-    if (!file || (!explicitPreview && resolvePreview(file).kind === "download")) return;
-    event.preventDefault();
-    showFile(file);
-  }
-
-  /** Escape closes the artifact, and belongs to it before anything else on the page.
-   *
-   * The conversation steps back a state on Escape too, so the press is claimed here to
-   * keep one press to one thing.
-   */
-  function closeFileOnEscape(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented) return;
-    if (!shownFile) return;
-    event.preventDefault();
-    showFile(null);
   }
 
   onMount(() => {
@@ -490,7 +425,7 @@
 
 </script>
 
-<svelte:window onkeydown={closeFileOnEscape} />
+<svelte:window onkeydown={artifact.closeOnEscape} />
 
 <!-- The catcher for links to managed files sits on the whole screen, so a file opens in
      place wherever it was written: a Ticket field, the recap, or the conversation. -->
@@ -504,7 +439,7 @@
   data-screen="ticket"
   data-ticket-id={stableId}
   data-stage={section?.record.value.stage}
-  onclick={openManagedFileInPlace}
+  onclick={artifact.claimPress}
 >
   <ResourceState shape="document" layout="fill" error={ticket.error ?? (navigationErrorHandledByParent ? null : navigation.state.error)} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(ticket.data && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
     {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
@@ -650,14 +585,14 @@
         </div>
         {/if}
       </main>
-      {#if shownFile}
+      {#if artifact.shown}
         <ArtifactPreview
           registerArtifactFrame={dismissal.registerArtifactFrame}
-          target={shownFile}
-          reloadSignal={artifactReloadSignal}
-          bind:element={artifactElement}
-          onRefresh={() => artifactReloadSignal += 1}
-          onClose={() => showFile(null)}
+          target={artifact.shown}
+          reloadSignal={artifact.reloadSignal}
+          bind:element={artifact.element}
+          onRefresh={artifact.refresh}
+          onClose={artifact.close}
         />
       {/if}
       </div>
