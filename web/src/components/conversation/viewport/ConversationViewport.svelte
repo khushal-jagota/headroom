@@ -23,7 +23,7 @@
   import { threadGeometry, type ThreadReading } from "./threadGeometry";
   import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
   import { conversationTextPresentations, TextPresentationRegistry } from '../../../lib/conversation/view/textPresentation';
-  import { releaseTextRestoration, rowRestorationAnchor, type TextRestorationPlacement } from './placement';
+  import { releaseTextRestoration, type TextRestorationPlacement, type LatestPlacementIntent } from './placement';
   import { threadPlacement, currentPlacement, presentationReady, streamArrivalBudget, streamTravelFits, type ThreadPlacement } from "./placement";
 
   let {
@@ -84,12 +84,7 @@
   let stateHasBeenDrawn = false;
   let pendingOpen = false;
   let latestPending = $state(false);
-  let latestIntent: {
-    reader: ConversationViewReader | null;
-    generation: number;
-    admitted: boolean;
-    focusButton: HTMLButtonElement | null;
-  } | null = null;
+  let latestIntent: LatestPlacementIntent<ConversationViewReader> | null = null;
   let readerOnScreen: ConversationViewReader | null = null;
   let sentMessageToPlace: string | null = null;
   let answerRoomMessageId = $state<string | null>(null);
@@ -110,19 +105,14 @@
   }
   function fallBackRestoration(): void {
     const operation = textRestoration;
-    if (!operation || operation.fallback || operation.reader !== reader) return;
-    stopRestorationWait();
-    releaseTextRestoration(operation);
-    const anchor = rowRestorationAnchor(operation.anchor);
-    textRestoration = {...operation, anchor, fallback:true};
-    viewAnchor = anchor;
-    // Failure is a visible row destination, not another wait for the failed text.
-    pendingPresentationTarget = null;
-    requestReconciliation();
+    if (!operation || operation.reader !== reader) return;
+    // Retire the saved target before any asynchronous newest admission.
+    // Clearing this operation makes each saved attempt terminal exactly once.
+    void jumpToTheNewestLine(null, 'restoration-fallback', operation.attempt);
   }
   function syncRestorationWait(): void {
     const operation = textRestoration;
-    if (!operation || operation.fallback || reader?.restorationOutcome !== 'pending') {
+    if (!operation || reader?.restorationOutcome !== 'pending') {
       stopRestorationWait();
       return;
     }
@@ -291,8 +281,25 @@
   const positionMotion = {};
   let gestureGeneration = 0;
   let heldUnreadKey = $state<string | null>(null);
+  function cancelLatestRecovery(): void {
+    if (latestIntent?.cause !== 'restoration-fallback') return;
+    latestIntent.controller?.abort();
+    latestIntent = null;
+    latestPending = false;
+    if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
+  }
+  function supersedeRestorationWithAcceptedSend(): void {
+    cancelLatestRecovery();
+    if (textRestoration === null) return;
+    cancelTextRestoration();
+    viewAnchor = null;
+    pendingOpen = false;
+    settledOnOpening = true;
+    placementReady = true;
+  }
   function stopAutomaticTravel(): void {
     gestureGeneration += 1;
+    cancelLatestRecovery();
     cancelTextRestoration();
     pendingOpen = false;
     settledOnOpening = true;
@@ -316,11 +323,11 @@
     if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
     withTheNewestLineBeforeTheWrite = false;
   }
-  async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS): Promise<boolean> {
+  async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS, current: () => boolean = () => true): Promise<boolean> {
     const from = thread.scrollTop;
     if (Math.abs(wanted - from) < .5) return true;
     return await conversationMotion(thread).move(positionMotion, fraction => {
-        moveTheThread(thread, from + (wanted - from) * fraction);
+        if (current()) moveTheThread(thread, from + (wanted - from) * fraction);
       }, duration, undefined, true);
   }
 
@@ -374,7 +381,7 @@
   }
 
   function saveLogicalAnchor(thread:HTMLDivElement):void{
-    if(reader===null||reader.restoring||pendingOpen||!settledOnOpening||!placementReady||textRestoration?.anchor.content)return;
+    if(reader===null||reader.restoring||latestPending&&latestIntent?.cause==='restoration-fallback'||pendingOpen||!settledOnOpening||!placementReady||textRestoration?.anchor.content)return;
     const top=thread.getBoundingClientRect().top;
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
@@ -384,7 +391,7 @@
 
   function onThreadScroll(): void {
     const thread = threadElement;
-    if (thread === null || !canMeasure() || pendingOpen || !placementReady || conversationMotion(thread).active(positionMotion)) return;
+    if (thread === null || !canMeasure() || pendingOpen || !placementReady || latestIntent?.cause === 'restoration-fallback' || conversationMotion(thread).active(positionMotion)) return;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return;
     // Native anchoring can scroll after content grows, before ResizeObserver updates
@@ -396,14 +403,24 @@
 
   function isCurrentLatest(intent: typeof latestIntent): boolean {
     return intent !== null && latestIntent === intent && !disposed &&
-      intent.generation === generation && intent.reader === reader;
+      intent.generation === generation && intent.reader === reader &&
+      (intent.cause !== 'restoration-fallback' || !intent.controller?.signal.aborted &&
+        intent.gesture === gestureGeneration && intent.attempt === (reader?.restorationAttempt ?? 0) && !hasUnplacedAcceptedSend());
+  }
+
+  function hasUnplacedAcceptedSend(): boolean {
+    if (outgoingMessages.some(message => message.accepted && !message.restored && !settledMessageIds.has(message.messageId))) return true;
+    return [...(contentElement?.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]') ?? [])]
+      .some(element => !settledMessageIds.has(element.dataset.conversationOutgoing!) &&
+        !outgoingMessages.some(message => message.messageId === element.dataset.conversationOutgoing && message.restored));
   }
 
   export function jumpToLatest(button: HTMLButtonElement): void {
     void jumpToTheNewestLine(button);
   }
 
-  async function jumpToTheNewestLine(button: HTMLButtonElement): Promise<void> {
+  async function jumpToTheNewestLine(button: HTMLButtonElement | null, cause: LatestPlacementIntent<ConversationViewReader>['cause'] = 'latest', attempt: number | null = null): Promise<void> {
+    cancelLatestRecovery();
     // Keep the last visible address until this Latest operation actually lands.
     // A reader replacement cancels an unfinished click and restores that address.
     // An unfulfilled restoration destination is explicitly abandoned by Latest.
@@ -429,20 +446,33 @@
     recoveryToPlace = null;
     reader?.releaseEntry();
     if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
-    const intent = {
-      reader,
-      generation,
+    if (cause === 'restoration-fallback') {
+      viewAnchor = null;
+      pendingPresentationTarget = null;
+      answerRoomMessageId = null;
+      reservedSpacePixels = 0;
+      withTheNewestLineBeforeTheWrite = false;
+    }
+    const intent: LatestPlacementIntent<ConversationViewReader> = {
+      reader, generation, cause, attempt, gesture: gestureGeneration,
+      controller: cause === 'restoration-fallback' ? new AbortController() : null,
       admitted: reader === null,
-      focusButton: button as HTMLButtonElement | null
+      focusButton: button
     };
     latestIntent = intent;
     latestPending = true;
     if (intent.reader !== null) {
-      const admitted = await intent.reader.load({kind:"timeline",key:null},null,"older",true);
+      const admitted = cause === 'restoration-fallback' && intent.controller !== null
+        ? await intent.reader.loadLatest({kind:'restoration-fallback', signal:intent.controller.signal, isCurrent:() => isCurrentLatest(intent)})
+        : await intent.reader.load({kind:"timeline",key:null},null,"older",true);
       if (!isCurrentLatest(intent)) return;
       if (!admitted) {
         latestIntent = null;
         latestPending = false;
+        if (cause === 'restoration-fallback') {
+          placementReady = true;
+          entryPresentationPending = false;
+        }
         requestReconciliation();
         return;
       }
@@ -524,7 +554,7 @@
         let provisionalNewest = false;
         // Svelte and managed Markdown finish their DOM writes before the reading.
         await tick();
-        if (startedIn !== generation || !canMeasure()) return;
+        if (startedIn !== generation || gesture !== gestureGeneration || !canMeasure()) return;
         if (intent !== latestIntent) {
           dirty = true;
           continue;
@@ -557,14 +587,8 @@
         }
         const accepted = [...thread.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]')]
           .filter(element => !settledMessageIds.has(element.dataset.conversationOutgoing!)).at(-1);
+        if (accepted !== undefined) supersedeRestorationWithAcceptedSend();
         if (accepted !== undefined && presentationReady(accepted)) {
-          if (textRestoration !== null) {
-            cancelTextRestoration();
-            viewAnchor = null;
-            pendingOpen = false;
-            settledOnOpening = true;
-            placementReady = true;
-          }
           const id = accepted.dataset.conversationOutgoing!;
           if (placement?.destination !== 'sent' || placement.messageId !== id) {
             if (placement) placement.cancelled = true;
@@ -599,7 +623,7 @@
         }
         // Space is part of layout. Place only after its final DOM height is present.
         await tick();
-        if (startedIn !== generation || !canMeasure() || thread !== threadElement) return;
+        if (startedIn !== generation || gesture !== gestureGeneration || !canMeasure() || thread !== threadElement) return;
         if (intent !== latestIntent) {
           dirty = true;
           continue;
@@ -608,8 +632,11 @@
         if (!geometry.hasShape()) return;
         takeTheReading(geometry.read(reservedSpacePixels));
 
+        // Recovery owns an explicit newest destination. It never uses opening's
+        // request-at-top or old row offset, even while newest content is pending.
+        if (intent?.cause === 'restoration-fallback' && isCurrentLatest(intent) && !intent.admitted) return;
         if (pendingOpen || !settledOnOpening || reader?.entryPhase === 'placing') {
-          if (!textRestoration?.fallback && reader !== null && reader.pages.length === 0 && (reader.status === null || reader.loading)) return;
+          if (reader !== null && reader.pages.length === 0 && (reader.status === null || reader.loading)) return;
           const targetKey = reader?.entryTarget?.key ?? (viewAnchor && !viewAnchor.following ? viewAnchor.key : null);
           if (viewAnchor !== null && !viewAnchor.following) {
             const held = restoredAnchorElement(thread);
@@ -619,12 +646,12 @@
               landTheOpen(thread);
             }
             if (textRestoration?.anchor.content) {
-              if (!alignSavedText(thread) && !textRestoration?.fallback) return;
-            } else if (!textRestoration?.fallback && !restorationPresentationReady(thread)) return;
+              if (!alignSavedText(thread)) return;
+            } else if (!restorationPresentationReady(thread)) return;
           }
           if (targetKey === null) landTheOpen(thread);
           const destination = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
-          const target = (targetKey === null ? destination : reader?.entryTarget === null || reader?.entryTarget === undefined ? restoredAnchorElement(thread) ?? undefined : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === targetKey)) ?? (textRestoration?.fallback ? contentElement ?? thread : undefined);
+          const target = (targetKey === null ? destination : reader?.entryTarget === null || reader?.entryTarget === undefined ? restoredAnchorElement(thread) ?? undefined : [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node => node.dataset.conversationViewKey === targetKey));
           if (target === undefined) return;
           const restoringAnchor = viewAnchor !== null && !viewAnchor.following;
           if (!restoringAnchor && !presentationReady(target)) {
@@ -666,7 +693,19 @@
         } else if (!settledOnOpening || pendingOpen) {
           landTheOpen(thread);
         } else if (latestPending && isCurrentLatest(intent) && intent?.admitted) {
-          await travel(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
+          const completed = await travel(thread, geometry.newestLineScrollTop(newestLineBottomPixels), CONVERSATION_MOVE_MS, () => isCurrentLatest(intent));
+          if (!completed || !isCurrentLatest(intent) || thread !== threadElement) return;
+          if (intent.cause === 'restoration-fallback') {
+            await tick();
+            if (!isCurrentLatest(intent) || thread !== threadElement || !canMeasure()) return;
+            // Reveal readable newest content without reviving the saved text
+            // demand. Retain recovery until the final row finishes presentation.
+            // Existing layout notifications resume placement after body release.
+            geometry = threadGeometry(thread, reservedSpaceElement);
+            takeTheReading(geometry.read(reservedSpacePixels));
+            if (!isCurrentLatest(intent)) return;
+            moveTheThread(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
+          }
         } else if (recoveryToPlace !== null) {
           if (textRestoration !== null) { cancelTextRestoration(); viewAnchor = null; }
           recoveryToPlace = null;
@@ -770,7 +809,10 @@
         else if (sentMessageToPlace !== null) dirty = true;
         takeTheReading(geometry.read(reservedSpacePixels));
         jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
-        const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && !jumpVisible;
+        const finalRow = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
+          .filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
+        const latestPresented = intent?.cause !== 'restoration-fallback' || presentationReady(finalRow);
+        const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && !jumpVisible && latestPresented;
         if (latestPlaced) latestPending = false;
         withTheNewestLineBeforeTheWrite = (followingMore || !jumpVisible) && !latestPending && heldUnreadKey === null && heldSent === null;
         saveLogicalAnchor(thread);
@@ -797,11 +839,12 @@
     const wantedReader = reader;
     untrack(() => {
       if (conversationOnScreen === wanted && readerOnScreen === wantedReader) return;
+      cancelLatestRecovery();
       generation += 1;
       stopRestorationWait();
       releaseTextRestoration(textRestoration);
       const anchor = wantedReader?.restorationAnchor ?? viewAnchor;
-      textRestoration = anchor && !anchor.following ? {reader:wantedReader, anchor:copyViewReaderAnchor(anchor), attempt:wantedReader?.restorationAttempt ?? 0, fallback:false, demand:null, unsubscribe:null} : null;
+      textRestoration = anchor && !anchor.following ? {reader:wantedReader, anchor:copyViewReaderAnchor(anchor), attempt:wantedReader?.restorationAttempt ?? 0, demand:null, unsubscribe:null} : null;
       if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
       if (placement) placement.cancelled = true;
       placement = threadPlacement(wantedReader, 'entry');
@@ -859,7 +902,7 @@
         generation += 1;
         releaseTextRestoration(textRestoration);
         const anchor = reader?.restorationAnchor ?? textRestoration.anchor;
-        textRestoration = {...textRestoration, anchor:copyViewReaderAnchor(anchor), attempt, fallback:false, demand:null, unsubscribe:null};
+        textRestoration = {...textRestoration, anchor:copyViewReaderAnchor(anchor), attempt, demand:null, unsubscribe:null};
         viewAnchor = copyViewReaderAnchor(anchor);
         pendingOpen = true;
         settledOnOpening = false;
@@ -875,7 +918,8 @@
     threadElement;
     untrack(() => {
       const thread = threadElement;
-      if (thread !== null && canMeasure() && !pendingOpen && heldSent === null && heldUnreadKey === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
+      if (hasUnplacedAcceptedSend()) supersedeRestorationWithAcceptedSend();
+      if (thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && heldUnreadKey === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
       noteMessageArrivals();
       requestReconciliation();
     });
@@ -920,7 +964,11 @@
       repairLayout(thread);
       requestReconciliation();
     });
-    const acceptanceObserver = new MutationObserver(() => { repairLayout(thread); requestReconciliation(); });
+    const acceptanceObserver = new MutationObserver(() => {
+      if (hasUnplacedAcceptedSend()) supersedeRestorationWithAcceptedSend();
+      repairLayout(thread);
+      requestReconciliation();
+    });
     acceptanceObserver.observe(content, {subtree:true, childList:true, attributes:true, attributeFilter:["data-conversation-accepted", "aria-busy", "data-markdown-rendering", "data-visible-content-state"]});
     observer.observe(thread);
     observer.observe(content);
@@ -936,6 +984,7 @@
     document.addEventListener("focusin", onFocusIn);
     return () => {
       disposed = true;
+      cancelLatestRecovery();
       stopRestorationWait();
       releaseTextRestoration(textRestoration);
       generation += 1;

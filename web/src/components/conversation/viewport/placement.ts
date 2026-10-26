@@ -31,14 +31,10 @@ export type TextRestorationPlacement = {
   readonly reader: object | null;
   readonly anchor: ViewReaderAnchor;
   readonly attempt: number;
-  fallback: boolean;
   demand: MarkdownTargetDemand | null;
   unsubscribe: (() => void) | null;
 };
-/** The original text locator belongs to Retry, never to the fallback placement. */
-export function rowRestorationAnchor(anchor: ViewReaderAnchor): ViewReaderAnchor {
-  return Object.freeze({key:anchor.key, order:Object.freeze({...anchor.order}), offset:anchor.offset, following:anchor.following});
-}
+
 export function releaseTextRestoration(operation: TextRestorationPlacement | null): void {
   operation?.unsubscribe?.();
   operation?.demand?.release();
@@ -49,3 +45,15 @@ export function releaseTextRestoration(operation: TextRestorationPlacement | nul
 export interface ConversationViewportControls {
   jumpToLatest(button: HTMLButtonElement): void;
 }
+
+/** Latest and automatic recovery share admission and retain distinct focus behavior. */
+export type LatestPlacementIntent<Reader> = {
+  reader: Reader | null;
+  generation: number;
+  gesture: number;
+  cause: 'latest' | 'restoration-fallback';
+  attempt: number | null;
+  controller: AbortController | null;
+  admitted: boolean;
+  focusButton: HTMLButtonElement | null;
+};

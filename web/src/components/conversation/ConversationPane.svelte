@@ -465,10 +465,9 @@
   </div>
 
   <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
-  {#if reader && reader.restorationOutcome !== 'idle'}
-    <div class="chat-receipt" role="status" data-conversation-restoration-status={reader.restorationOutcome}>
-      {reader.restorationOutcome === 'unavailable' ? 'This conversation position is no longer available.' : reader.restorationOutcome === 'failed' ? 'Your conversation position did not load.' : 'Restoring your conversation position…'}
-      {#if reader.restorationOutcome !== 'unavailable'}<button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>{/if}
+  {#if reader?.restorationOutcome === 'pending'}
+    <div class="chat-receipt" role="status" data-conversation-restoration-status="pending">
+      Restoring your conversation position…
       <button type="button" class="chat-qrow-act" aria-label="Jump to latest message" onclick={(event) => viewport?.jumpToLatest(event.currentTarget)}>Latest</button>
     </div>
   {/if}

@@ -3131,9 +3131,10 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             ('paragraphs',20,'cancel'),('paragraphs',20,'changed-source'),
             ('paragraphs',20,'inline-parser-retry'),('paragraphs',20,'inline-digest-retry'),
             ('paragraphs',0,'full-timeout'),('paragraphs',20,'history-timeout'),
+            ('paragraphs',20,'accepted-send'),
         ):
             if completion_order == 'bounded':
-                if order not in ('full-timeout', 'history-timeout'):
+                if order not in ('full-timeout', 'history-timeout', 'accepted-send'):
                     continue
             elif completion_order is not None and (variant, backlog, order) != ('paragraphs', 20, completion_order):
                 continue
@@ -3186,8 +3187,20 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 # registration while the original text location remains saved.
                 page.locator('[data-conversation-lens-choice="full"]').click(force=True)
                 page.evaluate('window.__returnProbe.hold=false')
-            if order=='cancel':
+            if order in ('cancel','accepted-send'):
                 page.evaluate('window.__returnProbe.holdTargetOnly=true')
+            if order=='accepted-send':
+                # This transport ignores abort and finishes after accepted send.
+                # Admission and viewport authority must both remain retired.
+                page.evaluate('''() => {
+                  window.__latestProbe.holdLatest=true;
+                  const fetch=window.fetch;
+                  window.fetch=(input,init)=>{
+                    const url=new URL(String(input),location.href);
+                    return fetch(input,url.pathname.endsWith('/view/pages')&&!url.searchParams.has('cursor')
+                      ? {...init,signal:undefined}:init);
+                  };
+                }''')
             if order.startswith('inline-'):
                 page.evaluate('''kind=>{
                   window.__returnProbe.inlineTarget=true;
@@ -3211,75 +3224,91 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             if order in ('full-timeout', 'history-timeout'):
                 if order == 'full-timeout':
                     page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
-                # No Retry or latest action can supply the first reveal. Native
-                # visibility catches the old final-layout text dependency too.
+                # Existing held history stays pending, but the new automatic
+                # newest read must use actual admission instead of that gate.
+                page.evaluate('window.__returnProbe.hold=false')
                 page.wait_for_function('''() => {
                   const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
                   return thread&&region&&getComputedStyle(thread).visibility!=='hidden'
-                    &&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true'
-                    &&document.querySelector('[data-conversation-restoration-status="failed"]');
-                }''',timeout=6500)
+                    &&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
+                }''',timeout=7000)
+                assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
+                assert page.locator('[data-conversation-restoration-status]').count()==0
+                # This assertion is the unchanged-product negative control:
+                # terminal row fallback cannot admit and place the final range.
+                page.wait_for_function('''() => {
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  return thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1;
+                }''')
+                assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
+                assert page.get_by_role('button',name='Jump to latest message',exact=True).is_visible()
+                if backlog:
+                    assert page.locator('[data-conversation-view-key="e2020"]').count()==1
                 frames=page.evaluate('window.__textFrames')
                 revealed=next(frame for frame in frames if frame['visible'])
                 elapsed=revealed['ms']-frames[0]['ms']
-                assert 4800 <= elapsed <= 5500, ('The active restoration budget must be 5000 ms',elapsed)
+                assert 4800 <= elapsed <= 5900, ('The active restoration budget is 5000 ms plus bottom travel',elapsed)
                 case['automaticRevealMs']=elapsed
                 page.screenshot(path=str(output/f'text-return-{order}-automatic.png'))
-                if order == 'full-timeout':
-                    # The old failed attempt must not consume the Retry budget.
-                    # A hidden tab consumes none of its fresh active budget.
-                    page.get_by_role('button',name='Retry conversation position',exact=True).click()
-                    page.locator('[data-conversation-restoration-status="pending"]').wait_for(state='visible')
-                    page.evaluate('window.__fixtureVisible=false;document.dispatchEvent(new Event("visibilitychange"))')
-                    page.wait_for_timeout(5200)
-                    page.evaluate('window.__fixtureVisible=true;document.dispatchEvent(new Event("visibilitychange"))')
-                    page.wait_for_timeout(600)
-                    assert page.locator('[data-conversation-restoration-status="pending"]').count()==1
-                    page.evaluate('window.__returnProbe.releaseBodies()')
-                    page.wait_for_function('''held => {
-                      const target=window.__readCharacter(held),thread=document.querySelector('[data-conversation-thread]');
-                      return target?.visible&&Math.abs(target.offset-held.offset)<=1
-                        &&getComputedStyle(thread).visibility!=='hidden'
-                        &&!document.querySelector('[data-conversation-restoration-status="pending"]');
-                    }''',arg=held,timeout=10000)
-                    case['freshRetryPreservedText']=True
-                else:
-                    _settle_conversation_layout(page)
-                    snapshot='''() => {
-                      const thread=document.querySelector('[data-conversation-thread]');
-                      return {scroll:thread.scrollTop,keys:[...thread.querySelectorAll('[data-conversation-view-key]')].map(row=>row.dataset.conversationViewKey)};
-                    }'''
-                    before=page.evaluate(snapshot)
-                    # A transport can finish after abort. It cannot restore old
-                    # history pages or reclaim placement after automatic fallback.
-                    page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
-                    page.wait_for_timeout(500)
-                    after=page.evaluate(snapshot)
-                    assert before==after, ('Late history reclaimed fallback placement',before,after)
-                    case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
+                _settle_conversation_layout(page)
+                snapshot='''() => {
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  return {scroll:thread.scrollTop,keys:[...thread.querySelectorAll('[data-conversation-view-key]')].map(row=>row.dataset.conversationViewKey)};
+                }'''
+                before=page.evaluate(snapshot)
+                # Ignore-abort history cannot reclaim the admitted newest range.
+                page.evaluate('window.__returnProbe.release()')
+                page.wait_for_timeout(500)
+                after=page.evaluate(snapshot)
+                assert before==after, ('Late history reclaimed fallback placement',before,after)
+                case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
+                page.evaluate('window.__returnProbe.releaseBodies()')
+                page.wait_for_function('''() => {
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  return thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1
+                    &&!document.querySelector('button[aria-label="Jump to latest message"]');
+                }''')
                 case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
                 continue
             if order.startswith('inline-'):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release();window.__returnProbe.releaseBodies()')
-                page.locator('[data-conversation-restoration-status="failed"]').wait_for(state='visible')
-                # A failed attempt now reveals its row fallback automatically.
-                # Preserve the strict native-line proof for every Retry frame,
-                # starting at the click event before the product handler runs.
                 page.wait_for_function('''() => {
                   const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
-                  return getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
+                  return region?.getAttribute('aria-busy')==='false'&&getComputedStyle(region).visibility!=='hidden'
+                    &&thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1
+                    &&thread.textContent.includes('Owner answer 20')&&!document.querySelector('[data-conversation-restoration-status]');
                 }''')
-                page.wait_for_function("window.__textFrames.some(frame=>frame.visible&&['failed','unavailable'].includes(frame.restorationStatus))")
-                case['failureFrames']=page.evaluate('window.__textFrames')
-                assert all(not frame['visible'] or frame['restorationStatus'] in ('failed','unavailable')
-                           for frame in case['failureFrames']),case['failureFrames']
-                page.get_by_role('button',name='Retry conversation position',exact=True).evaluate(
-                    "button=>button.addEventListener('click',()=>{window.__textFrames=[];},{capture:true,once:true})")
-                page.get_by_role('button',name='Retry conversation position',exact=True).click()
-                page.wait_for_function('window.__restorationFailure.retriedSameSource')
-                failure=page.evaluate('({failures:window.__restorationFailure.failures,retriedSameSource:window.__restorationFailure.retriedSameSource})')
-                assert failure=={'failures':1,'retriedSameSource':True},failure
-                case['failure']=failure
+                assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
+                case['failure']=page.evaluate('({failures:window.__restorationFailure.failures})')
+                assert case['failure']['failures']==1,case
+                case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                continue
+            if order=='accepted-send':
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+                page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
+                page.evaluate('window.__returnProbe.changedSource=true;window.__returnProbe.releaseBodies()')
+                page.wait_for_function('window.__latestProbe.latestWaiting>0')
+                responses_before=page.evaluate('window.__latestProbe.latestResponses')
+                box=page.locator('[data-conversation-input]')
+                box.fill('Accepted send supersedes automatic restoration recovery')
+                box.press('Enter')
+                page.locator('[data-conversation-outgoing][data-conversation-accepted="true"]').wait_for()
+                _settle_conversation_layout(page)
+                snapshot='''() => {
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  return {scroll:thread.scrollTop,keys:[...thread.querySelectorAll('[data-conversation-view-key]')].map(row=>row.dataset.conversationViewKey)};
+                }'''
+                before=page.evaluate(snapshot)
+                assert 'e2000' in before['keys'],before
+                page.evaluate('window.__latestProbe.holdLatest=false;window.__latestProbe.releaseLatest()')
+                page.wait_for_function('before=>window.__latestProbe.latestResponses>before',arg=responses_before)
+                _settle_conversation_layout(page)
+                after=page.evaluate(snapshot)
+                assert before==after,('Late automatic newest admission displaced an accepted send',before,after)
+                assert page.locator('[data-conversation-restoration-status]').count()==0
+                case.update({'beforeLateCompletion':before,'afterLateCompletion':after,'ignoredAbortNewestCompleted':True})
+                case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                continue
             if order in ('cancel','changed-source'):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
                 page.wait_for_function('window.__returnProbe.bodyWaiting>0')
@@ -3302,17 +3331,19 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                     case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
                 else:
                     page.evaluate('window.__returnProbe.changedSource=true;window.__returnProbe.releaseBodies()')
-                    page.locator('[data-conversation-restoration-status="unavailable"]').wait_for(state='visible')
-                    page.get_by_role('button',name='Jump to latest message',exact=True).click()
-                    _settle_conversation_layout(page)
+                    page.wait_for_function('''() => {
+                      const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+                      return region?.getAttribute('aria-busy')==='false'&&getComputedStyle(region).visibility!=='hidden'
+                        &&thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1
+                        &&thread.textContent.includes('Owner answer 20')&&!document.querySelector('[data-conversation-restoration-status]');
+                    }''')
+                    assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
                     case['unavailable']=True
                 case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
                 assert all(frame['retainedRoots']<=4 and frame['rows']<=300 for frame in case['frames']),case
                 page.screenshot(path=str(output/f'text-return-{order}.png'))
                 continue
-            if order.startswith('inline-'):
-                pass
-            elif order=='body-first':
+            if order=='body-first':
                 page.evaluate('window.__returnProbe.release()')
                 # The snapshot's body admission can finish while anchor history is held.
                 page.wait_for_function('window.__returnProbe.bodyWaiting>0')
@@ -3490,18 +3521,22 @@ def _tab_return(browser, url):
                     assert_frames(held,visible)
                 page.evaluate('window.__returnProbe.releaseBodies()')
             if admission == 'failed':
-                page.wait_for_timeout(350)
-                # Explicit retry retains the same remembered target after a failed read.
-                retry = page.get_by_role('button', name='Retry conversation position', exact=True)
-                retry.wait_for(state='visible')
-                page.wait_for_function("window.__returnFrames.some(frame=>frame.visible&&['failed','unavailable'].includes(frame.restorationStatus))")
-                failed = page.evaluate('window.__returnFrames')
-                visible = [frame for frame in failed if frame['visible']]
-                assert visible, failed
-                assert all(frame['restorationStatus'] in ('failed','unavailable') for frame in visible),failed
+                # Both restoration and automatic newest admission fail. Preserve
+                # readable content and ordinary Latest access, without false success.
+                wait_for_reveal()
+                assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
+                assert page.locator('[data-conversation-restoration-status]').count()==0
+                failed=page.evaluate('window.__returnFrames')
+                assert page.get_by_role('img',name='Connection trouble',exact=True).is_visible()
                 page.evaluate('window.__returnProbe.fail=false')
-                retry.evaluate("button=>button.addEventListener('click',()=>{window.__returnFrames=[];},{capture:true,once:true})")
-                retry.click()
+                page.get_by_role('button',name='Jump to latest message',exact=True).click()
+                page.wait_for_function('''() => {
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  return thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1&&thread.querySelector('[data-conversation-view-key="e2120"]');
+                }''')
+                frames=page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
+                proof.append({'position':position,'backlog':backlog,'admission':admission,'held':held,'after':page.evaluate(reading),'frames':frames,'failureFrames':failed})
+                continue
             wait_for_reveal()
             frames = page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
             assert_frames(held, frames)
