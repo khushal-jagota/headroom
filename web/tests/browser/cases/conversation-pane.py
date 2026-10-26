@@ -3046,17 +3046,17 @@ def _text_tab_return(browser, url, output):
     # This observer reads native text nodes and Range geometry. No product anchor,
     # rendering marker or wrapper identity supplies the correctness assertion.
     page.add_init_script('''
-    window.__restorationFailure={kind:null,failures:0,source:null,retriedSameSource:false};
+    window.__restorationFailure={kind:null,failedOperation:null,failures:0,source:null,retriedSameSource:false};
     const NativeWorker=window.Worker;
     window.Worker=class extends NativeWorker {
       postMessage(request,...args){
         const probe=window.__restorationFailure;
         if(request.kind==='markdown'&&request.source?.startsWith('Late paragraph 2000.0.')){
           if(probe.kind==='parser'){
-            probe.kind=null;probe.failures++;probe.source=request.source;
+            probe.kind=null;probe.failedOperation='parser';probe.failures++;probe.source=request.source;
             queueMicrotask(()=>this.onmessage?.({data:{id:request.id,error:'Injected temporary Markdown parser failure'}}));return;
           }
-          if(probe.source===request.source)probe.retriedSameSource=true;
+          if(probe.failedOperation==='parser'&&probe.source===request.source)probe.retriedSameSource=true;
         }
         return super.postMessage(request,...args);
       }
@@ -3066,10 +3066,10 @@ def _text_tab_return(browser, url, output):
       const source=new TextDecoder('utf-16le').decode(input),probe=window.__restorationFailure;
       if(source.startsWith('Late paragraph 2000.0.')){
         if(probe.kind==='digest'){
-          probe.kind=null;probe.failures++;probe.source=source;
+          probe.kind=null;probe.failedOperation='digest';probe.failures++;probe.source=source;
           return Promise.reject(new Error('Injected temporary Markdown digest failure'));
         }
-        if(probe.source===source)probe.retriedSameSource=true;
+        if(probe.failedOperation==='digest'&&probe.source===source)probe.retriedSameSource=true;
       }
       return nativeDigest(algorithm,input);
     };
@@ -3103,9 +3103,28 @@ def _text_tab_return(browser, url, output):
             case = {'variant':variant,'backlog':backlog,'order':order}
             proof.append(case)
             page.goto(url+'?reader=1&text-restoration='+variant)
-            page.wait_for_function("document.querySelector('.conversation-transcript-region')?.getAttribute('aria-busy')==='false'")
+            # Idle region state precedes deferred body admission. Wait for native
+            # target text before any wheel gesture can cancel initial placement.
+            page.wait_for_function('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+              const target=thread?.querySelector('[data-conversation-view-key="e2000"] .markdown-host');
+              return region?.dataset.conversationEntry==='complete'&&region.getAttribute('aria-busy')==='false'
+                &&getComputedStyle(region).visibility!=='hidden'&&getComputedStyle(thread).visibility!=='hidden'
+                &&target&&!target.hasAttribute('data-markdown-rendering')&&!target.querySelector('[aria-busy="true"]')
+                &&(target.textContent.includes('Late paragraph 2000.')||target.textContent.includes('Interior code line'));
+            }''')
             _settle_conversation_layout(page)
             thread=page.locator('[data-conversation-thread]')
+            latest=page.get_by_role('button',name='Jump to latest message',exact=True)
+            if latest.is_visible():
+                latest.click()
+            page.wait_for_function('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+              const text=window.__readCharacter()?.text;
+              return region?.getAttribute('aria-busy')==='false'&&thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1
+                &&text&&(text.includes('Late paragraph 2000.')||text.includes('Interior code line'));
+            }''')
+            _settle_conversation_layout(page)
             thread.hover()
             page.mouse.wheel(0,-600 if backlog==0 else -2400)
             _settle_conversation_layout(page)

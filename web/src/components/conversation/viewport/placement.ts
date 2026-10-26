@@ -39,3 +39,8 @@ export function releaseTextRestoration(operation: TextRestorationPlacement | nul
   operation?.demand?.release();
   if (operation) { operation.unsubscribe = null; operation.demand = null; }
 }
+
+/** Controls remain reachable while the transcript waits for its saved text. */
+export interface ConversationViewportControls {
+  jumpToLatest(button: HTMLButtonElement): void;
+}

@@ -352,6 +352,10 @@
       intent.generation === generation && intent.reader === reader;
   }
 
+  export function jumpToLatest(button: HTMLButtonElement): void {
+    void jumpToTheNewestLine(button);
+  }
+
   async function jumpToTheNewestLine(button: HTMLButtonElement): Promise<void> {
     cancelTextRestoration();
     viewAnchor = null;
@@ -906,7 +910,7 @@
       ></div>
     {/if}
   </div>
-  {#if jumpVisible || newerHistory || latestPending || reader?.restorationOutcome !== undefined && reader.restorationOutcome !== 'idle'}
+  {#if (reader === null || reader.restorationOutcome === 'idle') && (jumpVisible || newerHistory || latestPending)}
     <button
       type="button"
       class="chat-jump"
