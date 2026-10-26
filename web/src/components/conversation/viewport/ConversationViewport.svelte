@@ -769,7 +769,8 @@
       newestMessageSequence = 0;
       noteMessageArrivals();
       heldSent = null;
-      heldUnreadKey = null;
+      // A lens replacement retains the unread entry's padding and exact text position.
+      if (conversationOnScreen !== wanted) heldUnreadKey = null;
       reservedSpacePixels = 0;
       answerRoomMessageId = null;
       sentMessageToPlace = null;

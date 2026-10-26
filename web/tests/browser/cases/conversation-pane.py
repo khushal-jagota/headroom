@@ -3696,6 +3696,9 @@ def run(browser, urls):
         _machine_evidence(browser, urls[0])
         if __import__('os').environ.get('PANELS_MACHINE_ONLY') == '1':
             return
+        _short_lens_restoration(browser, urls[0])
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'short-lens':
+            return
 
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'repairs':
             _conversation_repairs(browser, urls[0])
@@ -3816,3 +3819,33 @@ def _machine_evidence(browser, url):
     assert not errors,errors
     page.close()
     print('MACHINE_EVIDENCE_PROOF seconds='+str(round(time.perf_counter()-started,3))+' newHosts=0',flush=True)
+
+
+def _short_lens_restoration(browser, url):
+    import json
+    import time
+
+    from playwright.sync_api import expect
+
+    started=time.perf_counter()
+    page=browser.new_page(viewport={"width":1000,"height":900})
+    try:
+        page.goto(url+"?reader=1&short-lens=1&unread=0")
+        text=page.get_by_text("Child direct message",exact=True)
+        expect(text).to_be_visible()
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        measure="""() => { const thread=document.querySelector('[data-conversation-thread]'); const text=thread.querySelector('p'); const region=document.querySelector('.conversation-transcript-region'); return {padding:getComputedStyle(thread).paddingTop,top:text.getBoundingClientRect().top-thread.getBoundingClientRect().top,scrollTop:thread.scrollTop,scrollHeight:thread.scrollHeight,height:thread.clientHeight,visibility:getComputedStyle(region).visibility,status:document.querySelector('[data-conversation-restoration-status]')?.dataset.conversationRestorationStatus??null}; }"""
+        before=page.evaluate(measure)
+        page.locator('[data-conversation-lens-choice="full"]').click()
+        expect(text).to_be_visible()
+        after=page.evaluate(measure)
+        assert after['status'] is None,after
+        assert abs(after['top']-before['top'])<=1,{'before':before,'after':after}
+        page.locator('[data-conversation-lens-choice="focus"]').click()
+        expect(text).to_be_visible()
+        restored=page.evaluate(measure)
+        assert restored['status'] is None,restored
+        assert abs(restored['top']-before['top'])<=1,{'before':before,'restored':restored}
+        print('SHORT_LENS_RESTORATION '+json.dumps({'before':before,'full':after,'focus':restored,'seconds':round(time.perf_counter()-started,3),'newHosts':0}),flush=True)
+    finally:
+        page.close()
