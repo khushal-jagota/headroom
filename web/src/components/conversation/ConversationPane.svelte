@@ -285,7 +285,7 @@
     if (conversationState === "opened") { event.preventDefault(); conversationState = "rest"; }
   }
 
-  /** The arrow switches the two states and keeps keyboard focus on its counterpart. */
+  /** Preview and Return share one action and restore focus to the corresponding control. */
   function moveThroughTheStates(): void {
     const restoreControlFocus = document.activeElement instanceof HTMLElement
       && paneElement?.contains(document.activeElement)
@@ -367,7 +367,7 @@
       >Full</button>
     </div>
     <div class="chat-head-right">
-      <!-- The corresponding state control receives focus after arrow activation. -->
+      <!-- The corresponding state control receives focus after preview activation. -->
       {#if stateControl !== null && conversationState !== "rest"}
         <button
           type="button"
@@ -514,9 +514,9 @@
     />
   {/if}
 
-  <!-- At rest this one line is the whole conversation visible above the composer. -->
+  <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
-    <ConversationRestBar line={restLine} preview={unreadPreview} {roleLabel} {activityKnown}
+    <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
       {connectionTrouble} {running} feedback={dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
@@ -580,7 +580,7 @@
   @container conversation-pane (max-width: 480px) {
     :global([data-conversation-pane] .chat-u) { max-width: 86%; }
   }
-  /* Inside the conversation card the well and rest line are two halves of one card. */
+  /* The activity preview owns its gap above the separate rounded input. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),
