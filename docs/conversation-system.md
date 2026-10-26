@@ -199,6 +199,20 @@ While an active lens is open, the owner read position advances through the newes
 row. Runtime-only rows can clear an unread mark because each lens displays every result that
 needs the owner's attention.
 
+Stream progress alone does not earn read credit. The browser keeps a separate safe read
+position, established when an admitted newest timeline page survives retention. Initial
+entry keeps that baseline even when placement takes the person to earlier unread text.
+Replacing newest with history, refusing a new timeline row, or losing the newest edge
+freezes further credit. Hidden rows and status updates cannot restore that evidence.
+Older rows can leave retention without stopping credit while the newest edge remains held.
+Expanded turn and work-group pages cannot establish conversation-wide read credit.
+
+Latest, ordinary paging that reaches newest, or a fresh newest snapshot can establish new
+delivery evidence. A page read earns credit only through the stream position captured
+when the queued read actually starts; replay checks subsequent writes separately. Failed,
+canceled, and obsolete reads earn nothing. This prevents future false credit. It does not
+lower an existing saved read position or restore unread state cleared before the repair.
+
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only

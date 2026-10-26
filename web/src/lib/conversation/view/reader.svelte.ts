@@ -31,6 +31,10 @@ export class ConversationViewReader {
     pages = $state.raw<readonly HeldPage[]>([]);
     status = $state.raw<ConversationViewStatus | null>(null);
     coverage = $state(0);
+    /** Stream progress is not evidence that a retained history window took a row. */
+    safeReadThroughSequence = $state(0);
+    // undefined: no current newest evidence; null: an authoritative empty timeline.
+    private newestReadWitness: ConversationViewItem | null | undefined = undefined;
     trouble = $state(false);
     loading = $state(false);
     restoring = $state(false);
@@ -108,6 +112,7 @@ export class ConversationViewReader {
         this.cancelPages();
         this.pageQueue = Promise.resolve();
         this.coverage = 0;
+        this.newestReadWitness = undefined;
         this.wholeHistoryIsSuspect = true;
         this.revision++;
     }
@@ -324,8 +329,31 @@ export class ConversationViewReader {
         if (status.diagnostics_expired && this.status?.diagnostics_expired !== true) this.discardedBodies++;
         this.status = status;
     }
+    private heldTimeline(): readonly ConversationViewItem[] {
+        return this.pages.find(page => page.scope.kind === 'timeline')?.items ?? [];
+    }
+    private holdsVersion(item: ConversationViewItem): boolean {
+        return this.heldTimeline().some(held => held.key === item.key && compareItems(held, item) === 0
+            && held.changed_through_sequence === item.changed_through_sequence);
+    }
+    /** Acquire evidence from a whole newest slice, after retention has run.
+     * Cursor exhaustion proves no delivery; a null cursor can prove an empty scope. */
+    private acquireReadWitness(page: ConversationViewPage, checkpoint: number, authoritativeEmpty: boolean): void {
+        if (!this.transcript || page.scope.kind !== 'timeline' || page.newer !== null) return;
+        // A fresh newest slice supersedes the old proof even when retention cannot
+        // keep it. The previous edge cannot vouch for rows this read omitted.
+        this.newestReadWitness = undefined;
+        if (page.items.length === 0 && !authoritativeEmpty || !page.items.every(item => this.holdsVersion(item))) return;
+        this.newestReadWitness = page.items.at(-1) ?? null;
+        this.safeReadThroughSequence = Math.max(this.safeReadThroughSequence, checkpoint);
+    }
+    private retainReadWitness(): void {
+        if (this.newestReadWitness !== undefined && (this.newestReadWitness === null
+            ? this.heldTimeline().length !== 0 : !this.holdsVersion(this.newestReadWitness))) this.newestReadWitness = undefined;
+    }
     private accept(page: ConversationViewPage, replace: boolean, direction: 'older' | 'newer' = 'older'): void {
         this.checkPage(page);
+        if (page.scope.kind === 'timeline' && replace && page.newer !== null) this.newestReadWitness = undefined;
         const key = scopeKey(page.scope);
         const previous = this.pages.find(p => scopeKey(p.scope) === key);
         const map = new Map<string, ConversationViewItem>((replace ? [] : previous?.items ?? []).map(item => [item.key, item]));
@@ -371,6 +399,7 @@ export class ConversationViewReader {
             }
         }
         this.pages = pages.filter(p => p.items.length > 0 || scopeKey(p.scope) === preferred);
+        this.retainReadWitness();
     }
     async connect(): Promise<void> {
         if (this.disposed || this.requests.size > 0 || this.restoring && this.receivedSnapshot || this.entryStarted && ['loading', 'placing', 'error'].includes(this.entryPhase))
@@ -432,6 +461,7 @@ export class ConversationViewReader {
                         this.pages = [];
                     }
                     this.admitSnapshot(value.page);
+                    this.acquireReadWitness(value.page, value.coverage.through_sequence, true);
                     if (!this.receivedSnapshot) {
                         this.receivedSnapshot = true;
                         this.initialLiveOutput = value.status.live_output ? JSON.stringify(value.status.live_output.reference) : null;
@@ -495,6 +525,12 @@ export class ConversationViewReader {
                             const latest = value.status.rest.latest_turn;
                             this.pages = this.pages.map(page => ({ ...page, items: page.items.map(item => item.key === latest.key ? latest : item) }));
                         }
+                        if (this.newestReadWitness !== undefined) {
+                            const expectedEdge = this.newestReadWitness === null ? null
+                                : updates.get(this.newestReadWitness.key) ?? this.newestReadWitness;
+                            this.newestReadWitness = expectedEdge === null || this.holdsVersion(expectedEdge)
+                                ? this.heldTimeline().at(-1) ?? null : undefined;
+                        }
                         this.trim(scopeKey(timeline), 'newer');
                         if (this.restorationAnchor && !this.pages.some(page => page.items.some(item => item.key === this.restorationAnchor?.key))) {
                             const removed = [...value.removed_keys, ...value.scope_changes.flatMap(scope => scope.removed_keys)];
@@ -514,6 +550,14 @@ export class ConversationViewReader {
                                 void this.load(scope, null, 'older', true);
                         }
                     }
+                    const timelineMembers = value.scope_changes.find(change => change.scope.kind === 'timeline')?.item_keys ?? [];
+                    if (!timelineMembers.every(key => {
+                        const item = value.upserts.find(item => item.key === key);
+                        return item !== undefined && this.holdsVersion(item);
+                    })) this.newestReadWitness = undefined;
+                    if (value.invalidated_scopes.some(scope => scope.kind === 'timeline')) this.newestReadWitness = undefined;
+                    if (this.transcript && this.newestReadWitness !== undefined)
+                        this.safeReadThroughSequence = Math.max(this.safeReadThroughSequence, value.coverage.through_sequence);
                     this.revision++;
                     ready();
                 }
@@ -558,6 +602,7 @@ export class ConversationViewReader {
             // reconnect replays writes during this read for every retained scope, including
             // the newly admitted page. A live writer therefore cannot starve history reads.
             this.pauseTail();
+            const readCheckpoint = this.coverage;
             let stopAbort = () => {};
             try {
                 // Abort retires the queue slot even if a transport never settles.
@@ -572,6 +617,7 @@ export class ConversationViewReader {
                 if (!active()) return false;
                 if (!sameScope(page.scope, scope)) throw new Error('Conversation view scope changed');
                 this.accept(page, replace || cursor === null, direction);
+                this.acquireReadWitness(page, readCheckpoint, cursor === null);
                 this.changed();
                 return true;
             }
