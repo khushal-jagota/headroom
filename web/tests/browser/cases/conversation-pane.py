@@ -3071,7 +3071,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
 
     started = time.perf_counter()
     proof = []
-    if completion_order not in (None, 'history-first', 'body-first', 'bounded'):
+    if completion_order not in (None, 'history-first', 'body-first', 'bounded', 'off-range'):
         raise ValueError('Unknown text restoration completion order')
     page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
     # This observer reads native text nodes and Range geometry. No product anchor,
@@ -3131,10 +3131,13 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             ('paragraphs',20,'cancel'),('paragraphs',20,'changed-source'),
             ('paragraphs',20,'inline-parser-retry'),('paragraphs',20,'inline-digest-retry'),
             ('paragraphs',0,'full-timeout'),('paragraphs',20,'history-timeout'),
-            ('paragraphs',20,'accepted-send'),
+            ('paragraphs',20,'accepted-send'),('paragraphs',1,'off-range'),
         ):
             if completion_order == 'bounded':
                 if order not in ('full-timeout', 'history-timeout', 'accepted-send'):
+                    continue
+            elif completion_order == 'off-range':
+                if order != 'off-range':
                     continue
             elif completion_order is not None and (variant, backlog, order) != ('paragraphs', 20, completion_order):
                 continue
@@ -3164,7 +3167,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             }''')
             _settle_conversation_layout(page)
             thread.hover()
-            page.mouse.wheel(0,-600 if backlog==0 else -2400)
+            page.mouse.wheel(0,-600 if backlog==0 or order=='off-range' else -2400)
             _settle_conversation_layout(page)
             held=page.evaluate('window.__readCharacter()')
             assert held and ('Late paragraph 2000.' in held['text'] or 'Interior code line' in held['text']),held
@@ -3180,6 +3183,15 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
               window.__backlog(count);Object.assign(window.__returnProbe,{hold:true,bodies:true,bodyHold:true});
               window.__textFrames=[];window.__stopTextFrames=false;
             }''',backlog)
+            if order=='off-range':
+                # A taller real pane can make the saved line offset unattainable
+                # although the exact immutable native text remains available.
+                page.set_viewport_size({'width':1000,'height':2400})
+                page.locator('[data-conversation-pane]').evaluate('''pane=>{
+                  const host=pane.parentElement;
+                  if(host.style.height!=='700px')throw new Error('Unexpected existing reader host');
+                  host.style.height='2200px';
+                }''')
             if order=='history-timeout':
                 page.evaluate('window.__returnProbe.ignoreAbort=true')
             if order=='full-timeout':
@@ -3317,6 +3329,42 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 assert page.locator('[data-conversation-restoration-status]').count()==0
                 case.update({'beforeLateCompletion':before,'afterLateCompletion':after,'ignoredAbortNewestCompleted':True})
                 case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                continue
+            if order=='off-range':
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+                page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
+                released_at=page.evaluate('performance.now()')
+                page.evaluate('window.__returnProbe.releaseBodies()')
+                page.wait_for_function('''() => {
+                  const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+                  return region?.getAttribute('aria-busy')==='false'&&getComputedStyle(region).visibility!=='hidden'
+                    &&thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1
+                    &&thread.querySelector('[data-conversation-view-key="e2001"]')?.textContent.includes('Owner answer 2001')
+                    &&!document.querySelector('button[aria-label="Jump to latest message"]');
+                }''',timeout=4500)
+                recovery_elapsed=page.evaluate('performance.now()')-released_at
+                assert recovery_elapsed<4500,('Off-range recovery must precede the five-second budget',recovery_elapsed)
+                # The newest row is ready before its preceding large saved body.
+                # Wait for that ordinary presentation before native range proof.
+                page.wait_for_function('held=>window.__readCharacter(held)!==null',arg=held,timeout=10000)
+                page.wait_for_function('''() => {
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  return thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1;
+                }''')
+                elapsed=page.evaluate('performance.now()')-released_at
+                geometry=page.evaluate('''held=>{
+                  const character=window.__readCharacter(held),thread=document.querySelector('[data-conversation-thread]');
+                  return {character,max:thread.scrollHeight-thread.clientHeight,
+                    wanted:character?thread.scrollTop+character.offset-held.offset:null};
+                }''',held)
+                assert geometry['character'] is not None,('The original valid text locator must remain available',geometry)
+                assert geometry['wanted']>geometry['max']+1,('The saved offset must lie outside the actual scroll range',geometry)
+                assert page.evaluate('window.__latestProbe.latestResponses')>case['newestResponsesBeforeReturn']
+                case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                assert all(frame['restorationStatus'] is None for frame in case['frames']),case
+                assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
+                case.update({'offRangeGeometry':geometry,'automaticRecoveryAfterReleaseMs':recovery_elapsed,'nativeGeometryReadyAfterReleaseMs':elapsed})
+                page.screenshot(path=str(output/'text-return-off-range.png'))
                 continue
             if order in ('cancel','changed-source'):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
@@ -3833,13 +3881,13 @@ def run(browser, urls):
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'card':
             _card_state_motion(browser, urls[0])
             return
-        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'text-bounded':
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') in ('text-bounded','text-off-range'):
             import os
             from pathlib import Path
 
             output=Path(os.environ.get('PANELS_E2E_FAILURE_DIR','/tmp'))
             output.mkdir(parents=True,exist_ok=True)
-            _text_tab_return(browser, urls[0], output, completion_order='bounded')
+            _text_tab_return(browser, urls[0], output, completion_order='off-range' if os.environ['CONVERSATION_SETTLED_CASE']=='text-off-range' else 'bounded')
             return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'tab-return':
             _tab_return(browser, urls[0])

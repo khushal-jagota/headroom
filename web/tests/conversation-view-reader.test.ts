@@ -83,6 +83,7 @@ it('does not restore a collapsed scope from a delayed response and resumes after
   // A reset asks for everything again. It does not take the conversation away first.
   expect(reader.pages).toHaveLength(1);
   expect(reader.coverage).toBe(0);
+  expect(reader.safeReadThroughSequence).toBe(1);
 });
 
 
@@ -175,6 +176,7 @@ it('re-reads everything at a runtime epoch boundary without emptying the convers
   // Suspect, so read it all again - and keep showing it while that happens.
   expect(reader.pages).toHaveLength(1);
   expect(reader.coverage).toBe(0);
+  expect(reader.safeReadThroughSequence).toBe(1);
   await vi.advanceTimersByTimeAsync(0);
   expect(new URL(Source.all.at(-1)!.url, 'http://local').searchParams.has('after')).toBe(false);
   Source.all.at(-1)!.send('snapshot', snapshot());
@@ -327,6 +329,7 @@ it('freezes unread entry at its captured cursor and waits for placement before r
   expect(url.searchParams.get('direction')).toBe('newer');
   expect(reader.entryTarget?.key).toBe(page.items[0].key);
   expect(reader.entryTarget?.offset).toBe(32);
+  expect(reader.safeReadThroughSequence).toBe(110);
   await vi.advanceTimersByTimeAsync(0);
   expect(Source.all).toHaveLength(1);
   reader.finishEntry();
@@ -461,6 +464,7 @@ it('releases placement when the newer half fails and retries the original contex
   pending[1].complete(Response.json({ error: 'offline' }, { status: 503 }));
   await ready;
   await vi.waitFor(() => expect(reader.restorationFailed).toBe(true));
+  expect(reader.safeReadThroughSequence).toBe(1);
   expect(reader.restoring).toBe(false);
   reader.retryRestoration();
   await vi.waitFor(() => expect(pending).toHaveLength(3));
@@ -509,6 +513,7 @@ it('retires timed-out restoration history without canceling unrelated demand or 
   pending[0].complete(Response.json({...oldPage,items:[]}));
   await flushDemand();
   expect(reader.pages).toBe(pages);
+  expect(reader.safeReadThroughSequence).toBe(1);
 });
 
 it('preserves an ordinary caller that shares the exact restoration history request', async () => {
@@ -635,7 +640,9 @@ it('retires a canceled recovery queue slot while an ignored-abort transport rema
 });
 
 it('preserves ordinary demand that shares recovery admission when recovery cancels', async () => {
-  const reader = await start();
+  const reader = await start(readSnapshot(100));
+  await readHistory(reader);
+  sendReadChanges(101, 100);
   const { pending } = holdPages();
   const attempt = recoveryOwner();
   const recovery = reader.loadLatest(attempt.owner);
@@ -644,8 +651,9 @@ it('preserves ordinary demand that shares recovery admission when recovery cance
   attempt.controller.abort();
   expect(await recovery).toBe(false);
   expect(pending[0].signal.aborted).toBe(false);
-  pending[0].complete(Response.json(snapshot().page));
+  pending[0].complete(Response.json(readSnapshot(101).page));
   expect(await ordinary).toBe(true);
+  expect(reader.safeReadThroughSequence).toBe(101);
 });
 
 it('waits for incompatible ordinary history before admitting automatic newest demand', async () => {
@@ -708,4 +716,207 @@ it('keeps genuine newest-page failure through target retirement, reconnect, and 
   expect(reader.trouble).toBe(true); // Historical success does not retry newest admission.
   expect(await reader.load(timeline,null,'older',true)).toBe(true);
   expect(reader.trouble).toBe(false);
+});
+
+function readSnapshot(...sequences: number[]) {
+  return viewSnapshot('c', 'focus', sequences.map(sequence => ({ ...rows[0], sequence })));
+}
+async function readHistory(reader: ConversationViewReader) {
+  const page = { ...readSnapshot(1).page, newer: cursor(1) };
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(page)));
+  await reader.load(timeline, cursor(2), 'older', true);
+  await vi.advanceTimersByTimeAsync(0);
+}
+function sendReadChanges(sequence: number, from: number, visible = true) {
+  const change = viewChanges(readSnapshot(sequence), from);
+  if (!visible) { change.upserts = []; change.scope_changes = []; }
+  Source.all.at(-1)!.send('changes', change);
+}
+
+it('freezes future read credit in history across refused rows, hidden frames, expanded scopes, and reconnects', async () => {
+  const reader = await start(readSnapshot(100));
+  expect(reader.safeReadThroughSequence).toBe(100);
+  await readHistory(reader);
+  sendReadChanges(101, 100);
+  expect(reader.coverage).toBe(101);
+  expect(reader.safeReadThroughSequence).toBe(100);
+  expect(reader.pages.flatMap(page => page.items).some(item => item.key === 'row:101')).toBe(false);
+  sendReadChanges(102, 101, false);
+  let sequence = 102;
+  for (const kind of ['turn', 'work_group'] as const) {
+    const scope = { kind, key: kind };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...readSnapshot(102).page, scope })));
+    await reader.expand(scope, true);
+    await vi.advanceTimersByTimeAsync(0);
+    sendReadChanges(sequence + 1, sequence, false);
+    sequence++;
+    expect(reader.safeReadThroughSequence).toBe(100);
+  }
+  expect(reader.coverage).toBe(104);
+  expect(reader.safeReadThroughSequence).toBe(100);
+});
+
+it('credits newest acquisition only through the checkpoint captured when queued demand executes, then verifies replay', async () => {
+  const reader = await start(readSnapshot(100));
+  await readHistory(reader);
+  const { pending } = holdPages();
+  const newest = reader.load(timeline, null, 'older', true);
+  // Enqueued demand has not paused the tail yet. A refused row arrives first.
+  sendReadChanges(101, 100);
+  await flushDemand();
+  pending[0].complete(Response.json(readSnapshot(101, 102).page));
+  expect(await newest).toBe(true);
+  expect(reader.coverage).toBe(101);
+  expect(reader.safeReadThroughSequence).toBe(101);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(new URL(Source.all.at(-1)!.url, 'http://local').searchParams.get('after')).toBe('101');
+  sendReadChanges(102, 101);
+  expect(reader.safeReadThroughSequence).toBe(102);
+  sendReadChanges(103, 102, false);
+  expect(reader.safeReadThroughSequence).toBe(103);
+});
+
+it('requires admitted versions at the newest edge, permits cursor-end recovery, and rejects empty cursor exhaustion', async () => {
+  const reader = await start(readSnapshot(100));
+  await readHistory(reader);
+  sendReadChanges(101, 100);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(readSnapshot().page)));
+  await reader.load(timeline, cursor(1), 'newer', true);
+  await vi.advanceTimersByTimeAsync(0);
+  sendReadChanges(102, 101, false);
+  expect(reader.safeReadThroughSequence).toBe(100);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(readSnapshot(102).page)));
+  await reader.load(timeline, cursor(1), 'newer', true);
+  expect(reader.safeReadThroughSequence).toBe(102);
+  await vi.advanceTimersByTimeAsync(0);
+  const updated = viewChanges(readSnapshot(103), 102);
+  const edge = { ...readSnapshot(102).page.items[0], order: { sequence: 102, slot: 1 }, changed_through_sequence: 103 };
+  updated.upserts = [edge];
+  updated.scope_changes = [{ scope: timeline, item_keys: [edge.key], removed_keys: [] }];
+  Source.all.at(-1)!.send('changes', updated);
+  expect(reader.safeReadThroughSequence).toBe(103);
+  const removal = viewChanges(readSnapshot(104), 103);
+  removal.upserts = []; removal.scope_changes = []; removal.removed_keys = [edge.key];
+  Source.all.at(-1)!.send('changes', removal);
+  sendReadChanges(105, 104, false);
+  expect(reader.safeReadThroughSequence).toBe(103);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(readSnapshot().page)));
+  await reader.load(timeline, null, 'older', true);
+  expect(reader.safeReadThroughSequence).toBe(105);
+});
+
+it('keeps newest evidence when older rows leave retention and freezes it when expansion evicts the timeline', async () => {
+  const initial = readSnapshot(...Array.from({ length: 100 }, (_, i) => i + 201));
+  const reader = await start(initial);
+  for (const [first, last] of [[101, 200], [1, 100]]) {
+    const page = readSnapshot(...Array.from({ length: 100 }, (_, i) => first + i)).page;
+    page.newer = cursor(last);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(page)));
+    await reader.load(timeline, cursor(first), 'older');
+  }
+  await vi.advanceTimersByTimeAsync(0);
+  sendReadChanges(301, 300);
+  expect(reader.pages.flatMap(page => page.items)).toHaveLength(300);
+  expect(reader.safeReadThroughSequence).toBe(301);
+  // A changed old row and a new edge arrive together. Retention evicts the
+  // changed row, so checking membership before trim would grant false credit.
+  const changedOld = { ...readSnapshot(2).page.items[0], changed_through_sequence: 302 };
+  const update = viewChanges(readSnapshot(302), 301);
+  update.upserts.unshift(changedOld);
+  update.scope_changes[0].item_keys.unshift(changedOld.key);
+  Source.all.at(-1)!.send('changes', update);
+  expect(reader.safeReadThroughSequence).toBe(301);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(readSnapshot(302).page)));
+  await reader.load(timeline, null, 'older', true);
+  expect(reader.safeReadThroughSequence).toBe(302);
+  for (let index = 0; index < 3; index++) {
+    const scope = { kind: 'turn' as const, key: `credit:${index}` };
+    const page = readSnapshot(...Array.from({ length: 100 }, (_, i) => i + 400 + index * 100)).page;
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...page, scope })));
+    await reader.expand(scope, true);
+  }
+  await vi.advanceTimersByTimeAsync(0);
+  sendReadChanges(303, 302, false);
+  expect(reader.safeReadThroughSequence).toBe(302);
+});
+
+it('grants no transcript credit to a status-only reader', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const reader = new ConversationViewReader('c', 'focus', false); readers.push(reader);
+  const ready = reader.connect();
+  Source.all.at(-1)!.send('snapshot', viewSnapshot('c', 'focus', rows, false));
+  await ready;
+  sendReadChanges(2, 1, false);
+  expect(reader.coverage).toBe(2);
+  expect(reader.safeReadThroughSequence).toBe(0);
+});
+
+it('retires old read evidence when a reconnect snapshot loses its new rows during retention', async () => {
+  const reader = await start(readSnapshot(...Array.from({ length: 100 }, (_, i) => i + 201)));
+  for (const first of [101, 1]) {
+    const page = readSnapshot(...Array.from({ length: 100 }, (_, i) => first + i)).page;
+    page.newer = cursor(first + 99);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(page)));
+    await reader.load(timeline, cursor(first), 'older');
+  }
+  await vi.advanceTimersByTimeAsync(0);
+  const replacement = readSnapshot(300, 301);
+  replacement.page.older = cursor(300);
+  Source.all.at(-1)!.send('snapshot', replacement);
+  const held = reader.pages.flatMap(page => page.items).map(item => item.key);
+  expect(held).toContain('row:300');
+  expect(held).not.toContain('row:301');
+  expect(reader.coverage).toBe(301);
+  expect(reader.safeReadThroughSequence).toBe(300);
+  sendReadChanges(302, 301, false);
+  expect(reader.safeReadThroughSequence).toBe(300);
+});
+
+
+it.each(['abort', 'stale', 'fetch-failure'] as const)('grants no read credit to %s recovery admission or its late response', async cause => {
+  const reader = await start(readSnapshot(100));
+  await readHistory(reader);
+  sendReadChanges(101, 100);
+  const pages = reader.pages;
+  const { pending } = holdPages();
+  const attempt = recoveryOwner();
+  const recovery = reader.loadLatest(attempt.owner);
+  await flushDemand();
+  if (cause === 'abort') attempt.controller.abort();
+  if (cause === 'stale') attempt.retire();
+  pending[0].complete(cause === 'fetch-failure' ? new Response('unavailable', {status:503})
+    : Response.json(readSnapshot(101).page));
+  expect(await recovery).toBe(false);
+  expect(reader.pages).toBe(pages);
+  expect(reader.safeReadThroughSequence).toBe(100);
+  // A status frame after reconnect cannot turn the rejected page into delivery.
+  await vi.advanceTimersByTimeAsync(0);
+  sendReadChanges(102, 101, false);
+  expect(reader.coverage).toBe(102);
+  expect(reader.safeReadThroughSequence).toBe(100);
+});
+
+it('retires an expired saved target without credit and credits only valid newest recovery after admission', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const initial = readSnapshot(100);
+  const item = initial.page.items[0];
+  const anchor = {key:item.key,order:item.order,offset:-17,following:false};
+  const reader = new ConversationViewReader('c','focus',true,undefined,anchor);
+  readers.push(reader);
+  const ready = reader.connect(); Source.all.at(-1)!.send('snapshot',initial); await ready;
+  await readHistory(reader);
+  sendReadChanges(101,100);
+  reader.failTextRestoration(anchor.key, true);
+  reader.cancelRestoration();
+  expect(reader.restorationAnchor).toBeNull();
+  expect(reader.safeReadThroughSequence).toBe(100);
+  const { pending } = holdPages();
+  const recovery = reader.loadLatest(recoveryOwner().owner);
+  await flushDemand();
+  expect(reader.safeReadThroughSequence).toBe(100);
+  pending[0].complete(Response.json(readSnapshot(101).page));
+  expect(await recovery).toBe(true);
+  expect(reader.safeReadThroughSequence).toBe(101);
+  expect(reader.pages.flatMap(page=>page.items).map(item=>item.key)).toEqual(['row:101']);
+  expect(reader.pages.flatMap(page=>page.items).length).toBeLessThanOrEqual(300);
 });
