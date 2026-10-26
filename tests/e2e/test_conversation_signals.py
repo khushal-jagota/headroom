@@ -521,9 +521,10 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
         assert record["attention"]["durable"]["message_for_owner"] is expected
         assert record["attention"]["current"]["signal"]["message_for_owner"] is expected
         review = httpx.get(server.base + "/api/review", timeout=10).json()
-        assert sum(item.get("review_item_type") == "message"
-                   and item.get("conversation_id") == conversation
-                   for item in review["items"]) == int(expected)
+        ticket_cards = [item for item in review["items"]
+                        if item["review_item_type"] == "ticket" and item["ticket_id"] == ticket]
+        assert sum(message["conversation_id"] == conversation
+                   for card in ticket_cards for message in card["messages"]) == int(expected)
         badge = page.locator(".rail-foot [data-review-badge]")
         visible_marks = page.locator('[data-conversation-signal="message"]:visible')
         if expected:
