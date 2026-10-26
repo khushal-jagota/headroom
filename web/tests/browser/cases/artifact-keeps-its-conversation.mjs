@@ -3,53 +3,87 @@ import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 
 export async function prepare({scratchRoot}) {
-  const host = join(scratchRoot, `artifact-conversation-host-${process.pid}.svelte`);
-  const main = join(scratchRoot, `artifact-conversation-main-${process.pid}.ts`);
+  const host = `artifact-conversation-host-${process.pid}.svelte`;
+  const main = `artifact-conversation-main-${process.pid}.ts`;
   const index = join(scratchRoot, `artifact-conversation-index-${process.pid}.html`);
-  await writeFile(host, `<script lang="ts">
-    import {flushSync} from "svelte";
-    import ManagerFrame from "../src/components/ManagerFrame.svelte";
-    import type {ManagedFileTarget} from "../src/lib/filePreview";
-    import type {ConversationState} from "../src/lib/conversation/conversationState";
-    let paneState = $state<ConversationState>("rest");
-    let addressState = $state<ConversationState>("rest");
-    // The Chief's pane keeps its artifact where a host asks it to. This stands in for
-    // the Workspace address, and records that the frame wrote through it.
-    let addressed = $state<ManagedFileTarget | null>(null);
-    (window as any).__state = (value: ConversationState) => flushSync(() => paneState = value);
-    (window as any).__addressed = () => addressed;
-  </script>
-  <section data-pane-kept style="height:420px">
-    <ManagerFrame bind:conversationState={paneState} data-frame="kept">
-      <p data-doc>
-        <a href="/files/tickets/t_pane/plan.md">Document plan</a>
-        <a href="/files/managers/si_pane/archive.zip">Unsupported</a>
-        <a href="/files/tickets/t_pane/plan.md" download="">Marked download</a>
-      </p>
-      {#snippet conversation()}
-        <div data-conversation-pane data-conversation-state={paneState}>
-          <p>Here is <a href="/files/tickets/t_pane/plan.md">the plan</a> from the other Ticket.</p>
-        </div>
-      {/snippet}
-    </ManagerFrame>
-  </section>
-  <section data-address-kept style="height:420px">
-    <ManagerFrame bind:conversationState={addressState} data-frame="addressed"
-      openedFile={addressed} onOpenFile={(file) => addressed = file}>
-      <p>Nothing to read here.</p>
-      {#snippet conversation()}
-        <div data-conversation-pane>
-          <p>And <a href="#/preview?source=ticket&ticket=t_pane&path=plan.md">Open plan.md</a> here.</p>
-        </div>
-      {/snippet}
-    </ManagerFrame>
-  </section>`);
-  await writeFile(main, `import {mount} from 'svelte'; import Host from './${host.split('/').at(-1)}';
-    import '../../assets/tokens.css'; import '../../assets/app.css';
-    mount(Host,{target:document.getElementById('app')!});`);
-  await writeFile(index, `<!doctype html><html><body><div id="app"></div><script type="module" src="./${main.split('/').at(-1)}"></script></body></html>`);
+  // The whole shell, so the real router reads the address on every load and on a reload,
+  // and the panes under test are the actual hosts: the Chief's pane through BoardRoute,
+  // which keeps its artifact in the Workspace address, and a Manager's pane, which keeps
+  // its own. Both live transports take their frames from the case fixture over HTTP.
+  await writeFile(join(scratchRoot, host), `<script lang="ts">
+import AppWithQueryClient from '../src/AppWithQueryClient.svelte';
+// Wire snapshots arrive through the production EventSource transports, so the real
+// navigation parser and the real conversation view reader are the ones under test. Each
+// stream address has a 'snapshot' sibling the case fixture answers.
+const sources = new Set<any>();
+class FixtureEventSource {
+  onopen = null; onmessage = null; onerror: null | (() => void) = null;
+  listeners = new Map<string, (event: {data: string}) => void>();
+  closed = false;
+  url: string;
+  constructor(url: string) {
+    this.url = url;
+    const snapshot = url.startsWith('/api/navigation/view/events?')
+      ? url.replace('/view/events?', '/view/snapshot?')
+      : url.includes('/view/tail?')
+        ? url.replace('/view/tail?', '/view/snapshot?')
+        : null;
+    // The change signal has nothing to say in this case, so /api/changes stays quiet.
+    if (snapshot === null) return;
+    sources.add(this);
+    void this.refresh(snapshot);
+  }
+  async refresh(from: string) {
+    let data: string;
+    try {
+      const response = await fetch(from);
+      if (!response.ok) throw new Error(String(response.status));
+      data = await response.text();
+    } catch {
+      // A missing frame is reported rather than left hanging, so a fixture gap shows up
+      // as the reader's own trouble instead of a screen that never finishes loading.
+      if (!this.closed) this.onerror?.();
+      return;
+    }
+    if (this.closed) return;
+    this.listeners.get('snapshot')?.({data});
+  }
+  addEventListener(name: string, listener: any) { this.listeners.set(name, listener); }
+  removeEventListener(name: string) { this.listeners.delete(name); }
+  close() { this.closed = true; sources.delete(this); }
+}
+(globalThis as any).EventSource = FixtureEventSource;
+</script>
+<AppWithQueryClient />
+<style>:global(html),:global(body),:global(#app){height:100%;margin:0;overflow:hidden;}</style>
+`);
+  await writeFile(join(scratchRoot, main), `import {mount} from 'svelte'; import Host from './${host}';
+import '../../assets/tokens.css'; import '../../assets/app.css';
+mount(Host,{target:document.getElementById('app')!});`);
+  await writeFile(index, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="app"></div><script type="module" src="./${main}"></script></body></html>`);
   return {
-    resources: [{path: "/files/tickets/t_pane/plan.md", body: "# The plan\n\nRead from the pane it was named in.\n", contentType: "text/markdown"}],
+    // The artifacts both conversations name. Each belongs to a Ticket that is not the
+    // conversation's owner, which is the case the owner reported.
+    resources: [
+      {
+        path: "/files/tickets/t_elsewhere/artifacts/plan.md",
+        body: "# The rollout plan\n\nRead from the pane it was named in.\n",
+        contentType: "text/markdown"
+      },
+      {
+        path: "/files/tickets/t_faraway/artifacts/budget.md",
+        body: "# The budget note\n\nRead from the Chief's pane.\n",
+        contentType: "text/markdown"
+      },
+      // The Manager's own artifact, named in its document rather than its conversation.
+      // A press there is the same claim, and it is where the focus the artifact borrows
+      // can be given back, because the document is still on the screen behind it.
+      {
+        path: "/files/managers/si_fixture/notes.md",
+        body: "# The handover notes\n\nNamed in the Manager's own document.\n",
+        contentType: "text/markdown"
+      }
+    ],
     inputs: [index],
     arguments: [index],
     python: fileURLToPath(new URL("./artifact-keeps-its-conversation.py", import.meta.url))

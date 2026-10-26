@@ -1450,9 +1450,20 @@ def run(browser, urls):
     expect(viewer).to_have_attribute("aria-label", "image.svg")
     expect(viewer.locator("img")).to_be_visible()
     viewer.get_by_role("button", name="Close", exact=True).click()
-    saved_artifacts.get_by_role("link", name="Open plan.md", exact=True).click()
+    # The artifact takes the focus when it opens and hands it back to the pressed link
+    # when it closes, so the keyboard is where the reading is and then where it was.
+    # This is the link that can prove it, deliberately: a field body is a contenteditable,
+    # and Chromium focuses the editable host rather than an anchor inside it, so a press
+    # on a raw Markdown link in a field leaves the field holding the focus. This link
+    # lives in the mounted preview slot, which is contenteditable="false", so it is a real
+    # focusable anchor. Do not move this proof back onto one of the raw links.
+    open_link = saved_artifacts.get_by_role("link", name="Open plan.md", exact=True)
+    open_link.click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
+    expect(viewer).to_be_focused()
     viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    expect(open_link).to_be_focused()
     saved_artifacts.get_by_role("link", name="Explicit receipt", exact=True).click()
     expect(viewer).to_have_attribute("aria-label", "receipt.json")
     expect(viewer.get_by_role("link", name="Download receipt.json", exact=True)).to_have_attribute(
@@ -1472,6 +1483,70 @@ def run(browser, urls):
     expect(page.locator("[data-conversation-pane]")).to_have_attribute(
         "data-conversation-state", "rest"
     )
+    assert page.url == original_url
+
+    # The document underneath keeps the place the reader left it, and Close gives it back.
+    # Measure only after the conversation's dock has settled: the dock reserves part of
+    # the screen, what it finally reserves is what the document has left to scroll in, and
+    # a reader that connects later changes the dock's height, which clamps the document's
+    # scroll position out from under the measurement.
+    page.set_viewport_size({"width": 1280, "height": 560})
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    conversation_pane = page.locator("[data-conversation-pane]")
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    expect(page.locator("[data-conversation-rest-bar]")).to_be_visible()
+    document_box = page.locator(".ticket-doc")
+    reading_range = document_box.evaluate(
+        "(element) => element.scrollHeight - element.clientHeight"
+    )
+    assert reading_range > 0, reading_range
+    # Set the reading position outright and dispatch the press rather than clicking it:
+    # the driver scrolls an element into view before a real click, which would move the
+    # very position being measured. The real click is proved above.
+    kept_scroll = document_box.evaluate(
+        "(element) => { element.scrollTop = Math.round("
+        "(element.scrollHeight - element.clientHeight) / 2); return element.scrollTop; }"
+    )
+    assert kept_scroll > 0, (reading_range, kept_scroll)
+    html_link.dispatch_event("click")
+    expect(viewer).to_have_attribute("aria-label", "plan.html")
+    under = document_box.evaluate("(element) => element.scrollTop")
+    assert abs(under - kept_scroll) <= 1, (kept_scroll, under)
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    given_back = document_box.evaluate("(element) => element.scrollTop")
+    assert abs(given_back - kept_scroll) <= 1, (kept_scroll, under, given_back)
+
+    # Escape belongs to whatever is on top, and on this screen that is a deliberate
+    # change: the Ticket used to close the artifact from behind an open conversation, and
+    # now it defers to the conversation covering it.
+    html_link.click()
+    expect(viewer).to_have_count(1)
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    html_link.click()
+    expect(viewer).to_have_count(1)
+    page.locator("[data-conversation-rest-bar]").click()
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "opened")
+    page.keyboard.press("Escape")
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    expect(viewer).to_have_count(1)
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+
+    # The one-document address still works on its own, which is the way in from a
+    # notification or a shared link, where there is no pane to draw the file over.
+    page.evaluate(
+        "window.__showPreview"
+        "('#/preview?source=ticket&ticket=t_artifacts&path=artifacts%2Fplan.md')"
+    )
+    expect(
+        page.locator("[data-file-preview-route]").get_by_role("heading", name="Markdown plan")
+    ).to_be_visible()
+    page.evaluate("history.replaceState(null, '', location.pathname)")
+    page.set_viewport_size({"width": 1280, "height": 900})
     assert page.url == original_url
     print(f"Artifact link browser coverage: {time.monotonic() - artifact_started:.2f}s", flush=True)
     # Reuse this host for the new browser boundary: the complete unread run, a draft
