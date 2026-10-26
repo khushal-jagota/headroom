@@ -1170,7 +1170,10 @@ def verify_conversation_overlay(browser, url):
         thread = page.locator('[data-conversation-thread]')
         thread.focus()
         page.keyboard.press('End')
-        page.wait_for_timeout(100)
+        page.wait_for_function('''() => {
+          const thread=document.querySelector('[data-conversation-thread]');
+          return thread && thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1;
+        }''')
         tail = page.get_by_text('Owner answer 2000.', exact=False).last
         expect(tail).to_be_in_viewport()
         def transcript_bounds(page=page):
