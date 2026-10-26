@@ -13,21 +13,50 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
   let frame = 0;
   let hovered = false;
   let mousePoint: { x: number; y: number } | null = null;
+  // Remember the press before outside dismissal can return an open pane to rest.
+  let backgroundPress: { id: number; x: number; y: number } | null = null;
   const viewport = window.visualViewport;
+  function outsideInput(target: EventTarget | null): target is Element {
+    return target instanceof Element && target.closest('[data-conversation-box]') === null;
+  }
+  function allowedBackground(target: EventTarget | null): target is Element {
+    return outsideInput(target) && !!layer?.contains(target)
+      && target.closest('button, a, input, textarea, select, [role="button"], [role="listbox"], [contenteditable="true"]') === null;
+  }
+  function press(event: PointerEvent): void {
+    backgroundPress = event.isPrimary && event.button === 0
+      && pane?.dataset.conversationState === 'rest' && allowedBackground(event.target)
+      ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
+  }
+  function movePress(event: PointerEvent): void {
+    if (backgroundPress && (event.pointerId !== backgroundPress.id
+      || event.clientX !== backgroundPress.x || event.clientY !== backgroundPress.y)) backgroundPress = null;
+  }
+  function cancelPress(): void { backgroundPress = null; }
+  function activateBackground(event: MouseEvent): void {
+    const origin = backgroundPress;
+    backgroundPress = null;
+    if (!origin || event.button !== 0 || pane?.dataset.conversationState !== 'rest'
+      || !allowedBackground(event.target)) return;
+    // Reuse the pane's action, including the mounted composer and focus behavior.
+    pane.querySelector<HTMLButtonElement>('[data-conversation-expand]')?.click();
+  }
   const set = (name: string, value: number) => {
     const text = `${value}px`;
     if (host.style.getPropertyValue(name) !== text) host.style.setProperty(name, text);
   };
   function shade(): string {
-    return getComputedStyle(host).getPropertyValue(state === 'opened' || hovered ? '--surface-1' : '--surface-recessed').trim();
+    const previewFocused = !!layer?.querySelector('[data-conversation-rest-bar]:focus-visible');
+    return getComputedStyle(host).getPropertyValue(state === 'opened' || hovered || previewFocused ? '--surface-1' : '--surface-recessed').trim();
   }
   function pointer(event: PointerEvent): void {
+    movePress(event);
     if (!layer) return;
     const wasHovered = hovered;
     mousePoint = event.pointerType === 'mouse' && event.type !== 'pointerleave' ? { x: event.clientX, y: event.clientY } : null;
     hovered = event.pointerType === 'mouse' && event.type !== 'pointerleave'
       && event.target instanceof Node && layer.contains(event.target)
-      && !(event.target instanceof Element && event.target.closest('[data-conversation-composer]'));
+      && outsideInput(event.target);
     host.toggleAttribute('data-conversation-dock-hover', hovered);
     // During motion its interpolation owns the shade. A later measurement retargets it.
     if (wasHovered !== hovered && (!pane || !conversationMotion(pane).active(layer))) layer.style.backgroundColor = shade();
@@ -77,7 +106,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
         const wanted = nextState === 'opened' ? bounds.height : layer.getBoundingClientRect().height;
         if (nextState !== 'opened') {
           const target = mousePoint ? document.elementFromPoint(mousePoint.x, mousePoint.y) : null;
-          hovered = !!target && layer.contains(target) && !target.closest('[data-conversation-composer]');
+          hovered = !!target && layer.contains(target) && outsideInput(target);
           host.toggleAttribute('data-conversation-dock-hover', hovered);
         }
         const toShade = shade();
@@ -101,7 +130,8 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
             host.removeAttribute('data-conversation-dock-transition');
             if (state !== 'opened') {
               const target = mousePoint ? document.elementFromPoint(mousePoint.x, mousePoint.y) : null;
-              hovered = !!target && movingLayer.contains(target) && !target.closest('[data-conversation-composer]');
+              hovered = !!target && movingLayer.contains(target) && outsideInput(target);
+              host.toggleAttribute('data-conversation-dock-hover', hovered);
               movingLayer.style.backgroundColor = shade();
             }
             if (state !== 'opened') releaseReader();
@@ -113,6 +143,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
         }
       }
       lastHeight = layer.getBoundingClientRect().height;
+      if (!conversationMotion(pane).active(layer)) layer.style.backgroundColor = shade();
       if (reader && state !== 'opened' && !host.hasAttribute('data-conversation-dock-transition')) readerHeight = reader.getBoundingClientRect().height;
     }
     if (composer) {
@@ -133,9 +164,16 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
   });
   sizes.observe(host);
   children.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-conversation-state'] });
+  host.addEventListener('pointerdown', press, true);
+  host.addEventListener('click', activateBackground);
+  window.addEventListener('pointermove', movePress, true);
+  window.addEventListener('pointerup', movePress, true);
+  window.addEventListener('pointercancel', cancelPress, true);
   host.addEventListener('pointerover', pointer);
   host.addEventListener('pointermove', pointer);
   host.addEventListener('pointerleave', pointer);
+  host.addEventListener('focusin', schedule);
+  host.addEventListener('focusout', schedule);
   viewport?.addEventListener('resize', schedule);
   viewport?.addEventListener('scroll', schedule);
   window.addEventListener('resize', schedule);
@@ -146,9 +184,16 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     if (pane && layer) conversationMotion(pane).cancel(layer);
     releaseReader();
     sizes.disconnect(); children.disconnect();
+    host.removeEventListener('pointerdown', press, true);
+    host.removeEventListener('click', activateBackground);
+    window.removeEventListener('pointermove', movePress, true);
+    window.removeEventListener('pointerup', movePress, true);
+    window.removeEventListener('pointercancel', cancelPress, true);
     host.removeEventListener('pointerover', pointer);
     host.removeEventListener('pointermove', pointer);
     host.removeEventListener('pointerleave', pointer);
+    host.removeEventListener('focusin', schedule);
+    host.removeEventListener('focusout', schedule);
     viewport?.removeEventListener('resize', schedule);
     viewport?.removeEventListener('scroll', schedule);
     window.removeEventListener('resize', schedule);

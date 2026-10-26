@@ -2,6 +2,10 @@
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
 import { VIEW_PROJECTION_VERSION } from '../../src/lib/conversation/view/contracts';
 export function installConversationViewReaderFixture(id='bounded-reader'):void {
+  const textRestoration=new URLSearchParams(location.search).get('text-restoration');
+  const restorationText=textRestoration==='tall'
+    ? '```text\n'+Array.from({length:1400},(_,index)=>`Interior code line ${index}: preserve this exact character through late layout.`).join('\n')+'\n```'
+    : Array.from({length:400},(_,index)=>`Late paragraph 2000.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n');
   const positionRace=new URLSearchParams(location.search).has('position-race');
   const positionBodies: Array<()=>void>=[];
   const positionProbe={hold:true,waiting:0,release:()=>{positionProbe.hold=false;for(const release of positionBodies.splice(0))release();}};
@@ -29,7 +33,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   (window as any).__backlog=(count:number)=>{sequence+=count;};
   const returnBodies=new Map<string,string>();
   const returnBodyReleases:Array<()=>void>=[];
-  const returnProbe={hold:false,fail:false,bodies:false,bodyHold:false,bodyWaiting:0,waiting:0,release:()=>{},
+  const returnProbe={hold:false,fail:false,inlineTarget:false,bodies:false,bodyHold:false,holdTargetOnly:false,changedSource:false,bodyWaiting:0,targetBodyWaiting:0,waiting:0,release:()=>{},
     releaseBodies:()=>{returnProbe.bodyHold=false;for(const release of returnBodyReleases.splice(0))release();}};
   (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
@@ -94,8 +98,9 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(visual)return visualPage(url);
     const cursor=JSON.parse(url.searchParams.get('cursor')??'null') as ViewPageCursor|null;
     const direction=url.searchParams.get('direction')??'older';
-    const end=cursor===null?sequence:direction==='older'?cursor.order.sequence-(cursor.order.slot>0?0:1):Math.min(sequence,cursor.order.sequence+100);
-    const start=cursor!==null&&direction==='newer'?cursor.order.sequence+1:Math.max(1,end-99);
+    const pageSize=textRestoration?20:100;
+    const end=cursor===null?sequence:direction==='older'?cursor.order.sequence-(cursor.order.slot>0?0:1):Math.min(sequence,cursor.order.sequence+pageSize);
+    const start=cursor!==null&&direction==='newer'?cursor.order.sequence+1:Math.max(1,end-pageSize+1);
     const items=Array.from({length:end-start+1},(_,index)=>{
       const row=item(start+index);
       if(hiddenUnread && unread!==null && row.source_sequence>unread && row.source_sequence<=unread+100){
@@ -105,12 +110,20 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
         row.row_kind='prompt';
         row.body={kind:'inline',value:{kind:'prompt',sender_label:row.source_sequence===1997?'Chief':'owner',mode:'queue',sent_at_unix_milliseconds:row.created_at,content:[{piece:'text',text:row.source_sequence===1999?'A long owner prompt retains its existing width limit. '.repeat(20):'Short prompt.'}]}};
       }
+      if(textRestoration && row.source_sequence===2000){
+        row.row_kind='agent_message';
+        const body=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:restorationText}]});
+        returnBodies.set('return:2000',body);
+        row.body=returnProbe.inlineTarget
+          ? {kind:'inline',value:JSON.parse(body)}
+          : {kind:'deferred',reference:{body_id:'return:2000',version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
+      }
       if(positionRace && row.source_sequence>=1991){
         const body=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:Array.from({length:row.source_sequence===2000?400:18},(_,index)=>`Late paragraph ${row.source_sequence}.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n')}]});
         row.row_kind='agent_message';
         row.body={kind:'deferred',reference:{body_id:'position:'+row.source_sequence,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
       }
-      if(returnProbe.bodies && row.body.kind==='inline'){
+      if(returnProbe.bodies && row.body.kind==='inline' && !(returnProbe.inlineTarget && row.source_sequence===2000)){
         const bodyId='return:'+row.source_sequence;
         const body=JSON.stringify(row.body.value);returnBodies.set(bodyId,body);
         row.body={kind:'deferred',reference:{body_id:bodyId,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
@@ -148,8 +161,13 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(url.pathname.endsWith('/view/body/content')){
       const reference=JSON.parse(url.searchParams.get('reference')!);
       if(String(reference.body_id).startsWith('return:')){
-        if(returnProbe.bodyHold){returnProbe.bodyWaiting++;await new Promise<void>(resolve=>returnBodyReleases.push(resolve));}
-        return new Response(returnBodies.get(reference.body_id));
+        if(returnProbe.bodyHold && (!returnProbe.holdTargetOnly || reference.body_id==='return:2000')){
+          returnProbe.bodyWaiting++;if(reference.body_id==='return:2000')returnProbe.targetBodyWaiting++;
+          await new Promise<void>(resolve=>returnBodyReleases.push(resolve));
+        }
+        const body=returnBodies.get(reference.body_id);
+        return new Response(returnProbe.changedSource && reference.body_id==='return:2000'
+          ? body?.replace('Late paragraph 2000.0.', 'Lost paragraph 2000.0.') : body);
       }
     }
     if(positionRace&&url.pathname.endsWith('/view/body/content')){

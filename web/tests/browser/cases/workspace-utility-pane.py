@@ -1168,8 +1168,12 @@ def verify_conversation_overlay(browser, url):
             assert host['width'] < 500, host
         # The transcript owns its own trailing clearance and follows its final row.
         thread = page.locator('[data-conversation-thread]')
-        thread.evaluate('e=>e.scrollTop=e.scrollHeight')
-        page.wait_for_timeout(100)
+        thread.focus()
+        page.keyboard.press('End')
+        page.wait_for_function('''() => {
+          const thread=document.querySelector('[data-conversation-thread]');
+          return thread && thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1;
+        }''')
         tail = page.get_by_text('Owner answer 2000.', exact=False).last
         expect(tail).to_be_in_viewport()
         def transcript_bounds(page=page):
@@ -1178,7 +1182,9 @@ def verify_conversation_overlay(browser, url):
         assert transcript_open['tail']['bottom'] <= transcript_open['bottom'] + 1, (name, transcript_open)
         highwater = document.evaluate('e=>e.scrollHeight')
         # A scrollback reader keeps the same content while the composer changes.
-        thread.evaluate('e=>e.scrollTop=Math.max(0,e.scrollHeight-e.clientHeight-500)')
+        # Reader input releases an older exact-text destination before scrollback.
+        thread.hover()
+        page.mouse.wheel(0, -500)
         page.wait_for_timeout(100)
         anchor = thread.evaluate('''e=>{const r=e.getBoundingClientRect();const row=[...e.querySelectorAll('[data-conversation-row]')].find(n=>n.getBoundingClientRect().bottom>r.top+10);return row?{key:row.closest('[data-conversation-view-key]')?.getAttribute('data-conversation-view-key'),text:row.textContent,top:row.getBoundingClientRect().top-r.top,bottomOffset:row.getBoundingClientRect().top-r.bottom}:null;}''')
         assert anchor and anchor['key'], (name, anchor)

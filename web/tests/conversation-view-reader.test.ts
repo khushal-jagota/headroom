@@ -467,3 +467,65 @@ it('keeps restoration pending when the newer half fails and retries that context
   expect(reader.restorationFailed).toBe(false);
   expect(reader.pages.flatMap(page => page.items).map(item => item.key)).toEqual([anchorPage.items[0].key, newerPage.items[0].key]);
 });
+
+it('ignores a restoration read after cancellation and leaves ordinary history reads active', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const oldPage = viewSnapshot('c', 'focus', [{ ...rows[0], sequence: 11 }]).page;
+  const { pending } = holdPages();
+  const anchor = { key: oldPage.items[0].key, order: oldPage.items[0].order, offset: -17, following: false };
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, anchor);
+  readers.push(reader);
+  const ready = reader.connect();
+  Source.all.at(-1)!.send('snapshot', snapshot());
+  await flushDemand();
+  reader.cancelRestoration();
+  pending[0].complete(Response.json(oldPage));
+  await ready;
+  expect(reader.restorationOutcome).toBe('idle');
+  expect(reader.restorationAnchor).toBeNull();
+  expect(reader.pages.flatMap(page => page.items).some(item => item.key === anchor.key)).toBe(false);
+  const ordinary = reader.load({kind:'timeline',key:null}, cursor(11), 'older');
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  reader.cancelRestoration();
+  pending[1].complete(Response.json(oldPage));
+  expect(await ordinary).toBe(true);
+});
+
+it('retains the original saved target within the shared bound and releases it for a new destination', async () => {
+  const page = snapshot().page;
+  const anchor = { key: page.items[0].key, order: page.items[0].order, offset: -17, following: false };
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const reader = new ConversationViewReader('c', 'focus', true, undefined, anchor);
+  readers.push(reader);
+  const ready = reader.connect(); Source.all.at(-1)!.send('snapshot', snapshot()); await ready;
+  const original = reader.restorationAnchor;
+  reader.failTextRestoration(anchor.key);
+  reader.retryRestoration();
+  await vi.waitFor(() => expect(reader.restoring).toBe(false));
+  expect(reader.restorationAnchor).toBe(original);
+  reader.settleTextRestoration();
+  for (let index = 0; index < 3; index++) {
+    const scope = {kind:'turn' as const,key:`saved-turn:${index}`};
+    const next = viewSnapshot('c', 'focus', Array.from({length:100}, (_, n) => ({...rows[0],sequence:100+index*100+n}))).page;
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({...next,scope})));
+    await reader.expand(scope,true);
+  }
+  expect(reader.pages.flatMap(page => page.items).length).toBeLessThanOrEqual(300);
+  expect(reader.pages.flatMap(page => page.items).some(item => item.key === anchor.key)).toBe(true);
+  reader.cancelRestoration();
+  expect(reader.restorationAnchor).toBeNull();
+});
+
+it('reports a missing direct text piece after body admission, including after a settled address changes', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('EventSource', Source);
+  const page = snapshot().page;
+  const anchor = {key:page.items[0].key,order:page.items[0].order,offset:-17,following:false,content:{pieceIndex:1,lineOffset:0,text:{contentIdentity:{algorithm:'sha256' as const,digest:'exact',utf16Length:4},blockIndex:0,textLeafPath:[0],utf16Offset:0}}};
+  const reader = new ConversationViewReader('c','focus',true,undefined,anchor); readers.push(reader);
+  const ready = reader.connect(); Source.all.at(-1)!.send('snapshot',snapshot()); await ready;
+  reader.textBodyReady(anchor.key,[{piece:'text'},{piece:'text'}]);
+  expect(reader.restorationOutcome).toBe('pending');
+  reader.settleTextRestoration();
+  reader.textBodyReady(anchor.key,[{piece:'text'},{piece:'image'}]);
+  expect(reader.restorationOutcome).toBe('unavailable');
+  expect(reader.restorationAnchor?.content).toEqual(anchor.content);
+});
