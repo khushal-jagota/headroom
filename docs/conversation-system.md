@@ -1436,24 +1436,6 @@ the current one ends. The held row says it is waiting because a command runs as 
 turn. Hermes and Claude take a steered command inside the running turn, and keep their
 behaviour.
 
-<<<<<<< HEAD
-Codex reads every source at startup and after a skill change. An app notification supplies
-its own app snapshot, so its refresh does not request `app/list` again. Both refresh paths
-read skills, installed callability, and plugins. Equal app metadata can accompany changed
-callability. Refreshes run beside the reader, coalesce repeated input, and preserve input
-that arrives during a pass. Each pending pass observes the same coalescence interval.
-
-The latest app observation wins in the client's receive order. A complete paginated read
-uses its first page as its freshness boundary. A failed read uses the failed response or
-the timeout position. An older notification cannot restore apps after a newer failure.
-A later notification can restore them. Failed sources contribute nothing, fresh sibling
-sources remain available, and source errors name the source in the log.
-
-The first snapshot publishes even when it is empty. Later snapshots publish only when
-visible entries change. A fresh snapshot still replaces invocation paths when its entries
-are equal. A failed publication leaves the previous snapshot and publication marker intact.
-A relay reconnect keeps this marker with the surviving child. A new child starts unpublished.
-=======
 App-change hints refresh installed state; skill-change hints refresh skills and plugins.
 Each of these sources, plus optional app metadata, runs independently. Bursts merge over
 50 milliseconds, and successful app refreshes wait at least one second before another.
@@ -1466,9 +1448,11 @@ when present, and retry delay, capped at 240 characters.
 Successful app metadata stays with that child for 15 minutes. An installed-state update
 fetches missing or expired metadata; expiry alone starts no polling. Removing an app
 also removes its metadata, and a late reply cannot restore its entry or invocation.
-Unchanged entries and invocations produce no catalog event. Stopping the child cancels
-and awaits its source requests and retries.
->>>>>>> aae05a7a161c6c89e3b415684c81becae4a62f63
+The first snapshot publishes even when it is empty. Later snapshots publish only when
+visible entries change. Equal entries still refresh invocation paths. A failed publication
+retains the last admitted snapshot and publication marker. A surviving child retains that
+marker across relay reconnection. A new child starts unpublished. Stopping the child
+cancels and awaits its source requests and retries.
 
 Codex resolves a selected token against that complete snapshot when the prompt starts.
 Skills use Codex skill input. Apps and plugins use exact mention paths. Exact protocol

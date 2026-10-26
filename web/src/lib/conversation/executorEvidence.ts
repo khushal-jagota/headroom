@@ -21,7 +21,7 @@ export function executorAnswerAvailable(
   return Boolean(
     pending.answer_available === true && evidence && context?.turn
     && (evidence.reachability === "reachable" || evidence.reachability === "uncertain") && evidence.answer_id === null
-    && evidence.ask.kind === kind 
+    && evidence.ask.kind === kind
     && evidence.ask.child.conversation_id === view.conversation_id
     && evidence.ask.child.executor_incarnation === context.child.executor_incarnation
     && evidence.ask.child.child_id === context.child.child_id
