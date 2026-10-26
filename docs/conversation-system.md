@@ -849,6 +849,7 @@ This fallback does not wait for the unresolved text or require Retry. The origin
 destination stays separate from the active row anchor. Retry uses that original destination
 with a fresh budget. Late results cannot reclaim a failed attempt. Attempt cancellation
 preserves unrelated reader requests. Changed, deleted, or expired text produces an unavailable result.
+If settled text cannot fit its saved offset within the available scroll range, fallback starts immediately.
 Latest abandons the saved destination and admits the newest page. Reader replacement and
 navigation cancel stale placement work and release its target demand.
 

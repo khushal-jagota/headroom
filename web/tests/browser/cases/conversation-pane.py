@@ -3201,6 +3201,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 const roots=[...document.querySelectorAll('[data-visible-content-state=retained]')]
                   .filter(node=>!node.parentElement?.closest('[data-visible-content-state=retained]')).length;
                 window.__textFrames.push({ms:performance.now(),visible,character:window.__readCharacter(held),
+                  restorationStatus:document.querySelector('[data-conversation-restoration-status]')?.getAttribute('data-conversation-restoration-status')??null,
                   retainedRoots:roots,rows:document.querySelectorAll('[data-conversation-view-key]').length});
                 if(!window.__stopTextFrames)requestAnimationFrame(sample);
               };window.__fixtureVisible=true;requestAnimationFrame(sample);document.dispatchEvent(new Event('visibilitychange'));
@@ -3261,6 +3262,18 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             if order.startswith('inline-'):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release();window.__returnProbe.releaseBodies()')
                 page.locator('[data-conversation-restoration-status="failed"]').wait_for(state='visible')
+                # A failed attempt now reveals its row fallback automatically.
+                # Preserve the strict native-line proof for every Retry frame,
+                # starting at the click event before the product handler runs.
+                page.wait_for_function('''() => {
+                  const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+                  return getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
+                }''')
+                case['failureFrames']=page.evaluate('window.__textFrames')
+                assert all(not frame['visible'] or frame['restorationStatus'] in ('failed','unavailable')
+                           for frame in case['failureFrames']),case['failureFrames']
+                page.get_by_role('button',name='Retry conversation position',exact=True).evaluate(
+                    "button=>button.addEventListener('click',()=>{window.__textFrames=[];},{capture:true,once:true})")
                 page.get_by_role('button',name='Retry conversation position',exact=True).click()
                 page.wait_for_function('window.__restorationFailure.retriedSameSource')
                 failure=page.evaluate('({failures:window.__restorationFailure.failures,retriedSameSource:window.__restorationFailure.retriedSameSource})')

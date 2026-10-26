@@ -168,9 +168,18 @@
     }
     if (state.kind !== 'ready') return false;
     const delta = state.rect.top - thread.getBoundingClientRect().top - location.lineOffset;
-    moveTheThread(thread, thread.scrollTop + delta);
+    const wantedTop = thread.scrollTop + delta;
+    moveTheThread(thread, wantedTop);
     const measured = operation.demand?.read() ?? textPresentations.measure(operation.anchor.key, location);
     const aligned = measured.kind === 'ready' && Math.abs(measured.rect.top - thread.getBoundingClientRect().top - location.lineOffset) <= 1;
+    if (!aligned && measured.kind === 'ready' && restorationPresentationReady(thread)
+      && (wantedTop < -1 || wantedTop > thread.scrollHeight - thread.clientHeight + 1)) {
+      // A lens or padding change can put the old line outside the scroll range.
+      // Ready text cannot become reachable through another presentation callback.
+      reader?.failTextRestoration(operation.anchor.key);
+      fallBackRestoration();
+      return false;
+    }
     if (aligned && reader?.restorationOutcome === 'idle') releaseTextRestoration(operation);
     return aligned;
   }
