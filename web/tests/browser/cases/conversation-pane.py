@@ -3064,13 +3064,15 @@ def _position_commit(browser, url):
         (output/'position-commit-latest.json').write_text(json.dumps(proof,indent=2))
         page.close()
 
-def _text_tab_return(browser, url, output):
+def _text_tab_return(browser, url, output, *, completion_order=None):
     """Protect actual character lines, which row offsets cannot identify after lazy layout."""
     import json
     import time
 
     started = time.perf_counter()
     proof = []
+    if completion_order not in (None, 'history-first', 'body-first'):
+        raise ValueError('Unknown text restoration completion order')
     page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
     # This observer reads native text nodes and Range geometry. No product anchor,
     # rendering marker or wrapper identity supplies the correctness assertion.
@@ -3129,6 +3131,8 @@ def _text_tab_return(browser, url, output):
             ('paragraphs',20,'cancel'),('paragraphs',20,'changed-source'),
             ('paragraphs',20,'inline-parser-retry'),('paragraphs',20,'inline-digest-retry'),
         ):
+            if completion_order is not None and (variant, backlog, order) != ('paragraphs', 20, completion_order):
+                continue
             case = {'variant':variant,'backlog':backlog,'order':order}
             proof.append(case)
             page.goto(url+'?reader=1&text-restoration='+variant)
