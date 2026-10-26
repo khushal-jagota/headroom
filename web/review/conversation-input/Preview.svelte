@@ -29,8 +29,11 @@
   let position = $state<Position>('normal');
   let previewHost: HTMLDivElement;
   let positionOperation = 0;
+  let scenarioGeneration = $state(0);
   let reader = $state.raw<ConversationViewReader | null>(null);
   let viewAnchor = $state<ViewReaderAnchor | null>(null);
+  const currentAnchor = (): ViewReaderAnchor | null => viewAnchor;
+  const currentReader = (): ConversationViewReader | null => reader;
   let capturedAnchor = $state<ViewReaderAnchor | null>(null);
   let capturedCharacter = $state<{text:string;character:number;offset:number} | null>(null);
   function readCharacter() {
@@ -91,6 +94,12 @@
   async function selectPosition() {
     const operation = ++positionOperation;
     reader?.close();
+    reader = null;
+    viewAnchor = null;
+    scenarioGeneration++;
+    conversationState = 'rest';
+    await tick();
+    if(operation !== positionOperation)return;
     resetTransport();
     // Start each scenario from the same finite text, then capture the actual
     // viewport anchor. Only setup scrolls. Recovery placement belongs to production.
@@ -112,24 +121,25 @@
       const thread = previewHost.querySelector<HTMLElement>('[data-conversation-thread]');
       if (!thread) throw new Error('Preview thread is absent');
       // This earlier position is scenario input, never its final outcome.
-      scenarioPhase = 'prepare-bottom';
-      previewHost.querySelector<HTMLButtonElement>('button[aria-label="Jump to latest message"]')?.click();
-      if (!await waitFor(() => Math.abs(thread.scrollHeight-thread.clientHeight-thread.scrollTop)<=2,operation)) return;
-      await new Promise(resolve => setTimeout(resolve, 150));
       if (position === 'normal') { scenarioPhase = 'ready'; return; }
       scenarioPhase = 'prepare-anchor';
-      const deadline = performance.now()+12000;
-      do {
-        thread.scrollTop = thread.scrollHeight-thread.clientHeight-600;
+      // Choose the saved INPUT inside this real row. End-layout growth cannot
+      // change which row this position selects. Recovery never uses this placement.
+      const targetRow = previewHost.querySelector<HTMLElement>('[data-conversation-view-key="e2000"]');
+      if(!targetRow)throw new Error('The synthetic target row is absent');
+      thread.dispatchEvent(new WheelEvent('wheel',{deltaY:-600,bubbles:true}));
+      thread.scrollTop += targetRow.getBoundingClientRect().top-thread.getBoundingClientRect().top+200;
+      thread.dispatchEvent(new Event('scroll'));
+      if (!await waitFor(() => {
+        // Text registration can settle after the first scroll event. Capture the
+        // same stationary reading again without any further movement.
         thread.dispatchEvent(new Event('scroll'));
-        await new Promise(resolve=>setTimeout(resolve,150));
-        if(operation !== positionOperation)return;
-        if(performance.now()>deadline)throw new Error('Preview setup did not capture native saved text');
-      } while(!viewAnchor?.content || viewAnchor.following || viewAnchor.key!=='e2000');
-      capturedAnchor = copyViewReaderAnchor(viewAnchor!);
+        return !!currentAnchor()?.content && !currentAnchor()?.following && currentAnchor()?.key==='e2000';
+      },operation)) return;
+      capturedAnchor = copyViewReaderAnchor(currentAnchor()!);
       scenarioPhase = 'prepare-character';
       capturedCharacter = readCharacter();
-      reader?.close();
+      currentReader()?.close();
       probes().__backlog(100);
       (window as unknown as {__previewBacklog?: number}).__previewBacklog = 100;
       Object.assign(probes().__returnProbe, {
@@ -201,11 +211,13 @@
   <div class="review-stage">
     <div class="review-host" bind:this={previewHost} style:width={`${width}px`} data-review-host={host} data-review-width={width}>
       {#snippet pane()}
+        {#key scenarioGeneration}
         <ConversationPane conversationId="local-input-preview" draftKey="review:conversation-input"
           conversationExists bind:conversationState bind:lens {reader} bind:viewAnchor {rows} {running} {ownerReadThroughSequence} {roleLabel}
           connectionTrouble={reader?.trouble ?? false} backendKey="codex" current={{model:'gpt-6.1-sol',reasoningEffort:'medium'}}
           models={[{model_id:'gpt-6.1-sol',display_name:'GPT-6.1',enabled:true}]} effortOptions={['medium']}
           ownSenderLabel="owner" onSend={send} onStop={() => { activity = 'idle'; }} />
+        {/key}
       {/snippet}
       {#if host === 'ticket' || host === 'artifact'}
         <div class="ticket-screen" data-screen="ticket">

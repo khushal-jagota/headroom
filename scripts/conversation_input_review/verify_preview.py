@@ -318,6 +318,10 @@ def main() -> None:
                             exact=True,
                         ).wait_for()
                         assert review.locator("[data-conversation-view-key]").count() > 0
+                        assert review.locator('[data-conversation-view-key="e2100"]').count() == 0
+                        assert review.get_by_role(
+                            "button", name="Jump to latest message", exact=True
+                        ).is_visible()
                     else:
                         review.wait_for_function(
                             """() => {
@@ -346,11 +350,18 @@ def main() -> None:
                             "(e)=>({top:e.scrollTop,max:e.scrollHeight-e.clientHeight})"
                         )
                         assert abs(after["top"] - after["max"]) <= 2, after
+                    screenshot = None
+                    if host == "ticket" and width == 736:
+                        screenshot = f"recovery-{scenario}-ticket-736.png"
+                        review.locator(".review-shell").screenshot(
+                            path=str(args.output / screenshot)
+                        )
                     result["savedPositionCases"].append(
                         {
                             "host": host,
                             "width": width,
                             "scenario": scenario,
+                            "screenshot": screenshot,
                             "capturedAnchor": json.loads(anchor),
                             "heldCharacter": held_character,
                             "restoredCharacter": native_after,
@@ -413,6 +424,8 @@ def main() -> None:
         json.dumps(
             {
                 "cases": len(result["cases"]),
+                "savedPositionCases": len(result["savedPositionCases"]),
+                "opaqueFrameNetworkRequests": len(result["previewRequests"]),
                 "pageErrors": result["pageErrors"],
                 "elapsedSeconds": result["elapsedSeconds"],
             }
