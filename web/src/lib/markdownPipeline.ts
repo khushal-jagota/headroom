@@ -157,16 +157,18 @@ export function parseMarkdown(source: string): ParsedMarkdown {
   return { children: tree.children || [], definitions };
 }
 
-export function renderParsedMarkdown(document: ParsedMarkdown): HTMLElement {
+export type MarkdownTextMapper = (node: Text, blockIndex: number, path: readonly number[]) => void;
+
+export function renderParsedMarkdown(document: ParsedMarkdown, mapText?: MarkdownTextMapper, blockOffset = 0): HTMLElement {
   const root = globalThis.document.createElement("div");
   root.className = "markdown";
-  for (const child of document.children) appendHastNode(root, child);
+  document.children.forEach((child, index) => appendHastNode(root, child, mapText, blockOffset + index, []));
   referenceDefinitionsByRoot.set(root, document.definitions);
   return root;
 }
 
-export function renderMarkdownToElement(source: string): HTMLElement {
-  return renderParsedMarkdown(parseMarkdown(source));
+export function renderMarkdownToElement(source: string, mapText?: MarkdownTextMapper): HTMLElement {
+  return renderParsedMarkdown(parseMarkdown(source), mapText);
 }
 
 /** The link and image destinations that rendered Markdown exposes to a reader. */
@@ -216,9 +218,11 @@ export function serializeMarkdownDomToSource(root: Node): string {
   return markdown;
 }
 
-function appendHastNode(parent: HTMLElement, node: HastNode): void {
+function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownTextMapper, blockIndex = 0, path: readonly number[] = []): void {
   if (node.type === "text") {
-    parent.appendChild(document.createTextNode(node.value || ""));
+    const text = document.createTextNode(node.value || "");
+    parent.appendChild(text);
+    mapText?.(text, blockIndex, path);
     return;
   }
   if (node.type !== "element" || !node.tagName) return;
@@ -228,7 +232,7 @@ function appendHastNode(parent: HTMLElement, node: HastNode): void {
     element.decoding = "async";
   }
   applySanitizedProperties(element, node.properties || {});
-  for (const child of node.children || []) appendHastNode(element, child);
+  (node.children || []).forEach((child, index) => appendHastNode(element, child, mapText, blockIndex, [...path, index]));
   parent.appendChild(element);
 }
 

@@ -463,9 +463,10 @@
   </div>
 
   <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
-  {#if reader?.restorationFailed}
-    <div class="chat-receipt" role="status" data-conversation-restoration-status="error">Your conversation position did not load.
-      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>
+  {#if reader && reader.restorationOutcome !== 'idle'}
+    <div class="chat-receipt" role="status" data-conversation-restoration-status={reader.restorationOutcome}>
+      {reader.restorationOutcome === 'unavailable' ? 'This conversation position is no longer available.' : reader.restorationOutcome === 'failed' ? 'Your conversation position did not load.' : 'Restoring your conversation position…'}
+      {#if reader.restorationOutcome !== 'unavailable'}<button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>{/if}
     </div>
   {/if}
   <!-- The conversation is never taken off the screen to say that it is loading. A

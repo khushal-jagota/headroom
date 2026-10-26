@@ -24,3 +24,18 @@ export function streamArrivalBudget(textChanged: boolean, wasFollowing: boolean,
 export function streamTravelFits(distance: number, remainingArrivalPixels: number): boolean {
   return distance >= 0.5 && remainingArrivalPixels >= 0.5 && distance <= remainingArrivalPixels + 1;
 }
+
+import type { ViewReaderAnchor } from '../../../lib/conversation/view/anchorContracts';
+import type { MarkdownTargetDemand } from '../../../lib/markdown/presentationContracts';
+export type TextRestorationPlacement = {
+  readonly reader: object | null;
+  readonly anchor: ViewReaderAnchor;
+  readonly attempt: number;
+  demand: MarkdownTargetDemand | null;
+  unsubscribe: (() => void) | null;
+};
+export function releaseTextRestoration(operation: TextRestorationPlacement | null): void {
+  operation?.unsubscribe?.();
+  operation?.demand?.release();
+  if (operation) { operation.unsubscribe = null; operation.demand = null; }
+}

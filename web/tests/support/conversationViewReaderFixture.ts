@@ -33,7 +33,7 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
   (window as any).__backlog=(count:number)=>{sequence+=count;};
   const returnBodies=new Map<string,string>();
   const returnBodyReleases:Array<()=>void>=[];
-  const returnProbe={hold:false,fail:false,bodies:false,bodyHold:false,changedSource:false,bodyWaiting:0,waiting:0,release:()=>{},
+  const returnProbe={hold:false,fail:false,inlineTarget:false,bodies:false,bodyHold:false,holdTargetOnly:false,changedSource:false,bodyWaiting:0,targetBodyWaiting:0,waiting:0,release:()=>{},
     releaseBodies:()=>{returnProbe.bodyHold=false;for(const release of returnBodyReleases.splice(0))release();}};
   (window as any).__returnProbe=returnProbe;
   const calls:string[]=[];
@@ -114,14 +114,16 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
         row.row_kind='agent_message';
         const body=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:restorationText}]});
         returnBodies.set('return:2000',body);
-        row.body={kind:'deferred',reference:{body_id:'return:2000',version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
+        row.body=returnProbe.inlineTarget
+          ? {kind:'inline',value:JSON.parse(body)}
+          : {kind:'deferred',reference:{body_id:'return:2000',version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
       }
       if(positionRace && row.source_sequence>=1991){
         const body=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:Array.from({length:row.source_sequence===2000?400:18},(_,index)=>`Late paragraph ${row.source_sequence}.${index}. `+'The final body differs from its provisional skeleton. '.repeat(3)).join('\n\n')}]});
         row.row_kind='agent_message';
         row.body={kind:'deferred',reference:{body_id:'position:'+row.source_sequence,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
       }
-      if(returnProbe.bodies && row.body.kind==='inline'){
+      if(returnProbe.bodies && row.body.kind==='inline' && !(returnProbe.inlineTarget && row.source_sequence===2000)){
         const bodyId='return:'+row.source_sequence;
         const body=JSON.stringify(row.body.value);returnBodies.set(bodyId,body);
         row.body={kind:'deferred',reference:{body_id:bodyId,version:'1',byte_count:new TextEncoder().encode(body).byteLength,media_type:'application/json'}};
@@ -159,7 +161,10 @@ export function installConversationViewReaderFixture(id='bounded-reader'):void {
     if(url.pathname.endsWith('/view/body/content')){
       const reference=JSON.parse(url.searchParams.get('reference')!);
       if(String(reference.body_id).startsWith('return:')){
-        if(returnProbe.bodyHold){returnProbe.bodyWaiting++;await new Promise<void>(resolve=>returnBodyReleases.push(resolve));}
+        if(returnProbe.bodyHold && (!returnProbe.holdTargetOnly || reference.body_id==='return:2000')){
+          returnProbe.bodyWaiting++;if(reference.body_id==='return:2000')returnProbe.targetBodyWaiting++;
+          await new Promise<void>(resolve=>returnBodyReleases.push(resolve));
+        }
         const body=returnBodies.get(reference.body_id);
         return new Response(returnProbe.changedSource && reference.body_id==='return:2000'
           ? body?.replace('Late paragraph 2000.0.', 'Lost paragraph 2000.0.') : body);
