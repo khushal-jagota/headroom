@@ -11,7 +11,7 @@ Mac: ordinary Worker files + backend child
                   |
           one durable outbound journal
                   |
-           Mac-initiated SSH connection
+           Mac-initiated app WebSocket
                   |
 VPS: canonical writers + first receipts + complete files + accepted answers
                   |
@@ -23,7 +23,7 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 7. Earlier peers refuse work before replay. The
+The wire protocol is version 8. Earlier peers refuse work before replay. The
 journal format is version 2. Earlier journal formats refuse ordinary startup
 and deployment before mutation. Wire compatibility and journal compatibility are
 separate checks. Neither compatibility check converts stored work.
@@ -50,7 +50,7 @@ Ticket fields retain their served `/files/tickets/<ticket-id>/<relative-path>` l
 
 The complete encoded start command must fit the existing one-megabyte frame limit.
 Oversized or invalid snapshots refuse startup without truncation or another transport.
-Protocol 7 requires this bootstrap on both peers. Journal format 2 stays unchanged.
+Protocol 8 requires this bootstrap on both peers. Journal format 2 stays unchanged.
 
 Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
 `src/planner/executor/runtime.py`, `src/planner/executor/vps.py`.
@@ -106,34 +106,21 @@ length, and digest, then publishes a complete file from quarantine. A dependent
 row cannot commit first. A replay of an old publication cannot overwrite a newer
 file at the same URL.
 
-Both directions use standard SFTP v3 on the same authenticated SSH connection as
-the relay and previews. SFTP has ordinary access as the configured VPS account.
-Panels validates each transfer's direction, manifest, and absolute path beneath
-the negotiated generation directory. It admits four transfers; each uses one
-handle and at most sixteen requests of at most 64 KiB. Reads are bounded by the
-manifest length, with an extra byte to check EOF. Short or excess data refuses
-acceptance. These are application limits, not server disk quotas or account confinement.
+Both directions use HTTP through the app service. The Mac uploads artifact snapshots with PUT and downloads input snapshots with GET.
+The control connection allocates generation-owned transfer IDs with a direction and manifest. The server resolves each ID to its own staging path.
+These reservations track integrity and lifecycle. They do not restrict the account's ordinary filesystem access.
 
-The VPS stages transfers in a private generation directory under the server
-user's shared account home. Upload paths are created exclusively and download
-paths contain immutable copies. Preview sockets remain in the same shared-home
-generation root, visible to the SSH daemon rather than the service's private
-`/tmp`. Unsafe or symlinked roots and paths exceeding Unix socket limits refuse
-setup.
+Four transfers can proceed concurrently. HTTP chunks retain the prior transport bound of 64 KiB. Local file copies retain their separate 256 KiB bound.
+The receiver checks the manifest length and digest. Short, excess, or incomplete content cannot receive publication acceptance.
+HTTP success proves byte transport only. The existing file completion and acceptance exchange still gates publication and native command dispatch.
 
-The Mac closes an upload handle before requesting completion. The receiver
-makes a fresh verified copy before atomic publication, so a retained SFTP handle
-cannot change accepted bytes. Panels rechecks the generation, original child,
-manifest, and reservation before committing the first receipt. Input downloads
-likewise pass through a fresh verified receiver copy before acceptance and command
-dispatch. A successful SFTP write proves neither publication nor a native effect.
-Lost input completion retains the original command and caller for reconciliation.
+The VPS uses a private directory for each connection generation. Upload slots admit one writer; download slots contain immutable snapshots.
+The receiver makes a fresh verified copy before atomic publication and rechecks the generation, original child, manifest, and reservation.
+Input downloads also pass through receiver quarantine and verification before the dependent native command.
+Lost completion retains the original publication or command identity for reconciliation.
 
-Generation loss closes application admission. Cancellation waits for admitted
-filesystem work, including receiver copies in threads, before releasing transfers
-or removing the generation directory. The Mac closes the connection before
-waiting for canceled transfer cleanup. Ordinary account SFTP supplies no handle
-revocation guarantee; receiver copies protect accepted bytes independently.
+Generation loss closes admission before cleanup waits. Cancellation settles admitted filesystem work, including receiver copies in threads, before slot release or directory removal.
+Ordinary account access stays intact. Accepted bytes remain protected by receiver verification and atomic publication.
 
 Snapshots and hashes use bounded streams. One submission per conversation can
 proceed at a time. Separate conversations can progress while a large transfer
@@ -313,7 +300,7 @@ phase machinery.
 A preview uses `/dev/tickets/<ticket-id>/<port>/` on either locale. The server reads
 that Ticket's current locale before each request. VPS previews use VPS loopback.
 Mac previews use a temporary VPS loopback listener. Its byte streams cross the
-existing Mac-initiated executor connection and reach only `127.0.0.1` on the Mac.
+app service through separate Mac-initiated WebSockets and reach only `127.0.0.1` on the Mac.
 The URL carries no host name and accepts no host parameter.
 
 Concurrent requests for one Ticket and port share a leased listener. The final
@@ -324,92 +311,57 @@ unavailable. The final request releases that listener.
 Preview traffic stays outside the journal, replay, and conversation commands.
 A failed request never moves to a VPS service at the same requested port.
 
-The remote open and local connect deadlines are one second. Idle streams expire
-after 30 seconds. SSH channels supply byte flow control. Each peer admits at most
-32 streams. The VPS admits at most 32 listeners. Private Unix reverse listeners
-reach only fixed Mac loopback ports. The VPS proxy retains its temporary loopback
-listener for browser access. The final lease closes listeners and active channels.
+The remote open and local connect deadlines are one second. Idle streams expire after 30 seconds.
+Each peer admits at most 32 streams. The VPS admits at most 32 listeners. Pending stream connections count against capacity before tasks start.
+Server-issued lease and stream IDs bind each connection to the current executor generation and fixed Mac loopback port.
+Each binary message carries at most 64 KiB. Awaited sends and bounded receive buffers supply backpressure.
+Separate connections keep stalled preview bytes away from control receipts. The final lease closes pending and active streams.
 These limits live in `src/planner/previews/configuration.py`.
 
 The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Earlier peers refuse the protocol 7 handshake before replay.
+Earlier peers refuse the protocol 8 handshake before replay.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac
 access, installed routes, provider credentials, or deployed behavior.
 
-## SSH prerequisites and boundaries
+## App service prerequisites and boundaries
 
-The launcher requires an explicit authentication mode, host, port, username, and
-absolute `known_hosts` path. `public_key` requires an absolute private key path.
-`tailscale` forbids that key and requires port 22 plus an absolute executable
-Tailscale CLI path. Neither mode reads ambient SSH configuration or uses agents,
-passwords, adjacent certificates, proxies, or interactive authentication.
-Missing or changed host keys refuse the connection. Encrypted public-key identities
-without explicit unattended support refuse.
-
-An explicit public-key launch uses these connection arguments:
+The native launcher requires the application revision, an HTTPS app origin, and a logical executor ID.
+The Mac uses one WebSocket for commands and receipts, HTTP for files, and separate WebSockets for preview streams.
+No open browser, SSH login, relay process, or SFTP subsystem participates.
 
 ```sh
-panels executor run --ssh-auth-mode public_key \
-  --ssh-host vps.example --ssh-port 2222 --ssh-user owner \
-  --ssh-identity-file /absolute/executor-key \
-  --ssh-known-hosts /absolute/known_hosts \
-  --panels-server-url https://panels.example
+panels executor run \
+  --application-revision "$CANDIDATE_SHA" \
+  --panels-server-url "$PANELS_SERVER_URL" \
+  --executor-id "$EXECUTOR_ID"
 ```
 
-For Tailscale, replace the mode with `tailscale`, set port 22, and replace
-`--ssh-identity-file` with `--tailscale-binary /absolute/tailscale`.
-The installed wrapper supplies its exact application revision.
+The origin has no credentials, path, query, or fragment. The client checks the server certificate and hostname.
+It does not follow redirects or use ambient proxies, cookies, or a separate application login.
 
-Before each Tailscale connection, the explicit CLI reads `status --json`.
-The local daemon must run with kernel networking. The configured IP must belong
-to one visible, unexpired peer. A name must match that peer's exact DNS name.
-Short aliases, system DNS, subnet routes, and ambiguous matches refuse.
-The selected address must also lie in Tailscale's IPv4 or IPv6 range.
-This range alone does not authenticate the peer.
+Tailscale Serve terminates HTTPS and replaces supplied identity headers with its authenticated user's identity.
+The existing allowed login authenticates native admission. Every native route also requires the configured logical executor ID.
+Missing, duplicate, or disallowed identity fails admission. Tagged devices supply no user login and cannot enter this boundary.
+The native routes reject browser Origin headers. Ordinary app access retains its existing behavior.
+The backend listens on loopback, within the existing trusted-host boundary.
 
-The status read establishes only the local daemon's current peer association.
-It does not prove reachability, packet routes, Tailscale SSH support, or permission.
-This mode trusts the local CLI, daemon, coordination state, and correct kernel routes.
-Tailscale enforces device authentication, network access, and SSH authorization at
-the existing endpoint. The executor supplies no extra key challenge.
-Tailscale check-mode challenges and denials remain connection failures.
-The executor does not open a login URL or change endpoint policy.
+The executor ID selects routing. It is not a password or hardware attestation.
+Any permitted untagged device under the allowed owner login can assert it. No new credential, device enrollment, or policy change exists.
+Auxiliary routes also check the current incarnation, generation, and reserved transfer or stream ID.
+Domain writes still require the original assigned child's authority. Native authentication grants no Worker owner authority.
 
-The numeric connection retains the configured host's exact `known_hosts` identity.
-A different pin for the numeric address cannot override a name's pin.
-Unknown, changed, and revoked host keys refuse. Advertised peer keys never replace
-operator pins. SFTP uses this same authenticated and pinned connection.
+Protocol 8 requires matching Mac and VPS packages before replay. Journal format 2 stays unchanged.
+The Mac retains its native children during app restarts and reconnects through inventory, reconciliation, replay, and readiness.
+There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 
-Connection diagnostics use fixed categories and omit addresses, paths, credentials,
-and remote output. Each category appears at most once per process, except that the
-first failure with context can add one line if its category was already reported.
-That first contextual failure includes the fixed connection phase, reader or
-session origin, and an allowlisted exception class (unknown types use `other`).
-Later failures omit context, keeping the process total to at most eight lines.
-Exception messages, remote payloads, and arbitrary class names are never included.
-
-The actual connection path uses AsyncSSH 2.24.1. Connection and login deadlines
-are ten seconds. Keepalives run every 15 seconds with three unanswered probes.
-Graceful closure has five seconds before abort. Transport failure preserves
-uncertain remote effects.
-
-The host must accept the standard SFTP v3 subsystem and provide shared-home
-access for the configured account. Browser previews still require reverse Unix
-SSH channels; their leases and cleanup remain independent of file transfers.
-The relay, SFTP, and preview channels share one SSH connection, so underlying TCP
-contention remains. Missing capabilities refuse work and grant no authority for
-host configuration changes.
-
-Active transfers prevent quiescence. Durable reservations, verified receiver
-copies, and first receipts retain their existing recovery rules. Wire protocol 7
-requires matching Mac and VPS peers. The Manager coordinates that transition with
-the installation Worker; a reviewed coding candidate grants no live application
-or SSH configuration authority.
+Connection diagnostics omit credentials, addresses, paths, exception messages, and remote payloads.
+Active transfers prevent quiescence. The Manager coordinates compatible peers through the existing identity-bound application procedure.
+A coding candidate grants no permission for a live route or peer change.
 
 ## Evidence boundaries
 
@@ -421,7 +373,7 @@ timing. Those remain explicit requirements before a live success claim.
 Installation and updates use the [Mac operator runbook](mac-executor-installation.md).
 See [runtime environments](environments.md) and [VPS deployment](deployment.md) for their separate operating boundaries.
 
-_Last verified: 2026-10-25._
+_Updated for the candidate transport. Live application remains separate._
 
 ## Machine display reads
 

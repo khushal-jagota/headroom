@@ -1,8 +1,7 @@
-"""Bounded, typed frames shared by SSH stdio and owner-only local IPC."""
+"""Bounded, typed frames shared by app WebSockets and owner-only local IPC."""
 
 from __future__ import annotations
 
-import asyncio
 import re
 import struct
 from uuid import UUID
@@ -15,6 +14,7 @@ from planner.executor.configuration import (
     SPOOL_FORMAT_VERSION,
 )
 from planner.executor.contracts import (
+    ByteWriter,
     ExecutorIdentity,
     FrameReader,
     WireMessage,
@@ -69,7 +69,7 @@ async def read_frame(reader: FrameReader) -> WireMessage:
     return await read_typed_frame(reader, WireMessage)
 
 
-async def write_frame(writer: asyncio.StreamWriter, value: object) -> None:
+async def write_frame(writer: ByteWriter, value: object) -> None:
     writer.write(encode_frame(value))
     await writer.drain()
 

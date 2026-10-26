@@ -174,9 +174,7 @@ def app_build(source_root: Path, requested_sha: str, candidate_app: Path) -> Non
 
 
 @environment.command("app-identity")
-@click.option(
-    "--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
-)
+@click.option("--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True)
 def app_identity(app: Path) -> None:
     """Print the validated SHA for one app directory."""
     try:
@@ -209,12 +207,13 @@ def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None
 @environment.command("configure-vps-launch")
 @click.option("--path", type=click.Path(path_type=Path), required=True)
 @click.option("--mode", type=click.Choice(["local", "remote"]), required=True)
-@click.option("--socket", type=click.Path(path_type=Path))
-def configure_vps_launch(path: Path, mode: str, socket: Path | None) -> None:
+@click.option("--executor-id")
+def configure_vps_launch(path: Path, mode: str, executor_id: str | None) -> None:
     """Write explicit owner-controlled VPS executor launch settings."""
     try:
         write_vps_launch(
-            path, VpsExecutorLaunchConfiguration(cast(Literal["local", "remote"], mode), socket)
+            path,
+            VpsExecutorLaunchConfiguration(cast(Literal["local", "remote"], mode), executor_id),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -259,13 +258,9 @@ def app_deploy(
 ) -> None:
     """Hard-cut over the deployed app with a verified snapshot and full recovery."""
     if (lifecycle_path is None) != (deployment_id is None):
-        raise click.ClickException(
-            "--lifecycle-path and --deployment-id must be supplied together"
-        )
+        raise click.ClickException("--lifecycle-path and --deployment-id must be supplied together")
     lifecycle_store = (
-        DeploymentLifecycleStore(lifecycle_path)
-        if lifecycle_path is not None
-        else None
+        DeploymentLifecycleStore(lifecycle_path) if lifecycle_path is not None else None
     )
 
     def publish_lifecycle(

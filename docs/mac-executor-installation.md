@@ -38,13 +38,12 @@ Set operator-reviewed values for these inputs:
 - `NATIVE_PYTHON`: the absolute native ordinary CPython 3.14.3 executable.
 - `BACKEND_PATH`: explicit absolute directories for native Node and the installed provider commands, plus required system commands.
 - `EVIDENCE`: an absolute private directory outside the source, environment, and persistent executor root.
-- SSH host, port, user, authentication mode, known-hosts path, and server URL.
-- Either the public-key identity path or the Tailscale executable path.
-- The remote relay command with the deployed VPS executable and configured absolute VPS socket.
+- The HTTPS app origin and logical executor ID from the reviewed application handoff.
 
-Do not derive authentication mode from the presence of a key.
-Public-key mode requires an absolute private key. Tailscale mode forbids that key and requires port 22.
-See [SSH prerequisites](executor.md#ssh-prerequisites-and-boundaries) for host pins and peer requirements.
+Use the existing Tailscale Serve route only when it targets the intended endpoint and durable state.
+The owner's normal app URL targets production. It does not select an isolated verification database.
+The executor ID selects routing under the existing allowed Serve login. It is not another credential or hardware attestation.
+See [app service prerequisites](executor.md#app-service-prerequisites-and-boundaries).
 
 Check the actual native host before installation:
 
@@ -97,11 +96,11 @@ PY
 ```
 
 Check that the resolved commit equals the reviewed full SHA.
-Record the candidate constants: wire protocol 7 and journal format 2.
-Both Mac and VPS peers must match protocol 7 before work. Coordinate the peer
+Record the candidate constants: wire protocol 8 and journal format 2.
+Both Mac and VPS peers must match protocol 8 before work. Coordinate the peer
 transition through the Manager and installation Worker before any application.
 
-Protocol 7 supplies exact canonical database skills before each new native Worker starts.
+Protocol 8 retains exact canonical database skills before each new native Worker starts.
 It repairs canonical entries in the normal account's Codex skills home and preserves unrelated account skills and credentials.
 Review that account path before authorized application. Do not redirect HOME or CODEX_HOME to bypass a conflict.
 Retain the existing executor root and journal. The bootstrap uses local copies beneath that root.
@@ -290,7 +289,7 @@ Legacy conversion has its own stopped-process boundary in [the executor referenc
 ## Render and start one LaunchAgent
 
 The renderer prints XML to stdout. It does not install packages, write files, or control services.
-Render with explicit public-key inputs:
+Render with the explicit app origin and logical executor ID:
 
 ```sh
 "$VENV/bin/python" -m planner.environments.mac_executor.cli \
@@ -298,19 +297,10 @@ Render with explicit public-key inputs:
   --executor-root "$EXECUTOR_ROOT" \
   --application-revision "$CANDIDATE_SHA" \
   --backend-path "$BACKEND_PATH" \
-  --ssh-auth-mode public_key \
-  --ssh-host "$SSH_HOST" --ssh-port "$SSH_PORT" --ssh-user "$SSH_USER" \
-  --ssh-identity-file "$SSH_IDENTITY" --ssh-known-hosts "$SSH_KNOWN_HOSTS" \
   --panels-server-url "$PANELS_SERVER_URL" \
-  --remote-command "$REMOTE_RELAY_COMMAND" > "$EVIDENCE/candidate.plist"
+  --executor-id "$EXECUTOR_ID" > "$EVIDENCE/candidate.plist"
 plutil -lint "$EVIDENCE/candidate.plist"
 ```
-
-For Tailscale mode, use `--ssh-auth-mode tailscale` and port 22.
-Replace `--ssh-identity-file` with `--tailscale-binary /absolute/tailscale`.
-The renderer adds `TAILSCALE_BE_CLI=1` in Tailscale mode so the bundled macOS executable uses its CLI.
-The [Tailscale CLI reference](https://tailscale.com/docs/reference/tailscale-cli?tab=macos) documents this selector.
-Public-key mode does not add it.
 
 Check the rendered arguments and environment before installation.
 The program is `$VENV/bin/panels executor run` with the full explicit SHA.
@@ -364,11 +354,49 @@ The first transition retains the old app and runtimes as recovery inputs, not as
 An incompatible prior package must not open the current journal.
 Never delete pending work or automatically convert the journal for rollback.
 
-File transfers require the standard SFTP v3 subsystem and shared-home access on
-the same authenticated SSH connection. Preview reverse Unix forwarding remains
-required. Endpoint capability evidence does not prove concurrent relay and SFTP
-behavior; that proof belongs to the reviewed candidate tests. This procedure
-grants no authority to change live SSH configuration.
+Files use verified HTTP transfers and previews use separate native WebSockets through the app service.
+The installed Mac needs no open browser or SSH authentication step.
+This procedure changes no account or network policy.
+
+## Isolated native validation route
+
+The HTTPS transport handoff proposes `https://panels-vps.tail687c57.ts.net:9443` for the retained isolated endpoint on loopback port 8793.
+This is a proposed later application route, not an installed capability or permission to change a live route.
+The Manager coordinates it with the verification Worker under existing owner authorization.
+Production application remains separately approved.
+
+Before the later route application, retain Serve status and check both ports:
+
+```sh
+tailscale serve status --json
+ss -ltn '( sport = :9443 or sport = :8793 )'
+```
+
+Require no conflicting listener or Serve handler. If a conflict exists, return it to the Manager.
+Start only the reviewed isolated package on loopback 8793 with the retained verification database and compatible peers.
+Configure its canonical HTTPS origin and logical executor ID. Preserve the existing journal, spool, assessment, and installed-state evidence.
+The proposed route command is:
+
+```sh
+tailscale serve --bg --https=9443 http://127.0.0.1:8793
+```
+
+Compare the result with the captured baseline. Preserve existing routes 443→8767, 8443→3001, and 10000→8788.
+The route must supply Serve's actual allowed-user identity and replace caller-supplied identity headers.
+Keep application tests with synthetic identity separate from this real Serve evidence.
+If the existing network policy prevents access to 9443, report the unavailable route without a policy change.
+
+Check native commands, files in both directions, previews, original callbacks, and recovery after an isolated app restart.
+Do not point this validation at production. Retain evidence and follow the Manager's peer disposition before cleanup.
+Remove only the route added for this validation:
+
+```sh
+tailscale serve --https=9443 off
+tailscale serve status --json
+```
+
+Compare the final status with the original baseline. Never use `serve reset` or change production 443.
+Preserve verification data. Stop only exact test processes owned by the application Worker.
 
 Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/cli.py`,
 `src/planner/executor/preflight.py`, `requirements-build.txt`, `requirements-executor.txt`,

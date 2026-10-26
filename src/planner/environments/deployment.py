@@ -29,7 +29,7 @@ from planner.environments.vps_launch import (
     read_vps_launch,
     restore_vps_launch,
     snapshot_vps_launch,
-    validate_vps_launch,
+    validate_vps_launch_for_application,
     validate_vps_launch_path,
     write_vps_launch,
 )
@@ -88,9 +88,7 @@ class SubprocessServiceController:
             command = ["systemctl", "--user", "restart", self.service_name]
         elif self.manager == "launchctl":
             target = (
-                self.service_name
-                if "/" in self.service_name
-                else f"system/{self.service_name}"
+                self.service_name if "/" in self.service_name else f"system/{self.service_name}"
             )
             if target.startswith("gui/"):
                 self._restart_user_launchagent(target)
@@ -123,9 +121,7 @@ class SubprocessServiceController:
                 raise DeploymentError("user LaunchAgent did not stop cleanly")
             time.sleep(0.05)
         subprocess.run(["/bin/launchctl", "bootout", target], check=False, shell=False)
-        subprocess.run(
-            ["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False
-        )
+        subprocess.run(["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False)
 
 
 def run_current_app_backup(
@@ -259,17 +255,17 @@ def deploy_app(
             except (OSError, ValueError) as exc:
                 raise DeploymentError(str(exc)) from exc
         _validate_current_root(root)
-        candidate_manifest = _validate_app(
-            candidate_app, "candidate app", require_runtime=True
-        )
+        candidate_manifest = _validate_app(candidate_app, "candidate app", require_runtime=True)
         prior_manifest = _validate_optional_current_app(current_app)
         launch_path = root / "data" / "executor-launch.json"
         # Refuse unsafe explicit settings before any service disruption.
         prior_launch_bytes = snapshot_vps_launch(launch_path)
         prior_launch = read_vps_launch(launch_path)
+        validate_vps_launch_for_application(
+            executor_launch_configuration or prior_launch or VpsExecutorLaunchConfiguration("local")
+        )
         launch_changed = False
         if executor_launch_configuration is not None:
-            validate_vps_launch(executor_launch_configuration)
             effective_prior_launch = prior_launch or VpsExecutorLaunchConfiguration("local")
             launch_changed = executor_launch_configuration != effective_prior_launch
             if launch_changed:
@@ -647,9 +643,7 @@ def _restore_fallback(
         restore_launch()
         service.restart()
         _publish_lifecycle(lifecycle_transition, "verifying")
-        if not health.wait_for_sha(
-            prior_manifest.app_sha, deadline=now() + timeout_seconds
-        ):
+        if not health.wait_for_sha(prior_manifest.app_sha, deadline=now() + timeout_seconds):
             raise DeploymentError("prior app did not become healthy")
         _publish_lifecycle(
             lifecycle_transition,

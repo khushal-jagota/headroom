@@ -1,12 +1,9 @@
-"""The VPS server endpoint and the SSH stdio relay's local Unix connection."""
+"""The executor endpoint attached directly to the app WebSocket service."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-import pwd
 import sqlite3
-import stat
 import tempfile
 import time
 from collections.abc import AsyncIterator
@@ -32,7 +29,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.executor.codec import encode_value
-from planner.executor.configuration import SSH_UNIX_SOCKET_MAX_BYTES
+from planner.executor.configuration import REQUEST_TIMEOUT_SECONDS
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AnswerApplication,
@@ -57,6 +54,8 @@ from planner.executor.contracts import (
     ExecutorIdentity,
     FilePublicationRequest,
     FileScope,
+    FrameReader,
+    FrameWriter,
     JsonObject,
     LiveReadRequest,
     QueuedEnvelope,
@@ -67,7 +66,7 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.files import directory_descriptor, snapshot_file
+from planner.executor.files import snapshot_file
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.skills import read_canonical_skill_snapshot
@@ -82,38 +81,11 @@ from planner.previews.forward import PreviewForwards
 
 
 def _generation_root() -> tempfile.TemporaryDirectory[str]:
-    """Keep forwarded sockets visible outside a service's private /tmp mount."""
-    home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    if not home.is_absolute():
-        raise ValueError("executor user home must be absolute")
-    parent = home / ".cache" / "panels" / "ssh"
-    with directory_descriptor(parent, create=True) as descriptor:
-        info = os.fstat(descriptor)
-        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-            raise ValueError("executor transport directory must be private and owned")
-        root = tempfile.TemporaryDirectory(prefix="panels-ssh-", dir=parent)
-    # Preview names are longer than the SFTP socket name. Refuse before
-    # advertising either endpoint, retaining both existing Unix path bounds.
-    if len(os.fsencode(Path(root.name) / "p" / uuid4().hex)) > SSH_UNIX_SOCKET_MAX_BYTES:
-        root.cleanup()
-        raise ValueError("executor transport socket path too long")
-    return root
+    return tempfile.TemporaryDirectory(prefix="panels-executor-")
 
 
 def now_ms() -> int:
     return time.time_ns() // 1_000_000
-
-
-def vps_socket_path(db_path: str) -> Path:
-    return (
-        Path(
-            os.environ.get(
-                "PLAN_EXECUTOR_VPS_SOCKET", str(Path(db_path).resolve().parent / "executor.sock")
-            )
-        )
-        .expanduser()
-        .resolve()
-    )
 
 
 class _MoveSource:
@@ -124,7 +96,7 @@ class _MoveSource:
         self.ticket_id = ticket_id
         self.conversation_id = conversation_id
         self.identity: ExecutorIdentity | None = None
-        self.writer: asyncio.StreamWriter | None = None
+        self.writer: FrameWriter | None = None
 
     def validate_current(self) -> None:
         endpoint = self.endpoint
@@ -196,10 +168,9 @@ class ExecutorEndpoint:
         self.runtime: Any = None
         self.app: Any = None
         self.identity: ExecutorIdentity | None = None
-        self.writer: asyncio.StreamWriter | None = None
+        self.writer: FrameWriter | None = None
         self.ready = False
         self._preview_forwards: PreviewForwards | None = None
-        self._server: asyncio.Server | None = None
         self.children: dict[str, RemoteBackendChild] = {}
         self.sinks: dict[str, BackendEventSink] = {}
         self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
@@ -227,21 +198,7 @@ class ExecutorEndpoint:
         self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[Any]]] = {}
 
     async def start(self) -> None:
-        path = vps_socket_path(self.db_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            # A live socket belongs to another process. Never unlink it silently.
-            try:
-                reader, writer = await asyncio.open_unix_connection(str(path))
-            except (ConnectionRefusedError, FileNotFoundError):
-                path.unlink(missing_ok=True)
-            else:
-                del reader
-                writer.close()
-                await writer.wait_closed()
-                raise RuntimeError("executor socket already has a listener")
-        self._server = await asyncio.start_unix_server(self._session, path=str(path))
-        path.chmod(0o600)
+        """The app router owns the listener; no separate relay socket exists."""
 
     @asynccontextmanager
     async def preview_forward(self, port: int, ticket_id: str) -> AsyncIterator[int]:
@@ -252,20 +209,24 @@ class ExecutorEndpoint:
             yield local_port
 
     async def close(self) -> None:
-        if self._preview_forwards is not None:
-            await self._preview_forwards.close()
-            self._preview_forwards = None
-        if self._server is not None:
-            self._server.close()
-        if self.writer is not None:
-            self.writer.close()
-            await self.writer.wait_closed()
+        # Revoke admission synchronously before any preview or file cleanup yields.
+        self.ready = False
+        writer, self.writer = self.writer, None
+        if writer is not None:
+            writer.close()
+        for future in self._responses.values():
+            if not future.done():
+                future.set_exception(ConnectionError("executor app stopped"))
+        previews, self._preview_forwards = self._preview_forwards, None
+        if previews is not None:
+            await previews.close()
         for task in tuple(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        if self._server is not None:
-            await self._server.wait_closed()
-        vps_socket_path(self.db_path).unlink(missing_ok=True)
+        for identity in tuple(self._transports):
+            await self._close_transport(identity)
+        if writer is not None:
+            await writer.wait_closed()
 
     def source_for_move(self, ticket_id: str, conversation_id: str | None) -> MoveSourceRetirement:
         return _MoveSource(self, ticket_id, conversation_id)
@@ -320,9 +281,9 @@ class ExecutorEndpoint:
         return child
 
     async def _send(self, message: WireMessage) -> None:
+        writer = self.writer
         async with self._send_lock:
-            writer = self.writer
-            if writer is None:
+            if writer is None or self.writer is not writer:
                 raise ConnectionError("executor link unavailable")
             await write_frame(writer, message)
 
@@ -330,9 +291,15 @@ class ExecutorEndpoint:
         request_id = str(uuid4())
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         self._responses[request_id] = future
+        writer = self.writer
         try:
-            await self._send(WireMessage(kind, request_id, payload))
-            return await future
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                await self._send(WireMessage(kind, request_id, payload))
+                return await future
+        except TimeoutError:
+            if writer is not None:
+                writer.close()
+            raise
         finally:
             self._responses.pop(request_id, None)
 
@@ -344,7 +311,7 @@ class ExecutorEndpoint:
     async def _transfer_command_inputs_locked(self, command: ChildCommand) -> None:
         identity = self.identity
         if identity is None or identity not in self._transports:
-            raise ConnectionError("SFTP unavailable")
+            raise ConnectionError("file generation unavailable")
         service = self._transports[identity]
         seen: set[str] = set()
         for key in ("content", "sender_content"):
@@ -919,11 +886,12 @@ class ExecutorEndpoint:
             self._dispatch_answer(answer)
         return True
 
-    async def _session(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _session(self, reader: FrameReader, writer: FrameWriter) -> None:
         identity = None
         forwards: PreviewForwards | None = None
         try:
-            hello = await read_frame(reader)
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                hello = await read_frame(reader)
             if hello.kind is not WireMessageKind.hello:
                 raise ValueError("executor handshake required")
             parsed_identity = parse_identity(hello.payload.get("identity"))
@@ -932,10 +900,12 @@ class ExecutorEndpoint:
                 raise ValueError("identity coercion refused")
             if type(hello.payload.get("process_id")) is not int or health.process_id < 1:
                 raise ValueError("invalid executor process identity")
-            identity = health.identity
             old_identity = self.identity
             old_writer = self.writer
-            self.store.begin_connection(identity, now_ms())
+            self.store.begin_connection(health.identity, now_ms())
+            # Only an admitted writer owns generation cleanup. A duplicate hello
+            # must not revoke resources from the already accepted connection.
+            identity = health.identity
             self.process_id = health.process_id
             self.observed_at_ms = now_ms()
             self.lost_at_ms = None
@@ -994,7 +964,14 @@ class ExecutorEndpoint:
                 task = asyncio.create_task(self._handle(message, identity, writer))
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
-        except (asyncio.IncompleteReadError, ConnectionError, OSError, ValueError):
+        except (
+            asyncio.IncompleteReadError,
+            ConnectionError,
+            OSError,
+            ValueError,
+            TimeoutError,
+            PlannerError,
+        ):
             pass
         finally:
             if identity is not None and self.writer is writer and self.identity == identity:
@@ -1034,7 +1011,7 @@ class ExecutorEndpoint:
         )
 
     async def _handle(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: asyncio.StreamWriter
+        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
     ) -> None:
         try:
             await self._handle_message(message, identity, writer)
@@ -1044,7 +1021,7 @@ class ExecutorEndpoint:
             writer.close()
 
     async def _handle_message(
-        self, message: WireMessage, identity: ExecutorIdentity, writer: asyncio.StreamWriter
+        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
     ) -> None:
         if self.writer is not writer or self.identity != identity:
             return
@@ -1065,8 +1042,6 @@ class ExecutorEndpoint:
                         raise ValueError("duplicate or stale transport generation")
                     root = _generation_root()
                     root_path = Path(root.name)
-                    previews_root = root_path / "p"
-                    previews_root.mkdir(mode=0o700)
                     service = GenerationTransfers(
                         identity,
                         root_path / "s",
@@ -1089,12 +1064,11 @@ class ExecutorEndpoint:
                         return await self._request(kind, payload)
 
                     self._preview_forwards = PreviewForwards(
-                        previews_root,
                         preview_request,
                         lambda: self.identity == identity and self.writer is writer and self.ready,
                     )
                     result, response_kind = (
-                        {"transfer_root": str(service.root), "preview_root": str(previews_root)},
+                        {},
                         WireMessageKind.transport_opened,
                     )
             elif message.kind is WireMessageKind.reconcile_inventory:
@@ -1277,7 +1251,7 @@ class ExecutorEndpoint:
             )
         service = self._transports.get(identity)
         if service is None:
-            raise ValueError("SFTP generation unavailable")
+            raise ValueError("file generation unavailable")
         publication = TypeAdapter(FilePublicationRequest).validate_python(message.payload)
         self._authorize_file(publication)
         manifest = publication.manifest

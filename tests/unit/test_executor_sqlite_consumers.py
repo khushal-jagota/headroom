@@ -20,14 +20,12 @@ from planner.executor.contracts import (
     AcceptanceReceipt,
     ChildReference,
     EnvelopeKind,
-    ExecutorSshConfig,
     FileScope,
     IpcOperation,
     IpcRequest,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    SshAuthenticationMode,
     WireMessage,
     WireMessageKind,
 )
@@ -42,15 +40,8 @@ def test_replay_pin_retains_bytes_after_concurrent_receipt_until_transfer_finish
         mac = MacExecutor(
             paths=ExecutorPaths(tmp_path / "mac"),
             revision="a" * 40,
-            ssh_config=ExecutorSshConfig(
-                "unused",
-                1,
-                "unused",
-                tmp_path / "key",
-                tmp_path / "hosts",
-                SshAuthenticationMode.public_key,
-            ),
-            panels_server_url="http://unused",
+            executor_id="owner-mac",
+            panels_server_url="https://unused",
         )
         # Isolate outbox lifetime after the peer has accepted this generation.
         mac._handshake_accepted = True
@@ -146,15 +137,8 @@ def test_replay_drains_captured_heads_and_quiescence_counts_without_full_invento
         mac = MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_config=ExecutorSshConfig(
-                "unused",
-                1,
-                "unused",
-                tmp_path / "key",
-                tmp_path / "hosts",
-                SshAuthenticationMode.public_key,
-            ),
-            panels_server_url="http://unused",
+            executor_id="owner-mac",
+            panels_server_url="https://unused",
         )
         # Requests below model a connected, accepted generation.
         mac._handshake_accepted = True
@@ -217,15 +201,8 @@ def ipc_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MacExec
     mac = MacExecutor(
         paths=ExecutorPaths(tmp_path),
         revision="a" * 40,
-        ssh_config=ExecutorSshConfig(
-            "unused",
-            1,
-            "unused",
-            tmp_path / "key",
-            tmp_path / "hosts",
-            SshAuthenticationMode.public_key,
-        ),
-        panels_server_url="http://unused",
+        executor_id="owner-mac",
+        panels_server_url="https://unused",
     )
     mac._handshake_accepted = True
     reference = ChildReference(mac.identity.executor_incarnation, str(uuid4()), "c_one")

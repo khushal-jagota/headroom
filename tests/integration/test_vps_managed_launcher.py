@@ -41,7 +41,7 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     )
     record = (
         "import json,os,sys;"
-        "keys=('PLAN_EXECUTOR_MODE','PLAN_EXECUTOR_VPS_SOCKET','PATH');"
+        "keys=('PLAN_EXECUTOR_MODE','PLAN_EXECUTOR_VPS_SOCKET','PLAN_EXECUTOR_ID','PATH');"
         "print(json.dumps({'env':{key:os.environ[key] for key in keys if key in os.environ},"
         "'untrusted_pythonpath_present':'PYTHONPATH' in os.environ,'argv':sys.argv[1:]}))"
     )
@@ -81,6 +81,7 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "PYTHONPATH": "/poison/source",
         "PLAN_EXECUTOR_MODE": "remote",
         "PLAN_EXECUTOR_VPS_SOCKET": "/poison/socket",
+        "PLAN_EXECUTOR_ID": "poison-executor",
     }
     configuration = app.parent / "data/executor-launch.json"
 
@@ -101,17 +102,24 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     assert payload["env"]["PLAN_EXECUTOR_MODE"] == "local"
     assert "PLAN_EXECUTOR_VPS_SOCKET" not in payload["env"]
     assert payload["untrusted_pythonpath_present"] is False
-    socket = app.parent / "data/executor.sock"
-    write_vps_launch(configuration, VpsExecutorLaunchConfiguration("remote", socket))
+    executor_id = "owner-mac"
+    write_vps_launch(configuration, VpsExecutorLaunchConfiguration("remote", executor_id))
     remote = launch()
     assert remote.returncode == 0, remote.stderr
     remote_env = json.loads(remote.stdout)["env"]
     assert remote_env["PLAN_EXECUTOR_MODE"] == "remote"
-    assert remote_env["PLAN_EXECUTOR_VPS_SOCKET"] == str(socket)
+    assert remote_env["PLAN_EXECUTOR_ID"] == executor_id
+    assert "PLAN_EXECUTOR_VPS_SOCKET" not in remote_env
     write_vps_launch(configuration, VpsExecutorLaunchConfiguration("local"))
-    assert "PLAN_EXECUTOR_VPS_SOCKET" not in json.loads(launch().stdout)["env"]
+    local_env = json.loads(launch().stdout)["env"]
+    assert "PLAN_EXECUTOR_VPS_SOCKET" not in local_env
+    assert "PLAN_EXECUTOR_ID" not in local_env
     configuration.write_text('{"version":1,"mode":"remote","socket":"relative"}')
     refused = launch()
     assert refused.returncode != 0
     assert not refused.stdout
-    assert "absolute socket path" in refused.stderr
+    assert "legacy VPS executor socket configuration" in refused.stderr
+    configuration.write_text('{"version":1,"mode":"remote","socket":"/legacy/executor.sock"}')
+    legacy = launch()
+    assert legacy.returncode != 0 and not legacy.stdout
+    assert "version-2 executor ID descriptor" in legacy.stderr

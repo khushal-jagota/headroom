@@ -15,7 +15,6 @@ import sys
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -27,15 +26,9 @@ import tree_environment  # noqa: E402  # reached via sys.path.insert above
 
 @pytest.fixture
 def executor_transport_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Use a short synthetic account home for real Unix socket tests."""
-    from planner.executor import vps
-
-    with tempfile.TemporaryDirectory(prefix="h-", dir="/tmp") as temporary:
-        home = Path(temporary)
-        monkeypatch.setattr(
-            vps, "pwd", SimpleNamespace(getpwuid=lambda uid: SimpleNamespace(pw_dir=str(home)))
-        )
-        yield home
+    """Retained fixture for synthetic executor test storage."""
+    with tempfile.TemporaryDirectory(prefix="executor-test-", dir="/tmp") as temporary:
+        yield Path(temporary)
 
 
 def pytest_configure(config: pytest.Config) -> None:

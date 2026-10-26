@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tempfile
 from pathlib import Path
@@ -18,25 +19,47 @@ MAX_VPS_LAUNCH_CONFIGURATION_BYTES = 4096
 
 
 def validate_vps_launch(configuration: VpsExecutorLaunchConfiguration) -> None:
-    if type(configuration.version) is not int or configuration.version != 1:
+    if type(configuration.version) is not int or configuration.version not in {1, 2}:
         raise ExecutorLaunchConfigurationError(
             "unsupported VPS executor launch configuration version"
         )
     if configuration.mode not in {"local", "remote"}:
         raise ExecutorLaunchConfigurationError("unsupported VPS executor launch mode")
-    path = configuration.socket_path
-    if configuration.mode == "local" and path is not None:
-        raise ExecutorLaunchConfigurationError(
-            "local executor launch configuration cannot set a VPS socket"
-        )
+    if configuration.version == 1:
+        path = configuration.socket_path
+        if (
+            configuration.executor_id is not None
+            or (configuration.mode == "local" and path is not None)
+            or (
+                configuration.mode == "remote"
+                and (
+                    not isinstance(path, Path)
+                    or not path.is_absolute()
+                    or any(ord(char) < 32 for char in str(path))
+                    or ".." in path.parts
+                )
+            )
+        ):
+            raise ExecutorLaunchConfigurationError(
+                "invalid legacy VPS executor socket configuration"
+            )
+        return
+    if configuration.socket_path is not None:
+        raise ExecutorLaunchConfigurationError("version 2 cannot configure an executor socket")
+    if configuration.mode == "local" and configuration.executor_id is not None:
+        raise ExecutorLaunchConfigurationError("local executor launch cannot set an executor ID")
     if configuration.mode == "remote" and (
-        not isinstance(path, Path)
-        or not path.is_absolute()
-        or any(ord(char) < 32 for char in str(path))
-        or any(part == ".." for part in path.parts)
+        not isinstance(configuration.executor_id, str)
+        or re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", configuration.executor_id) is None
     ):
+        raise ExecutorLaunchConfigurationError("remote VPS executor launch requires an executor ID")
+
+
+def validate_vps_launch_for_application(configuration: VpsExecutorLaunchConfiguration) -> None:
+    validate_vps_launch(configuration)
+    if configuration.version == 1 and configuration.mode == "remote":
         raise ExecutorLaunchConfigurationError(
-            "remote VPS executor launch requires a concrete absolute socket path"
+            "legacy remote launch requires an explicitly prepared version-2 executor ID descriptor"
         )
 
 
@@ -96,15 +119,22 @@ def _read_bytes(path: Path) -> bytes | None:
 def _decode(raw: bytes) -> VpsExecutorLaunchConfiguration:
     try:
         value = json.loads(raw)
-        if not isinstance(value, dict) or set(value) != {"version", "mode", "socket"}:
+        if not isinstance(value, dict):
+            raise ValueError("configuration must be an object")
+        version = value.get("version")
+        if type(version) is not int:
+            raise ValueError("configuration version must be an integer")
+        field = "socket" if version == 1 else "executor_id"
+        if set(value) != {"version", "mode", field}:
             raise ValueError("configuration fields do not match the supported schema")
-        mode, socket = value["mode"], value["socket"]
-        if mode not in {"local", "remote"} or (socket is not None and not isinstance(socket, str)):
+        mode, target = value["mode"], value[field]
+        if mode not in ("local", "remote") or (target is not None and not isinstance(target, str)):
             raise ValueError("configuration fields have invalid types")
         configuration = VpsExecutorLaunchConfiguration(
-            cast(Literal["local", "remote"], mode),
-            Path(socket) if socket is not None else None,
-            value["version"],
+            mode=cast(Literal["local", "remote"], mode),
+            version=version,
+            executor_id=target if version != 1 else None,
+            socket_path=Path(target) if version == 1 and target is not None else None,
         )
         validate_vps_launch(configuration)
         return configuration
@@ -154,9 +184,15 @@ def write_vps_launch(path: Path, configuration: VpsExecutorLaunchConfiguration) 
             {
                 "version": configuration.version,
                 "mode": configuration.mode,
-                "socket": str(configuration.socket_path)
-                if configuration.socket_path is not None
-                else None,
+                **(
+                    {
+                        "socket": str(configuration.socket_path)
+                        if configuration.socket_path
+                        else None
+                    }
+                    if configuration.version == 1
+                    else {"executor_id": configuration.executor_id}
+                ),
             },
             sort_keys=True,
         )

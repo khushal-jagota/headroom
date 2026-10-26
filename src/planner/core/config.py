@@ -5,6 +5,7 @@ checked-in yaml. Nothing in the system reads a timing/limit/path inline."""
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,7 @@ class Config:
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
     fake_now: str | None
+    executor_id: str | None = None
     app_sha: str | None = None
 
 
@@ -243,6 +245,10 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         except AppValidationError as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
 
+    executor_id = _optional_str_value(cfg, env, "executor_id", "PLAN_EXECUTOR_ID")
+    if executor_id is not None and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", executor_id) is None:
+        raise PlannerError(ErrorCode.validation, "executor_id must name a logical executor")
+
     return Config(
         db_path=_str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db"),
         port=_int_value(cfg, env, "port", "PLAN_PORT", 8767),
@@ -283,5 +289,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
         test_mode=test_mode,
         fake_now=fake_now,
+        executor_id=executor_id,
         app_sha=app_sha,
     )

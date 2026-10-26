@@ -1,26 +1,35 @@
 """Closed categories and the process-lifetime diagnostic output budget."""
 
+import ssl
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-import asyncssh
+import aiohttp
 import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from planner.executor.contracts import (
     ConnectionFailureCategory,
-    SshConfigurationError,
-    TailnetValidationError,
 )
 from planner.executor.diagnostics import ConnectionDiagnostics, classify_connection_failure
+
+
+def forbidden_handshake() -> aiohttp.WSServerHandshakeError:
+    url = URL("https://fixture.invalid/api/executor/connect")
+    request = aiohttp.RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+    return aiohttp.WSServerHandshakeError(request, (), status=403)
 
 
 @pytest.mark.parametrize(
     ("error", "category"),
     [
-        (SshConfigurationError("secret"), ConnectionFailureCategory.configuration),
-        (TailnetValidationError("secret"), ConnectionFailureCategory.tailnet_validation),
-        (asyncssh.HostKeyNotVerifiable("secret"), ConnectionFailureCategory.host_key),
-        (asyncssh.PermissionDenied("secret"), ConnectionFailureCategory.authentication),
+        (aiohttp.InvalidURL("secret"), ConnectionFailureCategory.configuration),
+        (ssl.SSLError("secret"), ConnectionFailureCategory.tls),
+        (
+            forbidden_handshake(),
+            ConnectionFailureCategory.authentication,
+        ),
         (TimeoutError("secret"), ConnectionFailureCategory.timeout),
         (OSError("secret"), ConnectionFailureCategory.network),
         (ValueError("secret"), ConnectionFailureCategory.connection_or_protocol),
@@ -30,14 +39,13 @@ def test_fixed_categories(error: Exception, category: ConnectionFailureCategory)
     assert classify_connection_failure(error) is category
 
 
-def test_seven_fixed_lines_for_arbitrary_repetitions() -> None:
+def test_six_fixed_lines_for_arbitrary_repetitions() -> None:
     lines: list[str] = []
     diagnostics = ConnectionDiagnostics(lines.append)
     errors = [
-        SshConfigurationError("private path"),
-        TailnetValidationError("private json"),
-        asyncssh.HostKeyNotVerifiable("private host"),
-        asyncssh.PermissionDenied("private user"),
+        aiohttp.InvalidURL("private path"),
+        ssl.SSLError("private host"),
+        forbidden_handshake(),
         TimeoutError("secret command"),
         OSError("secret credential"),
         ValueError("remote output"),
@@ -112,35 +120,35 @@ def test_context_is_finite_and_never_exposes_custom_names_or_messages() -> None:
     for _ in range(100):
         diagnostics.report(
             SecretCredentialName("secret credential"),
-            phase=ConnectionPhase.sftp_open,
+            phase=ConnectionPhase.transport_open,
             origin=ConnectionFailureOrigin.session,
         )
     assert lines == [
         "executor connection failure: connection_or_protocol",
-        "executor connection failure: connection_or_protocol phase=sftp_open"
+        "executor connection failure: connection_or_protocol phase=transport_open"
         " origin=session exception=other",
     ]
     for error in (
-        SshConfigurationError("secret"),
-        TailnetValidationError("secret"),
-        asyncssh.HostKeyNotVerifiable("secret"),
-        asyncssh.PermissionDenied("secret"),
+        aiohttp.InvalidURL("secret"),
+        ssl.SSLError("secret"),
+        ssl.SSLError("secret"),
+        forbidden_handshake(),
         TimeoutError("secret"),
         OSError("secret"),
     ):
         diagnostics.report(error)
-    assert len(lines) == 8
+    assert len(lines) == 7
     assert "secret" not in " ".join(lines).lower()
 
 
 @pytest.mark.parametrize(
     "error,tag",
     [
-        (asyncssh.ChannelOpenError(1, "secret"), "ChannelOpenError"),
-        (asyncssh.SFTPError(4, "secret"), "SFTPError"),
-        (asyncssh.SFTPFailure("secret"), "SFTPFailure"),
-        (asyncssh.SFTPConnectionLost("secret"), "SFTPConnectionLost"),
-        (asyncssh.SFTPOpUnsupported("secret"), "SFTPOpUnsupported"),
+        (aiohttp.InvalidURL("secret"), "InvalidURL"),
+        (aiohttp.ClientConnectionError("secret"), "ClientConnectionError"),
+        (aiohttp.ClientPayloadError("secret"), "ClientPayloadError"),
+        (aiohttp.ServerDisconnectedError("secret"), "ServerDisconnectedError"),
+        (ssl.SSLError("secret"), "SSLError"),
         (ValueError("secret"), "ValueError"),
         (KeyError("secret"), "KeyError"),
         (TypeError("secret"), "TypeError"),
@@ -157,11 +165,9 @@ def test_exception_tags_are_allowlisted(error: Exception, tag: str) -> None:
 @pytest.mark.parametrize(
     "failed_phase",
     [
-        "outer_connect",
-        "relay_start",
+        "app_connect",
         "hello",
         "transport_open",
-        "sftp_open",
         "preview_setup",
         "reconcile1",
         "replay1",
@@ -183,8 +189,6 @@ def test_connection_reports_precise_session_phase_before_cleanup(
     from planner.executor.configuration import ExecutorPaths
     from planner.executor.contracts import (
         ConnectionState,
-        ExecutorSshConfig,
-        SshAuthenticationMode,
         WireMessage,
         WireMessageKind,
     )
@@ -193,47 +197,32 @@ def test_connection_reports_precise_session_phase_before_cleanup(
         executor = mac.MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_config=ExecutorSshConfig(
-                "unused",
-                1,
-                "unused",
-                tmp_path / "key",
-                tmp_path / "hosts",
-                SshAuthenticationMode.public_key,
-            ),
-            panels_server_url="http://unused",
+            executor_id="owner-mac",
+            panels_server_url="https://unused",
         )
         failure = ValueError("secret key and frame bytes")
         lines: list[str] = []
         monkeypatch.setattr(mac, "connection_diagnostics", ConnectionDiagnostics(lines.append))
-        reader = asyncio.StreamReader()
-        process = SimpleNamespace(
-            stdin=SimpleNamespace(write=Mock(), drain=AsyncMock()), stdout=reader
-        )
         closed: list[bool] = []
 
         def fail(phase: str) -> None:
             if failed_phase == phase:
                 raise failure
 
-        async def create_process(*args: object, **kwargs: object) -> object:
-            fail("relay_start")
-            return process
-
-        outer = SimpleNamespace(create_process=create_process)
-
-        async def connect(config: object) -> object:
-            fail("outer_connect")
-            return outer
-
-        async def close(connection: object) -> None:
-            closed.append(True)
-            reader.feed_eof()
-
         @asynccontextmanager
-        async def sftp(*args: object) -> AsyncIterator[None]:
-            fail("sftp_open")
-            yield None
+        async def websocket(*args: object) -> AsyncIterator[object]:
+            fail("app_connect")
+            try:
+                yield SimpleNamespace(
+                    closed=False,
+                    receive_bytes=AsyncMock(side_effect=asyncio.CancelledError),
+                    send_bytes=AsyncMock(),
+                    aclose=AsyncMock(),
+                )
+            finally:
+                closed.append(True)
+
+        client = SimpleNamespace(websocket=websocket, close=AsyncMock())
 
         def preview(*args: object) -> object:
             fail("preview_setup")
@@ -242,16 +231,15 @@ def test_connection_reports_precise_session_phase_before_cleanup(
         async def request(kind: WireMessageKind, payload: object) -> WireMessage:
             if kind is WireMessageKind.hello:
                 fail("hello")
-                return WireMessage(kind, "reply", mac.as_object(executor.identity))
+                return WireMessage(
+                    WireMessageKind.hello_accepted, "reply", mac.as_object(executor.identity)
+                )
             if kind is WireMessageKind.transport_open:
                 fail("transport_open")
                 return WireMessage(
                     WireMessageKind.transport_opened,
                     "reply",
-                    {
-                        "transfer_root": "/unused",
-                        "preview_root": "/unused",
-                    },
+                    {},
                 )
             fail("ready_ack")
             return WireMessage(kind, "reply", {"ready": True})
@@ -269,9 +257,13 @@ def test_connection_reports_precise_session_phase_before_cleanup(
             replays += 1
             fail(f"replay{replays}" if replays <= 2 else "steady_state")
 
-        monkeypatch.setattr(mac, "connect_outer", connect)
-        monkeypatch.setattr(mac, "close_connection", close)
-        monkeypatch.setattr(mac, "connect_sftp", sftp)
+        monkeypatch.setattr(mac, "ExecutorAppClient", Mock(return_value=client))
+
+        # Hold the reader open so only the selected session phase fails.
+        async def read_forever(reader: object) -> None:
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(executor, "_read_loop", read_forever)
         monkeypatch.setattr(mac, "MacPreviewForwards", preview)
         monkeypatch.setattr(executor, "_request", request)
         monkeypatch.setattr(executor, "_reconcile", reconcile)
@@ -287,7 +279,7 @@ def test_connection_reports_precise_session_phase_before_cleanup(
             assert executor.state is ConnectionState.disconnected
             assert not executor._handshake_accepted
             assert executor._writer is None
-            assert bool(closed) is (failed_phase != "outer_connect")
+            assert bool(closed) is (failed_phase != "app_connect")
         finally:
             executor.spool.close()
 
@@ -302,37 +294,29 @@ def test_reader_failure_is_reported_before_session_cleanup(
 
     from planner.executor import mac
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.contracts import ExecutorSshConfig, SshAuthenticationMode
 
     async def run() -> None:
         executor = mac.MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_config=ExecutorSshConfig(
-                "unused",
-                1,
-                "unused",
-                tmp_path / "key",
-                tmp_path / "hosts",
-                SshAuthenticationMode.public_key,
-            ),
-            panels_server_url="http://unused",
+            executor_id="owner-mac",
+            panels_server_url="https://unused",
         )
         from types import SimpleNamespace
 
         lines: list[str] = []
         monkeypatch.setattr(mac, "connection_diagnostics", ConnectionDiagnostics(lines.append))
         failure = asyncio.IncompleteReadError(b"secret credentials", 10)
-        outer = SimpleNamespace(
-            create_process=AsyncMock(
-                return_value=SimpleNamespace(
-                    stdin=None,
-                    stdout=None,
-                )
-            )
-        )
-        monkeypatch.setattr(mac, "connect_outer", AsyncMock(return_value=outer))
-        monkeypatch.setattr(mac, "close_connection", AsyncMock())
+        from collections.abc import AsyncIterator
+        from contextlib import asynccontextmanager
+        from unittest.mock import Mock
+
+        @asynccontextmanager
+        async def websocket(*args: object) -> AsyncIterator[object]:
+            yield SimpleNamespace(closed=False, send_bytes=AsyncMock(), aclose=AsyncMock())
+
+        client = SimpleNamespace(websocket=websocket, close=AsyncMock())
+        monkeypatch.setattr(mac, "ExecutorAppClient", Mock(return_value=client))
 
         async def read(reader: object) -> None:
             raise failure

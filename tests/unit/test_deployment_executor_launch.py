@@ -15,7 +15,7 @@ from planner.environments.vps_launch import read_vps_launch, write_vps_launch
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
-REMOTE = VpsExecutorLaunchConfiguration("remote", Path("/tmp/panels-executor.sock"))
+REMOTE = VpsExecutorLaunchConfiguration("remote", "owner-mac")
 LOCAL = VpsExecutorLaunchConfiguration("local")
 
 
@@ -312,7 +312,7 @@ def test_rollback_restores_exact_prior_configuration_bytes(tmp_path: Path) -> No
     )
     assert result.status == "rolled_back"
     assert path.read_bytes() == original
-    assert service.seen == [REMOTE, LOCAL]
+    assert service.seen == [REMOTE, VpsExecutorLaunchConfiguration("local", version=1)]
 
 
 @pytest.mark.parametrize("legacy_shared_directory", [False, True])

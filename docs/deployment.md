@@ -541,10 +541,10 @@ A VPS deployment result supplies no evidence about the installed Mac revision.
 ## Explicit VPS executor configuration
 
 The managed VPS launcher reads `current/data/executor-launch.json`.
-This owner-only file accepts only version, mode, and socket fields.
+Version 2 of this owner-only file accepts only version, mode, and executor_id fields.
 An absent file keeps the local default. Invalid explicit configuration refuses launch.
 The launcher scrubs ambient settings before it applies the validated
-`PLAN_EXECUTOR_MODE` and optional `PLAN_EXECUTOR_VPS_SOCKET`.
+`PLAN_EXECUTOR_MODE` and `PLAN_EXECUTOR_ID`.
 Ambient flags cannot enable the remote endpoint.
 
 Prepare an explicit remote configuration with the current environment CLI:
@@ -553,10 +553,10 @@ Prepare an explicit remote configuration with the current environment CLI:
 panels environment configure-vps-launch \
   --path /absolute/private/executor-launch.json \
   --mode remote \
-  --socket /absolute/persistent/executor-vps.sock
+  --executor-id mac
 ```
 
-Use `--mode local` without `--socket` for an explicit local configuration.
+Use `--mode local` without `--executor-id` for an explicit local configuration.
 The `app-deploy --executor-launch-config /absolute/private/executor-launch.json`
 input applies a prepared file during deployment.
 An ordinary deployment without that input preserves the existing configuration.
@@ -565,10 +565,10 @@ The workflow does not infer a mode from a Mac deployment flag.
 The deployment transaction validates the requested configuration before downtime.
 It saves the previous bytes or absence before disruption. After service stop, it applies the requested settings.
 On failure, recovery restores the prior configuration before the fallback service starts.
-The Mac relay command must name the deployed executable and the same absolute socket.
-SSH environment propagation supplies neither setting.
+The Mac launch names the intended HTTPS origin and the same logical executor ID.
+Version-1 descriptors remain readable for exact backup and restoration. A remote version-1 descriptor refuses candidate launch until an explicit compatible application replaces it. No automatic conversion occurs.
 
-The combined Mac and VPS release requires peer protocol 7 and journal format 2. Update both peers from the reviewed combined source. A VPS restart adopts surviving native children without a new bootstrap.
+The combined Mac and VPS release requires peer protocol 8 and journal format 2. Update both peers from the reviewed combined source. A VPS restart adopts surviving native children without a new bootstrap.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 `src/planner/environments/deployment.py`, `src/planner/environments/vps_launch.py`,

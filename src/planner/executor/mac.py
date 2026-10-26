@@ -8,11 +8,10 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
-import asyncssh
+import aiohttp
 from pydantic import TypeAdapter
 
 from planner.conversation.backends.claude_agent_sdk import ClaudeAgentSdkBackendChildFactory
@@ -22,13 +21,20 @@ from planner.conversation.backends.hermes_acp import HermesAcpBackendChildFactor
 from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.production_backends import production_backend_launches
+from planner.executor.app_transport import (
+    ControlWebSocket,
+    ExecutorAppClient,
+    create_client_session,
+    validate_server_url,
+)
 from planner.executor.codec import encode_value
 from planner.executor.configuration import (
     CLI_RESULT_TIMEOUT_SECONDS,
+    MAX_ENVELOPE_BYTES,
+    MAX_TRANSFERS,
     PROTOCOL_VERSION,
     RECONNECT_INTERVAL_SECONDS,
     REQUEST_TIMEOUT_SECONDS,
-    SFTP_MAX_TRANSFERS,
     SPOOL_FORMAT_VERSION,
     ExecutorPaths,
 )
@@ -43,10 +49,10 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorHealth,
     ExecutorIdentity,
-    ExecutorSshConfig,
     FileSnapshot,
     FileTransfer,
     FrameReader,
+    FrameWriter,
     IpcOperation,
     IpcRequest,
     IpcResponse,
@@ -66,15 +72,7 @@ from planner.executor.contracts import (
 from planner.executor.diagnostics import connection_diagnostics
 from planner.executor.files import IncomingFiles, safe_component, snapshot_ticket
 from planner.executor.journal import FilesystemSpool
-from planner.executor.logic.transfer import validate_transfer_path
 from planner.executor.runtime import NativeChildRegistry, now_ms
-from planner.executor.ssh import (
-    close_connection,
-    connect_outer,
-    connect_sftp,
-    download_transfer,
-    upload_snapshot,
-)
 from planner.executor.wire import (
     ProtocolRefused,
     encode_frame,
@@ -95,18 +93,18 @@ class MacExecutor:
         *,
         paths: ExecutorPaths,
         revision: str,
-        ssh_config: ExecutorSshConfig,
-        remote_command: str = "panels executor relay",
+        executor_id: str,
         panels_server_url: str,
+        session_factory: Callable[[], aiohttp.ClientSession] = create_client_session,
         registry: NativeChildRegistry | None = None,
     ) -> None:
         self.paths = paths
-        self.ssh_config = ssh_config
-        self.remote_command = remote_command
-        self._sftp: asyncssh.SFTPClient | None = None
-        self._transfer_root: str | None = None
+        self.server_url = validate_server_url(panels_server_url)
+        self.executor_id = executor_id
+        self._session_factory = session_factory
+        self._app_client: ExecutorAppClient | None = None
         self._transfers = 0
-        self._transfer_capacity = asyncio.Semaphore(SFTP_MAX_TRANSFERS)
+        self._transfer_capacity = asyncio.Semaphore(MAX_TRANSFERS)
         self._transport_admission_stopped = False
         self._replay_lock = asyncio.Lock()
         self.spool = FilesystemSpool(paths.spool)
@@ -117,7 +115,7 @@ class MacExecutor:
         self._preview_streams: MacPreviewForwards | None = None
         self.state = ConnectionState.disconnected
         self.lost_at_ms: int | None = None
-        self._writer: asyncssh.SSHWriter[bytes] | None = None
+        self._writer: FrameWriter | None = None
         self._write_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[WireMessage]] = {}
         self._receipts: dict[str, asyncio.Future[AcceptanceReceipt]] = {}
@@ -228,7 +226,11 @@ class MacExecutor:
     async def _read_loop(self, reader: FrameReader) -> None:
         while True:
             message = await read_frame(reader)
-            if message.kind in (WireMessageKind.preview_bind, WireMessageKind.preview_release):
+            if message.kind in (
+                WireMessageKind.preview_bind,
+                WireMessageKind.preview_release,
+                WireMessageKind.preview_open,
+            ):
                 task = asyncio.create_task(self._preview(message))
                 self._command_tasks.add(task)
                 task.add_done_callback(self._command_tasks.discard)
@@ -237,7 +239,7 @@ class MacExecutor:
                 message.kind == WireMessageKind.file_slot
                 and message.request_id not in self._pending
             ):
-                if len(self._transfer_tasks) >= SFTP_MAX_TRANSFERS:
+                if len(self._transfer_tasks) >= MAX_TRANSFERS:
                     raise ProtocolRefused("input transfer capacity exceeded")
                 task = asyncio.create_task(self._input(message))
                 self._transfer_tasks.add(task)
@@ -308,11 +310,15 @@ class MacExecutor:
                 or self._preview_streams is None
             ):
                 raise ConnectionError("preview generation is unavailable")
-            path = str(message.payload["path"])
+            lease_id = str(message.payload["lease_id"])
             if message.kind is WireMessageKind.preview_bind:
-                await self._preview_streams.bind(path, cast(int, message.payload["port"]))
+                await self._preview_streams.bind(lease_id, cast(int, message.payload["port"]))
+            elif message.kind is WireMessageKind.preview_open:
+                self._preview_streams.open(
+                    lease_id, str(message.payload["stream_id"]), cast(int, message.payload["port"])
+                )
             else:
-                await self._preview_streams.release(path)
+                await self._preview_streams.release(lease_id)
             await self._send(WireMessage(WireMessageKind.preview_bound, message.request_id, {}))
         except (ValueError, OSError, ConnectionError, TimeoutError) as error:
             await self._send(
@@ -320,7 +326,8 @@ class MacExecutor:
             )
 
     async def _input(self, message: WireMessage) -> None:
-        if not self._handshake_accepted or self._sftp is None or self._transport_admission_stopped:
+        client = self._app_client
+        if not self._handshake_accepted or client is None or self._transport_admission_stopped:
             await self._send(
                 WireMessage(
                     WireMessageKind.error,
@@ -331,10 +338,7 @@ class MacExecutor:
             return
         try:
             slot = TypeAdapter(FileTransfer).validate_python(message.payload)
-            if self._transfer_root is None:
-                raise ValueError("input transfer root unavailable")
-            validate_transfer_path(slot.path, self._transfer_root)
-            if slot.direction != "download" or self._transfers >= SFTP_MAX_TRANSFERS:
+            if slot.direction != "download" or self._transfers >= MAX_TRANSFERS:
                 raise ValueError("invalid input slot or transfer capacity")
         except ValueError as error:
             await self._send(
@@ -347,7 +351,8 @@ class MacExecutor:
         temporary = self.paths.run / ("input-" + uuid4().hex)
         try:
             async with self._transfer_capacity:
-                await download_transfer(self._sftp, slot, temporary)
+                assert client is not None
+                await client.download(slot, temporary)
             if identity != self.identity or not self._handshake_accepted:
                 raise ConnectionError("input generation changed")
             # Cancellation cannot stop disk work. Drain it before deleting its source.
@@ -366,7 +371,7 @@ class MacExecutor:
                     WireMessageKind.file_accepted, message.request_id, as_object(slot.manifest)
                 )
             )
-        except (OSError, ValueError, ConnectionError, asyncssh.Error) as error:
+        except (OSError, ValueError, ConnectionError, aiohttp.ClientError) as error:
             with contextlib.suppress(ConnectionError):
                 await self._send(
                     WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
@@ -388,7 +393,7 @@ class MacExecutor:
                 try:
                     await self._replay_envelope(envelope)
                     return True
-                except (TimeoutError, ConnectionError, BrokenPipeError, asyncssh.Error):
+                except (TimeoutError, ConnectionError, BrokenPipeError, aiohttp.ClientError):
                     raise
                 except (ValueError, OSError):
                     logging.getLogger(__name__).exception(
@@ -399,7 +404,7 @@ class MacExecutor:
             async def admit() -> None:
                 active = set(tasks.values())
                 for envelope in await asyncio.to_thread(self.spool.pending_heads):
-                    if len(tasks) >= SFTP_MAX_TRANSFERS:
+                    if len(tasks) >= MAX_TRANSFERS:
                         break
                     if (
                         envelope.sequence <= ceilings.get(envelope.conversation_id, 0)
@@ -439,20 +444,19 @@ class MacExecutor:
                     raise ConnectionError("publication generation changed")
                 if response.kind != WireMessageKind.file_accepted:
                     slot = TypeAdapter(FileTransfer).validate_python(response.payload)
-                    if self._transfer_root is None:
-                        raise ValueError("publication transfer root unavailable")
-                    validate_transfer_path(slot.path, self._transfer_root)
                     if (
                         response.kind is not WireMessageKind.file_slot
                         or slot.direction != "upload"
                         or slot.manifest != snapshot.manifest
-                        or self._sftp is None
+                        or self._app_client is None
                     ):
                         raise ValueError("invalid publication slot")
+                    client = self._app_client
                     self._transfers += 1
                     try:
                         async with self._transfer_capacity:
-                            await upload_snapshot(self._sftp, snapshot.local_path, slot)
+                            assert client is not None
+                            await client.upload(slot, snapshot.local_path)
                         if identity != self.identity or not self._handshake_accepted:
                             raise ConnectionError("publication generation changed")
                         completion = await self._request(WireMessageKind.file_complete, publication)
@@ -511,7 +515,7 @@ class MacExecutor:
                 await self.registry.apply_answer(answer)
 
     async def _connected(self) -> None:
-        phase = ConnectionPhase.outer_connect
+        phase = ConnectionPhase.app_connect
 
         async def observe[T](awaitable: Awaitable[T], origin: ConnectionFailureOrigin) -> T:
             try:
@@ -525,133 +529,118 @@ class MacExecutor:
         )
         self.state = ConnectionState.reconciling
         self._handshake_accepted = False
-        try:
-            outer = await observe(connect_outer(self.ssh_config), ConnectionFailureOrigin.session)
-        except BaseException:
-            self.state = ConnectionState.disconnected
-            if self.lost_at_ms is None:
-                self.lost_at_ms = now_ms()
-            raise
-        try:
-            phase = ConnectionPhase.relay_start
-            process = await observe(
-                outer.create_process(self.remote_command, encoding=None),
-                ConnectionFailureOrigin.session,
-            )
-        except BaseException:
-            self.state = ConnectionState.disconnected
-            if self.lost_at_ms is None:
-                self.lost_at_ms = now_ms()
-            await close_connection(outer)
-            raise
-        self._writer = process.stdin
         identity = self.identity
-        phase = ConnectionPhase.hello
-        reader_task = asyncio.create_task(
-            observe(self._read_loop(process.stdout), ConnectionFailureOrigin.reader)
+        client = ExecutorAppClient(
+            self.server_url, self.executor_id, identity, self._session_factory
         )
-        sftp_context = None
-
-        async def session() -> None:
-            nonlocal phase
-            response = await self._request(WireMessageKind.hello, as_object(self.health()))
-            peer = parse_identity(response.payload)
-            if peer != self.identity:
-                raise ValueError("handshake identity changed")
-            self._handshake_accepted = True
-            phase = ConnectionPhase.transport_open
-            opened = await self._request(
-                WireMessageKind.transport_open,
-                {"identity": as_object(identity)},
-            )
-            if opened.kind is not WireMessageKind.transport_opened:
-                raise ValueError("SFTP generation refused")
-            transfer_root = opened.payload["transfer_root"]
-            if not isinstance(transfer_root, str):
-                raise ValueError("invalid transfer root")
-            validate_transfer_path(transfer_root + "/validation", transfer_root)
-            self._transfer_root = transfer_root
-            nonlocal sftp_context
-            phase = ConnectionPhase.sftp_open
-            opening_sftp = connect_sftp(outer)
-            self._sftp = await opening_sftp.__aenter__()
-            sftp_context = opening_sftp
-            phase = ConnectionPhase.preview_setup
-            self._preview_streams = MacPreviewForwards(
-                outer,
-                Path(str(opened.payload["preview_root"])),
-                lambda: (
-                    self.identity == identity
-                    and self._handshake_accepted
-                    and self.state == ConnectionState.ready
-                    and not self.registry.admission_stopped
-                ),
-            )
-            phase = ConnectionPhase.reconcile1
-            await self._reconcile()
-            phase = ConnectionPhase.replay1
-            await self._replay()
-            phase = ConnectionPhase.reconcile2
-            await self._reconcile()
-            phase = ConnectionPhase.replay2
-            await self._replay()
-            phase = ConnectionPhase.ready_ack
-            await self._request(WireMessageKind.reconciliation_ready, as_object(self.identity))
-            # This is the current outage marker, not a historical loss timestamp.
-            # Clear it only after this generation finishes reconciliation.
-            self.lost_at_ms = None
-            self.state = ConnectionState.ready
-            phase = ConnectionPhase.steady_state
-            while not self._stop.is_set():
-                await self._replay()
-                await self._reconcile()
-                await self._replay()
-                await asyncio.sleep(RECONNECT_INTERVAL_SECONDS)
-
-        session_task = asyncio.create_task(observe(session(), ConnectionFailureOrigin.session))
-        stop_task = asyncio.create_task(self._stop.wait())
+        self._app_client = client
+        reader_task: asyncio.Task[None] | None = None
+        session_task: asyncio.Task[None] | None = None
+        stop_task: asyncio.Task[bool] | None = None
         try:
-            done, _ = await asyncio.wait(
-                (reader_task, session_task, stop_task), return_when=asyncio.FIRST_COMPLETED
+            async with client.websocket("/api/executor/connect", MAX_ENVELOPE_BYTES + 4) as peer:
+                stream = ControlWebSocket(peer)
+                self._writer = stream
+                phase = ConnectionPhase.hello
+                reader_task = asyncio.create_task(
+                    observe(self._read_loop(stream), ConnectionFailureOrigin.reader)
+                )
+
+                async def session() -> None:
+                    nonlocal phase
+                    phase = ConnectionPhase.hello
+                    response = await self._request(WireMessageKind.hello, as_object(self.health()))
+                    if (
+                        response.kind is not WireMessageKind.hello_accepted
+                        or parse_identity(response.payload) != identity
+                    ):
+                        raise ValueError("handshake identity changed")
+                    self._handshake_accepted = True
+                    phase = ConnectionPhase.transport_open
+                    opened = await self._request(
+                        WireMessageKind.transport_open, {"identity": as_object(identity)}
+                    )
+                    if opened.kind is not WireMessageKind.transport_opened:
+                        raise ValueError("file generation refused")
+                    from planner.previews.configuration import PREVIEW_CHUNK_BYTES
+
+                    phase = ConnectionPhase.preview_setup
+                    self._preview_streams = MacPreviewForwards(
+                        lambda stream_id: client.websocket(
+                            "/api/executor/previews/" + stream_id, PREVIEW_CHUNK_BYTES
+                        ),
+                        lambda: (
+                            self.identity == identity
+                            and self._handshake_accepted
+                            and self.state == ConnectionState.ready
+                            and not self.registry.admission_stopped
+                        ),
+                    )
+                    phase = ConnectionPhase.reconcile1
+                    await self._reconcile()
+                    phase = ConnectionPhase.replay1
+                    await self._replay()
+                    phase = ConnectionPhase.reconcile2
+                    await self._reconcile()
+                    phase = ConnectionPhase.replay2
+                    await self._replay()
+                    phase = ConnectionPhase.ready_ack
+                    await self._request(WireMessageKind.reconciliation_ready, as_object(identity))
+                    self.lost_at_ms = None
+                    self.state = ConnectionState.ready
+                    phase = ConnectionPhase.steady_state
+                    while not self._stop.is_set():
+                        await self._replay()
+                        await self._reconcile()
+                        await self._replay()
+                        await asyncio.sleep(RECONNECT_INTERVAL_SECONDS)
+
+                session_task = asyncio.create_task(
+                    observe(session(), ConnectionFailureOrigin.session)
+                )
+                stop_task = asyncio.create_task(self._stop.wait())
+                done, _ = await asyncio.wait(
+                    (reader_task, session_task, stop_task), return_when=asyncio.FIRST_COMPLETED
+                )
+                for done_task in done:
+                    await done_task
+        except Exception as error:
+            connection_diagnostics.report(
+                error, phase=phase, origin=ConnectionFailureOrigin.session
             )
-            for task in done:
-                await task
+            raise
         finally:
-            # Revoke generation access before any fallible cleanup can yield.
+            # Revoke this generation before cleanup awaits. Native commands stay
+            # under registry ownership and retain outcomes for reconciliation.
             self._handshake_accepted = False
             previews, self._preview_streams = self._preview_streams, None
             self.state = ConnectionState.disconnected
             if self.lost_at_ms is None:
                 self.lost_at_ms = now_ms()
-            self._writer = None
+            writer, self._writer = self._writer, None
+            self._app_client = None
+            if writer is not None:
+                writer.close()
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(ConnectionError("executor link lost"))
-            transfers = tuple(self._transfer_tasks)
-            for task in (reader_task, session_task, stop_task, *transfers):
-                task.cancel()
-            # A canceled SFTP operation can await FXP_CLOSE in its context exit.
-            # Terminate channels before waiting for those canceled operations.
+            tasks = [
+                task
+                for task in (reader_task, session_task, stop_task, *self._transfer_tasks)
+                if task is not None
+            ]
+            for cleanup_task in tasks:
+                cleanup_task.cancel()
             try:
-                await close_connection(outer)
-            finally:
                 try:
-                    await asyncio.gather(
-                        reader_task,
-                        session_task,
-                        stop_task,
-                        *transfers,
-                        return_exceptions=True,
-                    )
+                    if previews is not None:
+                        await previews.close()
                 finally:
-                    self._sftp = None
-                    self._transfer_root = None
-                    try:
-                        if previews is not None:
-                            await previews.close()
-                    finally:
-                        if sftp_context is not None:
-                            await sftp_context.__aexit__(None, None, None)
+                    await client.close()
+            finally:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if writer is not None:
+                    await writer.wait_closed()
 
     async def handle_ipc(self, request: IpcRequest) -> IpcResponse:
         try:
@@ -704,6 +693,7 @@ class MacExecutor:
                     ),
                 )
                 return IpcResponse(request.request_id, response.payload, None)
+
             async def publish_write() -> QueuedEnvelope:
                 payload = as_object(
                     CliWrite(
@@ -726,6 +716,7 @@ class MacExecutor:
                     snapshots=snapshots,
                     submission_id=request.request_id,
                 )
+
             if request.request_id in self._receipts:
                 return IpcResponse(
                     request.request_id, None, None, QueuedCliResult(request.request_id)
@@ -784,7 +775,7 @@ class MacExecutor:
                         ValueError,
                         ConnectionError,
                         asyncio.IncompleteReadError,
-                        asyncssh.Error,
+                        aiohttp.ClientError,
                     ) as error:
                         connection_diagnostics.report(error)
                         if not self._stop.is_set():

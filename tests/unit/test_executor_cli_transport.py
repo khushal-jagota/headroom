@@ -15,7 +15,6 @@ from planner.executor.contracts import (
     IpcResponse,
     JsonObject,
     QueuedCliResult,
-    SshAuthenticationMode,
 )
 
 
@@ -77,98 +76,61 @@ def test_text_read_uses_live_executor_ipc(monkeypatch: pytest.MonkeyPatch, tmp_p
     )
 
 
-def test_explicit_launcher_passes_all_ssh_inputs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_explicit_launcher_passes_https_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import AsyncMock, Mock
 
     from planner.executor import mac
     from planner.executor.cli import executor_group
-    from planner.executor.contracts import ExecutorSshConfig
 
-    identity, known_hosts = tmp_path / "identity", tmp_path / "known_hosts"
-    identity.touch()
-    known_hosts.touch()
-    executor = Mock()
-    executor.run = AsyncMock()
+    executor = Mock(run=AsyncMock())
     constructor = Mock(return_value=executor)
     monkeypatch.setattr(mac, "MacExecutor", constructor)
     result = CliRunner().invoke(
         executor_group,
         [
             "run",
-            "--ssh-auth-mode",
-            "public_key",
-            "--ssh-host",
-            "peer.example",
-            "--ssh-port",
-            "2222",
-            "--ssh-user",
-            "executor",
-            "--ssh-identity-file",
-            str(identity),
-            "--ssh-known-hosts",
-            str(known_hosts),
+            "--executor-id",
+            "owner-mac",
             "--application-revision",
             "a" * 40,
             "--panels-server-url",
-            "https://panels.example",
-            "--remote-command",
-            "panels executor relay",
+            "https://panels.example:9443",
         ],
     )
     assert result.exit_code == 0, result.output
-    assert constructor.call_args.kwargs["ssh_config"] == ExecutorSshConfig(
-        "peer.example", 2222, "executor", identity, known_hosts, SshAuthenticationMode.public_key
-    )
-    assert constructor.call_args.kwargs["remote_command"] == "panels executor relay"
+    assert constructor.call_args.kwargs["executor_id"] == "owner-mac"
+    assert constructor.call_args.kwargs["panels_server_url"] == "https://panels.example:9443"
     executor.run.assert_awaited_once()
 
 
-@pytest.mark.parametrize("mode", [None, "tailscale", "public_key"])
-def test_launcher_mode_is_explicit_and_inputs_are_conditional(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    mode: str | None,
-) -> None:
-    from unittest.mock import AsyncMock, Mock
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://panels.example",
+        "https://user@panels.example",
+        "https://panels.example/api",
+        "https://panels.example?secret=1",
+    ],
+)
+def test_launcher_refuses_non_origin_urls(origin: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import Mock
 
     from planner.executor import mac
     from planner.executor.cli import executor_group
 
-    known_hosts = tmp_path / "known_hosts"
-    known_hosts.touch()
-    binary = tmp_path / "tailscale"
-    binary.touch(mode=0o700)
-    executor = Mock(run=AsyncMock())
-    constructor = Mock(return_value=executor)
+    constructor = Mock()
     monkeypatch.setattr(mac, "MacExecutor", constructor)
-    arguments = [
-        "run",
-        "--ssh-host",
-        "peer.example",
-        "--ssh-port",
-        "22",
-        "--ssh-user",
-        "user",
-        "--ssh-known-hosts",
-        str(known_hosts),
-        "--application-revision",
-        "a" * 40,
-        "--panels-server-url",
-        "https://panels.example",
-    ]
-    if mode is not None:
-        arguments += ["--ssh-auth-mode", mode]
-    if mode == "tailscale":
-        arguments += ["--tailscale-binary", str(binary)]
-    result = CliRunner().invoke(executor_group, arguments)
-    if mode == "tailscale":
-        assert result.exit_code == 0, result.output
-        config = constructor.call_args.kwargs["ssh_config"]
-        assert config.auth_mode is SshAuthenticationMode.tailscale
-        assert config.identity_file is None and config.tailscale_binary == binary
-        executor.run.assert_awaited_once()
-    else:
-        assert result.exit_code != 0
-        constructor.assert_not_called()
+    result = CliRunner().invoke(
+        executor_group,
+        [
+            "run",
+            "--executor-id",
+            "owner-mac",
+            "--application-revision",
+            "a" * 40,
+            "--panels-server-url",
+            origin,
+        ],
+    )
+    assert result.exit_code != 0
+    constructor.assert_not_called()

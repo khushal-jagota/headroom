@@ -8,26 +8,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import shlex
 import signal
-import sys
+import ssl
 from pathlib import Path
 
-from tests.support.executor_sshd import isolated_sshd
+import aiohttp
 
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.contracts import ExecutorSshConfig
 from planner.executor.mac import MacExecutor
 
 
-async def serve(root: Path, socket_path: Path, port: int) -> None:
-    with isolated_sshd(root.parent / "ssh") as ssh_config:
-        await serve_with_ssh(root, socket_path, port, ssh_config)
-
-
-async def serve_with_ssh(
-    root: Path, socket_path: Path, port: int, ssh_config: ExecutorSshConfig
-) -> None:
+async def serve(root: Path, origin: str, ca_path: Path, port: int) -> None:
     async def http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             request = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
@@ -43,24 +34,32 @@ async def serve_with_ssh(
                 )
                 content_type = b"text/html"
             writer.write(
-                b"HTTP/1.1 200 OK\r\nContent-Type: " + content_type
-                + b"\r\nContent-Length: " + str(len(body)).encode()
-                + b"\r\nConnection: close\r\n\r\n" + body
+                b"HTTP/1.1 200 OK\r\nContent-Type: "
+                + content_type
+                + b"\r\nContent-Length: "
+                + str(len(body)).encode()
+                + b"\r\nConnection: close\r\n\r\n"
+                + body
             )
             await writer.drain()
         finally:
             writer.close()
             await writer.wait_closed()
 
+    def session_factory() -> aiohttp.ClientSession:
+        return aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=ssl.create_default_context(cafile=str(ca_path))),
+            cookie_jar=aiohttp.DummyCookieJar(),
+            trust_env=False,
+            auto_decompress=False,
+        )
+
     mac = MacExecutor(
         paths=ExecutorPaths(root),
         revision="a" * 40,
-        ssh_config=ssh_config,
-        remote_command=shlex.join((
-            sys.executable, "-m", "planner.executor.entrypoint", "executor", "relay",
-            "--socket-path", str(socket_path),
-        )),
-        panels_server_url="http://unused.invalid",
+        executor_id="synthetic-preview",
+        panels_server_url=origin,
+        session_factory=session_factory,
     )
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
@@ -87,7 +86,8 @@ async def serve_with_ssh(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--socket", type=Path, required=True)
+    parser.add_argument("--origin", required=True)
+    parser.add_argument("--ca", type=Path, required=True)
     parser.add_argument("--port", type=int, required=True)
     arguments = parser.parse_args()
-    asyncio.run(serve(arguments.root, arguments.socket, arguments.port))
+    asyncio.run(serve(arguments.root, arguments.origin, arguments.ca, arguments.port))

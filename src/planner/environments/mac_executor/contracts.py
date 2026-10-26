@@ -3,8 +3,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from planner.executor.contracts import SshAuthenticationMode
-
 
 class MacExecutorConfigurationError(RuntimeError):
     """The explicit LaunchAgent inputs are invalid."""
@@ -20,17 +18,10 @@ class MacExecutorPaths:
 
 @dataclass(frozen=True)
 class ExecutorLaunchOptions:
-    ssh_host: str
+    executor_id: str
     application_revision: str
     panels_server_url: str
-    ssh_port: int
-    ssh_user: str
-    ssh_identity_file: Path | None
-    ssh_known_hosts_file: Path
-    ssh_auth_mode: SshAuthenticationMode
-    remote_command: str = "panels executor relay"
     backend_path: str | None = None
-    tailscale_binary: Path | None = None
 
 
 @dataclass(frozen=True)

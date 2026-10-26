@@ -11,10 +11,11 @@ from __future__ import annotations
 import sqlite3
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, Protocol, TypedDict
+from typing import ClassVar, Literal, Protocol, TypedDict
+
+from pydantic import ConfigDict
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import MoveRetirementResult
@@ -51,52 +52,10 @@ class ExecutorIdentity:
     connection_generation: int
 
 
-class SshAuthenticationMode(StrEnum):
-    public_key = "public_key"
-    tailscale = "tailscale"
-
-
-class SshConfigurationError(ValueError):
-    """Explicit outer SSH inputs contradict their selected authentication mode."""
-
-
-class TailnetValidationError(ConnectionError):
-    """The local Tailscale status cannot establish a permitted destination."""
-
-
-@dataclass(frozen=True, slots=True)
-class TailnetPeer:
-    node_id: str
-    dns_name: str
-    addresses: tuple[str, ...]
-    in_network_map: bool
-    expired: bool
-    key_expiry: datetime | None
-
-
-@dataclass(frozen=True, slots=True)
-class TailnetStatus:
-    running: bool
-    kernel_networking: bool
-    peers: tuple[TailnetPeer, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ValidatedTailnetDestination:
-    node_id: str
-    address: str
-
-
-class TailnetDestinationValidator(Protocol):
-    async def validate(self, host: str, binary: Path) -> ValidatedTailnetDestination: ...
-
-
 class ConnectionPhase(StrEnum):
-    outer_connect = "outer_connect"
-    relay_start = "relay_start"
+    app_connect = "app_connect"
     hello = "hello"
     transport_open = "transport_open"
-    sftp_open = "sftp_open"
     preview_setup = "preview_setup"
     reconcile1 = "reconcile1"
     replay1 = "replay1"
@@ -113,8 +72,7 @@ class ConnectionFailureOrigin(StrEnum):
 
 class ConnectionFailureCategory(StrEnum):
     configuration = "configuration"
-    tailnet_validation = "tailnet_validation"
-    host_key = "host_key"
+    tls = "tls"
     authentication = "authentication"
     timeout = "timeout"
     network = "network"
@@ -122,22 +80,12 @@ class ConnectionFailureCategory(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutorSshConfig:
-    host: str
-    port: int
-    username: str
-    identity_file: Path | None
-    known_hosts_file: Path
-    auth_mode: SshAuthenticationMode
-    tailscale_binary: Path | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class FileTransfer:
-    """Generation-owned account path; publication authority stays with the original child."""
+    """Generation reservation; publication authority stays with the original child."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     transfer_id: str
-    path: str
     direction: Literal["upload", "download"]
     manifest: FileManifest
 
@@ -548,6 +496,7 @@ class WireMessageKind(StrEnum):
     hello_accepted = "hello_accepted"
     transport_open = "transport_open"
     transport_opened = "transport_opened"
+    preview_open = "preview_open"
     preview_bind = "preview_bind"
     preview_bound = "preview_bound"
     preview_release = "preview_release"
@@ -687,3 +636,18 @@ class ByteWriter(Protocol):
     def write(self, data: bytes) -> None: ...
     async def drain(self) -> None: ...
     def close(self) -> None: ...
+
+
+class PreviewPeer(Protocol):
+    """One bounded executor preview WebSocket, without HTTP credentials."""
+
+    @property
+    def closed(self) -> bool: ...
+    async def receive_bytes(self, max_bytes: int) -> bytes: ...
+    async def send_bytes(self, data: bytes) -> None: ...
+    async def aclose(self) -> None: ...
+
+
+class FrameWriter(ByteWriter, Protocol):
+    async def wait_closed(self) -> None: ...
+    def is_closing(self) -> bool: ...

@@ -1,4 +1,4 @@
-"""Synthetic Mac/VPS streams use real SSH forwarding, TCP sockets and native events."""
+"""Synthetic Mac/VPS streams use real app WebSockets, TCP sockets and native events."""
 
 from __future__ import annotations
 
@@ -24,7 +24,10 @@ def test_large_binary_http_body_and_shared_listener_leases(
 
         async def http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             try:
-                await reader.readuntil(b"\r\n\r\n")
+                headers = await reader.readuntil(b"\r\n\r\n")
+                if headers.startswith(b"POST "):
+                    # Exercise the chunk bound in both directions on the same host.
+                    assert await reader.readexactly(len(body)) == body
                 writer.write(
                     b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "
                     + str(len(body)).encode()
@@ -41,17 +44,15 @@ def test_large_binary_http_body_and_shared_listener_leases(
         endpoint = harness.endpoint
         identity = endpoint.identity
         assert identity is not None
-        generation = Path(endpoint._transport_roots[identity].name)
-        assert generation.parent == executor_transport_home / ".cache/panels/ssh"
-        assert endpoint._transports[identity].root == generation / "s"
         assert endpoint._preview_forwards is not None
-        assert endpoint._preview_forwards.root == generation / "p"
         try:
             async with endpoint.preview_forward(port, "t_scripted") as local:
                 async with endpoint.preview_forward(port, "t_scripted") as shared:
                     assert shared == local
                     async with httpx.AsyncClient() as client:
-                        response = await client.get(f"http://127.0.0.1:{local}/", timeout=5)
+                        response = await client.post(
+                            f"http://127.0.0.1:{local}/", content=body, timeout=5
+                        )
                         assert response.status_code == 200 and response.content == body
                     forwards = endpoint._preview_forwards
                     assert forwards is not None
@@ -80,7 +81,6 @@ def test_large_binary_http_body_and_shared_listener_leases(
             server.close()
             await server.wait_closed()
             await harness.close()
-        assert not generation.exists()
 
     asyncio.run(run())
 
@@ -104,7 +104,7 @@ def test_stalled_preview_keeps_executor_events_live_and_drop_cleans_generation(
             with pytest.raises(ConnectionError, match="ended before request completion"):
                 async with endpoint.preview_forward(port, "t_scripted") as local:
                     reader, writer = await asyncio.open_connection("127.0.0.1", local)
-                    # Enough input to exhaust TCP buffering, leaving SSH flow control blocked.
+                    # Enough input to exhaust TCP buffering, leaving WebSocket flow control blocked.
                     writer.write(b"x" * (16 * 1024 * 1024))
                     drain = asyncio.create_task(writer.drain())
                     await eventually(lambda: bool(accepted), "Mac loopback dial absent")
@@ -255,7 +255,7 @@ def test_link_drop_after_partial_close_delimited_http_body_fails_lease(
                             chunks = response.aiter_raw()
                             assert response.status_code == 200
                             assert await anext(chunks) == partial
-                            # Bytes demonstrably crossed the real SSH channels.
+                            # Bytes demonstrably crossed the real app WebSockets.
                             assert harness.endpoint.writer is not None
                             harness.endpoint.writer.close()
                             assert b"".join([chunk async for chunk in chunks]) == b""

@@ -1,4 +1,4 @@
-"""Real Mac/VPS dispatch over isolated OpenSSH and temporary Unix sockets.
+"""Real Mac/VPS dispatch over isolated app HTTPS and WebSockets.
 
 The scripted native adapter never calls a provider. Every event still traverses
 native registry, durable spool, framed transport, VPS acceptance and conversation
@@ -9,18 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import shlex
-import socket
-import struct
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from tests.support.executor_sshd import isolated_sshd
+from tests.support.executor_https import HttpsProxy, serve_executor_app
 
 from planner.conversation.backends.contracts import (
     BackendChild,
@@ -81,18 +77,6 @@ from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
-
-
-def production_relay_argv(socket_path: Path) -> tuple[str, ...]:
-    return (
-        sys.executable,
-        "-m",
-        "planner.executor.entrypoint",
-        "executor",
-        "relay",
-        "--socket-path",
-        str(socket_path),
-    )
 
 
 class ScriptedNativeChild:
@@ -247,7 +231,9 @@ class ExecutorHarness:
     native: ScriptedNativeChild
     task: asyncio.Task[None]
     old_systems: list[SqliteProcessConversationSystem]
-    ssh_stack: contextlib.ExitStack
+    transport_stack: contextlib.AsyncExitStack
+    transport_app: Any
+    proxy: HttpsProxy
 
     def events(self, kind: str) -> int:
         connection = connect(self.endpoint.db_path)
@@ -303,6 +289,7 @@ class ExecutorHarness:
             self.root / "vps/files",
             self.root / "vps/quarantine",
         )
+        self.transport_app.state.executor_endpoint = self.endpoint
         await self.endpoint.start()
         if wait_ready:
             await eventually(lambda: self.endpoint.ready, "VPS core restart did not reconcile")
@@ -311,7 +298,7 @@ class ExecutorHarness:
         try:
             await self._close()
         finally:
-            self.ssh_stack.close()
+            await self.transport_stack.aclose()
 
     async def _close(self) -> None:
         self.mac._stop.set()
@@ -367,8 +354,6 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
         worker_ticket_id = ticket.id
     finally:
         connection.close()
-    socket_path = root / "vps.sock"
-    monkeypatch.setenv("PLAN_EXECUTOR_VPS_SOCKET", str(socket_path))
     endpoint = CutReceiptEndpoint(db_path)
     system = make_core(endpoint)
     endpoint.runtime = SimpleNamespace(
@@ -381,14 +366,29 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     )
     await endpoint.start()
     native = ScriptedNativeChild()
-    ssh_stack = contextlib.ExitStack()
-    ssh_config = ssh_stack.enter_context(isolated_sshd(root / "ssh"))
+    from fastapi import FastAPI
+
+    from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
+    from planner.executor.app_transport import build_executor_router
+
+    transport_app = FastAPI()
+    transport_app.state.executor_id = "test-executor"
+    transport_app.state.executor_endpoint = endpoint
+    transport_app.include_router(build_executor_router())
+    transport_app.add_middleware(
+        TrustedIngressMiddleware,
+        config=TrustedIngressConfig("tailscale", "owner@example.com", "https://localhost"),
+    )
+    transport_stack = contextlib.AsyncExitStack()
+    proxy = await transport_stack.enter_async_context(
+        serve_executor_app(transport_app, root / "tls")
+    )
     mac = MacExecutor(
         paths=ExecutorPaths(root / "mac"),
         revision="a" * 40,
-        ssh_config=ssh_config,
-        remote_command=shlex.join(production_relay_argv(socket_path)),
-        panels_server_url="http://unused",
+        executor_id="test-executor",
+        panels_server_url=proxy.origin,
+        session_factory=proxy.session_factory,
     )
 
     def factory(
@@ -410,7 +410,9 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
         message_files=ConversationMessageFiles(root / "mac/unused"),
     )
     task = asyncio.create_task(mac.run())
-    harness = ExecutorHarness(root, endpoint, mac, system, native, task, [], ssh_stack)
+    harness = ExecutorHarness(
+        root, endpoint, mac, system, native, task, [], transport_stack, transport_app, proxy
+    )
     try:
         await eventually(
             lambda: endpoint.ready and mac.state == ConnectionState.ready,
@@ -1265,8 +1267,6 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
         monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
         monkeypatch.setenv("CODEX_HOME", str(tmp_path / "native-codex-home"))
         monkeypatch.setenv("PLAN_EXECUTOR_MODE", "remote")
-        socket_path = tmp_path / "server.sock"
-        monkeypatch.setenv("PLAN_EXECUTOR_VPS_SOCKET", str(socket_path))
         db_path = str(tmp_path / "server/planning.db")
         Path(db_path).parent.mkdir()
         connection = connect(db_path)
@@ -1279,43 +1279,52 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 "PLAN_DB_PATH": db_path,
                 "PLAN_LOGS_DIR": str(tmp_path / "logs"),
                 "PLAN_APP_SHA": "a" * 40,
+                "PLAN_EXECUTOR_ID": "test-executor",
+                "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+                "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@example.com",
+                "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://localhost",
             },
         )
-        ssh_stack = contextlib.ExitStack()
-        ssh_config = ssh_stack.enter_context(isolated_sshd(tmp_path / "ssh"))
-        mac = MacExecutor(
-            paths=ExecutorPaths(tmp_path / "mac"),
-            revision="a" * 40,
-            ssh_config=ssh_config,
-            remote_command=shlex.join(production_relay_argv(socket_path)),
-            panels_server_url="http://unused",
-        )
-        task = asyncio.create_task(mac.run())
-        try:
-            first_app = create_app(config, RealClock(), lambda: connect(db_path))
-            async with first_app.router.lifespan_context(first_app):
-                await eventually(
-                    lambda: first_app.state.executor_endpoint.ready,
-                    "first server did not reconcile",
-                )
-                identity = mac.identity
-            second_app = create_app(config, RealClock(), lambda: connect(db_path))
-            async with second_app.router.lifespan_context(second_app):
-                await eventually(
-                    lambda: second_app.state.executor_endpoint.ready,
-                    "restarted server rejected surviving Mac incarnation",
-                )
-                assert mac.identity.executor_incarnation == identity.executor_incarnation
-                assert mac.identity.connection_generation > identity.connection_generation
-                mac._stop.set()
-                if second_app.state.executor_endpoint.writer is not None:
-                    second_app.state.executor_endpoint.writer.close()
-                await asyncio.wait_for(task, 3)
-        finally:
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-            ssh_stack.close()
+        # A stable listener forwards to fresh apps with their actual lifespans.
+        target = [create_app(config, RealClock(), lambda: connect(db_path))]
+
+        async def dispatch(scope: Any, receive: Any, send: Any) -> None:
+            await target[0](scope, receive, send)
+
+        async with serve_executor_app(cast(Any, dispatch), tmp_path / "tls") as proxy:
+            mac = MacExecutor(
+                paths=ExecutorPaths(tmp_path / "mac"),
+                revision="a" * 40,
+                executor_id="test-executor",
+                panels_server_url=proxy.origin,
+                session_factory=proxy.session_factory,
+            )
+            task = asyncio.create_task(mac.run())
+            try:
+                first_app = target[0]
+                async with first_app.router.lifespan_context(first_app):
+                    await eventually(
+                        lambda: first_app.state.executor_endpoint.ready,
+                        "first server did not reconcile",
+                    )
+                    identity = mac.identity
+                second_app = create_app(config, RealClock(), lambda: connect(db_path))
+                target[0] = second_app
+                async with second_app.router.lifespan_context(second_app):
+                    await eventually(
+                        lambda: second_app.state.executor_endpoint.ready,
+                        "restarted server rejected surviving Mac incarnation",
+                    )
+                    assert mac.identity.executor_incarnation == identity.executor_incarnation
+                    assert mac.identity.connection_generation > identity.connection_generation
+                    mac._stop.set()
+                    if second_app.state.executor_endpoint.writer is not None:
+                        second_app.state.executor_endpoint.writer.close()
+                    await asyncio.wait_for(task, 3)
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())
 
@@ -1577,20 +1586,24 @@ def test_vps_refuses_protocol_one_before_replay_without_fencing_current_peer(
 ) -> None:
     from uuid import uuid4
 
+    from planner.executor.app_transport import ControlWebSocket, ExecutorAppClient
     from planner.executor.codec import encode_value
     from planner.executor.contracts import ExecutorHealth, ExecutorIdentity
-    from planner.executor.vps import vps_socket_path
     from planner.executor.wire import write_frame
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         try:
             identity = harness.endpoint.identity
+            assert identity is not None
             connection = connect(harness.endpoint.db_path)
             before = connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0]
-            reader, writer = await asyncio.open_unix_connection(
-                str(vps_socket_path(harness.endpoint.db_path))
+            client = ExecutorAppClient(
+                harness.proxy.origin, "test-executor", identity, harness.proxy.session_factory
             )
+            ws_context = client.websocket("/api/executor/connect", 1024 * 1024 + 4)
+            peer = await ws_context.__aenter__()
+            stream = ControlWebSocket(peer)
             old = ExecutorHealth(
                 ExecutorIdentity(1, "a" * 40, 1, str(uuid4()), 1),
                 42,
@@ -1601,10 +1614,10 @@ def test_vps_refuses_protocol_one_before_replay_without_fencing_current_peer(
             )
             payload = encode_value(old)
             assert isinstance(payload, dict)
-            await write_frame(writer, WireMessage(WireMessageKind.hello, "old_protocol", payload))
-            assert await asyncio.wait_for(reader.read(1), 1) == b""
-            writer.close()
-            await writer.wait_closed()
+            await write_frame(stream, WireMessage(WireMessageKind.hello, "old_protocol", payload))
+            assert await asyncio.wait_for(peer.receive_bytes(1024), 1) == b""
+            await ws_context.__aexit__(None, None, None)
+            await client.close()
             assert harness.endpoint.identity == identity and harness.endpoint.ready
             assert (
                 connection.execute("SELECT count(*) FROM executor_receipts").fetchone()[0] == before
@@ -1616,68 +1629,8 @@ def test_vps_refuses_protocol_one_before_replay_without_fencing_current_peer(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("termination", ["eof", "reset"])
-def test_production_relay_exits_when_peer_ends_while_stdin_stays_open(
-    tmp_path: Path, termination: str
-) -> None:
-    async def run() -> None:
-        socket_path = tmp_path / "relay.sock"
-        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        listener.bind(str(socket_path))
-        listener.listen()
-        listener.setblocking(False)
-        process = await asyncio.create_subprocess_exec(
-            *production_relay_argv(socket_path),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        peer: socket.socket | None = None
-        try:
-            loop = asyncio.get_running_loop()
-            peer, _ = await asyncio.wait_for(loop.sock_accept(listener), 2)
-            assert peer is not None
-            assert process.stdin is not None
-            assert not process.stdin.is_closing()
-            if termination == "reset":
-                # Leave bytes unread at the Unix peer, so its abrupt close causes
-                # ECONNRESET in the production relay's socket receive task.
-                process.stdin.write(b"leave these peer bytes unread")
-                await process.stdin.drain()
-                assert await asyncio.wait_for(loop.sock_recv(peer, 1), 2) == b"l"
-                peer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
-            else:
-                await loop.sock_sendall(peer, b"production relay output")
-            # Deliberately keep the subprocess stdin writer open. Input EOF must
-            # not be what lets either peer-termination case finish.
-            assert not process.stdin.is_closing()
-            peer.close()
-            peer = None
-            returncode = await asyncio.wait_for(process.wait(), 2)
-            assert process.stdout is not None and process.stderr is not None
-            stdout, stderr = await asyncio.gather(process.stdout.read(), process.stderr.read())
-            if termination == "eof":
-                assert returncode == 0
-                assert stdout == b"production relay output"
-                assert stderr == b""
-            else:
-                assert returncode != 0
-                assert b"ConnectionResetError" in stderr
-        finally:
-            if process.stdin is not None:
-                process.stdin.close()
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-            if peer is not None:
-                peer.close()
-            listener.close()
-
-    asyncio.run(run())
-
-
 @pytest.mark.parametrize(
-    "invalid_ack", ["empty", "mismatched", "outside_root", "traversal", "manifest", "wrong_kind"]
+    "invalid_ack", ["empty", "mismatched", "unknown_slot", "traversal", "manifest", "wrong_kind"]
 )
 def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
@@ -1696,10 +1649,10 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
                         payload["direction"] = "download"
-                    elif invalid_ack == "outside_root":
-                        payload["path"] = "/tmp/unnegotiated-transfer"
+                    elif invalid_ack == "unknown_slot":
+                        payload["transfer_id"] = "x" * 32
                     elif invalid_ack == "traversal":
-                        payload["path"] = str(payload["path"]) + "/../escape"
+                        payload["transfer_id"] = "../escape"
                     elif invalid_ack == "manifest":
                         payload["manifest"] = {}
                     message = WireMessage(
@@ -2216,7 +2169,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
                 harness.endpoint._current_ask_evidence(
                     "c_scripted",
                     f"{ask.turn.turn_number}:user_input:request_late",
-                    AskKind.user_input
+                    AskKind.user_input,
                 )
                 is None
             )
@@ -2368,7 +2321,6 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
 ) -> None:
     async def run() -> None:
         from collections.abc import Coroutine
-        from typing import Any
 
         harness = await boot(tmp_path, monkeypatch)
         first_entered, first_release, first_returned = (

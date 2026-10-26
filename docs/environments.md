@@ -204,14 +204,14 @@ Pinned dependencies use compatible wheels, except the pinned `http-ece` and `PyI
 PyICU requires native ICU libraries, headers, `pkg-config`, and a compatible C++ compiler.
 The operator runbook defines these prerequisites. No broad source-build fallback exists.
 
-One GUI LaunchAgent runs the console with explicit source SHA, SSH inputs, and server URL.
+One GUI LaunchAgent runs the console with explicit source SHA, HTTPS app origin, and logical executor ID.
 Its environment retains the owner's HOME and reviewed backend PATH, with `venv/bin` first.
 The Claude executable points explicitly into the source's `agent_backends/node_modules`.
 The installed Python package cannot infer that source path.
 
 The small plist renderer prints configuration only. The operator owns installation and service commands.
 The [Mac operator runbook](mac-executor-installation.md) owns inputs, shutdown, updates, and failed-install recovery.
-[VPS deployment](deployment.md#explicit-vps-executor-configuration) owns the independent server mode and socket configuration.
+[VPS deployment](deployment.md#explicit-vps-executor-configuration) owns the independent server mode and executor identity configuration.
 Physical Mac installation, provider credentials, reboot, and pre-unlock behavior require separate live evidence.
 
 Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/`,

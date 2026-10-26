@@ -361,9 +361,7 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
             service=FakeService(events),
             health=FakeHealth(events, {SHA_B}),
             gate_evidence=evidence,
-            executor_launch_configuration=VpsExecutorLaunchConfiguration(
-                "remote", tmp_path / "executor.sock"
-            ),
+            executor_launch_configuration=VpsExecutorLaunchConfiguration("remote", "owner-mac"),
         )
     assert events == []
     assert not (current / "data" / "executor-launch.json").exists()

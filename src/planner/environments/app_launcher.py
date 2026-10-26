@@ -9,7 +9,7 @@ from pathlib import Path
 
 from planner.environments.app import validate_app_manifest
 from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
-from planner.environments.vps_launch import read_vps_launch, validate_vps_launch
+from planner.environments.vps_launch import read_vps_launch, validate_vps_launch_for_application
 
 EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
     {
@@ -65,10 +65,10 @@ def build_app_launch_env(
     }
     allowed.update({"PLAN_APP_SHA": manifest.app_sha, "PLAN_APP_ROOT": str(root)})
     if executor_launch is not None:
-        validate_vps_launch(executor_launch)
+        validate_vps_launch_for_application(executor_launch)
         allowed["PLAN_EXECUTOR_MODE"] = executor_launch.mode
-        if executor_launch.socket_path is not None:
-            allowed["PLAN_EXECUTOR_VPS_SOCKET"] = str(executor_launch.socket_path)
+        if executor_launch.executor_id is not None:
+            allowed["PLAN_EXECUTOR_ID"] = executor_launch.executor_id
     return allowed
 
 

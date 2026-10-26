@@ -2,17 +2,16 @@
 
 import asyncio
 import logging
+import ssl
 from collections.abc import Callable
 
-import asyncssh
+import aiohttp
 from pydantic import ValidationError
 
 from planner.executor.contracts import (
     ConnectionFailureCategory,
     ConnectionFailureOrigin,
     ConnectionPhase,
-    SshConfigurationError,
-    TailnetValidationError,
 )
 from planner.executor.wire import ProtocolRefused
 
@@ -20,17 +19,15 @@ from planner.executor.wire import ProtocolRefused
 def connection_exception_tag(error: Exception) -> str:
     # Exact types only: custom subclass names and messages are never diagnostics.
     return {
-        SshConfigurationError: "SshConfigurationError",
-        TailnetValidationError: "TailnetValidationError",
-        asyncssh.HostKeyNotVerifiable: "HostKeyNotVerifiable",
-        asyncssh.PermissionDenied: "PermissionDenied",
-        asyncssh.ChannelOpenError: "ChannelOpenError",
-        asyncssh.ConnectionLost: "ConnectionLost",
-        asyncssh.DisconnectError: "DisconnectError",
-        asyncssh.SFTPError: "SFTPError",
-        asyncssh.SFTPFailure: "SFTPFailure",
-        asyncssh.SFTPConnectionLost: "SFTPConnectionLost",
-        asyncssh.SFTPOpUnsupported: "SFTPOpUnsupported",
+        aiohttp.InvalidURL: "InvalidURL",
+        aiohttp.ClientConnectorCertificateError: "ClientConnectorCertificateError",
+        aiohttp.ClientConnectorSSLError: "ClientConnectorSSLError",
+        aiohttp.WSServerHandshakeError: "WSServerHandshakeError",
+        aiohttp.ClientConnectionError: "ClientConnectionError",
+        aiohttp.ClientPayloadError: "ClientPayloadError",
+        aiohttp.ServerDisconnectedError: "ServerDisconnectedError",
+        ssl.SSLCertVerificationError: "SSLCertVerificationError",
+        ssl.SSLError: "SSLError",
         asyncio.IncompleteReadError: "IncompleteReadError",
         ProtocolRefused: "ProtocolRefused",
         ValidationError: "ValidationError",
@@ -48,17 +45,15 @@ def connection_exception_tag(error: Exception) -> str:
 
 
 def classify_connection_failure(error: Exception) -> ConnectionFailureCategory:
-    if isinstance(error, SshConfigurationError):
+    if isinstance(error, aiohttp.InvalidURL):
         return ConnectionFailureCategory.configuration
-    if isinstance(error, TailnetValidationError):
-        return ConnectionFailureCategory.tailnet_validation
-    if isinstance(error, asyncssh.HostKeyNotVerifiable):
-        return ConnectionFailureCategory.host_key
-    if isinstance(error, asyncssh.PermissionDenied):
+    if isinstance(error, (aiohttp.ClientSSLError, ssl.SSLError)):
+        return ConnectionFailureCategory.tls
+    if isinstance(error, aiohttp.ClientResponseError) and error.status in (401, 403):
         return ConnectionFailureCategory.authentication
     if isinstance(error, TimeoutError):
         return ConnectionFailureCategory.timeout
-    if isinstance(error, OSError):
+    if isinstance(error, (OSError, aiohttp.ClientConnectionError)):
         return ConnectionFailureCategory.network
     return ConnectionFailureCategory.connection_or_protocol
 

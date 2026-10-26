@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import plistlib
 import re
-import stat
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from planner.environments.mac_executor.configuration import RESTART_THROTTLE_SECONDS
 from planner.environments.mac_executor.contracts import (
@@ -14,59 +14,30 @@ from planner.environments.mac_executor.contracts import (
     MacExecutorConfigurationError,
     ServiceConfiguration,
 )
-from planner.executor.contracts import SshAuthenticationMode, SshConfigurationError
-from planner.executor.logic.ssh_configuration import validate_authentication_inputs
 
 
 def validate_executor_launch(launch: ExecutorLaunchOptions, *, check_files: bool) -> None:
-    """Validate explicit executor inputs without ambient SSH configuration or contact."""
-    if (
-        re.fullmatch(r"[A-Za-z0-9_.:-]+", launch.ssh_host) is None
-        or launch.ssh_host.startswith("-")
-        or not 1 <= launch.ssh_port <= 65535
-        or re.fullmatch(r"[A-Za-z0-9_.-]+", launch.ssh_user) is None
-        or launch.ssh_user.startswith("-")
-        or re.fullmatch(r"[0-9a-f]{40}", launch.application_revision) is None
-        or not launch.panels_server_url.startswith(("http://", "https://"))
-        or not launch.remote_command.strip()
-    ):
-        raise MacExecutorConfigurationError("invalid explicit executor SSH launch configuration")
+    """Validate the explicit HTTPS origin and logical executor identity offline."""
+    del check_files  # There are no SSH credential or host-pin files.
     try:
-        validate_authentication_inputs(
-            launch.ssh_auth_mode, launch.ssh_identity_file, launch.tailscale_binary, launch.ssh_port
-        )
-    except SshConfigurationError as exc:
-        raise MacExecutorConfigurationError(str(exc)) from exc
-    if launch.ssh_auth_mode is SshAuthenticationMode.tailscale:
-        binary = launch.tailscale_binary
-        if binary is None or not binary.is_absolute() or any(ord(c) < 32 for c in str(binary)):
-            raise MacExecutorConfigurationError("tailscale requires an absolute executable path")
-        if check_files:
-            if any(p.is_symlink() for p in (binary, *binary.parents)):
-                raise MacExecutorConfigurationError(
-                    "Tailscale binary path must contain no symlinks"
-                )
-            if not binary.is_file() or not os.access(binary, os.X_OK):
-                raise MacExecutorConfigurationError("Tailscale binary must be an executable file")
-    files = [(launch.ssh_known_hosts_file, False)]
-    if launch.ssh_identity_file is not None:
-        files.append((launch.ssh_identity_file, True))
-    for path, secret in files:
-        if not path.is_absolute() or any(ord(c) < 32 for c in str(path)):
-            raise MacExecutorConfigurationError("executor SSH files must be absolute paths")
-        if not check_files:
-            continue
-        if any(p.is_symlink() for p in (path, *path.parents)):
-            raise MacExecutorConfigurationError("executor SSH files must contain no symlinks")
-        metadata = path.stat()
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
-            raise MacExecutorConfigurationError(
-                "executor SSH files must be owner-owned regular files"
-            )
-        if secret and stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise MacExecutorConfigurationError("executor SSH identity must be owner-only")
-        if not path.read_bytes().strip():
-            raise MacExecutorConfigurationError("executor SSH files must be nonempty")
+        origin = urlsplit(launch.panels_server_url)
+        port = origin.port
+    except ValueError as error:
+        raise MacExecutorConfigurationError("invalid executor HTTPS origin") from error
+    if (
+        re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", launch.executor_id) is None
+        or re.fullmatch(r"[0-9a-f]{40}", launch.application_revision) is None
+        or origin.scheme != "https"
+        or not origin.hostname
+        or origin.username is not None
+        or origin.password is not None
+        or origin.path not in ("", "/")
+        or origin.query
+        or origin.fragment
+        or (port is not None and not 1 <= port <= 65535)
+        or any(char.isspace() or ord(char) < 32 for char in launch.panels_server_url)
+    ):
+        raise MacExecutorConfigurationError("invalid explicit executor HTTPS launch configuration")
 
 
 def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
@@ -100,25 +71,11 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
     arguments += [
         "--application-revision",
         launch.application_revision,
-        "--ssh-host",
-        launch.ssh_host,
-        "--ssh-port",
-        str(launch.ssh_port),
-        "--ssh-user",
-        launch.ssh_user,
-        "--ssh-auth-mode",
-        launch.ssh_auth_mode,
-        "--ssh-known-hosts",
-        str(launch.ssh_known_hosts_file),
+        "--executor-id",
+        launch.executor_id,
         "--panels-server-url",
         launch.panels_server_url,
-        "--remote-command",
-        launch.remote_command,
     ]
-    if launch.ssh_identity_file is not None:
-        arguments += ["--ssh-identity-file", str(launch.ssh_identity_file)]
-    if launch.tailscale_binary is not None:
-        arguments += ["--tailscale-binary", str(launch.tailscale_binary)]
     return plistlib.dumps(
         {
             "Label": configuration.label,
@@ -128,11 +85,6 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
             "KeepAlive": {"SuccessfulExit": False},
             "ThrottleInterval": RESTART_THROTTLE_SECONDS,
             "EnvironmentVariables": {
-                **(
-                    {"TAILSCALE_BE_CLI": "1"}
-                    if launch.ssh_auth_mode is SshAuthenticationMode.tailscale
-                    else {}
-                ),
                 "HOME": str(paths.home),
                 "PLAN_CLAUDE_EXECUTABLE": str(
                     paths.source

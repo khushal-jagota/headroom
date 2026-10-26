@@ -325,6 +325,10 @@ def create_app(
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
+    from planner.executor.app_transport import build_executor_router
+
+    app.include_router(build_executor_router())
+    app.state.executor_id = config.executor_id
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory

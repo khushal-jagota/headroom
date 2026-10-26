@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -24,7 +23,7 @@ from planner.environments.vps_launch import (
 def test_explicit_remote_local_and_absence_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "data/executor-launch.json"
     assert read_vps_launch(path) is None
-    remote = VpsExecutorLaunchConfiguration("remote", tmp_path / "executor.sock")
+    remote = VpsExecutorLaunchConfiguration("remote", "owner-mac")
     write_vps_launch(path, remote)
     assert read_vps_launch(path) == remote
     assert path.stat().st_mode & 0o777 == 0o600
@@ -78,56 +77,49 @@ def test_nonowner_access_or_symlink_refuses_read_and_write(tmp_path: Path) -> No
         write_vps_launch(alias, VpsExecutorLaunchConfiguration("local"))
 
 
-def test_configuration_cli_requires_explicit_remote_socket(tmp_path: Path) -> None:
+def test_configuration_cli_requires_explicit_remote_identity(tmp_path: Path) -> None:
     path = tmp_path / "executor-launch.json"
     runner = CliRunner()
     remote = runner.invoke(
         environment, ["configure-vps-launch", "--path", str(path), "--mode", "remote"]
     )
     assert remote.exit_code != 0
-    assert "absolute socket path" in remote.output
+    assert "executor ID" in remote.output
     assert not path.exists()
     local = runner.invoke(
         environment, ["configure-vps-launch", "--path", str(path), "--mode", "local"]
     )
     assert local.exit_code == 0, local.output
-    assert json.loads(path.read_bytes()) == {"version": 1, "mode": "local", "socket": None}
-    socket = tmp_path / "executor.sock"
+    assert json.loads(path.read_bytes()) == {"version": 2, "mode": "local", "executor_id": None}
+    executor_id = "owner-mac"
     remote = runner.invoke(
         environment,
-        ["configure-vps-launch", "--path", str(path), "--mode", "remote", "--socket", str(socket)],
+        [
+            "configure-vps-launch",
+            "--path",
+            str(path),
+            "--mode",
+            "remote",
+            "--executor-id",
+            executor_id,
+        ],
     )
     assert remote.exit_code == 0, remote.output
-    assert read_vps_launch(path) == VpsExecutorLaunchConfiguration("remote", socket)
+    assert read_vps_launch(path) == VpsExecutorLaunchConfiguration("remote", executor_id)
 
 
-def test_explicit_relay_socket_wins_over_absent_or_hostile_ambient(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from click.testing import CliRunner
+def test_legacy_remote_snapshot_restores_exact_bytes_but_refuses_launch(tmp_path: Path) -> None:
+    from planner.environments.vps_launch import validate_vps_launch_for_application
 
-    from planner.executor import cli
-
-    requested = tmp_path / "live data/executor.sock"
-    seen: list[str] = []
-
-    class StopProbe(Exception):
-        pass
-
-    async def connection(path: str) -> None:
-        seen.append(path)
-        raise StopProbe("stopped before any connection or pipe")
-
-    monkeypatch.setattr(asyncio, "open_unix_connection", connection)
-    for env in (
-        {},
-        {"PLAN_DB_PATH": "/poison/planner.db", "PLAN_EXECUTOR_VPS_SOCKET": "/poison/sock"},
-    ):
-        monkeypatch.delenv("PLAN_DB_PATH", raising=False)
-        monkeypatch.delenv("PLAN_EXECUTOR_VPS_SOCKET", raising=False)
-        result = CliRunner().invoke(
-            cli.executor_group, ["relay", "--socket-path", str(requested)], env=env
-        )
-        assert isinstance(result.exception, StopProbe)
-    assert seen == [str(requested), str(requested)]
+    path = tmp_path / "executor-launch.json"
+    raw = b'{"version":1,"mode":"remote","socket":"/tmp/executor.sock"}\n'
+    path.write_bytes(raw)
+    path.chmod(0o600)
+    snapshot = snapshot_vps_launch(path)
+    configuration = read_vps_launch(path)
+    assert configuration is not None and configuration.version == 1
+    with pytest.raises(ExecutorLaunchConfigurationError, match="version-2"):
+        validate_vps_launch_for_application(configuration)
+    write_vps_launch(path, VpsExecutorLaunchConfiguration("local"))
+    restore_vps_launch(path, snapshot)
+    assert path.read_bytes() == raw

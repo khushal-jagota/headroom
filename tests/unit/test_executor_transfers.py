@@ -6,15 +6,15 @@ import asyncio
 import hashlib
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from planner.executor.configuration import PROTOCOL_VERSION, TRANSFER_CHUNK_BYTES
 from planner.executor.contracts import ExecutorIdentity, FileManifest, FileScope, FileSnapshot
 from planner.executor.files import copy_verified
-from planner.executor.logic.transfer import validate_transfer_path
 from planner.executor.transfers import GenerationTransfers
 
 
@@ -30,31 +30,47 @@ def _manifest(data: bytes) -> FileManifest:
 
 
 def _service(root: Path, valid: Callable[[], bool] = lambda: True) -> GenerationTransfers:
-    return GenerationTransfers(ExecutorIdentity(6, "a" * 40, 2, "executor", 1), root, valid)
+    return GenerationTransfers(
+        ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "executor", 1), root, valid
+    )
 
 
 def test_upload_admission_is_generation_bound_and_single_use(tmp_path: Path) -> None:
-    current = True
-    service = _service(tmp_path / "transfers", lambda: current)
-    manifest = _manifest(b"test")
-    transfers = [service.create_upload(manifest) for _ in range(4)]
-    assert len({item.path for item in transfers}) == 4
-    assert all(os.stat(item.path).st_mode & 0o777 == 0o600 for item in transfers)
-    with pytest.raises(ValueError, match="limit"):
-        service.create_upload(manifest)
-    first = transfers[0]
-    assert service.upload_path(first.transfer_id) == Path(first.path)
-    with pytest.raises(ValueError, match="revoked"):
-        service.upload_path(first.transfer_id)
-    service.release(first.transfer_id)
-    assert not Path(first.path).exists()
-    current = False
-    with pytest.raises(ValueError, match="revoked"):
-        service.upload_path(transfers[1].transfer_id)
-    with pytest.raises(ValueError, match="revoked"):
-        service.create_upload(manifest)
-    asyncio.run(service.close())
-    assert not list(service.root.iterdir())
+    async def exercise() -> None:
+        current = True
+        service = _service(tmp_path / "transfers", lambda: current)
+        manifest = _manifest(b"test")
+        transfers = [service.create_upload(manifest) for _ in range(4)]
+        assert len({item.transfer_id for item in transfers}) == 4
+        assert all(
+            os.stat(service.root / item.transfer_id).st_mode & 0o777 == 0o600 for item in transfers
+        )
+        with pytest.raises(ValueError, match="limit"):
+            service.create_upload(manifest)
+        first = transfers[0]
+        with pytest.raises(ValueError, match="incomplete"):
+            service.upload_path(first.transfer_id)
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield b"test"
+
+        await service.upload(first.transfer_id, chunks())
+        assert service.upload_path(first.transfer_id).read_bytes() == b"test"
+        with pytest.raises(ValueError):
+            await service.upload(first.transfer_id, chunks())
+        with pytest.raises(ValueError, match="revoked"):
+            service.upload_path(first.transfer_id)
+        service.release(first.transfer_id)
+        assert not (service.root / first.transfer_id).exists()
+        current = False
+        with pytest.raises(ValueError, match="revoked"):
+            service.upload_path(transfers[1].transfer_id)
+        with pytest.raises(ValueError, match="revoked"):
+            service.create_upload(manifest)
+        await service.close()
+        assert not list(service.root.iterdir())
+
+    asyncio.run(exercise())
 
 
 def test_private_root_and_manifest_refusals(tmp_path: Path) -> None:
@@ -81,8 +97,8 @@ def test_download_copy_survives_source_handle_mutation_and_rejects_corruption(
             transfer = await service.create_download_async(FileSnapshot(manifest, source))
             retained.write(b"modified")
             retained.flush()
-            assert Path(transfer.path).read_bytes() == b"original"
-            assert source.stat().st_ino != Path(transfer.path).stat().st_ino
+            assert (service.root / transfer.transfer_id).read_bytes() == b"original"
+            assert source.stat().st_ino != (service.root / transfer.transfer_id).stat().st_ino
         with pytest.raises(ValueError, match="upload revoked"):
             service.upload_path(transfer.transfer_id)
         for data in (b"short", b"too much data", b"modified"):
@@ -135,26 +151,37 @@ def test_snapshot_copy_cancellation_drains_thread_before_shutdown(
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "relative",
-        "/root/../escape",
-        "/root//file",
-        "/root/./file",
-        "/root/nested/file",
-        "/rooted/file",
-        "/root/%2e%2e",
-        "/root/a\\b",
-        "/root/a\x00",
-        "/root/a\n",
-        "//root/file",
-    ],
-)
-def test_transfer_path_refusals(path: str) -> None:
-    with pytest.raises(ValueError):
-        validate_transfer_path(path, "/root")
+@pytest.mark.parametrize("body", [b"short", b"too much data", b"modified"])
+def test_bad_upload_revokes_slot(tmp_path: Path, body: bytes) -> None:
+    async def exercise() -> None:
+        service = _service(tmp_path / "transfers")
+        slot = service.create_upload(_manifest(b"original"))
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield body
+
+        with pytest.raises(ValueError):
+            await service.upload(slot.transfer_id, chunks())
+        assert slot.transfer_id not in service.transfers
+        assert not (service.root / slot.transfer_id).exists()
+        await service.close()
+
+    asyncio.run(exercise())
 
 
-def test_transfer_path_accepts_home_with_spaces() -> None:
-    validate_transfer_path("/home/Example User/private/random", "/home/Example User/private")
+def test_download_is_single_use_and_preserves_network_chunk_bound(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        service = _service(tmp_path / "transfers")
+        data = b"x" * (TRANSFER_CHUNK_BYTES * 3 + 1)
+        source = tmp_path / "source"
+        source.write_bytes(data)
+        slot = await service.create_download_async(FileSnapshot(_manifest(data), source))
+        chunks = service.claim_download(slot.transfer_id)
+        with pytest.raises(ValueError):
+            service.claim_download(slot.transfer_id)
+        blocks = [chunk async for chunk in chunks]
+        assert b"".join(blocks) == data
+        assert max(map(len, blocks)) == 64 * 1024
+        await service.close()
+
+    asyncio.run(exercise())
