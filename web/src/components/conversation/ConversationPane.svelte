@@ -567,7 +567,7 @@
 </div>
 
 <style>
-  .conversation-reader { display:flex; flex:1; min-height:0; }
+  .conversation-reader { display:flex; flex-direction:column; flex:1; min-height:0; }
   .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side

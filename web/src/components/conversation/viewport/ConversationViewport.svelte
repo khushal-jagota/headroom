@@ -674,7 +674,34 @@
           }
         }
         if (startedIn !== generation || gesture !== gestureGeneration || thread !== threadElement) return;
-        if (textRestoration?.anchor.content && pendingOpen && !alignSavedText(thread)) return;
+        if (!provisionalNewest && reader?.restorationOutcome === 'pending') {
+          // Removing the notice changes the reader's available layout. Keep the
+          // transcript hidden until the original address fits that final geometry.
+          const entryReader = reader;
+          const operation = textRestoration;
+          reader.settleTextRestoration();
+          await tick();
+          if (startedIn !== generation || gesture !== gestureGeneration || thread !== threadElement || reader !== entryReader || operation !== textRestoration || intent !== latestIntent) return;
+          let finalReady: boolean;
+          if (operation?.anchor.content) finalReady = alignSavedText(thread);
+          else {
+            landTheOpen(thread);
+            finalReady = restorationPresentationReady(thread);
+          }
+          if (!finalReady) {
+            const anchor = entryReader.restorationAnchor;
+            if (anchor && entryReader.restorationOutcome === 'idle') entryReader.failTextRestoration(anchor.key);
+            releaseTextRestoration(operation);
+            return;
+          }
+          geometry = threadGeometry(thread, reservedSpaceElement);
+          takeTheReading(geometry.read(reservedSpacePixels));
+        }
+        if (textRestoration?.anchor.content && pendingOpen && !alignSavedText(thread)) {
+          if (reader?.restorationOutcome === 'idle') reader.failTextRestoration(textRestoration.anchor.key);
+          releaseTextRestoration(textRestoration);
+          return;
+        }
         settledOnOpening = !provisionalNewest;
         pendingOpen = provisionalNewest;
         placementReady = true;
