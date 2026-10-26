@@ -844,7 +844,9 @@ conversation is open. History and text presentation share this budget. Hidden ta
 the dock pause it. Later layout changes preserve a successfully restored character until
 the reader navigates.
 
-Pending restoration displays progress. Failure, unavailable text, or an exhausted budget
+Saved-position restoration displays no notice, progress text, warning, or restoration controls.
+Ordinary Latest navigation remains available when content lies below the current position.
+Failure, unavailable text, or an exhausted budget
 retires the saved target and automatically admits the newest conversation page.
 The viewport then places the actual final content at the bottom, without a warning,
 restoration Retry control, or focus change. Request capacity delays this operation

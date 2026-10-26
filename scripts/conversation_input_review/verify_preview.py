@@ -30,6 +30,51 @@ NATIVE_CHARACTER = """held => {
  }return null;
 }"""
 
+RESTORATION_UI_AUDIT = """() => {
+ const host=document.querySelector('[data-review-host]');
+ const forbidden=/restor(?:ing|ation)|(?:saved|conversation) position|retry conversation position/i;
+ const audit={pendingSamples:0,pendingVisibleOpenSamples:0,ordinaryLoadingSamples:0,
+   samples:0,violations:[],
+   pendingFirstAt:null,pendingLastAt:null,newestBottomAt:null};
+ let stopped=false,frame=0;
+ function inspect() {
+   audit.samples++;
+   const status=host.querySelector('[data-conversation-restoration-status]');
+   const text=host.innerText;
+   if(status||forbidden.test(text))audit.violations.push({kind:'product-ui',text:status?.textContent??text});
+   const instrument=document.querySelector('[data-preview-reader-outcome]');
+   if(instrument?.dataset.previewPhase==='restoration'&&instrument.dataset.previewReaderOutcome==='pending'){
+     audit.pendingSamples++;
+     if(document.visibilityState==='visible'&&host.querySelector('[data-conversation-state="opened"]'))
+       audit.pendingVisibleOpenSamples++;
+     audit.pendingFirstAt??=performance.now();audit.pendingLastAt=performance.now();
+     if(host.querySelector('.conversation-transcript-region[aria-busy="true"]'))
+       audit.ordinaryLoadingSamples++;
+   }
+   const thread=host.querySelector('[data-conversation-thread]');
+   if(instrument?.dataset.previewPhase==='restoration'&&
+      instrument.dataset.previewReaderOutcome==='idle'&&audit.pendingFirstAt!==null&&thread&&
+      host.querySelector('[data-conversation-view-key="e2100"]')&&
+      Math.abs(thread.scrollHeight-thread.clientHeight-thread.scrollTop)<=2)
+     audit.newestBottomAt??=performance.now();
+ }
+ const observer=new MutationObserver(records=>{
+   for(const record of records)for(const node of record.addedNodes){
+     if(node.nodeType===Node.ELEMENT_NODE&&
+       (node.matches('[data-conversation-restoration-status]')||
+        node.querySelector('[data-conversation-restoration-status]')))
+       audit.violations.push({kind:'added-status',text:node.textContent});
+   }
+   inspect();
+ });
+ observer.observe(host,{subtree:true,childList:true,characterData:true,attributes:true});
+ function sample(){if(stopped)return;inspect();frame=requestAnimationFrame(sample);}
+ frame=requestAnimationFrame(sample);
+ window.__restorationUiAudit=audit;
+ window.__stopRestorationUiAudit=()=>{stopped=true;cancelAnimationFrame(frame);observer.disconnect();
+   inspect();return audit;};
+}"""
+
 MEASURE = """() => {
  const box=document.querySelector('[data-conversation-box]');
  const input=document.querySelector('[data-conversation-input]');
@@ -110,7 +155,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:8767")
     parser.add_argument("--ticket", default="t_2g0vwu4y")
-    parser.add_argument("--path", default="candidate/preview.html")
+    parser.add_argument("--path", default="clarification/candidate/preview.html")
     parser.add_argument(
         "--widths", nargs="+", type=int, choices=(736, 1250, 390), default=[736, 1250, 390]
     )
@@ -268,8 +313,9 @@ def main() -> None:
                 review.get_by_label("Host width", exact=True).select_option(str(width))
                 for scenario in ("restored", "timeout", "unavailable", "fetch-error"):
                     start = time.monotonic()
+                    review.evaluate(RESTORATION_UI_AUDIT)
                     review.get_by_label("Saved position", exact=True).select_option(scenario)
-                    review.locator('[data-preview-phase="restoration"]').wait_for()
+                    review.locator('[data-preview-phase="restoration"]').wait_for(state="attached")
                     anchor = review.locator("[data-preview-anchor]").get_attribute(
                         "data-preview-anchor"
                     )
@@ -286,8 +332,20 @@ def main() -> None:
                     held_character = json.loads(held_text)
                     assert held_character, (host, width, scenario)
                     native_after = None
+                    genuine_error_visible = False
+                    if scenario in ("restored", "timeout"):
+                        review.wait_for_function("""() =>
+                          window.__returnProbe.targetBodyWaiting>0 &&
+                          window.__restorationUiAudit.pendingSamples>=2""")
+                        pending = review.evaluate("window.__restorationUiAudit")
+                        assert not pending["violations"], (host, width, scenario, pending)
+                        assert pending["ordinaryLoadingSamples"] > 0, (
+                            host,
+                            width,
+                            scenario,
+                            pending,
+                        )
                     if scenario == "restored":
-                        review.wait_for_function("window.__returnProbe.targetBodyWaiting>0")
                         review.get_by_role("button", name="Release saved body", exact=True).click()
                         review.wait_for_function("""() => {
                           const target=document.querySelector(
@@ -313,10 +371,8 @@ def main() -> None:
                             native_after,
                         )
                     elif scenario == "fetch-error":
-                        review.get_by_text(
-                            "Local transport · restoration · reader idle · message fetch error",
-                            exact=True,
-                        ).wait_for()
+                        review.wait_for_function("""() => document.querySelector(
+                          '[data-preview-trouble="true"]') !== null""")
                         assert review.locator("[data-conversation-view-key]").count() > 0
                         assert review.locator('[data-conversation-view-key="e2100"]').count() == 0
                         assert review.get_by_role(
@@ -332,6 +388,13 @@ def main() -> None:
                         }""",
                             timeout=15000,
                         )
+                    if scenario == "fetch-error":
+                        review.get_by_role("button", name="Return to dock", exact=True).click()
+                        trouble = review.get_by_role("img", name="Connection trouble", exact=True)
+                        trouble.wait_for()
+                        genuine_error_visible = trouble.is_visible()
+                        assert genuine_error_visible
+                        review.get_by_role("button", name="Open conversation", exact=True).click()
                     assert review.locator("[data-conversation-restoration-status]").count() == 0
                     assert (
                         review.get_by_role(
@@ -350,6 +413,13 @@ def main() -> None:
                             "(e)=>({top:e.scrollTop,max:e.scrollHeight-e.clientHeight})"
                         )
                         assert abs(after["top"] - after["max"]) <= 2, after
+                    ui_audit = review.evaluate("window.__stopRestorationUiAudit()")
+                    assert not ui_audit["violations"], (host, width, scenario, ui_audit)
+                    if scenario == "timeout":
+                        assert ui_audit["pendingVisibleOpenSamples"] == ui_audit["pendingSamples"]
+                        assert ui_audit["pendingLastAt"] - ui_audit["pendingFirstAt"] >= 4500
+                        assert ui_audit["newestBottomAt"] is not None
+                        assert ui_audit["newestBottomAt"] - ui_audit["pendingFirstAt"] >= 4500
                     screenshot = None
                     if host == "ticket" and width == 736:
                         screenshot = f"recovery-{scenario}-ticket-736.png"
@@ -362,6 +432,8 @@ def main() -> None:
                             "width": width,
                             "scenario": scenario,
                             "screenshot": screenshot,
+                            "restorationUiAudit": ui_audit,
+                            "genuineErrorVisible": genuine_error_visible,
                             "capturedAnchor": json.loads(anchor),
                             "heldCharacter": held_character,
                             "restoredCharacter": native_after,
@@ -374,7 +446,7 @@ def main() -> None:
                     )
                     print(f"PASS saved position {host} {width} {scenario}", flush=True)
         review.get_by_label("Saved position", exact=True).select_option("normal")
-        review.locator('[data-preview-phase="ready"]').wait_for()
+        review.locator('[data-preview-phase="ready"]').wait_for(state="attached")
         review.locator("[data-conversation-input]").fill("Local acceptance probe")
         review.locator("[data-conversation-send]").click()
         review.get_by_text(

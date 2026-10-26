@@ -3,7 +3,7 @@ This review artifact compiles the current conversation components into one HTML 
 Build from the repository root after `npm ci --prefix web`:
 
 ```sh
-node web/review/conversation-input/build.mjs /home/vps/Deployments/Panels/current/data/files/tickets/t_2g0vwu4y/artifacts/candidate/preview.html
+node web/review/conversation-input/build.mjs /home/vps/Deployments/Panels/current/data/files/tickets/t_2g0vwu4y/artifacts/clarification/candidate/preview.html
 ```
 
 Without an output argument, the builder writes `web/review-dist/conversation-input.html`. A sibling `.build.json` records the commit, dirty source status, hashes for the bundled repository source inputs, compiled CSS, JavaScript, and final HTML. The HTML embeds the same provenance except its own hash. Rebuild after the final commit to associate the artifact with that revision.
@@ -14,7 +14,7 @@ Two review-only adapters remove external execution requirements. The Markdown wo
 
 The Saved position selector uses the production `ConversationViewReader` and a captured `viewAnchor`. Each selection resets the synthetic pane and its draft. Each scenario starts with its already-admitted inline target text, scrolls to an earlier native character, and captures the actual immutable text locator. Only that initial setup scroll changes the scroll position directly. A replacement reader receives the captured anchor. Its transport returns the same target as a deferred body, so response gates exercise actual restoration. New synthetic output moves the newest range beyond the retained historical window. Production admission and placement determine the final position.
 
-The scenarios cover successful saved text with a held body, the five-second visible timeout, an unavailable target, and a genuine HTTP 503 response for newest admission. Release saved body resolves the actual pending synthetic response. In the timeout case, a late release must not restore the retired target. Fetch failures retain readable content and the existing production error indication. Preview status exposes transport state without replacing production error presentation.
+The scenarios cover successful saved text with a held body, the five-second visible timeout, an unavailable target, and a genuine HTTP 503 response for newest admission. Release saved body resolves the actual pending synthetic response. In the timeout case, a late release must not restore the retired target. Fetch failures retain readable content and the existing production error indication. The synthetic controls describe scenario setup only. Reader outcomes and phases remain in hidden probe attributes. No visible saved-position status, progress text, warning, or Retry appears in the product pane, including while a real body response remains held. Ordinary loading semantics and the production connection-error indication remain.
 
 `web/tests/support/conversationViewReaderFixture.ts` supplies bounded indexed pages, deferred bodies, and response gates. Explicit search and URL-base options permit opaque-origin delivery. Existing browser cases retain their defaults. The synthetic URL base never authorizes network access. The local send adapter publishes synthetic owner and agent rows through the fixture snapshot path.
 
@@ -28,7 +28,9 @@ The document contains synthetic local conversations and local send responses. Fi
 Run the acceptance probe against the managed sandbox:
 
 ```sh
-.venv/bin/python scripts/conversation_input_review/verify_preview.py --base-url http://127.0.0.1:8767 --ticket t_2g0vwu4y --path candidate/preview.html --output /home/vps/Deployments/Panels/current/data/files/tickets/t_2g0vwu4y/artifacts/candidate/evidence
+.venv/bin/python scripts/conversation_input_review/verify_preview.py --base-url http://127.0.0.1:8767 --ticket t_2g0vwu4y --path clarification/candidate/preview.html --output /home/vps/Deployments/Panels/current/data/files/tickets/t_2g0vwu4y/artifacts/clarification/evidence
 ```
 
 The probe reuses the existing deployed artifact host. It adds no permanent browser host. Its forty-eight recovery cases cross four outcomes, four hosts, and three real child viewport widths. The twelve five-second timeout cases cost at least sixty seconds. The evidence records elapsed time, native text location, scroll geometry, request activity, and browser errors. Existing frontend cases retain the deeper admission and cancellation matrix. A real-app held HTTP 200 probe remains necessary for live endpoint and worker-parser evidence.
+
+The probe observes product mutations and animation frames from scenario setup through pending restoration, final placement, and late response release. It asserts that no restoration-specific status or text appears. Held-body cases prove a pending reader and ordinary loading semantics before release. The genuine newest-fetch failure case proves the production Connection trouble indication in the dock.

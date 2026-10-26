@@ -41,11 +41,6 @@ export function releaseTextRestoration(operation: TextRestorationPlacement | nul
   if (operation) { operation.unsubscribe = null; operation.demand = null; }
 }
 
-/** Controls remain reachable while the transcript waits for its saved text. */
-export interface ConversationViewportControls {
-  jumpToLatest(button: HTMLButtonElement): void;
-}
-
 /** Latest and automatic recovery share admission and retain distinct focus behavior. */
 export type LatestPlacementIntent<Reader> = {
   reader: Reader | null;

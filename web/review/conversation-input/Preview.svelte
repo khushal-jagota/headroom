@@ -196,7 +196,7 @@
 
 <div class="review-shell">
   <header class="review-controls">
-    <div class="review-heading"><strong>Conversation input</strong><span>Synthetic conversations · no messages leave this preview</span></div>
+    <div class="review-heading"><strong>Conversation input</strong><span>Synthetic scenario controls · no messages leave this preview</span></div>
     <div class="review-options">
       <label>Host <select aria-label="Host" bind:value={host} onchange={() => { artifactOpen = true; }}><option value="ticket">Ticket</option><option value="manager">Manager</option><option value="chief">Chief</option><option value="artifact">Ticket with artifact</option></select></label>
       <label>State <select aria-label="State" bind:value={activity}><option value="idle">Idle</option><option value="unread">Unread reply</option><option value="working">Working</option></select></label>
@@ -206,7 +206,7 @@
       <button type="button" onclick={() => { conversationState = conversationState === 'rest' ? 'opened' : 'rest'; }}>{conversationState === 'rest' ? 'Open conversation' : 'Return to dock'}</button>
       {#if host === 'artifact' && !artifactOpen}<button type="button" onclick={() => { artifactOpen = true; }}>Open sample artifact</button>{/if}
     </div>
-    <p class="review-simulation" data-preview-phase={scenarioPhase}>Local transport · {scenarioPhase} · reader {reader?.restorationOutcome ?? 'idle'}{reader?.trouble ? ' · message fetch error' : ''}</p>
+    <output hidden data-preview-phase={scenarioPhase} data-preview-reader-outcome={reader?.restorationOutcome ?? 'idle'} data-preview-trouble={reader?.trouble ? 'true' : 'false'}></output>
     <output hidden data-preview-character={capturedCharacter ? JSON.stringify(capturedCharacter) : ''} data-preview-current-anchor={viewAnchor ? JSON.stringify(viewAnchor) : ''} data-preview-anchor={capturedAnchor ? JSON.stringify(capturedAnchor) : ''}></output>
   </header>
   <div class="review-stage">
@@ -256,7 +256,6 @@
   .review-options label { display:flex; gap:8px; align-items:center; color:var(--text-muted); font-size:13px; }
   .review-options select, .review-options button { background:var(--surface-2); color:var(--text-default); border:1px solid var(--border-color); border-radius:6px; padding:7px 9px; font:inherit; }
   .review-options button { cursor:pointer; font-size:13px; }
-  .review-simulation { font-size:13px; line-height:1.4; color:var(--text-muted); margin:8px 0 0; }
   .review-stage { display:flex; flex:1; min-height:0; justify-content:center; overflow:hidden; }
   .review-host { max-width:100%; height:100%; min-width:0; background:var(--surface-1); }
   .review-host > :global(.ticket-screen) { height:100%; }

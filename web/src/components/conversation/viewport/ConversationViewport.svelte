@@ -75,6 +75,12 @@
   let jumpVisible = $state(false);
   let belowCount = $state(0);
   const newerHistory = $derived(reader?.pages.some(page => page.scope.kind === "timeline" && page.newer !== null) ?? false);
+  const newerThanUnplacedAnchor = $derived.by(() => {
+    const anchor = viewAnchor;
+    return !placementReady && anchor !== null && !anchor.following && (reader?.pages.some(page =>
+      page.scope.kind === 'timeline' && page.items.some(item =>
+        item.order.sequence > anchor.order.sequence || item.order.sequence === anchor.order.sequence && item.order.slot > anchor.order.slot)) ?? false);
+  });
   let newestLineBottomPixels = 0;
   let settledOnOpening = false;
   let settledMessageIds = new Set<string>();
@@ -413,10 +419,6 @@
     return [...(contentElement?.querySelectorAll<HTMLElement>('[data-conversation-outgoing][data-conversation-accepted="true"]') ?? [])]
       .some(element => !settledMessageIds.has(element.dataset.conversationOutgoing!) &&
         !outgoingMessages.some(message => message.messageId === element.dataset.conversationOutgoing && message.restored));
-  }
-
-  export function jumpToLatest(button: HTMLButtonElement): void {
-    void jumpToTheNewestLine(button);
   }
 
   async function jumpToTheNewestLine(button: HTMLButtonElement | null, cause: LatestPlacementIntent<ConversationViewReader>['cause'] = 'latest', attempt: number | null = null): Promise<void> {
@@ -765,8 +767,8 @@
         }
         if (startedIn !== generation || gesture !== gestureGeneration || thread !== threadElement) return;
         if (!provisionalNewest && reader?.restorationOutcome === 'pending') {
-          // Removing the notice changes the reader's available layout. Keep the
-          // transcript hidden until the original address fits that final geometry.
+          // Settle the attempt before its final exact-address proof. Keep the
+          // transcript hidden until the original address fits final geometry.
           const entryReader = reader;
           const operation = textRestoration;
           reader.settleTextRestoration();
@@ -1048,7 +1050,7 @@
       ></div>
     {/if}
   </div>
-  {#if (reader === null || reader.restorationOutcome === 'idle') && (jumpVisible || newerHistory || latestPending)}
+  {#if jumpVisible || newerHistory || newerThanUnplacedAnchor || latestPending}
     <button
       type="button"
       class="chat-jump"
@@ -1059,6 +1061,8 @@
 </div>
 
 <style>
+  /* Ordinary navigation stays reachable while exact transcript placement waits. */
+  .chat-jump { visibility: visible; }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */

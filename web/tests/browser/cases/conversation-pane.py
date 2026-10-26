@@ -3206,6 +3206,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                   window.__returnProbe.inlineTarget=true;
                   window.__restorationFailure.kind=kind;
                 }''','parser' if order=='inline-parser-retry' else 'digest')
+            case['newestResponsesBeforeReturn']=page.evaluate('window.__latestProbe.latestResponses')
             page.evaluate('''held=>{
               const sample=()=>{
                 const thread=document.querySelector('[data-conversation-thread]');
@@ -3221,9 +3222,16 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             }''',held)
             if backlog:
                 page.wait_for_function('window.__returnProbe.waiting>0')
+                # A held real history response proves pending restoration here.
+                assert page.locator('[data-conversation-restoration-status]').count()==0
+                assert page.get_by_text('Restoring your conversation position…',exact=True).count()==0
+                assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
             if order in ('full-timeout', 'history-timeout'):
                 if order == 'full-timeout':
                     page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
+                    assert page.locator('[data-conversation-restoration-status]').count()==0
+                    assert page.get_by_text('Restoring your conversation position…',exact=True).count()==0
+                    assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
                 # Existing held history stays pending, but the new automatic
                 # newest read must use actual admission instead of that gate.
                 page.evaluate('window.__returnProbe.hold=false')
@@ -3242,8 +3250,8 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 }''')
                 assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
                 assert page.get_by_role('button',name='Jump to latest message',exact=True).is_visible()
-                if backlog:
-                    assert page.locator('[data-conversation-view-key="e2020"]').count()==1
+                assert page.locator(f'[data-conversation-view-key="e{2000+backlog}"]').count()==1
+                assert page.evaluate('window.__latestProbe.latestResponses')>case['newestResponsesBeforeReturn']
                 frames=page.evaluate('window.__textFrames')
                 revealed=next(frame for frame in frames if frame['visible'])
                 elapsed=revealed['ms']-frames[0]['ms']
@@ -3269,6 +3277,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                     &&!document.querySelector('button[aria-label="Jump to latest message"]');
                 }''')
                 case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                assert all(frame['restorationStatus'] is None for frame in case['frames']),case
                 continue
             if order.startswith('inline-'):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release();window.__returnProbe.releaseBodies()')
@@ -3312,11 +3321,15 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             if order in ('cancel','changed-source'):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
                 page.wait_for_function('window.__returnProbe.bodyWaiting>0')
-                page.locator('[data-conversation-restoration-status="pending"]').wait_for(state='visible')
+                # The fixture holds a genuine saved-body fetch. Restoration
+                # has no notice or control, even while this work remains pending.
+                page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
+                assert page.locator('[data-conversation-restoration-status]').count()==0
+                assert page.get_by_text('Restoring your conversation position…',exact=True).count()==0
+                assert page.get_by_role('button',name='Retry conversation position',exact=True).count()==0
                 if order=='cancel':
                     page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
                     page.get_by_role('button',name='Jump to latest message',exact=True).click()
-                    page.wait_for_function("!document.querySelector('[data-conversation-restoration-status=\"pending\"]')")
                     page.wait_for_function('''() => {
                       const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
                       return thread&&region&&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true'
