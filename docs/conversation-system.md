@@ -829,6 +829,22 @@ recorded before any of it existed read the same way as new ones.
 
 ### Scrolling back, and what is known about it
 
+When the reader leaves a tab, the browser retains a location inside visible message text
+and its line offset. A return restores that text after delayed Markdown presentation.
+The address stays local to this browser. It includes the message piece, exact content
+identity, logical text path, and character offset. Nested preview text supplies no address
+for its parent message.
+
+Restoration admits the target Markdown host and group through the existing bounded
+presentation policy. Placeholder geometry cannot replace the saved destination. The
+conversation waits for the actual character and relevant geometry before it reveals the
+restored position. Later layout changes preserve that character until the reader navigates.
+
+A pending or failed restoration uses the existing notice and controls. Retry retains the
+original destination. Changed, deleted, or expired text produces an unavailable result.
+Latest abandons the saved destination and admits the newest page. Reader replacement and
+navigation cancel stale placement work and release its target demand.
+
 Scrolling back asks for one page at a time. Before each page the browser closes its live
 stream and re-opens it once the page has arrived. That looks wasteful and is not: a
 conversation being written to while somebody reads backwards would otherwise keep

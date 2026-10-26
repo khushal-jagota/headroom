@@ -9,6 +9,7 @@
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import TaskProgress from "./TaskProgress.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
+  import type { ConversationViewportControls } from './viewport/placement';
   import type { RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
@@ -189,6 +190,7 @@
 
   let placementReady = $state(false);
   let entryPresentationPending = $state(true);
+  let viewport = $state<ConversationViewportControls | null>(null);
   let paneElement = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false);
   let confirmArmed = $state(false);
@@ -463,9 +465,11 @@
   </div>
 
   <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
-  {#if reader?.restorationFailed}
-    <div class="chat-receipt" role="status" data-conversation-restoration-status="error">Your conversation position did not load.
-      <button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>
+  {#if reader && reader.restorationOutcome !== 'idle'}
+    <div class="chat-receipt" role="status" data-conversation-restoration-status={reader.restorationOutcome}>
+      {reader.restorationOutcome === 'unavailable' ? 'This conversation position is no longer available.' : reader.restorationOutcome === 'failed' ? 'Your conversation position did not load.' : 'Restoring your conversation position…'}
+      {#if reader.restorationOutcome !== 'unavailable'}<button type="button" class="chat-qrow-act" onclick={() => reader?.retryRestoration()}>Retry conversation position</button>{/if}
+      <button type="button" class="chat-qrow-act" aria-label="Jump to latest message" onclick={(event) => viewport?.jumpToLatest(event.currentTarget)}>Latest</button>
     </div>
   {/if}
   <!-- The conversation is never taken off the screen to say that it is loading. A
@@ -480,6 +484,7 @@
     style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
+    bind:this={viewport}
     bind:placementReady
     bind:entryPresentationPending
     {ownerReadThroughSequence}
@@ -562,7 +567,7 @@
 </div>
 
 <style>
-  .conversation-reader { display:flex; flex:1; min-height:0; }
+  .conversation-reader { display:flex; flex-direction:column; flex:1; min-height:0; }
   .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side

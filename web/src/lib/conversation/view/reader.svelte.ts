@@ -1,3 +1,4 @@
+import { copyViewReaderAnchor } from './copyAnchor';
 import { DiagnosticExpiredError, isDiagnosticExpiry } from '../diagnosticExpiry';
 /** One selected view: bounded pages, one stream, and cancellable demand reads. */
 import { SvelteSet } from 'svelte/reactivity';
@@ -18,15 +19,8 @@ function sameCursor(a: ViewPageCursor | null, b: ViewPageCursor | null): boolean
 export function compareItems(a: ConversationViewItem, b: ConversationViewItem): number { return a.order.sequence - b.order.sequence || a.order.slot - b.order.slot; }
 function itemBytes(item: ConversationViewItem): number { const cached = byteSizes.get(item); if (cached !== undefined)
     return cached; const count = item.kind === 'row' && item.body.kind === 'inline' ? encoder.encode(JSON.stringify(item.body.value)).byteLength : 0; byteSizes.set(item, count); return count; }
-export type ViewReaderAnchor = {
-    key: string;
-    order: {
-        sequence: number;
-        slot: number;
-    };
-    offset: number;
-    following: boolean;
-};
+export type { ViewReaderAnchor } from './anchorContracts';
+import type { ViewReaderAnchor, RestorationOutcome } from './anchorContracts';
 export type HeldPage = {
     scope: ViewHistoryScope;
     items: ConversationViewItem[];
@@ -41,6 +35,40 @@ export class ConversationViewReader {
     loading = $state(false);
     restoring = $state(false);
     restorationFailed = $state(false);
+    restorationOutcome = $state<RestorationOutcome>('idle');
+    restorationAnchor = $state.raw<ViewReaderAnchor | null>(null);
+    restorationAttempt = $state(0);
+    private restorationOperation = 0;
+    failTextRestoration(key: string, unavailable = false): void {
+        if (this.disposed || this.restorationAnchor?.key !== key) return;
+        this.restorationOutcome = unavailable ? 'unavailable' : 'failed';
+        this.restorationFailed = !unavailable;
+        this.restoring = false;
+        this.changed();
+    }
+    textBodyReady(key: string, pieces: readonly { piece: string }[]): void {
+        const anchor = this.restorationAnchor;
+        if (anchor?.key === key && anchor.content && pieces[anchor.content.pieceIndex]?.piece !== 'text') {
+            this.failTextRestoration(key, true);
+        }
+    }
+    settleTextRestoration(): void {
+        if (this.restorationOutcome !== 'pending') return;
+        this.restorationOutcome = 'idle';
+        this.restorationFailed = false;
+        this.changed();
+    }
+    cancelRestoration(): void {
+        if (!this.restorationAnchor && !this.restoring && !this.restorationFailed) return;
+        if (this.restoring) this.cancelPages();
+        this.restorationOperation++;
+        this.restoring = false;
+        this.restorationFailed = false;
+        this.restorationOutcome = 'idle';
+        this.restorationAnchor = null;
+        this.initialAnchor = null;
+        this.changed();
+    }
     entryPhase = $state<'idle' | 'loading' | 'placing' | 'error' | 'complete'>('idle');
     entryTarget = $state.raw<ViewReaderAnchor | null>(null);
     entryTargetReady = $state(false);
@@ -125,6 +153,8 @@ export class ConversationViewReader {
     }
     constructor(readonly id: string, readonly lens: ConversationViewLens, readonly transcript: boolean, private changed: () => void = () => { }, private initialAnchor: ViewReaderAnchor | null = null, private expanded = new Set<string>(), readonly openTools = new SvelteSet<string>(), private entryReadThroughSequence: number | null = null) {
         this.restoring = transcript && initialAnchor !== null && !initialAnchor.following;
+        this.restorationAnchor = this.restoring ? initialAnchor ? copyViewReaderAnchor(initialAnchor) : null : null;
+        this.restorationOutcome = this.restoring ? 'pending' : 'idle';
         if (transcript && entryReadThroughSequence !== null && initialAnchor === null) this.entryPhase = 'loading';
     }
     /** Restore a bounded neighborhood, not a page that ends at the held line.
@@ -132,23 +162,30 @@ export class ConversationViewReader {
      * Otherwise one older page and one newer page supply both sides of it. */
     private async restoreAnchor(): Promise<void> {
         if (!this.restoring || !this.initialAnchor || this.disposed) return;
-        const anchor = this.initialAnchor;
+        const anchor = this.restorationAnchor ?? this.initialAnchor;
+        const operation = ++this.restorationOperation;
+        const active = () => !this.disposed && operation === this.restorationOperation && this.restorationAnchor === anchor;
         let page = this.pages.find(page => page.scope.kind === 'timeline');
         if (!page?.items.some(item => item.key === anchor.key)) {
             const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline,
                 order: { ...anchor.order, slot: anchor.order.slot + 1 } };
             if (!await this.load(timeline, cursor, 'older', true)) {
-                this.failRestoration();
+                if (active()) this.failRestoration();
                 return;
             }
+            if (!active()) return;
             page = this.pages.find(page => page.scope.kind === 'timeline');
         }
-        if (this.disposed) return;
+        if (!active()) return;
         if (page?.newer && !await this.load(timeline, page.newer, 'newer')) {
-            this.failRestoration();
+            if (active()) this.failRestoration();
             return;
         }
-        if (this.disposed) return;
+        if (!active()) return;
+        if (!this.pages.some(page => page.items.some(item => item.key === anchor.key))) {
+            this.failTextRestoration(anchor.key, true);
+            return;
+        }
         this.restoring = false;
         this.restorationFailed = false;
         this.changed();
@@ -157,13 +194,19 @@ export class ConversationViewReader {
     private failRestoration(): void {
         if (this.disposed) return;
         this.restorationFailed = true;
+        this.restorationOutcome = 'failed';
         this.loading = false;
         this.trouble = true;
         this.changed();
     }
     retryRestoration(): void {
-        if (!this.restorationFailed) return;
+        if (!this.restorationAnchor || this.restorationOutcome === 'unavailable') return;
+        this.restorationOperation++;
+        this.restorationAttempt++;
         this.restorationFailed = false;
+        this.restorationOutcome = 'pending';
+        this.restoring = true;
+        this.cancelPages();
         void this.restoreAnchor();
     }
     /** Entry is an operation, not a moving copy of the durable read watermark. */
@@ -295,11 +338,15 @@ export class ConversationViewReader {
         let count = pages.reduce((sum, p) => sum + p.items.length, 0);
         let bytes = pages.reduce((sum, p) => sum + p.items.reduce((n, item) => n + itemBytes(item), 0), 0);
         while (count > READER_ITEMS || bytes > READER_BODY_BYTES) {
-            const removable = pages.filter(p => p.items.length > 0 && !(this.entryHeld && p.items.length === 1 && p.items[0].key === this.entryTarget?.key));
+            const protectedKey = this.restorationAnchor?.key ?? (this.entryHeld ? this.entryTarget?.key : undefined);
+            const removable = pages.filter(p => p.items.length > 0 && !(p.items.length === 1 && p.items[0].key === protectedKey));
             const page = removable.find(p => scopeKey(p.scope) !== preferred) ?? removable[0];
-            if (!page)
-                break;
-            const targetIndex = this.entryHeld ? page.items.findIndex(item => item.key === this.entryTarget?.key) : -1;
+            if (!page) {
+                // An oversized target cannot enlarge the bounded neighborhood.
+                if (this.restorationAnchor) this.failTextRestoration(this.restorationAnchor.key, true);
+                pages = []; break;
+            }
+            const targetIndex = page.items.findIndex(item => item.key === protectedKey);
             const removeEnd = targetIndex >= 0 ? targetIndex < page.items.length / 2 : scopeKey(page.scope) === preferred && direction === 'older';
             const removed = removeEnd ? page.items.pop() : page.items.shift();
             if (!removed)
@@ -441,6 +488,10 @@ export class ConversationViewReader {
                             this.pages = this.pages.map(page => ({ ...page, items: page.items.map(item => item.key === latest.key ? latest : item) }));
                         }
                         this.trim(scopeKey(timeline), 'newer');
+                        if (this.restorationAnchor && !this.pages.some(page => page.items.some(item => item.key === this.restorationAnchor?.key))) {
+                            const removed = [...value.removed_keys, ...value.scope_changes.flatMap(scope => scope.removed_keys)];
+                            if (removed.includes(this.restorationAnchor.key)) this.failTextRestoration(this.restorationAnchor.key, true);
+                        }
                         if (stoppedChanged) {
                             // Runtime stop has no durable row to change pending ask bodies.
                             // Re-read only held windows under the normal serialized demand bound.
@@ -569,7 +620,7 @@ export class ConversationViewReader {
         }
     }
     async receipts(ids: readonly string[]): Promise<ViewMessageReceipts> { return this.get('/receipts', { message_ids: JSON.stringify(ids.slice(0, 64)) }); }
-    close(): void { this.entryOperation++; this.disposed = true; this.generation++; this.releaseSource(); this.source = null; this.abort.abort(); this.cancelPages(); if (this.retry !== null)
+    close(): void { this.restorationOperation++; this.entryOperation++; this.disposed = true; this.generation++; this.releaseSource(); this.source = null; this.abort.abort(); this.cancelPages(); if (this.retry !== null)
         clearTimeout(this.retry); this.retry = null; this.pages = []; this.status = null; this.requests.clear(); if (this.rangeTimer !== null)
         clearTimeout(this.rangeTimer); this.rangeTimer = null; }
 }

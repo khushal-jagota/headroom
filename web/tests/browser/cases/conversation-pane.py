@@ -3064,6 +3064,260 @@ def _position_commit(browser, url):
         (output/'position-commit-latest.json').write_text(json.dumps(proof,indent=2))
         page.close()
 
+def _text_tab_return(browser, url, output, *, completion_order=None):
+    """Protect actual character lines, which row offsets cannot identify after lazy layout."""
+    import json
+    import time
+
+    started = time.perf_counter()
+    proof = []
+    if completion_order not in (None, 'history-first', 'body-first'):
+        raise ValueError('Unknown text restoration completion order')
+    page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
+    # This observer reads native text nodes and Range geometry. No product anchor,
+    # rendering marker or wrapper identity supplies the correctness assertion.
+    page.add_init_script('''
+    window.__restorationFailure={kind:null,failedOperation:null,failures:0,source:null,retriedSameSource:false};
+    const NativeWorker=window.Worker;
+    window.Worker=class extends NativeWorker {
+      postMessage(request,...args){
+        const probe=window.__restorationFailure;
+        if(request.kind==='markdown'&&request.source?.startsWith('Late paragraph 2000.0.')){
+          if(probe.kind==='parser'){
+            probe.kind=null;probe.failedOperation='parser';probe.failures++;probe.source=request.source;
+            queueMicrotask(()=>this.onmessage?.({data:{id:request.id,error:'Injected temporary Markdown parser failure'}}));return;
+          }
+          if(probe.failedOperation==='parser'&&probe.source===request.source)probe.retriedSameSource=true;
+        }
+        return super.postMessage(request,...args);
+      }
+    };
+    const nativeDigest=crypto.subtle.digest.bind(crypto.subtle);
+    crypto.subtle.digest=(algorithm,input)=>{
+      const source=new TextDecoder('utf-16le').decode(input),probe=window.__restorationFailure;
+      if(source.startsWith('Late paragraph 2000.0.')){
+        if(probe.kind==='digest'){
+          probe.kind=null;probe.failedOperation='digest';probe.failures++;probe.source=source;
+          return Promise.reject(new Error('Injected temporary Markdown digest failure'));
+        }
+        if(probe.failedOperation==='digest'&&probe.source===source)probe.retriedSameSource=true;
+      }
+      return nativeDigest(algorithm,input);
+    };
+    window.__readCharacter = (held=null) => {
+      const thread=document.querySelector('[data-conversation-thread]');
+      if(!thread)return null;
+      const viewport=thread.getBoundingClientRect();
+      const walker=document.createTreeWalker(thread,NodeFilter.SHOW_TEXT);
+      for(let node;node=walker.nextNode();){
+        if(!node.parentElement.closest('.markdown-block')||!node.textContent.trim())continue;
+        if(held&&node.textContent!==held.text)continue;
+        const range=document.createRange();range.selectNodeContents(node);
+        if(!held&&!Array.from(range.getClientRects()).some(rect=>rect.bottom>viewport.top+24&&rect.top<viewport.bottom))continue;
+        const begin=held?held.character:0,end=held?begin+1:node.length;
+        for(let character=begin;character<end;character++){
+          range.setStart(node,character);range.setEnd(node,character+1);
+          const rect=range.getBoundingClientRect();
+          if(rect.width&&rect.height&&(held||rect.top>=viewport.top+24&&rect.bottom<=viewport.bottom))
+            return {text:node.textContent,character,offset:rect.top-viewport.top,
+              visible:rect.bottom>viewport.top&&rect.top<viewport.bottom};
+        }
+      }return null;
+    };''')
+    try:
+        for variant, backlog, order in (
+            ('paragraphs',20,'history-first'),('paragraphs',20,'body-first'),
+            ('paragraphs',0,'history-first'),('tall',20,'body-first'),
+            ('paragraphs',20,'cancel'),('paragraphs',20,'changed-source'),
+            ('paragraphs',20,'inline-parser-retry'),('paragraphs',20,'inline-digest-retry'),
+        ):
+            if completion_order is not None and (variant, backlog, order) != ('paragraphs', 20, completion_order):
+                continue
+            case = {'variant':variant,'backlog':backlog,'order':order}
+            proof.append(case)
+            page.goto(url+'?reader=1&text-restoration='+variant)
+            # Idle region state precedes deferred body admission. Wait for native
+            # target text before any wheel gesture can cancel initial placement.
+            page.wait_for_function('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+              const target=thread?.querySelector('[data-conversation-view-key="e2000"] .markdown-host');
+              return region?.dataset.conversationEntry==='complete'&&region.getAttribute('aria-busy')==='false'
+                &&getComputedStyle(region).visibility!=='hidden'&&getComputedStyle(thread).visibility!=='hidden'
+                &&target&&!target.hasAttribute('data-markdown-rendering')&&!target.querySelector('[aria-busy="true"]')
+                &&(target.textContent.includes('Late paragraph 2000.')||target.textContent.includes('Interior code line'));
+            }''')
+            _settle_conversation_layout(page)
+            thread=page.locator('[data-conversation-thread]')
+            latest=page.get_by_role('button',name='Jump to latest message',exact=True)
+            if latest.is_visible():
+                latest.click()
+            page.wait_for_function('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+              const text=window.__readCharacter()?.text;
+              return region?.getAttribute('aria-busy')==='false'&&thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1
+                &&text&&(text.includes('Late paragraph 2000.')||text.includes('Interior code line'));
+            }''')
+            _settle_conversation_layout(page)
+            thread.hover()
+            page.mouse.wheel(0,-600 if backlog==0 else -2400)
+            _settle_conversation_layout(page)
+            held=page.evaluate('window.__readCharacter()')
+            assert held and ('Late paragraph 2000.' in held['text'] or 'Interior code line' in held['text']),held
+            case['held']=held
+            page.screenshot(path=str(output/f'text-return-{variant}-{backlog}-{order}-before.png'))
+            page.evaluate('''() => {
+              window.__fixtureVisible=false;
+              Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__fixtureVisible?'visible':'hidden'});
+              document.dispatchEvent(new Event('visibilitychange'));
+            }''')
+            page.wait_for_timeout(100)
+            page.evaluate('''count=>{
+              window.__backlog(count);Object.assign(window.__returnProbe,{hold:true,bodies:true,bodyHold:true});
+              window.__textFrames=[];window.__stopTextFrames=false;
+            }''',backlog)
+            if order=='cancel':
+                page.evaluate('window.__returnProbe.holdTargetOnly=true')
+            if order.startswith('inline-'):
+                page.evaluate('''kind=>{
+                  window.__returnProbe.inlineTarget=true;
+                  window.__restorationFailure.kind=kind;
+                }''','parser' if order=='inline-parser-retry' else 'digest')
+            page.evaluate('''held=>{
+              const sample=()=>{
+                const thread=document.querySelector('[data-conversation-thread]');
+                const region=document.querySelector('.conversation-transcript-region');
+                const visible=thread&&region&&getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden';
+                const roots=[...document.querySelectorAll('[data-visible-content-state=retained]')]
+                  .filter(node=>!node.parentElement?.closest('[data-visible-content-state=retained]')).length;
+                window.__textFrames.push({ms:performance.now(),visible,character:window.__readCharacter(held),
+                  retainedRoots:roots,rows:document.querySelectorAll('[data-conversation-view-key]').length});
+                if(!window.__stopTextFrames)requestAnimationFrame(sample);
+              };window.__fixtureVisible=true;requestAnimationFrame(sample);document.dispatchEvent(new Event('visibilitychange'));
+            }''',held)
+            if backlog:
+                page.wait_for_function('window.__returnProbe.waiting>0')
+            if order.startswith('inline-'):
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release();window.__returnProbe.releaseBodies()')
+                page.locator('[data-conversation-restoration-status="failed"]').wait_for(state='visible')
+                page.get_by_role('button',name='Retry conversation position',exact=True).click()
+                page.wait_for_function('window.__restorationFailure.retriedSameSource')
+                failure=page.evaluate('({failures:window.__restorationFailure.failures,retriedSameSource:window.__restorationFailure.retriedSameSource})')
+                assert failure=={'failures':1,'retriedSameSource':True},failure
+                case['failure']=failure
+            if order in ('cancel','changed-source'):
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.locator('[data-conversation-restoration-status="pending"]').wait_for(state='visible')
+                if order=='cancel':
+                    page.wait_for_function('window.__returnProbe.targetBodyWaiting>0')
+                    page.get_by_role('button',name='Jump to latest message',exact=True).click()
+                    page.wait_for_function("!document.querySelector('[data-conversation-restoration-status=\"pending\"]')")
+                    page.wait_for_function('''() => {
+                      const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+                      return thread&&region&&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true'
+                        &&thread.scrollHeight-thread.clientHeight-thread.scrollTop<=1&&window.__readCharacter()?.text.includes('Owner answer 20');
+                    }''')
+                    _settle_conversation_layout(page)
+                    before=page.evaluate("({scroll:document.querySelector('[data-conversation-thread]').scrollTop,text:window.__readCharacter()})")
+                    page.evaluate('window.__returnProbe.releaseBodies()')
+                    page.wait_for_timeout(400)
+                    after=page.evaluate("({scroll:document.querySelector('[data-conversation-thread]').scrollTop,text:window.__readCharacter()})")
+                    assert before==after, ('Canceled completion moved the visible text',before,after)
+                    case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
+                else:
+                    page.evaluate('window.__returnProbe.changedSource=true;window.__returnProbe.releaseBodies()')
+                    page.locator('[data-conversation-restoration-status="unavailable"]').wait_for(state='visible')
+                    page.get_by_role('button',name='Jump to latest message',exact=True).click()
+                    _settle_conversation_layout(page)
+                    case['unavailable']=True
+                case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+                assert all(frame['retainedRoots']<=4 and frame['rows']<=300 for frame in case['frames']),case
+                page.screenshot(path=str(output/f'text-return-{order}.png'))
+                continue
+            if order.startswith('inline-'):
+                pass
+            elif order=='body-first':
+                page.evaluate('window.__returnProbe.release()')
+                # The snapshot's body admission can finish while anchor history is held.
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.evaluate('window.__returnProbe.releaseBodies()')
+                page.wait_for_timeout(150)
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+            else:
+                page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
+                page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                page.wait_for_timeout(150)
+                page.evaluate('window.__returnProbe.releaseBodies()')
+            page.wait_for_function('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
+              return thread&&region&&getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
+            }''',timeout=15000)
+            page.wait_for_timeout(500)
+            if variant=='tall':
+                # A late font metric change moves the saved interior line inside one block.
+                page.add_style_tag(content='[data-conversation-thread] pre code { line-height: 1.8; }')
+                page.wait_for_timeout(400)
+            case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
+            case['after']=page.evaluate('window.__readCharacter()')
+            page.screenshot(path=str(output/f'text-return-{variant}-{backlog}-{order}-after.png'))
+            visible=[frame for frame in case['frames'] if frame['visible']]
+            assert visible,case
+            bad=[frame for frame in visible if frame['character'] is None or not frame['character']['visible'] or abs(frame['character']['offset']-held['offset'])>1]
+            assert not bad, f"Visible text line changed after lazy restoration: held={held!r}, first_bad={bad[:1]!r}, after={case['after']!r}"
+            assert all(frame['retainedRoots']<=4 and frame['rows']<=300 for frame in case['frames']),case
+            case['groups']=page.evaluate('''() => {
+              const thread=document.querySelector('[data-conversation-thread]'),viewport=thread.getBoundingClientRect();
+              const mounted=[...thread.querySelectorAll('[data-markdown-window]')].filter(node=>node.textContent.trim());
+              const distant=mounted.filter(node=>{const rect=node.getBoundingClientRect();return rect.bottom<viewport.top-256||rect.top>viewport.bottom+256;});
+              return {mounted:mounted.length,distant:distant.length,
+                unretainedDistant:distant.filter(node=>!node.closest('[data-visible-content-state=retained]')).length};
+            }''')
+            assert case['groups']['unretainedDistant']<=1,case['groups']
+            if backlog and not order.startswith('inline-'):
+                # A settled target must leave admission when real navigation moves it
+                # outside the intersection margin. A leaked demand keeps it active.
+                page.evaluate('''held=>{
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  const walker=document.createTreeWalker(thread,NodeFilter.SHOW_TEXT);
+                  window.__settledTargetGroup=null;
+                  for(let node;node=walker.nextNode();)if(node.textContent===held.text){
+                    window.__settledTargetGroup=node.parentElement.closest('[data-markdown-window]')??node.parentElement.closest('.markdown-host');break;
+                  }
+                }''',held)
+                thread.hover()
+                page.mouse.wheel(0,10000)
+                _settle_conversation_layout(page)
+                page.wait_for_timeout(100)
+                cleanup=page.evaluate('''() => {
+                  const target=window.__settledTargetGroup,thread=document.querySelector('[data-conversation-thread]');
+                  if(!target?.isConnected)return {connected:false};
+                  const rect=target.getBoundingClientRect(),viewport=thread.getBoundingClientRect();
+                  return {connected:true,state:target.dataset.visibleContentState,
+                    distant:rect.bottom<viewport.top-256||rect.top>viewport.bottom+256};
+                }''')
+                assert not cleanup['connected'] or cleanup['distant'] and cleanup['state']!='active',cleanup
+                case['navigationCleanup']=cleanup
+                # Replacement after navigation must not reactivate the old path.
+                page.evaluate('''() => {
+                  window.__fixtureVisible=false;document.dispatchEvent(new Event('visibilitychange'));
+                }''')
+                page.wait_for_timeout(50)
+                page.evaluate('window.__fixtureVisible=true;document.dispatchEvent(new Event("visibilitychange"))')
+                _settle_conversation_layout(page)
+                page.wait_for_timeout(100)
+                swapped=page.evaluate('''() => {
+                  const target=window.__settledTargetGroup;
+                  return !target?.isConnected||target.dataset.visibleContentState!=='active';
+                }''')
+                assert swapped,'Reader replacement reactivated a released, offscreen text target'
+                case['readerSwapCleanup']=swapped
+        print('TEXT_TAB_RETURN_PROOF '+json.dumps({'cases':len(proof),'seconds':round(time.perf_counter()-started,3),'newHosts':0}),flush=True)
+    finally:
+        page.screenshot(path=str(output/'text-return-last.png'))
+        (output/'text-tab-return-proof.json').write_text(json.dumps({'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0},indent=2))
+        page.close()
+
+
 def _tab_return(browser, url):
     """A remembered row and its pixel offset survive hidden backlog admission."""
     import json
@@ -3074,6 +3328,7 @@ def _tab_return(browser, url):
     started = time.perf_counter()
     output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
     output.mkdir(parents=True, exist_ok=True)
+    _text_tab_return(browser, url, output)
     proof = []
     page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
     reading = """() => {

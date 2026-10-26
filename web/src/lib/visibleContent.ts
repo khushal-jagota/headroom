@@ -3,11 +3,50 @@ import { VISIBLE_CONTENT_INACTIVE_LIMIT, VISIBLE_CONTENT_ROOT_MARGIN, VISIBLE_CO
 type Lease = {
   element: HTMLElement;
   release(): void;
+  publish(): void;
   inactive(): boolean;
   inactiveOrder(): number;
 };
 type Scope = { leases: Set<Lease>; inactive: Set<Lease>; clock: number };
 const scopes = new WeakMap<Document, Scope>();
+// Native frames report completion to every containing observer. Weak ownership
+// also lets unobserved small Markdown sample the same relevant readiness.
+const loadedFrames = new WeakSet<HTMLIFrameElement>();
+
+/** Readiness of layout that can move this leaf, without a whole-document wait. */
+export function visibleContentTargetReady(element: HTMLElement, target: Node): boolean {
+  if (!element.contains(target)) return false;
+  for (let ancestor = target.parentElement; ancestor && ancestor !== element; ancestor = ancestor.parentElement) {
+    if (ancestor.matches('[aria-busy="true"], [data-visible-content-restoring]')) return false;
+  }
+  const nearestGroup = target.parentElement?.closest<HTMLElement>('[data-markdown-window]');
+  const group = nearestGroup && element.contains(nearestGroup) ? nearestGroup : element;
+  const relevant = (candidate: Element) => candidate.contains(target) ||
+    Boolean(candidate.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING);
+  if ([...group.querySelectorAll('[aria-busy="true"], [data-visible-content-restoring]')].some(relevant)) return false;
+  if ([...group.querySelectorAll('img')].some(image => relevant(image) && !image.complete)) return false;
+  if ([...group.querySelectorAll('iframe')].some(frame => relevant(frame) && !loadedFrames.has(frame))) return false;
+  return true;
+}
+type ReadinessScope = () => Node | null;
+const explicitDemands = new WeakMap<HTMLElement, Set<ReadinessScope>>();
+const publishers = new WeakMap<HTMLElement, () => void>();
+
+/** Admit one scoped target through the ordinary observer and retention policy. */
+export function demandVisibleContent(element: HTMLElement, readinessScope: ReadinessScope): () => void {
+  let demands = explicitDemands.get(element);
+  if (!demands) { demands = new Set(); explicitDemands.set(element, demands); }
+  demands.add(readinessScope);
+  publishers.get(element)?.();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true; demands.delete(readinessScope);
+    if (!demands.size) explicitDemands.delete(element);
+    publishers.get(element)?.();
+  };
+}
+
 const geometry = new WeakMap<HTMLElement, { hold(): void; reset(): void }>();
 
 /** Keep measured geometry while a mounted view replaces asynchronous content. */
@@ -42,7 +81,6 @@ export function observeVisibleContent(
   let originalMaxHeight = '';
   let originalOverflow = '';
   let frame = 0;
-  const loadedFrames = new WeakSet<HTMLIFrameElement>();
 
   function stopFrame() { cancelAnimationFrame(frame); frame = 0; }
   function reserve() {
@@ -67,6 +105,13 @@ export function observeVisibleContent(
     element.style.overflow = 'hidden';
   }
   function contentReady() {
+    const scopes = explicitDemands.get(element);
+    if (scopes?.size) {
+      return [...scopes].every(scope => {
+        const target = scope();
+        return target !== null && visibleContentTargetReady(element, target);
+      });
+    }
     if (element.matches('img') && !(element as HTMLImageElement).complete) return false;
     if (element.querySelector('[aria-busy="true"], [data-visible-content-restoring]')) return false;
     if ([...element.querySelectorAll('img')].some(image => !image.complete)) return false;
@@ -119,7 +164,7 @@ export function observeVisibleContent(
   element.addEventListener('load', loaded, true);
   element.addEventListener('error', loaded, true);
 
-  const lease: Lease = { element, release,
+  const lease: Lease = { element, release, publish,
     inactive: () => admitted && !demanded,
     inactiveOrder: () => inactiveOrder
   };
@@ -166,10 +211,10 @@ export function observeVisibleContent(
     if (destroyed) return;
     const ancestorReleased = element.parentElement?.closest('[data-visible-content-state="released"]');
     const wasDemanded = demanded;
-    demanded = intersecting && owner.visibilityState !== 'hidden' && !ancestorReleased;
+    demanded = (intersecting || Boolean(explicitDemands.get(element)?.size)) && owner.visibilityState !== 'hidden' && !ancestorReleased;
     if (demanded) {
       retention.inactive.delete(lease);
-      element.dataset.visibleContentState = 'active';
+      if (element.dataset.visibleContentState !== 'active') element.dataset.visibleContentState = 'active';
       if (!admitted) {
         admitted = true;
         if (reserved) element.dataset.visibleContentRestoring = '';
@@ -181,11 +226,15 @@ export function observeVisibleContent(
         release();
       } else {
         if (wasDemanded) inactiveOrder = ++retention.clock;
-        element.dataset.visibleContentState = 'retained';
+        if (element.dataset.visibleContentState !== 'retained') element.dataset.visibleContentState = 'retained';
       }
     }
     rebalance();
+    scheduleReady();
   }
+  publishers.set(element, publish);
+  // An operation can request this host before its lazy surface exists.
+  if (explicitDemands.get(element)?.size) publish();
   const resize = new ResizeObserver(entries => {
     const nextWidth = element.getBoundingClientRect().width;
     if (reserved && Math.abs(nextWidth - width) > 1) {
@@ -206,6 +255,12 @@ export function observeVisibleContent(
   resize.observe(element);
   intersection.observe(element);
   owner.addEventListener('visibilitychange', publish);
+  const ancestorMutations = new MutationObserver(publish);
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor.hasAttribute('data-visible-content-state')) {
+      ancestorMutations.observe(ancestor, { attributes: true, attributeFilter: ['data-visible-content-state'] });
+    }
+  }
   return () => {
     destroyed = true;
     retention.inactive.delete(lease);
@@ -214,11 +269,13 @@ export function observeVisibleContent(
     resize.disconnect();
     intersection.disconnect();
     mutations.disconnect();
+    ancestorMutations.disconnect();
     element.removeEventListener('load', loaded, true);
     element.removeEventListener('error', loaded, true);
     owner.removeEventListener('visibilitychange', publish);
     reset();
     geometry.delete(element);
+    publishers.delete(element);
     delete element.dataset.visibleContentState;
   };
 }
