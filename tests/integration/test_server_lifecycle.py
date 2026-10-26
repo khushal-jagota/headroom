@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import socket
@@ -12,7 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-from tests.e2e.harness import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
+import pytest
+from tests.support.server import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
 
 
 def _direct_children(parent_pid: int) -> list[int]:
@@ -36,26 +36,6 @@ def _process_exists(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
-
-
-def _process_is_zombie(pid: int) -> bool:
-    result = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip().startswith("Z")
-
-
-def _process_is_stopped(pid: int) -> bool:
-    result = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip().startswith("T")
 
 
 def _wait_until(predicate: Callable[[], bool], message: str, timeout: float = 10.0) -> None:
@@ -173,54 +153,6 @@ def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandl
     _wait_until(lambda: _nothing_listens(server.port), "server port remained open")
 
 
-def test_unexpected_child_exit_wins_over_a_queued_restart(
-    server_factory: Callable[..., ServerHandle],
-) -> None:
-    server = server_factory()
-    supervisor_pid = server.proc.pid
-    application_pid = _wait_for_one_child(supervisor_pid)
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    supervisor_resumed = False
-    try:
-        os.kill(supervisor_pid, signal.SIGSTOP)
-        _wait_until(
-            lambda: _process_is_stopped(supervisor_pid),
-            "supervisor did not stop before the queued restart setup",
-        )
-        client.connect(str(server.control_socket_path))
-        request = json.dumps({"version": 1, "operation": "restart"}).encode() + b"\n"
-        client.sendall(request)
-        os.kill(application_pid, signal.SIGKILL)
-        _wait_until(
-            lambda: _process_is_zombie(application_pid),
-            "killed application child did not become observable before supervisor resume",
-        )
-        os.kill(supervisor_pid, signal.SIGCONT)
-        supervisor_resumed = True
-        client.settimeout(5.0)
-        try:
-            response = client.recv(4096)
-        except (ConnectionResetError, TimeoutError):
-            response = b""
-    finally:
-        if not supervisor_resumed:
-            os.kill(supervisor_pid, signal.SIGCONT)
-        client.close()
-
-    try:
-        server.proc.wait(timeout=0.75)
-        supervisor_ended = True
-    except subprocess.TimeoutExpired:
-        supervisor_ended = False
-        server.proc.terminate()
-        server.proc.wait(timeout=10.0)
-
-    assert b'"status":"accepted"' not in response
-    assert supervisor_ended
-    assert server.proc.returncode != 0
-    assert not server.control_socket_path.exists()
-
-
 def test_restart_from_ticket_worktree_uses_captured_launch_root(
     server: ServerHandle,
     tmp_path: Path,
@@ -241,3 +173,43 @@ def test_restart_from_ticket_worktree_uses_captured_launch_root(
     assert "data-svelte-app" in replacement_shell
     assert replacement_shell == original_shell
     assert not (ticket_worktree / "web" / "dist").exists()
+
+
+@pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="requires Linux /proc masks")
+def test_incomplete_control_request_cannot_block_shutdown_or_child_signal_mask(
+    server: ServerHandle,
+) -> None:
+    application_pid = _wait_for_one_child(server.proc.pid)
+    status = Path(f"/proc/{application_pid}/status").read_text()
+    mask_text = next(line.split()[1] for line in status.splitlines() if line.startswith("SigBlk:"))
+    watched = sum(1 << (value - 1) for value in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD))
+    assert int(mask_text, 16) & watched == 0
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(str(server.control_socket_path))
+        client.sendall(b'{"version":')
+        server.proc.terminate()
+        server.proc.wait(timeout=5)
+        assert server.proc.returncode == 0
+    assert not server.control_socket_path.exists()
+    assert not _process_exists(application_pid)
+    assert _nothing_listens(server.port)
+
+
+def test_unexpected_child_exit_wins_over_accepted_restart_with_open_client(
+    server: ServerHandle,
+) -> None:
+    application_pid = _wait_for_one_child(server.proc.pid)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(5)
+        client.connect(str(server.control_socket_path))
+        client.sendall(b'{"version":1,"operation":"restart"}\n')
+        assert b'"accepted"' in client.recv(4096)
+        # The acceptance response proves that this open client holds the restart.
+        # Verify direct fixture parentage immediately before the exact-child signal.
+        assert _direct_children(server.proc.pid) == [application_pid]
+        os.kill(application_pid, signal.SIGKILL)
+        server.proc.wait(timeout=5)
+        assert server.proc.returncode == 1
+    assert not server.control_socket_path.exists()
+    assert not _process_exists(application_pid)
+    assert _nothing_listens(server.port)

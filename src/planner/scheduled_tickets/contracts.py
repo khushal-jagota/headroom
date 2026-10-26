@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from planner.core.contracts import Priority
 from planner.tickets.contracts import TicketLocale
 
 
@@ -22,28 +21,18 @@ class OccurrenceOutcome(StrEnum):
     failed = "failed"
 
 
-class ScheduledTicketPlacementMode(StrEnum):
-    current_sprint = "current_sprint"
-    backlog = "backlog"
-
-
 @dataclass(frozen=True)
 class ScheduledTicketTemplate:
     title: str
     worker_type: str
     kickoff_note: str
-    priority: Priority
     deadline: str | None
     project_id: str | None
-    placement_mode: ScheduledTicketPlacementMode
-    sprint_item_id: str | None
+    manager_id: str | None
     employee_backend: str | None
     employee_launch_model: str | None
     blocked_by_ticket_ids: tuple[str, ...]
-    # Null current_sprint resolves at occurrence time. A non-null value preserves the
-    # fixed Sprint of a legacy direct/Other schedule migrated into this contract.
-    sprint_id: str | None = None
-    orchestrator_kind: str = field(default="chief", kw_only=True)
+    manager_kind: str = field(default="chief", kw_only=True)
     locale: TicketLocale | None = field(default=None, kw_only=True)
 
 
@@ -62,7 +51,7 @@ class ScheduledTicketSchedule:
 class ScheduledTicketOccurrence:
     schedule_id: str
     occurrence_key: str
-    target_day_id: str
+    target_date: str
     outcome: OccurrenceOutcome
     ticket_id: str | None
     error: str | None

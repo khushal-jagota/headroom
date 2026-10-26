@@ -1,3 +1,4 @@
+import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
  * Every shape here is exactly what `/api/conversation` serializes, and every call is a
@@ -41,6 +42,7 @@ export type ToolCallStatus = "completed" | "failed";
 
 export type PromptDeliveryRefusalReason =
   | "no_such_conversation"
+  | "model_resolution_failed"
   | "backend_did_not_start"
   | "session_did_not_load"
   | "write_to_backend_failed"
@@ -80,7 +82,7 @@ export type MessageContent = MessagePiece[];
 export type StoredMessageContent = { text: string } | { content: MessagePiece[] };
 
 export type Principal = {
-  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  kind: "owner" | "chief" | "manager" | "ticket";
   id: string;
 };
 
@@ -219,8 +221,6 @@ export type ConversationView = {
   reasoning_effort: string | null;
   workspace_folder: string;
   access: string;
-  role_text: string | null;
-  identity_environment_variable_names: string[];
   latest_sequence: number;
   owner_read_through_sequence: number;
   is_running: boolean;
@@ -229,7 +229,6 @@ export type ConversationView = {
   pending_user_input: PendingUserInput | null;
   executor_context?: { child: ExecutorChildReference; turn: ExecutorTurn | null } | null;
   executor_asks?: ExecutorAskRecord[];
-  composer_catalog: ComposerCatalogEntry[];
 };
 
 /** One earlier conversation of the same owner, as the record lists it.
@@ -281,6 +280,7 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
+        refusal_detail?: string | null;
         sender_message_id?: string;
       } & AddressedMessageFields
     >
@@ -294,7 +294,7 @@ export type ConversationEvent =
     >
   | Row<
       "prompt_discarded",
-      StoredMessageContent & { sender_label: string; sender_message_id?: string }
+      StoredMessageContent & { sender_label: string; sender_message_id?: string; suppression_reason?: string | null }
         & AddressedMessageFields
     >
   | Row<
@@ -385,7 +385,8 @@ export type PromptDeliveryFate =
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
   | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
-  | { fate: "uncertain" };
+  | { fate: "uncertain" }
+  | { fate: "suppressed"; reason: string };
 
 export type HeldPromptPromotionResult =
   | { promoted: false }
@@ -394,6 +395,7 @@ export type HeldPromptPromotionResult =
       | { fate: "injected" }
       | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
       | { fate: "uncertain" }
+      | { fate: "suppressed"; reason: string }
     ));
 
 export type BackendIdentity = {
@@ -406,6 +408,11 @@ export type BackendIdentity = {
 export type BackendModel = {
   model_id: string;
   display_name: string | null;
+  /** Provider-owned variant and its current concrete model. */
+  selected_variant?: string | null;
+  resolved_model_id?: string | null;
+  /** A failed catalogue refresh can leave a last known-good model available. */
+  catalogue_warning?: string | null;
   /** Disabled models remain visible on Backends, but no picker offers them for a run. */
   enabled: boolean;
   /** What this model really is, when the name alone does not say — an alias and the
@@ -505,6 +512,7 @@ export type SendPromptBody = {
  * to a conversation that does not exist yet they are what to create it on.
  */
 export type OwnerSendBody = {
+  owner_read_through_sequence?: number;
   conversation_id: string | null;
   backend_key?: string;
   model?: string;
@@ -573,6 +581,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ConversationWireError("The server sent something that is not JSON.", response.status);
     }
   }
+  if (isDiagnosticExpiry(raw)) throw new DiagnosticExpiredError();
   throw new ConversationWireError(detailSentence(raw, response.status), response.status);
 }
 
@@ -601,6 +610,21 @@ export function readConversation(conversationId: string): Promise<ConversationVi
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
 }
 
+/** The composer's typeahead menu, which is read on its own occasions.
+ *
+ * It used to arrive inside the record, where it was 97.4% of it - 66 KB of commands and
+ * skills against about 950 bytes of conversation - and the record is re-read every time
+ * the conversation gains a row. Watching an agent work for seventy seconds sent the same
+ * closed menu 68 times. */
+export async function readComposerCatalog(
+  conversationId: string
+): Promise<ComposerCatalogEntry[]> {
+  const answer = await request<{ composer_catalog: ComposerCatalogEntry[] }>(
+    `/conversations/${encodeURIComponent(conversationId)}/composer-catalog`
+  );
+  return answer.composer_catalog;
+}
+
 export async function advanceOwnerRead(
   conversationId: string,
   throughSequence: number
@@ -625,10 +649,11 @@ export async function readEventsAfter(
 /** The whole output of one finished tool call, which an open does not carry. */
 export async function readToolCallDetail(
   conversationId: string,
-  sequence: number
+  sequence: number,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const answer = await request<{ detail: string | null }>(
-    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`
+    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`, {signal}
   );
   return answer.detail;
 }
@@ -647,7 +672,6 @@ export async function killConversation(conversationId: string): Promise<void> {
   );
 }
 
-/** Remote landed means saved on VPS; only application evidence proves delivery to Mac. */
 export function answerPermissionAsk(
   conversationId: string,
   askId: string,
@@ -656,11 +680,10 @@ export function answerPermissionAsk(
 ): Promise<{ landed: boolean }> {
   return request<{ landed: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}/permission-answers`,
-    postJson({ ask_id: askId, option_id: optionId, executor_ask: executorAsk })
+    postJson({ ask_id: askId, option_id: optionId, ...(executorAsk ? {executor_ask: executorAsk} : {}) })
   );
 }
 
-/** Remote landed means saved on VPS; only application evidence proves delivery to Mac. */
 export function answerUserInput(
   conversationId: string,
   requestId: string,
@@ -669,7 +692,7 @@ export function answerUserInput(
 ): Promise<{ landed: boolean }> {
   return request<{ landed: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
-    postJson({ request_id: requestId, answers, executor_ask: executorAsk })
+    postJson({ request_id: requestId, answers, ...(executorAsk ? {executor_ask: executorAsk} : {}) })
   );
 }
 

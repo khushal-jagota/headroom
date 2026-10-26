@@ -211,6 +211,8 @@ def test_unknown_remote_source_refuses_before_request(
 def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_and_restart(
     tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uncertain_return: bool
 ) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+
     async def run() -> None:
         from pydantic import TypeAdapter
 
@@ -236,7 +238,10 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
 
             return cast(BackendChildFactory, create)
 
+        from planner.executor.configuration import ExecutorPaths
+
         registry = NativeChildRegistry(
+            paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=IDENTITY.executor_incarnation,
             spool=FilesystemSpool(tmp_path / "spool"),
             factory=native_factory,

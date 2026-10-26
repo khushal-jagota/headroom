@@ -4,7 +4,7 @@ import PermissionAskActions from "../src/components/conversation/PermissionAskAc
 import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
 import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 import TurnAnchor from "../src/components/conversation/TurnAnchor.svelte";
-import { executorAnswerAvailable, executorAnswerSentence, executorUnavailableSentence, historicalExecutorAskRecord } from "../src/lib/conversation/executorEvidence";
+import { executorAnswerAvailable, currentExecutorAskRecord, currentExecutorAnswers, executorAnswerSentence, executorUnavailableSentence } from "../src/lib/conversation/executorEvidence";
 import type { ConversationView, ExecutorAskEvidence, ExecutorAskRecord } from "../src/lib/conversation/wire";
 
 const child = { executor_incarnation: "mac-incarnation", child_id: "child", conversation_id: "conversation" };
@@ -16,9 +16,9 @@ const evidence = (kind: "permission" | "user_input", ask_id: string): ExecutorAs
 function snapshot(): ConversationView {
   return {
     conversation_id: "conversation", backend_key: "codex", supports_steer: false, model: null,
-    reasoning_effort: null, workspace_folder: "/workspace", access: "full", role_text: null,
-    identity_environment_variable_names: [], latest_sequence: 10, owner_read_through_sequence: 0,
-    is_running: true, held_prompts: [], composer_catalog: [], executor_context: { child, turn },
+    reasoning_effort: null, workspace_folder: "/workspace", access: "full",
+ latest_sequence: 10, owner_read_through_sequence: 0,
+    is_running: true, held_prompts: [], executor_context: { child, turn },
     pending_permission_ask: { ask_id: "permission", title: "Allow?", detail: null, options: [], answer_available: true, executor_evidence: evidence("permission", "permission") },
     pending_user_input: { request_id: "questions", questions: [], answer_available: false, executor_evidence: evidence("user_input", "questions") }
   };
@@ -75,6 +75,25 @@ describe("exact executor ask evidence", () => {
     expect(executorAnswerAvailable(view, "permission", "permission", "vps")).toBe(true);
   });
 
+  it("uses the public request and its attested native binding independently", () => {
+    const view = snapshot();
+    view.pending_permission_ask!.ask_id = "turn-public:permission:native";
+    view.pending_permission_ask!.executor_evidence!.ask.ask_id = "native";
+    expect(executorAnswerAvailable(view,"permission","turn-public:permission:native","macos")).toBe(true);
+    expect(executorAnswerAvailable(view,"permission","native","macos")).toBe(false);
+    const proof=view.pending_permission_ask!.executor_evidence!;
+    view.executor_asks=[{evidence:proof,answer:null}];
+    expect(currentExecutorAskRecord(view,"permission","turn-public:permission:native")).toBe(view.executor_asks[0]);
+  });
+  it("retains current receipts after pending clears without attributing them to reused transcript IDs", () => {
+    const view=snapshot();
+    const proof=view.pending_permission_ask!.executor_evidence!;
+    view.executor_asks=[{evidence:proof,answer:{answer_id:"accepted",ask:proof.ask,accepted_at_vps_ms:100}}];
+    view.pending_permission_ask=null;
+    expect(currentExecutorAnswers(view)).toEqual(view.executor_asks);
+    view.executor_context={child:{...child,child_id:"replacement"},turn};
+    expect(currentExecutorAnswers(view)).toEqual([]);
+  });
   it("retains durable acceptance independently from callback application", () => {
     const proof = evidence("permission", "permission");
     const record: ExecutorAskRecord = { evidence: proof, answer: { answer_id: "answer", ask: proof.ask, accepted_at_vps_ms: 100 } };
@@ -85,17 +104,6 @@ describe("exact executor ask evidence", () => {
     proof.applied_at_mac_ms = 101;
     proof.reachability = "child_gone";
     expect(executorAnswerSentence(record)).toBe("Answer applied on Mac.");
-  });
-
-  it("does not attach a recorded answer to a reused ID in another turn or child", () => {
-    const first: ExecutorAskRecord = { evidence: evidence("permission", "reused"), answer: null };
-    const second = structuredClone(first);
-    second.evidence.ask.turn.turn_number += 1;
-    second.evidence.ask.child.child_id = "other-child";
-    second.answer = { answer_id: "other-answer", ask: second.evidence.ask, accepted_at_vps_ms: 100 };
-    expect(historicalExecutorAskRecord([first, second], "permission", "reused", 1)).toBeUndefined();
-    expect(historicalExecutorAskRecord([second], "permission", "reused", 2)).toBeUndefined();
-    expect(historicalExecutorAskRecord([second], "permission", "reused", 1)).toBe(second);
   });
 
   it.each(["child_gone", "callback_gone"] as const)("names confirmed %s instead of claiming an unknown pending callback", (reachability) => {
@@ -123,7 +131,7 @@ describe("unavailable request controls", () => {
   });
   it("shows uncertainty without inventing activity or overwriting completed turns", () => {
     const open = render(TurnAnchor, { props: { activityUncertain: true } }).body;
-    expect(open).toContain("Activity unknown. Last progress remains below.");
+    expect(open).toContain("Current activity on Mac is unknown.");
     expect(open).not.toContain("live-text-shimmer");
     const complete = render(TurnAnchor, { props: { activityUncertain: true, settled: true, ending: "completed", durationSeconds: 3 } }).body;
     expect(complete).not.toContain("Activity unknown");

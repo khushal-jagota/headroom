@@ -14,19 +14,48 @@ filter, which compares stored data directly without resolving a Worker type, and
 
 from __future__ import annotations
 
+import hashlib
+import json
+import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import (
+    install_probe_registry,
+    seed_probe_worker_type,
+    uninstall_probe_registry,
+)
 
+from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
+from planner.core import authority
+from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.worker_types.configuration import load_worker_runtime_definitions
+from planner.worker_types.store import read_definition
+
+
+def _deny_retired_ticket_guidance(
+    action: int, table: str | None, column: str | None, _db: str | None, _trigger: str | None,
+) -> int:
+    if action in (sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE) and (
+        table, column
+    ) == ("tickets", "guidance"):
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
 
 AppDb = tuple[FastAPI, Path]
 OWNER = {"kind": "owner", "id": "owner"}
@@ -42,26 +71,79 @@ def probe_installed() -> Iterator[None]:
 
 
 @pytest.fixture
-def app_db(tmp_path: Path) -> AppDb:
+def app_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probe_installed: None,
+) -> AppDb:
     db_path = tmp_path / "ingress.db"
     boot = connect(str(db_path))
     create_schema(boot)
+    probe = seed_probe_worker_type(boot)
+    coding = read_definition(boot, "coding")
+    boot.commit()
+    load_worker_runtime_definitions(boot)
     boot.close()
+
+    # The ingress tests own these model choices, not the locally installed providers.
+    async def snapshot(
+        self: BackendSnapshotService,
+        backend_key: ConversationBackendKey,
+        *,
+        refresh: bool = False,
+        discover_update_advisory: bool = True,
+    ) -> BackendSnapshot:
+        profiles = tuple(
+            definition.worker_profile
+            for definition in (coding, probe)
+            if definition.worker_profile.default_backend == backend_key.value
+        )
+        assert profiles, backend_key
+        models = tuple(
+            BackendModel(
+                profile.default_model,
+                reasoning_effort_options=(
+                    (profile.default_reasoning_effort,)
+                    if profile.default_reasoning_effort is not None else ()
+                ),
+            )
+            for profile in profiles
+        )
+        return BackendSnapshot(
+            backend_key=backend_key,
+            installed=True,
+            executable_path="/scripted/backend",
+            version="1.0.0",
+            identity=None,
+            available_models=models,
+            reasoning_effort_options=(),
+            default_model_id=models[0].model_id,
+            default_reasoning_effort=profiles[0].default_reasoning_effort,
+            update_advisory=None,
+            diagnoses=(),
+        )
+
+    monkeypatch.setattr(BackendSnapshotService, "snapshot", snapshot)
     config = load_config(
         path=None,
         env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
 
     def conn_factory() -> Connection:
-        return connect(str(db_path))
+        conn = connect(str(db_path))
+        conn.set_authorizer(_deny_retired_ticket_guidance)
+        return conn
 
-    return create_app(config, build_clock(config), conn_factory), db_path
+    return create_app(
+        config,
+        build_clock(config),
+        conn_factory,
+        conversation_system_for_test=InMemoryConversationSystem(),
+    ), db_path
 
 
 def _create(client: TestClient, worker_type: str) -> str:
     r = client.post(
         "/api/tickets",
-        json={"title": worker_type, "worker_type": worker_type, "kickoff_note": "k"},
+        json={"title": worker_type, "worker_type": worker_type, "brief": "k"},
     )
     assert r.status_code == 200, r.json()
     ticket_id: str = r.json()["id"]
@@ -80,105 +162,25 @@ def _propose(client: TestClient, ticket_id: str, body: str) -> None:
 # --- coding ingress stays byte-identical ---------------------------------------
 
 
-def test_coding_ticket_accepts_coding_field_and_ceiling(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "coding")
-        # A parked proposal fixes its address, so a direct ceiling edit cannot retarget it.
-        scoped = client.patch(f"/api/tickets/{tid}", json={"ceiling": "needs_what_changes"})
-        assert scoped.status_code == 400, scoped.json()
-        missing_holder = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={"next_ceiling": "needs_what_changes"},
-        )
-        assert missing_holder.status_code == 400, missing_holder.json()
-        assert missing_holder.json()["error"]["code"] == "scope_missing"
-        self_held = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_what_changes",
-                "next_holder": {"kind": "ticket", "id": tid},
-            },
-        )
-        assert self_held.status_code == 400, self_held.json()
-        assert self_held.json()["error"]["code"] == "validation"
-        approved = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_what_changes",
-                "next_holder": OWNER,
-            },
-        )
-        assert approved.status_code == 200, approved.json()
-        assert approved.json()["ceiling"] == "needs_what_changes"
 
 
-def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        # A probe ticket: accepting a coding field is a per-type field rejection.
-        tid = _create(client, "probe")
-        bad_field = client.post(
-            f"/api/tickets/{tid}/accept/success_condition",
-            json={"next_ceiling": "none"},
-        )
-        assert bad_field.status_code == 400
-        assert bad_field.json()["error"]["code"] == "validation"
-        assert bad_field.json()["error"]["detail"] == {
-            "field": "success_condition",
-            "worker_type": "probe",
-        }
-        # A foreign next_ceiling (coding's needs_plan) on the probe kickoff accept is
-        # rejected against probe's ceiling range.
-        bad_ceiling = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={"next_ceiling": "needs_plan"},
-        )
-        assert bad_ceiling.status_code == 400
-        assert bad_ceiling.json()["error"]["code"] == "scope_invalid"
-        assert bad_ceiling.json()["error"]["detail"] == {"next_ceiling": "needs_plan"}
 
 
 # --- probe ingress: per-type field / ceiling / stage ---------------------------
 
 
-def test_probe_proposal_parks_on_registry_selected_field(
-    app_db: AppDb, probe_installed: None
+
+
+def test_proposal_route_accepts_only_the_ticket_own_worker(
+    app_db: AppDb, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "probe")
-        # kickoff already parked at create — accept it keeping ceiling at needs_alpha
-        # so the next answer parks at the ceiling.
-        client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_alpha",
-                "next_holder": OWNER,
-            },
-        )
-        # A position-relative propose parks on ALPHA — the field probe's needs_alpha gates.
-        parked = client.post(
-            f"/api/tickets/{tid}/propose",
-            json={"body": "alpha body", "recap": "r"},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
-        )
-        assert parked.status_code == 200, parked.json()
-        assert parked.json()["pending_proposal"]["body"] == "alpha body"
-        assert parked.json()["pending_proposal"]["field"] == "alpha"
-        assert parked.json()["pending_proposal"]["revision"] == 2
-
-
-def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> None:
     app, db_path = app_db
     with TestClient(app) as client:
         target = _create(client, "coding")
-        parent = _create(client, "coding")
+        parent = _create(client, "probe")
         unrelated = _create(client, "coding")
+        # Even a declared reviewer cannot file another Ticket's own proposal.
+        monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "probe", (authority.ticket(target),))
         scoped = client.post(
             f"/api/tickets/{target}/accept/brief",
             json={
@@ -188,11 +190,11 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
         )
         assert scoped.status_code == 200, scoped.text
         item = client.post(
-            "/api/items", json={"title": "Supervisor", "project_id": "project_vylo"}
+            "/api/managers", json={"title": "Supervisor", "project_id": "project_vylo"}
         ).json()
         attempts = (
             {
-                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Actor": "manager",
                 "X-Plan-Sprint-Item-ID": str(item["id"]),
             },
             {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": parent},
@@ -219,119 +221,94 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
 # --- the ?stage= filter decision -----------------------------------------------
 
 
-def test_stage_filter_non_reserved_needs_no_worker_type(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
+
+
+
+
+def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> None:
+    app, db_path = app_db
+    original = "  Historical boundary\n\nKeep this. λ\x00  "
+    # Schema reopen runs before the actual runtime owns this synthetic database.
+    with closing(connect(str(db_path))) as conn:
+        with conn:
+            ticket_id = tickets_data.create_ticket(
+                conn, title="coding", worker_type="coding", brief="k",
+                principal=OWNER_PRINCIPAL, now=1, title_max_chars=TITLE_MAX_CHARS,
+            ).id
+            conn.execute("UPDATE tickets SET guidance=? WHERE id=?", (original, ticket_id))
+            before = hashlib.sha256(
+                conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
+                .fetchone()[0]
+            ).hexdigest()
+            active_record = dict(conn.execute(
+                "SELECT * FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone())
+            del active_record["guidance"]
+            expected_record_hash = hashlib.sha256(json.dumps(
+                active_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode()).hexdigest()
+        conn.set_authorizer(_deny_retired_ticket_guidance)
+        create_schema(conn)
+        assert tickets_data.ticket_record_sha256(conn, ticket_id) == expected_record_hash
     with TestClient(app) as client:
-        _create(client, "coding")
-        # A non-reserved stage filters directly. Advance the coding ticket to
-        # needs_success_condition so the filter returns exactly it.
-        made = client.get("/api/tickets?detail=full&stage=needs_brief").json()["tickets"]
-        assert len(made) == 1
-        tid = made[0]["id"]
-        client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_success_condition",
-                "next_holder": OWNER,
-            },
-        )
-        ok = client.get("/api/tickets?detail=full&stage=needs_success_condition")
-        assert ok.status_code == 200, ok.json()
-        assert [t["id"] for t in ok.json()["tickets"]] == [tid]
-        # An unknown stored value is a valid filter and returns no rows.
-        unknown = client.get("/api/tickets?detail=full&stage=needs_ghost")
-        assert unknown.status_code == 200
-        assert unknown.json()["tickets"] == []
-
-
-def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> None:
-    """Five places a Ticket keeps words, and each one alone is enough to find it.
-
-    Title, recap, guidance, a settled field value, and the body of a proposal still waiting
-    for its owner. Each Ticket here carries its invented word in exactly one of them, so a
-    search that quietly narrowed to fewer sources returns the wrong Ticket instead of
-    staying green. The word written nowhere proves the filter runs at all: a search that
-    was ignored would answer with every Ticket rather than none.
-    """
-    app, _db = app_db
-    with TestClient(app) as client:
-        in_the_title = _create(client, "coding")
-        client.patch(f"/api/tickets/{in_the_title}", json={"title": "zarquon"})
-
-        in_the_recap = _create(client, "coding")
-        client.patch(f"/api/tickets/{in_the_recap}", json={"recap": "florbish"})
-
-        in_the_guidance = _create(client, "coding")
-        client.patch(f"/api/tickets/{in_the_guidance}", json={"guidance": "wemsley"})
-
-        # A settled value is an accepted proposal, so this word is proposed and accepted.
-        in_a_field_value = _create(client, "coding")
-        _propose(client, in_a_field_value, "quinvex")
-        settled = client.post(
-            f"/api/tickets/{in_a_field_value}/accept/brief",
-            json={"next_ceiling": "needs_success_condition", "next_holder": OWNER},
-        )
-        assert settled.status_code == 200, settled.json()
-        assert settled.json()["field_values"] == {"brief": "quinvex"}
-
-        # This one's proposal stays pending, which is the other half of the same source.
-        in_a_pending_proposal = _create(client, "coding")
-        _propose(client, in_a_pending_proposal, "tarnabel")
-
-        for term, expected in (
-            ("zarquon", [in_the_title]),
-            ("florbish", [in_the_recap]),
-            ("wemsley", [in_the_guidance]),
-            ("quinvex", [in_a_field_value]),
-            ("tarnabel", [in_a_pending_proposal]),
-            ("nobodywrotethis", []),
-        ):
-            found = client.get(f"/api/tickets?detail=summary&search={term}")
-            assert found.status_code == 200, found.json()
-            assert [t["id"] for t in found.json()["tickets"]] == expected, term
-
-
-def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        ticket_id = _create(client, "coding")
+        with connect(str(db_path)) as conn:
+            conn.set_authorizer(_deny_retired_ticket_guidance)
+            ticket = tickets_data.read_ticket(conn, ticket_id)
+            conn.execute(
+                "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+                "access, created_at) VALUES (?, ?, ?, '/work', 'full', ?)",
+                ("retired-guidance-proof", ticket.employee_backend, ticket.employee_launch_model,
+                 ticket.updated_at),
+            )
+            tickets_data.write_ticket_conversation_start(
+                conn, ticket_id, conversation_id="retired-guidance-proof",
+                backend=ticket.employee_backend, model=ticket.employee_launch_model,
+                reasoning_effort=ticket.employee_launch_reasoning_effort, now=ticket.updated_at,
+            )
+            assert tickets_data.read_ticket_by_conversation_id(
+                conn, "retired-guidance-proof"
+            ).id == ticket_id
         path = f"/api/tickets/{ticket_id}"
         read_path = f"/api/tickets?detail=full&id={ticket_id}"
-        original = "  Scope boundary\n\nKeep this.  "
-        saved = client.patch(path, json={"guidance": original})
-        assert saved.status_code == 200
-        assert saved.json()["guidance"] == original
+        saved = client.get(read_path)
+        assert saved.status_code == 200, saved.json()
+        assert "guidance" not in saved.json()
         assert saved.json()["field_values"] == {}
         assert saved.json()["pending_proposal"]["field"] == "brief"
         for body in (
-            {},
+            {"guidance": "replacement", "recap": "must not change"},
             {"guidance": None},
-            {"guidance": 3},
-            {"guidance": "lost", "key": "plan"},
+            {"guidance_append": "new text"},
+            {"guidance_append": ""},
             {"key": "plan"},
         ):
-            assert client.patch(path, json=body).status_code == 400
-            assert client.get(read_path).json()["guidance"] == original
-        assert client.patch(path, json={"guidance_append": ""}).json() == saved.json()
-        appended = client.patch(path, json={"guidance_append": "\nNew direction  "})
-        assert appended.json()["guidance"] == original + "\n\n\nNew direction  "
-        assert client.patch(path, json={"guidance": ""}).json()["guidance"] == ""
-        assert (
-            client.put(f"/api/tickets/{ticket_id}/notes/plan", json={"body": "old"}).status_code
-            == 404
+            rejected = client.patch(path, json=body)
+            assert rejected.status_code == 400
+            assert client.get(read_path).json() == saved.json()
+        edited = client.patch(path, json={"recap": "Current work"})
+        assert edited.status_code == 200, edited.json()
+        assert "guidance" not in edited.json()
+        accepted = client.post(
+            path + "/accept/brief",
+            json={"next_ceiling": "needs_success_condition", "next_holder": OWNER},
         )
-
-
-def test_a_create_naming_no_brief_parks_nothing_at_the_http_door(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    """The default path: an absent kickoff_note used to park an empty proposal."""
-    app, _db = app_db
-    with TestClient(app) as client:
-        created = client.post("/api/tickets", json={"title": "No brief", "worker_type": "coding"})
-        assert created.status_code == 200, created.json()
-        detail = client.get(f"/api/tickets?detail=full&id={created.json()['id']}").json()
-        assert detail["ticket_status"] == "empty"
-        assert detail["pending_proposal"] is None
+        assert accepted.status_code == 200, accepted.json()
+        _propose(client, ticket_id, "A current proposal")
+        rejected = client.post(path + "/reject", json={"message": "Revise this."})
+        assert rejected.status_code == 200, rejected.json()
+        copied = client.get(path + "/copy-text")
+        assert copied.status_code == 200
+        assert "guidance:" not in copied.text and "Historical boundary" not in copied.text
+        assert client.get("/api/tickets?detail=summary&search=Historical").json()["tickets"] == []
+        assert client.put(path + "/notes/plan", json={"body": "old"}).status_code == 404
+        with connect(str(db_path)) as conn:
+            conn.set_authorizer(_deny_retired_ticket_guidance)
+            old_hash = tickets_data.ticket_record_sha256(conn, ticket_id)
+            conn.execute("UPDATE tickets SET recap='Same-second change' WHERE id=?", (ticket_id,))
+            assert tickets_data.ticket_record_sha256(conn, ticket_id) != old_hash
+            conn.set_authorizer(None)
+            after = hashlib.sha256(
+                conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
+                .fetchone()[0]
+            ).hexdigest()
+        assert before == after

@@ -12,10 +12,7 @@
     scheduledTaskCadenceLabel,
     type ScheduledTaskForm
   } from "../lib/scheduledTasks";
-  import type {
-    Priority,
-    ScheduledTask
-  } from "../lib/types";
+  import type { ScheduledTask } from "../lib/types";
   import Button from "../components/Button.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
@@ -25,11 +22,9 @@
 
   const schedules = createQuery(() => queries.schedules());
   const projects = createQuery(() => queries.projects());
-  const sprintItems = createQuery(() => queries.sprintItems());
+  const managers = createQuery(() => queries.managers());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
   const supportedWorkerTypes = createQuery(() => queries.supportedWorkerTypeManifests());
-
-  const priorities: Priority[] = ["P0", "P1", "P2", "P3"];
 
   let formOpen = $state(false);
   let editingId = $state<string | null>(null);
@@ -45,7 +40,7 @@
   let creatableWorkerTypes = $derived((supportedWorkerTypes.data?.worker_types ?? []).filter((workerType) => workerType.creatable !== false));
   let canSubmit = $derived(!saving && !historical);
   let catalogueError = $derived(
-    [projects.error, sprintItems.error, workerTypes.error, supportedWorkerTypes.error].find((error) => error != null)
+    [projects.error, managers.error, workerTypes.error, supportedWorkerTypes.error].find((error) => error != null)
   );
 
   function openCreate(): void {
@@ -82,20 +77,16 @@
     draft.worker_type = selectValue(event);
   }
 
-  function setPriority(event: Event): void {
-    draft.priority = selectValue(event) as Priority;
-  }
-
   function setProject(event: Event): void {
     const projectId = selectValue(event) || null;
-    if (projectId !== draft.project_id) draft.orchestrator = { kind: "chief", id: "chief" };
+    if (projectId !== draft.project_id) draft.manager = { kind: "chief", id: "chief" };
     draft.project_id = projectId;
   }
 
-  function setOrchestrator(event: Event): void {
+  function setManager(event: Event): void {
     const itemId = selectValue(event);
-    draft.orchestrator = itemId ? { kind: "sprint_item", id: itemId } : { kind: "chief", id: "chief" };
-    const item = sprintItems.data?.items.find((item) => item.id === itemId);
+    draft.manager = itemId ? { kind: "manager", id: itemId } : { kind: "chief", id: "chief" };
+    const item = managers.data?.managers.find((item) => item.id === itemId);
     if (item) draft.project_id = item.project_id;
   }
 
@@ -193,7 +184,7 @@
         {#if catalogueError}<ErrorLine error={catalogueError} />{/if}
 
         {#if historical && editingSchedule}
-          <p data-retired-schedule>Retired schedule · {scheduledTaskCadenceLabel(editingSchedule.cadence)} · {editingSchedule.placement_mode === "current_sprint" ? "Current sprint" : "Backlog"}</p>
+          <p data-retired-schedule>Retired schedule · Historical cadence: {scheduledTaskCadenceLabel(editingSchedule.cadence)}</p>
         {/if}
         <form class="scheduled-task-form" onsubmit={saveSchedule}>
           <fieldset disabled={historical} style="border:0;padding:0;margin:0;min-width:0">
@@ -235,32 +226,20 @@
                   <option value={workerType.worker_type}>{workerType.label}</option>
                 {/each}
               </select>
-              <span class="scheduled-task-separator" aria-hidden="true">·</span>
-              <select
-                class="scheduled-task-quiet-control"
-                aria-label="Priority"
-                value={draft.priority}
-                onchange={setPriority}
-                data-input="priority"
-              >
-                {#each priorities as priority}
-                  <option value={priority}>{priority}</option>
-                {/each}
-              </select>
             </div>
           </section>
 
-          <section class="scheduled-task-group" data-schedule-section="orchestrator">
-            <h2>Orchestrator</h2>
+          <section class="scheduled-task-group" data-schedule-section="manager">
+            <h2>Manager</h2>
             <div class="scheduled-task-values">
               <select class="scheduled-task-quiet-control" aria-label="Project" value={draft.project_id || ""} onchange={setProject} data-input="project">
                 <option value="">No project</option>
                 {#each projects.data?.projects || [] as project}<option value={project.id}>{project.name}</option>{/each}
               </select>
               <span class="scheduled-task-separator" aria-hidden="true">·</span>
-              <select class="scheduled-task-quiet-control" aria-label="Orchestrator" value={draft.orchestrator.kind === "sprint_item" ? draft.orchestrator.id : ""} onchange={setOrchestrator} data-input="orchestrator">
+              <select class="scheduled-task-quiet-control" aria-label="Manager" value={draft.manager.kind === "manager" ? draft.manager.id : ""} onchange={setManager} data-input="manager">
                 <option value="">Chief of Staff</option>
-                {#each (sprintItems.data?.items || []).filter((item) => !draft.project_id || item.project_id === draft.project_id) as item}<option value={item.id}>{item.title}</option>{/each}
+                {#each (managers.data?.managers || []).filter((item) => !draft.project_id || item.project_id === draft.project_id) as item}<option value={item.id}>{item.title}</option>{/each}
               </select>
             </div>
           </section>
@@ -353,7 +332,7 @@
       {#if toggleError}<ErrorLine error={toggleError} />{/if}
 
       <div class="scheduled-task-list" data-scheduled-tasks>
-        <ResourceState
+        <ResourceState shape="rows"
           error={schedules.error}
           loading={schedules.isFetching}
           hasData={Boolean(schedules.data)}

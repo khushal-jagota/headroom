@@ -10,10 +10,16 @@
    * It stays separate from the Agents layout because this component owns the canonical
    * Chief conversation while the route owns roster selection and responsive navigation.
    */
+  import { tick, onDestroy } from "svelte";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
+  import { actualMark, expectedMark } from "../lib/conversationSignalDom";
   import { createQuery } from "@tanstack/svelte-query";
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import ManagerHeader from "./ManagerHeader.svelte";
+  import ManagerFrame from "./ManagerFrame.svelte";
+  import type { ConversationState } from "../lib/conversation/conversationState";
   import ErrorLine from "./ErrorLine.svelte";
-  import OrchestratorChildren from "./OrchestratorChildren.svelte";
+  import ManagerChildren from "./ManagerChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -24,35 +30,116 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
-  let { onMachineRowsChange = () => undefined }: { onMachineRowsChange?: (hasMac: boolean) => void } = $props();
-
+  import ArtifactPreview from "./ArtifactPreview.svelte";
+  import { managedFileTargetFromLinkHref } from "../lib/artifactStrip";
+  import { isPlainLinkClick } from "../lib/linkClick";
+  import { resolvePreview, targetFromPreviewHref, type ManagedFileTarget } from "../lib/filePreview";
+  let { showRequestErrorLine = true, requestedConversationId = null, openedFile = null, onOpenFile }: { showRequestErrorLine?: boolean; requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
+  let artifactReloadSignal = $state(0);
+  let artifactElement = $state<HTMLElement | null>(null);
+  let previousFocus: HTMLElement | null = null;
+  function showFile(file: ManagedFileTarget | null): void {
+    if (file && !openedFile) previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    onOpenFile?.(file);
+    if (file) conversationState = "rest";
+    else { const restore = previousFocus; previousFocus = null; queueMicrotask(() => restore?.focus()); }
+  }
+  $effect(() => { if (openedFile && artifactElement) artifactElement.focus(); });
+  function openManagedFileInPlace(event: MouseEvent): void {
+    if (event.defaultPrevented) return;
+    const anchor = (event.target as Element | null)?.closest?.("a[href]");
+    if (!anchor || anchor.hasAttribute("download")) return;
+    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
+    if (!isPlainLinkClick(link, event)) return;
+    const explicitPreview = targetFromPreviewHref(link.href);
+    const file = explicitPreview ?? managedFileTargetFromLinkHref(link.href);
+    if (!file || (!explicitPreview && resolvePreview(file).kind === "download")) return;
+    event.preventDefault(); showFile(file);
+  }
+  function closeFileOnEscape(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || event.defaultPrevented || !openedFile || conversationState === "opened") return;
+    event.preventDefault(); showFile(null);
+  }
+  const navigation = (() => {
+    const value = navigationApplication();
+    if (!value) throw new Error("Chief conversation requires the application navigation owner");
+    return value;
+  })();
+  const observer = navigation.registerRenderBoundary(`chief-conversation:${crypto.randomUUID()}`,impact => {
+    if(impact.kind==='chief') return impact.fields==='*' || impact.fields.includes('conversation_id');
+    return impact.kind==='conversation' && impact.id===chief?.conversation_id && (impact.fields==='*' || impact.fields.includes('attention'));
+  });
+  onDestroy(() => navigation.disposeRenderBoundary(observer));
+  let root = $state<HTMLElement | null>(null);
+  let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
+  $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
+  let chief = $derived(displayed ? navigation.presentationFor(displayed).chief : null);
+  $effect(()=>navigation.owner.setDemand('chief',{selected:{kind:'chief',id:'chief'},selected_conversation_id:selectedPastConversationId,windows:[]}));
+  onDestroy(()=>navigation.owner.setDemand('chief',undefined));
+  let conversationState = $state<ConversationState>("rest");
   let conversationId = $state<string | null>(null);
+  let selectedPastConversationId = $state<string | null>(null);
+  let shownConversationId = $derived(selectedPastConversationId ?? conversationId);
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!chief || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== chief.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
+  });
+  let observedPointer: string | undefined = $state();
   let backends = $state<readonly BackendSnapshot[]>([]);
-  const workers = createQuery(() => queries.workers());
-  const currentConversation = createQuery(() => queries.chiefConversation());
   // What a conversation for the Chief would start on. It is a query rather than a read on
   // arrival because the owner changes it on the Config screen, and this must not go on
   // showing what the Chief was configured on before they did.
   const startValues = createQuery(() => queries.chiefConversationStartValues());
+  const chiefSettings = createQuery(() => queries.chiefSettings());
 
   $effect(() => {
-    if (currentConversation.data) {
-      conversationId = currentConversation.data.conversation_id;
+    if (!chief) return;
+    const pointer = JSON.stringify(chief.conversation_id);
+    if (pointer !== observedPointer) {
+      observedPointer = pointer;
+      conversationId = chief.conversation_id;
     }
+  });
+  $effect(() => {
+    const effective = displayed;
+    const generation = navigation.state.generation;
+    const element = root;
+    const source = chief;
+    const localPointer = shownConversationId;
+    if (!effective?.runtimeCurrent || !element || !source || (selectedPastConversationId === null && source.conversation_id !== localPointer)) return;
+    const publication = effective.publication;
+    const observation = observer.observeSelectors(publication,generation);
+    let obsolete = false;
+    void tick().then(() => {
+      if (obsolete || !element.isConnected || navigation.selectors.effective !== effective
+        || navigation.state.generation !== generation || shownConversationId !== localPointer) return;
+      const pane = element.querySelector('[data-conversation-pane]');
+      if (pane?.getAttribute('data-conversation-id') !== (localPointer ?? '')) return;
+      const region=element.querySelector('.manager-workspace-title');
+      if(JSON.stringify(region ? actualMark(region) : [null,null]) !== JSON.stringify(expectedMark(source.conversation_signal,source.conversation_id))) return;
+      observer.acknowledgeRender(publication,observation);
+    });
+    return () => { obsolete = true; };
   });
 
   async function sendToTheChief(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered = await mutateJson<DeliveredMessage>("/api/chief/conversation/send", {
-      method: "POST",
-      body
-    });
-    if (delivered.conversation_id !== null) conversationId = delivered.conversation_id;
+    const view=navigation.state.effective;
+    const delivered=await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'chief','chief'),responseMetadata =>
+      mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body,responseMetadata}),"send Chief message");
+    if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
   }
-
-  async function newConversation(): Promise<void> {
-    await mutateJson("/api/chief/conversation/reset", { method: "POST" });
-    conversationId = null;
+  function saveRecap(recap: string): Promise<unknown> {
+    return mutateJson("/api/workers/chief-of-staff/recap", { method: "PUT", body: { recap } });
+  }
+  async function newConversation():Promise<void> {
+    const view=navigation.state.effective;
+    await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'chief','chief'),responseMetadata =>
+      mutateJson("/api/chief/conversation/reset",{method:"POST",responseMetadata}),"reset Chief conversation");
+    conversationId=null;
   }
 
   $effect(() => {
@@ -64,31 +151,47 @@
   });
 </script>
 
-<div class="chief-workspace">
-  {#if workers.data?.chief_of_staff.conversation_signal?.working || workers.data?.chief_of_staff.conversation_signal?.message_for_owner}
-    <div class="chief-signal"><ConversationSignalMark signal={workers.data?.chief_of_staff.conversation_signal} conversationId={workers.data?.chief_of_staff.conversation_id} /></div>
-  {/if}
-  <div class="chief-workers"><OrchestratorChildren {onMachineRowsChange} principal={{ kind: "chief", id: "chief" }} /></div>
-  <div class="chief-conversation">
-{#if currentConversation.error}
+<svelte:window onkeydown={closeFileOnEscape} />
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div class="chief-workspace-host" bind:this={root} onclick={openManagedFileInPlace}>
+<ManagerFrame class="chief-workspace" bind:conversationState>
+  <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
+    recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
+    {#snippet title()}Chief of Staff{/snippet}
+  </ManagerHeader>
+  <section class="manager-workers" aria-label="Workers">
+    <ManagerChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
+  </section>
+  {#snippet readingAside(registerArtifactFrame)}
+    {#if openedFile}
+      <ArtifactPreview target={openedFile} {registerArtifactFrame} reloadSignal={artifactReloadSignal}
+        bind:element={artifactElement} onRefresh={() => artifactReloadSignal += 1} onClose={() => showFile(null)} />
+    {/if}
+  {/snippet}
+  {#snippet conversation()}
+<!-- A failed read is a line next to the conversation, not a screen in place of it.
+     Replacing it takes the transcript, and takes words somebody typed and has not
+     sent with it - which no amount of retrying brings back. -->
+{#if navigation.state.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>
-    <ErrorLine error={currentConversation.error} />
+    {#if showRequestErrorLine}<ErrorLine error={navigation.state.error} />{/if}
     <button
       type="button"
       class="button button--quiet"
       data-chief-conversation-retry
-      onclick={() => currentConversation.refetch()}
+      onclick={() => navigation.owner.recover().catch(() => undefined)}
     >
       Retry
     </button>
   </div>
-{:else if currentConversation.isFetching && !currentConversation.data}
-  <div class="quiet-line chief-conversation-resource" data-chief-conversation-loading>
-    Loading conversation...
-  </div>
-{:else}
+{/if}
   <LiveConversation
-    {conversationId}
+    ownerLoading={!chief}
+    bind:conversationState
+    conversationId={shownConversationId}
+    bind:selectedPastConversationId
+    readOnly={selectedPastConversationId !== null}
     persistenceKey="owner:chief"
     label="Chief of Staff"
     bind:backends
@@ -97,13 +200,11 @@
     sendMessage={sendToTheChief}
     onNewConversation={newConversation}
   />
-{/if}
 
-  </div>
+  {/snippet}
+</ManagerFrame>
 </div>
 <style>
-  .chief-signal { padding:var(--space-3) var(--space-5) 0; }
-  .chief-workspace { display:flex; flex-direction:column; width:100%; min-height:0; }
-  .chief-workers { padding:var(--space-5); max-height:45%; overflow:auto; flex:none; }
-  .chief-conversation { display:flex; flex:1; min-height:0; }
+  .chief-workspace-host { display:contents; }
+  .manager-workers { margin-top:var(--space-5); }
 </style>

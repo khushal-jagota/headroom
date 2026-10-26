@@ -53,15 +53,13 @@ def test_http_unsupported_mac_backend_requirements_explicit_override_and_schedul
         "create",
         "--name",
         "Mac project",
-        "--priority",
-        "P2",
         "--requires-macos",
     )
     request: JsonObject = {
         "title": "Mac request",
         "worker_type": "coding",
-        "kickoff_note": "Check Mac requirements.",
-        "orchestrator": {"kind": "chief", "id": "chief"},
+        "brief": "Check Mac requirements.",
+        "manager": {"kind": "chief", "id": "chief"},
         "employee_backend": "claude",
         "employee_launch_model": "scripted-unsupported-model",
     }
@@ -126,15 +124,13 @@ def test_http_codex_mac_creation_allowed_offline_but_both_execution_doors_wait(
         "create",
         "--name",
         "Compatible Mac project",
-        "--priority",
-        "P2",
         "--requires-macos",
     )
     request: JsonObject = {
         "title": "Compatible offline Mac request",
         "worker_type": "coding",
-        "kickoff_note": "The next worker step requires a reconciled Mac connection.",
-        "orchestrator": {"kind": "chief", "id": "chief"},
+        "brief": "The next worker step requires a reconciled Mac connection.",
+        "manager": {"kind": "chief", "id": "chief"},
         "employee_backend": "codex",
         "employee_launch_model": "scripted-compatible-model",
         "ceiling": "needs_success_condition",
@@ -211,8 +207,6 @@ def test_creation_context_is_readonly_offline_and_write_revalidates(
         "create",
         "--name",
         "Draft Mac project",
-        "--priority",
-        "P2",
         "--requires-macos",
     )
     draft: JsonObject = {

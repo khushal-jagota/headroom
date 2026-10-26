@@ -7,9 +7,15 @@ from dataclasses import asdict
 from types import MappingProxyType
 from typing import Any
 
-from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import PendingTicketProposal, TicketFieldValues
-from planner.worker_types.contracts import RETIREMENT_FIELD_ID, WorkerTypeDefinition
+from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
+from planner.tickets.contracts import (
+    PendingTicketProposal,
+    TicketApprovalMethod,
+    TicketFieldApproval,
+    TicketFieldApprovals,
+    TicketFieldValues,
+)
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 def _require(condition: bool) -> None:
@@ -21,12 +27,25 @@ def values_to_json(values: TicketFieldValues) -> str:
     return json.dumps(dict(values), ensure_ascii=False)
 
 
-def values_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFieldValues:
-    field_ids = tuple(dict.fromkeys((*field_ids, RETIREMENT_FIELD_ID)))
+def stored_values_from_json(raw: str) -> TicketFieldValues:
+    """Validate the stored string map, including fields no longer declared."""
     value: Any = json.loads(raw)
     _require(isinstance(value, dict))
-    _require(all(key in field_ids and isinstance(body, str) for key, body in value.items()))
+    _require(all(isinstance(body, str) for body in value.values()))
+    return MappingProxyType(value)
+
+
+def values_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFieldValues:
+    value = stored_values_from_json(raw)
     return MappingProxyType({key: value[key] for key in field_ids if key in value})
+
+
+def replace_declared_values(raw: str, values: TicketFieldValues, field_ids: tuple[str, ...]) -> str:
+    """Replace current values without deleting text outside the current declaration."""
+    _require(all(key in field_ids and isinstance(body, str) for key, body in values.items()))
+    stored = stored_values_from_json(raw)
+    historical = {field: body for field, body in stored.items() if field not in field_ids}
+    return values_to_json({**historical, **values})
 
 
 def proposal_to_json(proposal: PendingTicketProposal | None) -> str | None:
@@ -53,8 +72,7 @@ def validate_state(
 ) -> None:
     _require(
         all(
-            (worker_type_definition.has_field(key) or key == RETIREMENT_FIELD_ID)
-            and isinstance(body, str)
+            worker_type_definition.has_field(key) and isinstance(body, str)
             for key, body in values.items()
         )
     )
@@ -69,3 +87,44 @@ def field_value(
 ) -> str | None:
     worker_type_definition.field_definition(field)
     return values.get(field)
+
+
+def approvals_to_json(approvals: TicketFieldApprovals) -> str:
+    return json.dumps({key: asdict(value) for key, value in approvals.items()}, ensure_ascii=False)
+
+
+def approvals_from_json(raw: str, values: TicketFieldValues) -> TicketFieldApprovals:
+    """Read evidence for current values, with honest unknowns for older records."""
+    obj: Any = json.loads(raw)
+    _require(isinstance(obj, dict))
+    approvals = {}
+    for key, item in obj.items():
+        _require(isinstance(item, dict))
+        _require(set(item) == {"method", "principal", "display_label"})
+        try:
+            method = TicketApprovalMethod(item["method"])
+            principal_obj = item["principal"]
+            principal = None
+            if principal_obj is not None:
+                _require(isinstance(principal_obj, dict))
+                _require(set(principal_obj) == {"kind", "id"})
+                _require(isinstance(principal_obj["id"], str))
+                principal = Principal(PrincipalKind(principal_obj["kind"]), principal_obj["id"])
+            _require(isinstance(item["display_label"], str))
+            _require((method is TicketApprovalMethod.explicit_accept) == (principal is not None))
+        except (ValueError, TypeError) as exc:
+            raise PlannerError(ErrorCode.validation, "corrupt ticket field state") from exc
+        approvals[key] = TicketFieldApproval(method, principal, item["display_label"])
+    unknown = TicketFieldApproval(TicketApprovalMethod.unknown, None, "Approval unknown")
+    return MappingProxyType({key: approvals.get(key, unknown) for key in values})
+
+
+def replace_declared_approvals(
+    raw: str, approvals: TicketFieldApprovals, field_ids: tuple[str, ...]
+) -> str:
+    """Keep evidence for removed fields beside the historical text it approves."""
+    stored = json.loads(raw)
+    historical = {key: value for key, value in stored.items() if key not in field_ids}
+    return json.dumps(
+        {**historical, **json.loads(approvals_to_json(approvals))}, ensure_ascii=False
+    )

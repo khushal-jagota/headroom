@@ -30,7 +30,7 @@ def _seed(conn: sqlite3.Connection) -> str:
         conn,
         worker_type="coding",
         title="Synthetic inspection",
-        kickoff_note="Synthetic task",
+        brief="Synthetic task",
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,

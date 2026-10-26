@@ -4,19 +4,18 @@ import ConversationSignalMark from "../src/components/ConversationSignalMark.sve
 
 describe("exact conversation signal marks", () => {
   it.each([
-    { working: false, message_for_owner: false },
-    { working: true, message_for_owner: false },
-    { working: false, message_for_owner: true },
-    { working: true, message_for_owner: true }
-  ])("shows one mark with message precedence %j", (signal) => {
+    [{ working: false, message_for_owner: false }, null, null],
+    [{ working: true, message_for_owner: false }, "working", "Working"],
+    [{ working: false, message_for_owner: true }, "message", "Unread message"],
+    [{ working: true, message_for_owner: true }, "message", "Unread message"]
+  ] as const)("shows one mark with message precedence %j", (signal, mark, label) => {
     const html = render(ConversationSignalMark, {
       props: { signal, conversationId: "conversation-exact" }
     }).body;
-    expect(html.includes('data-conversation-signal="working"')).toBe(signal.working && !signal.message_for_owner);
-    expect(html.includes('data-conversation-signal="message"')).toBe(signal.message_for_owner);
-    expect(html.includes('stage-mark--current-running')).toBe(signal.working && !signal.message_for_owner);
-    expect(html.includes('stage-mark--current-awaiting-approval')).toBe(signal.message_for_owner);
-    if (signal.working || signal.message_for_owner) {
+    if (mark === null) expect(html).not.toContain('data-conversation-signal');
+    else {
+      expect(html).toContain(`data-conversation-signal="${mark}"`);
+      expect(html).toContain(`aria-label="${label}"`);
       expect(html).toContain('data-conversation-id="conversation-exact"');
     }
   });
@@ -27,34 +26,31 @@ describe("exact conversation signal marks", () => {
   });
 });
 
-import SprintTicketRow from "../src/components/SprintTicketRow.svelte";
+import WorkerRow from "../src/components/WorkerRow.svelte";
 import WorkspaceRailCard from "../src/components/WorkspaceRailCard.svelte";
 
 describe("shared conversation signal consumers", () => {
-  it("renders a VPS row without an executor query provider", () => {
-    const html = render(SprintTicketRow, { props: {
-      locale: "vps", priority: null, title: "VPS worker",
-      signal: {working: true, message_for_owner: false}, conversationId: "vps-conversation"
-    } }).body;
+  it("keeps the VPS machine control outside its row button and preserves current activity", () => {
+    const html=render(WorkerRow,{props:{locale:"vps",ticketId:"worker",title:"Worker",signal:{working:true,message_for_owner:false},conversationId:"vps-exact"}}).body;
+    expect(html).toContain('data-ticket-locale="vps"');
     expect(html).toContain('data-conversation-signal="working"');
+    expect(html).not.toMatch(/class="ticket-row[^>]*>[\s\S]*?<button/);
   });
-  it.each([
-    { working: false, message_for_owner: false },
-    { working: true, message_for_owner: false },
-    { working: false, message_for_owner: true },
-    { working: true, message_for_owner: true }
-  ])("uses message precedence in Worker and supervisor rows: %j", (signal) => {
-    const worker = render(SprintTicketRow, { props: {
-      priority: null, title: "Worker", signal, conversationId: "worker-exact"
+  it("forwards mixed signal identity through the actual Worker and manager consumers", () => {
+    const signal = { working: true, message_for_owner: true };
+    const worker = render(WorkerRow, { props: {
+      title: "Worker", signal, conversationId: "worker-mixed-exact"
     } }).body;
-    const supervisor = render(WorkspaceRailCard, { props: {
-      id: "item", title: "Supervisor", signal, conversationId: "supervisor-exact",
+    const manager = render(WorkspaceRailCard, { props: {
+      id: "item-mixed", title: "Manager", signal, conversationId: "manager-mixed-exact",
       selected: false, selectedTicketId: null, groups: [], onSelect: () => {},
       onTicket: () => {}, onSettle: () => {}, onHover: () => {}, onWorkerHover: () => {}, onLeave: () => {}
     } }).body;
-    for (const html of [worker, supervisor]) {
-      expect(html.includes('data-conversation-signal="working"')).toBe(signal.working && !signal.message_for_owner);
-      expect(html.includes('data-conversation-signal="message"')).toBe(signal.message_for_owner);
+    for (const [html, id] of [[worker, "worker-mixed-exact"], [manager, "manager-mixed-exact"]]) {
+      expect(html).toContain(`data-conversation-id="${id}"`);
+      expect(html).toContain('data-conversation-signal="message"');
+      expect(html).toContain('aria-label="Unread message"');
+      expect(html).not.toContain('data-conversation-signal="working"');
     }
   });
 
@@ -62,7 +58,7 @@ describe("shared conversation signal consumers", () => {
     const html = render(WorkspaceRailCard, { props: {
       id: "chief", title: "Chief", chief: true, selected: false, selectedTicketId: null,
       groups: [{key:"awaiting_approval",label:"Needs your approval",defaultCollapsed:false,cards:[{
-        id:"child",title:"Child",priority:"P1",stage:"done",ticket_status:"empty",
+        id:"child",title:"Child",stage:"done",ticket_status:"empty",
         awaiting_reply:false,awaiting_answer:false,awaiting_approval:true,awaiting_agent_approval:false,
         assigned:false,agent_state:"idle",conversation_id:"child-exact",
         conversation_signal:{working:true,message_for_owner:true}

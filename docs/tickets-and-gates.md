@@ -22,21 +22,42 @@ single-door rule.
    field                                               package)           report)
 ```
 
+## HTML artifacts
+
+The viewer opens HTML links inside the same artifact directory, including its subdirectories.
+It keeps the Panels address unchanged and gives each viewer its own Back button.
+A new artifact starts a new history. Refresh reloads the current child document.
+Fragments scroll inside the current document without a new file read.
+Empty links, bare `#` links, and anchors without `href` keep their authored behavior.
+
+The parent viewer resolves each raw link against the current trusted file address.
+Authored base elements do not control navigation. Absolute and scheme-relative links must use the same origin and permitted directory.
+Dot segments resolve before the directory check. Encoded separators, double encoding, backslashes, credentials, and queries cause rejection.
+Only HTML and HTM links open here. Middle clicks, modified clicks, download links, and explicit targets use the same viewer.
+A rejected or missing link leaves the current document and history intact.
+The parent draws the rejection notice outside the artifact frame.
+
+The server checks the resolved file against the resolved artifact directory before each viewer read, including the first document.
+A symlink that leaves that directory returns the same generic 404 as a missing file.
+Valid files retain their attachment headers and the `allow-scripts` sandbox.
+Only the current visible frame and its current document generation can request navigation.
+Concurrent viewers share an unfinished read only when their original directory and freshness rules match.
+
 ## Execution locale
 
 Each Ticket stores the machine where its Worker can run: `vps` or `macos`.
 Creation uses an explicit locale first. Without one, a Mac requirement on the effective
-Project or Worker type selects `macos`. Otherwise it selects `vps`. An orchestrator's
+Project or Worker type selects `macos`. Otherwise it selects `vps`. A Manager's
 Project counts when the Ticket inherits that Project. Later Project or Worker edits do
 not move existing Tickets.
 
 Creation checks the chosen backend against the configured locale compatibility set.
 A refusal names the locale, backend, and reason before any Ticket exists. Machine
-reachability does not affect creation. The Mac compatibility set starts empty until
-the Mac backend investigation establishes support. Mac creation therefore refuses until
-that configuration allows its backend. The VPS refuses to start a Ticket for another
-locale, including through manual start commands. This guard keeps Mac work safe until
-the Mac executor exists.
+reachability does not affect creation. Mac execution supports Codex through the native
+executor. Unsupported backends refuse before creation. A VPS process routes Mac work
+through the configured remote executor and requires its authenticated reconciled
+connection before execution. Local-only mode refuses Mac execution, including manual
+start commands.
 
 Use `panels ticket move <ticket> --locale vps|macos` to change an idle Ticket's locale.
 The move refuses before retirement if a Worker step, active turn, pending ask, or
@@ -66,11 +87,11 @@ _Code paths:_ `src/planner/tickets/`, `src/planner/runtime/`,
 Every Worker type starts with a **Brief** and ends at **done**; the
 Stages between are the Worker type's own. What follows is the `coding` lifecycle.
 
-A ticket starts with its **Brief**. The Brief is the first ordinary Ticket field: the
-human-approved intake context. The title is separate editable Ticket metadata, not
-part of the Brief proposal. A new ordinary ticket parks a Brief field proposal
-for review before any worker turn can start. Approving the Brief settles the Brief
-field, then the ticket enters the worker stages.
+A ticket starts with its **Brief**, the first ordinary Ticket field for intake
+context. The title is separate editable Ticket metadata, not part of the Brief
+proposal. The [ceiling rule](#how-far-a-worker-may-go-the-ceiling) determines whether
+supplied Brief text waits for approval or settles at creation, and what happens
+when no text is supplied.
 
 The Ticket also stores the Worker, Model, and Reasoning its conversation runs on.
 Creation copies the Worker type's three starting values, and they are kept up to date
@@ -88,12 +109,15 @@ proposed), then **Consequences** (only the applicable merge, deploy, follow-up, 
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
 what moves the ticket one stage forward. **done** records successful completion.
-Historical cancelled Tickets retain a separate non-success ending, `cancelled`, outside
-the Stage ladder and ceiling choices. Retire is no longer a Ticket action.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
 
-## Backlog, resume, and cancelled history
+Artifact links in Ticket fields and the conversation open in the Ticket viewer when their
+format supports a preview. JSON receipts and unsupported formats keep their download
+behavior. Explicit preview links still open the viewer for any managed file. Download
+links and requests for another tab keep normal browser behavior.
+
+## Backlog, resume, and delete
 
 Explicit backlog prevents the next automatic Worker step. It preserves the current
 Stage, proposal, approval holder, assignment, history, conversations, and artifacts.
@@ -108,15 +132,24 @@ The Ticket page provides Backlog ticket and Resume ticket controls. Each transit
 one writer. An optional stored-record hash precondition refuses stale requests inside
 the write transaction. The browser sends that precondition automatically.
 
-Historical cancelled Tickets retain their records, conversations, artifacts, and
-retirement provenance. That provenance preserves the original record, proposal, approval
-holder, revision feedback, actor, and time. The Steps section retains historical proposal
-evidence. Direct record reads and bounded lists with `stage=cancelled` and
-`include_terminal=true` retain access to that history.
+Delete removes a Ticket's record. Files under `/files/tickets/<ticket-id>` survive
+Ticket deletion. Backlog is the reversible way to pause work while keeping the Ticket.
+The Stage ladder ends only at Done; there is no retirement state or retirement field.
+Historical text for a field that the Worker type no longer declares stays in storage.
+Ticket reads and search show only declared fields. Later edits and approvals preserve
+historical text, but new writes and proposals must use declared fields. Invalid stored
+values still fail validation, even when their fields are no longer declared.
 
-Cancelled Tickets remain terminal. Their historical proposals cannot receive actionable
-approvals, and normal readiness does not start another Worker step. Historical reads do
-not provide a cancellation action or another way to end current work.
+Each settled field shows who approved its current text. Explicit approval records the
+actual approver, separately from the proposal recipient and the next approval holder.
+The UI says “Approved by Khushal”, “Approved by Chief”, or “Approved by Manager”.
+CLI text uses the manager’s human-readable title. Ticket JSON includes the approval
+method, the principal kind and ID, and the readable label captured at approval.
+
+A field that settles below its ceiling says “Auto-accepted”. A settled Brief at creation
+uses the same label. Older records and direct user completion say “Approval unknown”.
+Unknown never means auto-accepted. An edit that changes the text clears its approval.
+An identical edit preserves it. Ticket history stays unchanged.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -211,10 +244,16 @@ existing Ticket id with its worker identity. Direct callers keep the same access
 complete change once. It writes nothing to the blocked Ticket, because what that Ticket
 reads as is worked out from the block itself.
 
+### List order
+
+Ticket API and CLI lists show oldest-created Tickets first, then identifier. Day-scoped
+lists retain stored position. The stage board places dated Tickets first, earliest
+deadline first, then oldest-created.
+
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, priority, deadline, Project, Sprint, and
-optional Sprint Item together. Panels checks the whole request before saving any of it. All requested
+One ordinary edit may change a Ticket's title, deadline, Project, Sprint, and
+optional Manager together. Panels checks the whole request before saving any of it. All requested
 changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it
 unchanged.
@@ -246,7 +285,7 @@ and `src/planner/tickets/api.py`.
 ## The one rule: proposals and the single door
 
 Workers never change settled values or advance Stages directly. Only a Ticket's own
-Worker principal can file that Ticket's proposal; a supervisor, holder Ticket, or other
+Worker principal can file that Ticket's proposal; a Manager, holder Ticket, or other
 Worker cannot file on its behalf. A worker that wants to
 move work forward files a **proposal** on the blank the current Stage gates. The
 proposal resolver is the only thing that can turn a proposal into a real value or
@@ -262,18 +301,11 @@ rejects it and says what is wrong.
 Nothing keeps a withdrawn draft. A rejected proposal is gone, and deleting a Ticket
 takes whatever was parked on it.
 
-Each Ticket has one **guidance** document for durable user corrections and constraints.
-It is separate from settled field values and is never approved as a proposal. Review
-shows this document, while the Ticket page does not. The CLI reads it with
-`panels ticket show guidance` and writes it with `panels ticket edit --input-json -`
-using `guidance` or `guidance_append`. Ticket search and supervisor
-context include it too.
-
-No Worker step prompt carries this document. The Stage instruction names the command
-that reads it, and the Worker reads it at the start of every step. A direct edit keeps
-the existing generic Ticket-changed notice. Saving guidance is not an immediate
-conversation intervention: ordinary chat and rejection keep their existing send
-behavior.
+Ticket guidance is retired. Its historical database column and existing text remain
+intact. No active Ticket feature reads or writes that column. The API, CLI, search,
+copy text, Manager context, Review, and Worker prompts do not expose it.
+There is no replacement field. Messages, artifacts, and revision feedback keep their
+existing roles.
 
 The **recap** is a short cold-reader
 orientation line that works beside the title: what the ticket is, where it stands now,
@@ -297,17 +329,16 @@ decide a proposal whoever holds it.
 
 The holder is a full principal kind and ID, not a display label or current conversation.
 A Ticket cannot hold its own ceiling: its Worker is the proposal author, so addressing a
-proposal to itself addresses it to nobody. Holder Tickets and Sprint Items must exist
+proposal to itself addresses it to nobody. Holder Tickets and Managers must exist
 when the ceiling is written.
 
 **The holder must stand above the Ticket.** An address that cannot decide is not an
-address. Authority comes from the Ticket's current Sprint Item, so moving a Ticket to
-another Sprint Item — or out of every Sprint Item — can leave the Sprint Item that holds
+address. Authority comes from the Ticket's current Manager, so moving a Ticket to
+another Manager — or out of every Manager — can leave the Manager that holds
 the ceiling below it.
-When a move does that, the ceiling returns to the user in the same transaction, and the
-Ticket's guidance gains one line naming the move that sent it back. The user stands above
+When a move does that, the ceiling returns to the user in the same transaction. The user stands above
 everything, so the ceiling always has somewhere valid to go, and only the user or the
-Chief can move a Ticket between Sprint Items in the first place. It is the same question on
+Chief can move a Ticket between Managers in the first place. It is the same question on
 every move, whether or not a proposal is parked right now: a wrong address is wrong before
 anything arrives at it. A holder that still stands above the moved Ticket keeps the
 ceiling. A Ticket that was already stranded stays as it is until something moves it.
@@ -319,28 +350,40 @@ ceiling says nothing about who owns a Stage: user-owned Stages still do not
 dispatch automatically after their opening turn. They rest at `empty` with their opener fact
 until the user and worker continue the discussion. Stage ownership does not add an
 approval stop.
-New tickets start leashed right at
-the **Brief**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
-the human-approved intake until the human raises the ceiling — review before agents
-start.
 
-A Ticket created **without** a Brief parks nothing. A blank intake body means nothing was
-written, not a Brief whose text is empty, so the Ticket rests at its Brief stage with the
-worker-owned Kickoff ready to start. This is one rule at one door, so every way of creating
-a Ticket gets it: the API defaults an absent intake body to blank, and so does a form field
-nobody typed in.
+Every Worker type defaults to a ceiling of `needs_brief`. A creator can supply the
+Brief text, or the Ticket's own Worker can write it after creation.
+There are two possible authors, but one approval rule.
+Automatically approving creator-supplied text also approves agent-authored work without the default review.
+
+Supplied Brief text parks for approval at the default ceiling. An explicit ceiling
+past Brief accepts that text at creation and advances the Ticket to its next Stage.
+The creator's identity does not change this rule.
+
+Omitted, empty, or whitespace-only Brief text leaves no proposal. The Ticket stays
+at Brief, where its own Worker can write the text when ordinary readiness permits.
+That answer follows the same ceiling rule: it parks at the default ceiling and
+settles below an explicitly higher ceiling.
 
 A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
 The same breath names who holds it, with `ticket create --holder`. A creator can name any
 holder, including the user, without holding anything itself — that is how a Ticket is
 opened for somebody else to review. Name nobody and the creator holds it, which is the
-ordinary case: a Sprint Item that opens a Ticket holds it.
-Whoever was given the authority to set the ceiling says so in the same breath as
-the Ticket, so work the user has already authorized does not sit waiting for a second
-approval. The Brief is then judged by the stated ceiling exactly as a later proposal is:
-it settles and the Ticket starts at the next Stage when the stated ceiling is past
-the Brief, and it parks for approval otherwise. State nothing and the default leash holds,
-which is the ordinary case for intake the human wants to sense-check.
+ordinary case: a Manager that opens a Ticket holds it.
+Whoever has authority to set the ceiling states it with the Ticket. This avoids a
+second approval for work the user already authorized.
+
+The creation receipt explains this grant in plain words. It lists only the Stages that
+remain unsupervised and the first review gate with its recipient.
+If no review gate remains, the receipt opens with:
+"Nothing in this grant ever parks for review." Stage ownership still
+controls user participation. A Ticket holder routes a parked proposal to the owner, and the
+receipt names that actual destination. The receipt changes no ceiling or holder rule.
+See `cli.md` for the JSON input and effort choice at creation.
+
+_Code paths:_ `src/planner/tickets/data.py` (creation and supplied Brief text),
+`src/planner/tickets/logic/proposal_routing.py` (the ceiling rule), and
+`src/planner/tickets/logic/resolution.py` (the Worker's answer).
 
 ### Changing a ceiling on a running Ticket
 
@@ -356,8 +399,22 @@ Both halves can change later, and they change separately.
   way a proposal sitting in the wrong queue reaches the right one. Anyone standing above
   the Ticket can do it.
 
+When a parked review moves to another holder, Panels attempts one courtesy notice to
+the previous holder. The notice names the Ticket and the new holder. Automatic returns
+to the user after reassignment follow the same rule. No parked proposal or no final
+holder change means no notice. A combined edit names only the final holder.
+
+The Chief, a Manager, or a holder Ticket receives the notice in its conversation.
+The user receives a Panels message in the affected Ticket conversation. This message
+starts no worker turn and does not answer an unrelated request for a worker reply.
+
+The transfer commits before the notice attempt. A failed notice logs the failure and leaves
+the transfer successful. Panels does not retry the notice. A process failure before send,
+a refused send, or a restart before a queued message reaches the agent can lose the line.
+Once the conversation records the message, its ordinary history preserves it.
+
 Everywhere tooling takes a holder — creation, either change, and approval — it takes one
-`--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint Item id, or
+`--holder`, and reads the kind from what it is given: `me`, `chief`, a Manager id, or
 a Ticket id. Approving without naming one keeps the ceiling where it is: you hold it.
 
 Every later stage behaves the same way, including the last two: an accepted
@@ -381,7 +438,7 @@ proposal edits and unfinished picker choices.
 
 The ceiling sentence states the saved stage and reviewer and opens both choices
 directly with one click. Controls use User,
-Orchestrator, or Chief; actual entity names remain in navigation and identifying
+Manager, or Chief; actual entity names remain in navigation and identifying
 context. The parked stage is editable. An explicit raise beyond both the saved
 ceiling and the pending stage approves through atomic Accept. Same/lower scope
 preserves the proposal, including a user-owned proposal already below a higher
@@ -401,8 +458,18 @@ sets the ceiling to the next stage. It does not pause the next Worker turn. Curr
 scope edits use actual lifecycle stages. The existing readiness, authority, blocker,
 claim, and user-owned collaboration rules continue unchanged.
 
+Review combines each Ticket's eligible proposal and unread conversations into one card before pagination and counts.
+Its queue position is the earliest constituent timestamp. An older unread message deliberately brings a new proposal forward.
+The proposal keeps its own timestamp and revision for approval. Each conversation retains its exact reply address and read boundary.
+Approval changes only the proposal. Reply and Mark read leave other pending parts intact.
+
+The message filter uses the owning Ticket's done and backlog state or the owning Manager's settlement state.
+A settled Manager does not exclude live child Tickets. Chief messages remain eligible because Chief cannot settle.
+State reversals restore eligible messages. Ordinary unread discovery and watermarks remain independent of the Review filter.
+Proposal eligibility stays unchanged.
+
 Review's oldest-first walk shows owner-addressed proposals independently of Today.
-A proposal addressed to an ordinary orchestrator or Chief creates a durable notice
+A proposal addressed to an ordinary Manager or Chief creates a durable notice
 through the existing principal-aware manager queue. Kickoff, new filing and reviewer
 reroute all use that path. The notice reaches the intended canonical conversation
 as a real prompt; a saved holder is not delivery evidence. A parked proposal keeps
@@ -422,7 +489,7 @@ The Ticket transaction validates authority and route. It stores the exact attrib
 comment as one-use feedback for the current Stage, clears the pending proposal, and
 returns the Ticket to its resting control status. A Worker-owned Stage also returns to the
 current Day in that transaction. The commit wakes normal readiness, and readiness reuses
-the Ticket conversation. Ticket guidance is unchanged. The next normal worker-step prompt
+the Ticket conversation. The next normal worker-step prompt
 carries the feedback, which is consumed only after that prompt is accepted. The ticket's
 stage never changes. Settled values remain. The gated field can
 therefore be revised
@@ -440,7 +507,7 @@ it approves that visible revision through the same canonical acceptance action.
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
 Anyone else reads proposals from canonical Ticket state through their normal Ticket and
-Sprint Item views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
+Manager views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -456,14 +523,13 @@ deletion remains a manual API or CLI operation, and the CLI requires `--yes`.
 
 The user's ordinary delete is refused while the Ticket's status says a worker step is
 out, and also while its conversation has a turn running. `--force` deletes it anyway. A
-Sprint Item can delete its own child Ticket without that activity guard. No actor can
-delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. Any delete
+Manager can delete its own child Ticket without that activity guard. No actor can
+delete a Ticket or Manager that is the ceiling holder for another Ticket. Any delete
 that goes ahead over a running worker kills that worker's turn first, so nothing keeps
 talking into a conversation whose ticket is gone.
 
-One transaction removes the ticket
-from days, sprint views, Ticket blocks, Review, and Workspace. Other tickets and day
-ordering stay intact.
+One transaction removes the Ticket from its manager, Ticket blocks, Review, and Workspace.
+Other Tickets remain intact.
 
 Ticket blocks are removed in the same transaction. The delete response lists the
 surviving Tickets from those relationships.
@@ -471,8 +537,7 @@ surviving Tickets from those relationships.
 The conversations live outside the Ticket record and are not erased. Deletion removes
 their Ticket associations, so Panels no longer assigns those transcripts to that Ticket.
 
-The whole deletion is one transaction, so it announces one change — not one per removed
-day or Ticket block.
+The whole deletion is one transaction, so it announces one change — not one per removed Ticket block.
 
 _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 `src/planner/cli/main.py`.
@@ -490,7 +555,7 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
   Worker identity hold no approval verb or authority.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
   render a ticket's story and carry the human's decisions.
-- **Projects** (`projects.md`) — the catalog that Tickets, Sprint Items, and Ideas use
+- **Projects** (`projects.md`) — the catalog that Tickets, Managers, and Ideas use
   directly.
 
 ## Deferred
@@ -500,28 +565,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-08-14._
-
-## Machine choice for a creation draft
-
-`POST /api/tickets/creation-context` is a read-only projection. It accepts the
-creation policy fields: Worker type, Project or Project ID, orchestrator, backend,
-model, and optional locale. It does not require a title or kickoff note.
-It returns `resolved_locale`, `employee_backend`, inherited `project_id`, and
-`locale_choices`. Each choice carries `locale`, `compatible`, and a nullable
-canonical refusal `reason`.
-
-The projection and creation use the same resolver, launch defaults, placement
-validation, model enablement, and locale compatibility rules. A Project inherited
-from an orchestrator participates in resolution. A conflicting supplied Project
-fails validation. Invalid Workers, backends, Projects, orchestrators, models, or
-locales use the existing validation errors. Unknown model IDs follow ordinary
-creation's existing model policy. An explicitly disabled model is refused.
-
-A selected incompatible locale remains in the draft response with a refusal
-reason. It cannot pass full creation. Compatibility does not depend on connection
-reachability, so a supported offline Mac remains a valid destination for new work.
-The read creates no rows. Creation and moves still validate current conditions at
-the authoritative write. A failed or superseded draft read cannot enable creation.
-Locale appears only in the approved machine identity surfaces and structured
-Ticket reads. Curated copy text keeps its established projection.
+_Last verified: 2026-10-18. Brief creation and ceiling explanation checked against code: 2026-10-19._

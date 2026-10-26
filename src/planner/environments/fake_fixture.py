@@ -9,13 +9,12 @@ from pathlib import Path
 
 from planner.core import db
 from planner.core.clock import Clock
-from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind, Priority
-from planner.days import data as days_data
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.files.logic.paths import ticket_files_root
+from planner.managers import data as managers_data
+from planner.managers.contracts import Manager
 from planner.projects import data as projects_data
 from planner.projects.contracts import Project
-from planner.sprints import data as sprints_data
-from planner.sprints.contracts import SprintItem
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
@@ -52,59 +51,19 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
     try:
         db.create_schema(conn)
         projects = _create_projects(conn, now=now)
-        sprint = sprints_data.create_sprint(
+        items = _create_managers(
             conn,
-            name="Fictional July Systems Sprint",
-            date_start="2026-07-06",
-            date_end="2026-07-17",
-            kickoff=(
-                "## Limiting factor\n\nKeep the fake workspace small enough to inspect.\n\n"
-                "## Supports\n\nRepresentative tickets, day placement, and managed files.\n\n"
-                "## Premortem\n\nThe useful failure is accidental coupling between instances."
-            ),
-            primary_bet="Prove isolated environments without touching live state.",
-            clock=clock,
-        )
-        generated_ids.add(sprint.id)
-        sprints_data.update_sprint_field(
-            conn,
-            sprint.id,
-            "review",
-            "Fake environments materialize predictably and independently.",
-            clock=clock,
-        )
-        items = _create_items(
-            conn,
-            sprint_id=sprint.id,
             project_ids=(projects[0].id, projects[1].id),
             clock=clock,
         )
         generated_ids.update(item.id for item in items)
-        day_id = "day_2026-07-10"
-        days_data.set_day_field(
-            conn,
-            day_id,
-            "focus",
-            "Exercise the isolated runtime fixture.",
-            now,
-        )
-        days_data.set_day_field(
-            conn,
-            day_id,
-            "notes",
-            "This is fictional non-production planning data.",
-            now,
-        )
         tickets = _create_tickets(
             conn,
-            sprint_id=sprint.id,
-            sprint_item_ids=(items[0].id, items[1].id),
+            manager_ids=(items[0].id, items[1].id),
             project_id=projects[0].id,
             now=now,
         )
         generated_ids.update(ticket.id for ticket in tickets)
-        for ticket in tickets:
-            days_data.add_day_ticket(conn, day_id, ticket.id, now)
         managed_file_relative_paths = _write_managed_files(db_path, tickets[0].id)
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
@@ -114,15 +73,13 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
         fixture_version=FAKE_FIXTURE_VERSION,
         logical_summary={
             "projects": 2,
-            "sprints": 1,
-            "sprint_items": 2,
-            "days": 1,
+            "managers": 2,
             "tickets": 4,
             "managed_files": len(managed_file_relative_paths),
         },
         logical_titles={
             "projects": tuple(project.name for project in projects),
-            "sprint_items": tuple(item.title for item in items),
+            "managers": tuple(item.title for item in items),
             "tickets": tuple(ticket.title for ticket in tickets),
         },
         generated_ids=frozenset(generated_ids),
@@ -135,57 +92,47 @@ def _create_projects(conn: sqlite3.Connection, *, now: int) -> tuple[Project, Pr
         projects_data.create_project(
             conn,
             name="Northstar Demo",
-            priority=Priority.P1,
             summary="Fictional product workspace for environment isolation.",
             now=now,
         ),
         projects_data.create_project(
             conn,
             name="Harbor Ops",
-            priority=Priority.P2,
             summary="Fictional operations workspace for staging testing.",
             now=now,
         ),
     )
 
 
-def _create_items(
+def _create_managers(
     conn: sqlite3.Connection,
     *,
-    sprint_id: str,
     project_ids: tuple[str, str],
     clock: Clock,
-) -> tuple[SprintItem, SprintItem]:
+) -> tuple[Manager, Manager]:
     items = (
-        sprints_data.create_item(
+        managers_data.create_manager(
             conn,
             title="Prepare isolated runtime story",
-            body="Small representative plan for fictional staging work.",
-            priority=Priority.P1,
+            goal="Small representative plan for fictional staging work.",
             project_id=project_ids[0],
             clock=clock,
         ),
-        sprints_data.create_item(
+        managers_data.create_manager(
             conn,
             title="Review fake environment behavior",
-            body="Fictional review item with child tickets in multiple states.",
-            priority=Priority.P2,
+            goal="Fictional review item with child tickets in multiple states.",
             project_id=project_ids[1],
             clock=clock,
         ),
     )
-    for item in items:
-        conn.execute(
-            "INSERT INTO sprint_outcomes(sprint_id,outcome_id) VALUES (?,?)", (sprint_id, item.id)
-        )
     return items
 
 
 def _create_tickets(
     conn: sqlite3.Connection,
     *,
-    sprint_id: str,
-    sprint_item_ids: tuple[str, str],
+    manager_ids: tuple[str, str],
     project_id: str,
     now: int,
 ) -> tuple[Ticket, Ticket, Ticket, Ticket]:
@@ -195,9 +142,8 @@ def _create_tickets(
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="Build fictional state only.",
-        sprint_item_id=sprint_item_ids[0],
-        sprint_id=sprint_id,
+        brief="Build fictional state only.",
+        manager_id=manager_ids[0],
         worker_type="coding",
         stated_ceiling="needs_what_changes",
     )
@@ -222,9 +168,8 @@ def _create_tickets(
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="Invent a representative worker without creating registry rows.",
-        sprint_item_id=sprint_item_ids[0],
-        sprint_id=sprint_id,
+        brief="Invent a representative worker without creating registry rows.",
+        manager_id=manager_ids[0],
         worker_type="new_worker",
         stated_ceiling="needs_stages",
     )
@@ -249,9 +194,8 @@ def _create_tickets(
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="Inspect reset behavior in fictional staging.",
-        sprint_item_id=sprint_item_ids[1],
-        sprint_id=sprint_id,
+        brief="Inspect reset behavior in fictional staging.",
+        manager_id=manager_ids[1],
         worker_type="exploration",
         stated_ceiling="needs_research_plan",
     )
@@ -276,10 +220,8 @@ def _create_tickets(
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="Keep this pending to show approval state.",
+        brief="Keep this pending to show approval state.",
         project_id=project_id,
-        priority=Priority.P2,
-        sprint_id=sprint_id,
         worker_type="initiative_planning",
     )
     tickets_data.mark_ticket_errored(

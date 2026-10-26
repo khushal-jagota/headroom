@@ -10,7 +10,7 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, tic
 
 from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket, TicketEdit
+from planner.tickets.contracts import Ticket, TicketApprovalMethod, TicketEdit, TicketFieldApproval
 from planner.tickets.logic import admission, resolution
 from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -39,21 +39,13 @@ def _cases(
         conn, "t_1", field=foreign_field, new_body="b", principal=OWNER_PRINCIPAL, now=0
     )
     _t4: Ticket = tickets_data.edit_ticket(
-            conn,
-            "t_1",
-            edit=TicketEdit(guidance="n"),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=0,
-        )
-    _t5: Ticket = tickets_data.edit_ticket(
-            conn,
-            "t_1",
-            edit=TicketEdit(guidance_append="n"),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=0,
-        )
+        conn,
+        "t_1",
+        edit=TicketEdit(recap="n"),
+        title_max_chars=200,
+        principal=OWNER_PRINCIPAL,
+        now=0,
+    )
 
     assert_type(
         resolution.decide_file_proposal(
@@ -74,6 +66,9 @@ def _cases(
             "none",
             OWNER_PRINCIPAL,
             worker_type_definition=definition,
+            approval=TicketFieldApproval(
+                TicketApprovalMethod.explicit_accept, OWNER_PRINCIPAL, "Approved by Khushal"
+            ),
         ),
         Decision,
     )

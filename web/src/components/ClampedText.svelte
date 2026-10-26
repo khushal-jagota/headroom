@@ -2,7 +2,7 @@
   /** A block of prose clamped to its first few lines, with a way to see the rest.
    *
    * Three screens show a long piece of writing at the head of a document — the Ticket's
-   * recap, the Sprint Item's brief, the Sprint's primary bet — and all three want the same
+   * recap, the Manager's brief, the Sprint's primary bet — and all three want the same
    * thing: a few lines at rest, everything on demand, and the offer to see the rest only
    * when there is something being hidden. Whether there is can only be answered by the
    * browser, so it is measured here, once, rather than copied into each screen.

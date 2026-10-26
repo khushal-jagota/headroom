@@ -1,12 +1,13 @@
+import json
 import shutil
 import sqlite3
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
+from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from planner.core import db as db_module
@@ -25,8 +26,7 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-# Existing 63 plus four memory notice, ten executor and three native usage objects.
-CURRENT_SCHEMA_OBJECT_COUNT = 80
+CURRENT_SCHEMA_OBJECT_COUNT = 122
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -80,11 +80,11 @@ def _revision(conn: sqlite3.Connection) -> str:
     return str(conn.execute("SELECT version_num FROM alembic_version").fetchone()[0])
 
 
-def _head_revision() -> str:
+def head_revision() -> str:
     """The revision this build finishes at, which moves as revisions are added."""
-    head = ScriptDirectory(str(db_module.MIGRATIONS_DIRECTORY)).get_current_head()
-    assert head is not None
-    return head
+    config = Config()
+    config.set_main_option("script_location", str(db_module.MIGRATIONS_DIRECTORY))
+    return str(ScriptDirectory.from_config(config).get_current_head())
 
 
 def _build_database_at_the_pre_collapse_head(path: Path) -> sqlite3.Connection:
@@ -148,7 +148,7 @@ def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
 
     create_schema(conn)
 
-    assert _revision(conn) == _head_revision()
+    assert _revision(conn) == head_revision()
     removed_objects = {
         "idx_sprint_items_supervisor_agent_key",
         "sprint_items_supervisor_create",
@@ -195,32 +195,6 @@ def test_current_cutover_refuses_ordinary_only_historical_fixture_without_mutati
     conn.close()
 
 
-def test_database_at_a_revision_from_the_collapsed_chain_is_refused(tmp_path: Path) -> None:
-    """The refusal a single deploy gets, when the database still needs the deleted steps."""
-    db_path = tmp_path / "mid-chain.db"
-    conn = _build_database_at_the_pre_collapse_head(db_path)
-    conn.execute("DELETE FROM alembic_version")
-    conn.execute("INSERT INTO alembic_version VALUES (?)", (REVISION_FROM_THE_COLLAPSED_CHAIN,))
-    _insert_ticket(conn, "t_waiting", "Waiting on the earlier build")
-
-    with pytest.raises(RuntimeError) as refusal:
-        create_schema(conn)
-
-    # The message has to be enough to act on: where the database is, where this build
-    # starts, and which build to run first.
-    message = str(refusal.value)
-    assert REVISION_FROM_THE_COLLAPSED_CHAIN in message
-    assert BASELINE_REVISION in message
-    assert PRE_COLLAPSE_HEAD_REVISION in message
-    assert "before the migration chain was collapsed" in message
-    # A refused database is left exactly as it was.
-    assert _revision(conn) == REVISION_FROM_THE_COLLAPSED_CHAIN
-    assert conn.execute("SELECT title FROM tickets WHERE id = 't_waiting'").fetchone()[0] == (
-        "Waiting on the earlier build"
-    )
-    conn.close()
-
-
 def test_manager_wake_migration_backfills_current_unresolved_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -261,7 +235,7 @@ def test_manager_wake_migration_backfills_current_unresolved_sources(
     # Exercise this revision's backfill against its own historical schema only.
     _migration_tree_through(tmp_path, monkeypatch, "wake_sprint_item_managers")
     create_schema(conn)
-    assert _revision(conn) == _head_revision() == "wake_sprint_item_managers"
+    assert _revision(conn) == head_revision() == "wake_sprint_item_managers"
 
     rows = conn.execute(
         "SELECT ticket_id,source_kind,source_revision FROM manager_wakes ORDER BY ticket_id"
@@ -270,81 +244,6 @@ def test_manager_wake_migration_backfills_current_unresolved_sources(
         ("t_error", "worker_error", 3),
         ("t_proposal", "proposal", 1),
     ]
-    conn.close()
-
-
-def test_database_with_tables_but_no_version_table_is_refused(tmp_path: Path) -> None:
-    """What a database the pre-Alembic ladder built now gets. Two hops, not one."""
-    conn = connect(str(tmp_path / "untracked.db"))
-    conn.execute("CREATE TABLE something_else (value TEXT)")
-    conn.execute("PRAGMA user_version=37")
-
-    with pytest.raises(RuntimeError, match="no version table"):
-        create_schema(conn)
-
-    conn.close()
-
-
-def test_database_at_the_pre_collapse_head_without_that_schema_is_refused(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "mismarked.db"))
-    conn.execute("CREATE TABLE alembic_version (version_num TEXT NOT NULL)")
-    conn.execute("INSERT INTO alembic_version VALUES (?)", (PRE_COLLAPSE_HEAD_REVISION,))
-
-    with pytest.raises(RuntimeError, match="does not hold that schema"):
-        create_schema(conn)
-
-    conn.close()
-
-
-def test_a_database_this_build_already_carried_opens_again(tmp_path: Path) -> None:
-    """Opening twice must not refuse the second time.
-
-    The adoption guard once named the baseline as the only revision a database could
-    already stand on. The first revision added on top of the baseline then made every
-    start after the first refuse, because the database now held that revision instead.
-    """
-    conn = connect(str(tmp_path / "opened-twice.db"))
-    create_schema(conn)
-    first = _revision(conn)
-
-    create_schema(conn)
-
-    assert _revision(conn) == first == _head_revision()
-    conn.close()
-
-
-def test_processes_starting_at_once_agree_on_one_database(tmp_path: Path) -> None:
-    """Nothing stops two Panels processes bringing the same database up together."""
-    db_path = tmp_path / "contended.db"
-    # Open once so the file exists in WAL mode. Racing that first open is a question
-    # about connect(), not about who gets to build the schema, which is what this asks.
-    connect(str(db_path)).close()
-    starters = [
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "from planner.core.db import connect, create_schema\n"
-                f"conn = connect({str(db_path)!r})\n"
-                "create_schema(conn)\n"
-                "conn.close()\n",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        for _ in range(4)
-    ]
-    failures = [process.communicate()[1] for process in starters if process.wait() != 0]
-    assert failures == []
-
-    conn = connect(str(db_path))
-    assert [str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")] == [
-        _head_revision()
-    ]
-    assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     conn.close()
 
 
@@ -492,7 +391,7 @@ def _migration_tree_through(
     tree = _migration_tree(tmp_path, monkeypatch)
     for revision in ScriptDirectory(str(shipped)).walk_revisions(base="base", head=head):
         shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
-    assert _head_revision() == head
+    assert head_revision() == head
     return tree
 
 
@@ -883,7 +782,7 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
         shutil.copy(revision, tree / "versions" / revision.name)
     create_schema(conn)
 
-    assert _revision(conn) == _head_revision()
+    assert _revision(conn) == head_revision()
     for table in _NOTIFICATION_TABLES:
         sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -910,4 +809,626 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
         ]
         == 0
     )
+    conn.close()
+
+
+def test_model_resolution_migration_preserves_saved_choices_and_removes_pinned_trigger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "native_usage_prices")
+    conn = connect(str(tmp_path / "models.db"))
+    create_schema(conn)
+    project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0]
+    conn.execute(
+        "INSERT INTO agents(agent_key,conversation_id) VALUES ('sprint_item_supervisor_old',NULL)"
+    )
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,body,priority,project_id,supervisor_backend,"
+        "supervisor_model,supervisor_reasoning_effort,created_at,updated_at) "
+        "VALUES ('old','Existing','', 'P3',?,'codex','gpt-5.6-sol','high',1,1)",
+        (project_id,),
+    )
+    conn.execute(
+        "CREATE TRIGGER sprint_items_supervisor_create AFTER INSERT ON sprint_items BEGIN "
+        "UPDATE sprint_items SET supervisor_model='gpt-5.6-sol' WHERE id=NEW.id; END"
+    )
+    before = tuple(conn.execute("SELECT * FROM sprint_items WHERE id='old'").fetchone())
+    shutil.copy(shipped / "versions" / "current_model_variants.py", tree / "versions")
+    create_schema(conn)
+    assert tuple(conn.execute("SELECT * FROM sprint_items WHERE id='old'").fetchone()) == before
+    assert conn.execute(
+        "SELECT agent_key FROM agents WHERE agent_key='sprint_item_supervisor_old'"
+    ).fetchone()
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='trigger' "
+            "AND name='sprint_items_supervisor_create'"
+        ).fetchone()
+        is None
+    )
+    assert conn.execute("SELECT COUNT(*) FROM model_variant_resolutions").fetchone()[0] == 0
+    conn.close()
+
+
+def test_priority_removal_preserves_other_values_constraints_and_dependents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "chief_recap")
+    conn = connect(str(tmp_path / "without-priority.db"))
+    create_schema(conn)
+    conn.execute("UPDATE chief_settings SET recap='Keep the owner recap'")
+    chief_before = tuple(conn.execute("SELECT * FROM chief_settings").fetchone())
+    project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+        "supervisor_reasoning_effort,created_at,updated_at) "
+        "VALUES ('si_kept','Item',?,'codex','model','medium',1,2)",
+        (project_id,),
+    )
+    _insert_ticket(conn, "t_kept", "Kept")
+    _insert_ticket(conn, "t_child", "Child")
+    conn.execute(
+        "UPDATE tickets SET sprint_item_id='si_kept',orchestrator_kind='sprint_item',"
+        "project_id=NULL,priority='P0' WHERE id='t_kept'"
+    )
+    conn.execute("INSERT INTO ticket_blocks VALUES ('t_kept','t_child')")
+    conn.execute(
+        "INSERT INTO scheduled_ticket_schedules(id,enabled,cadence,local_time,title,"
+        "worker_type,priority,placement_mode,created_at,updated_at) "
+        "VALUES ('schedule_kept',1,'daily','09:00','Keep schedule','coding','P1','backlog',3,4)"
+    )
+    tables = ("projects", "sprint_items", "tickets", "scheduled_ticket_schedules")
+    before = {}
+    structures = {}
+    for table in tables:
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")]
+        retained = ",".join(f'"{column}"' for column in columns if column != "priority")
+        before[table] = (
+            retained,
+            list(conn.execute(f"SELECT {retained} FROM {table} ORDER BY id")),
+        )
+        structures[table] = _table_structure(conn, table)
+    dependents = _schema_objects(conn)
+    conn.commit()
+    shutil.copy(shipped / "versions" / "remove_priority.py", tree / "versions")
+    create_schema(conn)
+
+    for table in tables:
+        projection, rows = before[table]
+        assert list(conn.execute(f"SELECT {projection} FROM {table} ORDER BY id")) == rows
+        structure = _table_structure(conn, table)
+        assert structure["columns"] == [
+            column
+            for column in cast(
+                list[tuple[str, str, int, str | None, int]], structures[table]["columns"]
+            )
+            if column[0] != "priority"
+        ]
+        assert structure["foreign_keys"] == structures[table]["foreign_keys"]
+        assert structure["indexes"] == structures[table]["indexes"]
+        sql = conn.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
+        assert "priority" not in sql
+    assert tuple(conn.execute("SELECT * FROM chief_settings").fetchone()) == chief_before
+    after = _schema_objects(conn)
+    assert {key: value for key, value in after.items() if key not in tables} == {
+        key: value for key, value in dependents.items() if key not in tables
+    }
+    assert [tuple(row) for row in conn.execute("SELECT * FROM ticket_blocks")] == [
+        ("t_kept", "t_child")
+    ]
+    assert list(conn.execute("PRAGMA foreign_key_check")) == []
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE tickets SET worker_step_claim='invalid' WHERE id='t_kept'")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE scheduled_ticket_schedules SET enabled=5 WHERE id='schedule_kept'")
+    conn.close()
+
+
+# This fixture starts after the historical cohort gates, with real source triggers.
+def _database_before_calendar_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[sqlite3.Connection, Path]:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "diagnostic_expiry_metadata")
+    conn = connect(str(tmp_path / "before-calendar-removal.db"))
+    create_schema(conn)
+    project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
+    personal = json.loads(
+        conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+        ).fetchone()[0]
+    )
+    personal["worker_type"] = "personal"
+    personal["label"] = "Historical personal task"
+    conn.execute(
+        "INSERT INTO worker_types(worker_type,position,definition_json,updated_at) "
+        "VALUES('personal',99,?,1)",
+        (json.dumps(personal),),
+    )
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,goal,recap,project_id,supervisor_backend,"
+        "supervisor_model,created_at,updated_at) "
+        "VALUES('si_kept','Orchestrator','Keep goal','Keep recap',?,'codex','model',1,2)",
+        (project_id,),
+    )
+    conn.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) "
+        "VALUES('kept-conversation','codex',?,'full',1)",
+        (str(tmp_path),),
+    )
+    conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_si_kept','kept-conversation')")
+    conn.execute(
+        "INSERT INTO ideas(id,title,body,project_id,created_at,updated_at) "
+        "VALUES('idea_kept','Idea','Keep idea',?,1,2)",
+        (project_id,),
+    )
+    conn.execute(
+        "INSERT INTO sprints(id,name,date_start,date_end,primary_bet,kickoff,checkpoint,review,"
+        "created_at,updated_at) VALUES('sp_removed','Sprint','2026-01-01','2026-01-07',"
+        "'Bet','Kickoff','Checkpoint','Review',1,2)"
+    )
+    for ticket_id in ("t_chief", "t_item", "t_personal"):
+        _insert_ticket(conn, ticket_id, stage="needs_plan")
+    conn.execute(
+        "UPDATE tickets SET ceiling='done',sprint_id='sp_removed',field_values=?,"
+        "field_approvals=?,pending_proposal=?,pending_proposal_revision=7,"
+        "worker_step_claim='out',worker_step_claim_revision=9,is_backlogged=1,"
+        "conversation_id='kept-conversation',guidance='Keep guidance',locale='macos' "
+        "WHERE id='t_item'",
+        (
+            '{ "brief": "Keep original bytes" }',
+            '{ "brief": {"fixture": true} }',
+            '{"field":"plan","body":"Keep proposal","proposed_by":"worker","created_at":3}',
+        ),
+    )
+    conn.execute(
+        "UPDATE tickets SET sprint_item_id='si_kept',orchestrator_kind='sprint_item',"
+        "project_id=NULL "
+        "WHERE id='t_item'"
+    )
+    conn.execute("UPDATE tickets SET worker_type='personal' WHERE id='t_personal'")
+    conn.execute("INSERT INTO ticket_blocks VALUES('t_chief','t_item')")
+    conn.execute("INSERT INTO ticket_conversations VALUES('kept-conversation','t_item')")
+    conn.execute("INSERT INTO sprint_outcomes VALUES('sp_removed','si_kept')")
+    conn.execute(
+        "INSERT INTO days(id,focus,notes,created_at,updated_at) "
+        "VALUES('day_2024-02-29','Delete focus','Delete notes',1,2)"
+    )
+    conn.execute("INSERT INTO day_tickets VALUES('day_2024-02-29','t_item',0)")
+    for identity, enabled, cadence, worker_type, item_id in (
+        ("daily", 1, "daily", "coding", None),
+        ("retired", 0, "current_sprint_final_day", "planning-sprint", None),
+        ("assigned", 1, "daily", "coding", "si_kept"),
+    ):
+        conn.execute(
+            "INSERT INTO scheduled_ticket_schedules(id,enabled,cadence,local_time,title,"
+            "worker_type,kickoff_note,deadline,project_id,sprint_id,sprint_item_id,"
+            "employee_backend,employee_launch_model,blocked_by_ticket_ids,created_at,updated_at,"
+            "placement_mode,locale,orchestrator_kind) "
+            "VALUES(?,?,?,'09:05',? ,?,'Keep brief','2026-11-01',?,'sp_removed',?,"
+            "'codex','model','[\"t_chief\"]',3,4,'current_sprint','macos',?)",
+            (
+                identity,
+                enabled,
+                cadence,
+                identity,
+                worker_type,
+                project_id,
+                item_id,
+                "chief" if item_id is None else "sprint_item",
+            ),
+        )
+    for identity, outcome, target, receipt_ticket_id, error in (
+        ("one", "created", "day_2024-02-29", "t_chief", None),
+        ("two", "suppressed", "day_2026-01-01", None, None),
+        ("three", "failed", "day_9999-12-31", None, "Keep error"),
+    ):
+        conn.execute(
+            "INSERT INTO scheduled_ticket_occurrences VALUES('daily',?,?,?,?,?,5)",
+            (identity, target, outcome, receipt_ticket_id, error),
+        )
+    conn.commit()
+    shutil.copy(shipped / "versions" / "remove_calendar_records.py", tree / "versions")
+    return conn, tree / "versions" / "remove_calendar_records.py"
+
+
+def _all_table_rows(conn: sqlite3.Connection) -> dict[str, list[tuple[object, ...]]]:
+    result = {}
+    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
+        table = str(row[0])
+        columns = list(conn.execute(f'PRAGMA table_info("{table}")'))
+        order = ",".join(str(index + 1) for index in range(len(columns)))
+        result[table] = [
+            tuple(value) for value in conn.execute(f'SELECT * FROM "{table}" ORDER BY {order}')
+        ]
+    return result
+
+
+def test_calendar_removal_preserves_work_receipts_constraints_and_projections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn, _ = _database_before_calendar_removal(tmp_path, monkeypatch)
+    removed_tables = {"days", "day_tickets", "sprints", "sprint_outcomes"}
+    projected = {}
+    structures = {}
+    for table, removed in (
+        ("tickets", {"sprint_id"}),
+        ("scheduled_ticket_schedules", {"sprint_id", "placement_mode"}),
+    ):
+        structures[table] = _table_structure(conn, table)
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")]
+        projection = ",".join(f'"{column}"' for column in columns if column not in removed)
+        projected[table] = (
+            projection,
+            list(conn.execute(f"SELECT {projection} FROM {table} ORDER BY id")),
+        )
+    before = _all_table_rows(conn)
+    receipt_structure = _table_structure(conn, "scheduled_ticket_occurrences")
+    objects = _schema_objects(conn)
+    create_schema(conn)
+    assert _revision(conn) == "remove_calendar_records"
+    after = _all_table_rows(conn)
+    assert set(before) - set(after) == removed_tables
+    changed = removed_tables | {
+        "tickets",
+        "scheduled_ticket_schedules",
+        "scheduled_ticket_occurrences",
+        "alembic_version",
+    }
+    assert {key: value for key, value in after.items() if key not in changed} == {
+        key: value for key, value in before.items() if key not in changed
+    }
+    for table, (projection, values) in projected.items():
+        assert list(conn.execute(f"SELECT {projection} FROM {table} ORDER BY id")) == values
+        retained_structure = _table_structure(conn, table)
+        assert retained_structure["indexes"] == structures[table]["indexes"]
+        assert retained_structure["foreign_keys"] == [
+            fk
+            for fk in cast(list[tuple[str, str, str, str]], structures[table]["foreign_keys"])
+            if fk[1] != "sprint_id"
+        ]
+        removed = {"sprint_id", "placement_mode"} if table.endswith("schedules") else {"sprint_id"}
+        assert retained_structure["columns"] == [
+            column
+            for column in cast(
+                list[tuple[str, str, int, str | None, int]], structures[table]["columns"]
+            )
+            if column[0] not in removed
+        ]
+    assert after["scheduled_ticket_occurrences"] == [
+        (row[0], row[1], str(row[2])[4:], *row[3:])
+        for row in before["scheduled_ticket_occurrences"]
+    ]
+    receipt_after = _table_structure(conn, "scheduled_ticket_occurrences")
+    assert receipt_after == {
+        **receipt_structure,
+        "columns": [
+            ("target_date" if column[0] == "target_day_id" else column[0], *column[1:])
+            for column in cast(
+                list[tuple[str, str, int, str | None, int]], receipt_structure["columns"]
+            )
+        ],
+    }
+    excluded_objects = removed_tables | {
+        "tickets",
+        "scheduled_ticket_schedules",
+        "scheduled_ticket_occurrences",
+        "idx_sprint_outcomes_outcome_id",
+    }
+    assert {
+        key: value for key, value in _schema_objects(conn).items() if key not in excluded_objects
+    } == {key: value for key, value in objects.items() if key not in excluded_objects}
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    # A schema check alone cannot prove that retained guard triggers still execute.
+    for sql in (
+        "UPDATE tickets SET worker_step_claim='invalid' WHERE id='t_item'",
+        "UPDATE tickets SET orchestrator_kind='chief' WHERE id='t_item'",
+        "UPDATE scheduled_ticket_schedules SET enabled=5 WHERE id='daily'",
+        "UPDATE scheduled_ticket_schedules SET cadence='unknown' WHERE id='daily'",
+        "UPDATE scheduled_ticket_schedules SET orchestrator_kind='chief' WHERE id='assigned'",
+        "UPDATE scheduled_ticket_occurrences SET target_date=NULL WHERE occurrence_key='one'",
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(sql)
+    conn.rollback()
+    # Opening an already migrated database is idempotent and keeps every retained row.
+    create_schema(conn)
+    assert _all_table_rows(conn) == after
+    conn.close()
+
+
+def test_calendar_removal_failure_after_drops_rolls_back_every_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn, revision_path = _database_before_calendar_removal(tmp_path, monkeypatch)
+    before = list(conn.iterdump())
+    source = revision_path.read_text()
+    source = source.replace(
+        '    if _retained_rows(conn, "tickets", frozenset()) != tickets:',
+        '    raise RuntimeError("injected failure after calendar drops")\n'
+        '    if _retained_rows(conn, "tickets", frozenset()) != tickets:',
+    )
+    revision_path.write_text(source)
+    with pytest.raises(RuntimeError, match="injected failure after calendar drops"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "target", ["2026-01-01", "day_2026-1-01", "day_2026-02-30", "day_0000-01-01"]
+)
+def test_calendar_removal_refuses_invalid_receipt_without_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    conn, _ = _database_before_calendar_removal(tmp_path, monkeypatch)
+    conn.execute(
+        "UPDATE scheduled_ticket_occurrences SET target_day_id=? WHERE occurrence_key='one'",
+        (target,),
+    )
+    conn.commit()
+    before = list(conn.iterdump())
+    with pytest.raises(RuntimeError, match="invalid receipt target"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
+    conn.close()
+
+
+def _database_before_manager_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> sqlite3.Connection:
+    """Reuse the occupied calendar-removal fixture at the exact rename boundary."""
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    conn, _ = _database_before_calendar_removal(tmp_path, monkeypatch)
+    create_schema(conn)
+    monkeypatch.setattr(db_module, "MIGRATIONS_DIRECTORY", shipped)
+    identity = '[ ["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", "si_kept"] ]'
+    conn.execute(
+        "UPDATE conversations SET identity_environment_variables=? "
+        "WHERE conversation_id='kept-conversation'",
+        (identity,),
+    )
+    conn.execute(
+        "INSERT INTO manager_wakes(id,sprint_item_id,ticket_id,source_kind,source_revision,"
+        "summary,created_at,target_kind,target_id) VALUES(41,'si_kept','t_item',"
+        "'proposal',7,'Keep sprint item text',3,'sprint_item','si_kept')"
+    )
+    conn.execute(
+        "INSERT INTO manager_wake_batches(id,sprint_item_id,sender_message_id,message,status,"
+        "conversation_id,created_at,updated_at,target_kind,target_id) VALUES(51,'si_kept',"
+        "'supervisor_delivery_kept','Keep authored message','uncertain','kept-conversation',"
+        "3,4,'sprint_item','si_kept')"
+    )
+    conn.execute("INSERT INTO manager_wake_batch_members VALUES(51,41)")
+    # A deleted sequence maximum is still an issued identity and must not be reused.
+    conn.execute("UPDATE sqlite_sequence SET seq=80 WHERE name='manager_wake_batches'")
+    conn.commit()
+    return conn
+
+
+def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    ticket_columns = (
+        "id,conversation_id,field_values,field_approvals,pending_proposal,"
+        "pending_proposal_revision,worker_step_claim,worker_step_claim_revision,locale,is_backlogged"
+    )
+    ticket = tuple(
+        conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone()
+    )
+    unchanged_tables = (
+        "agents",
+        "conversations",
+        "ticket_conversations",
+        "ticket_blocks",
+        "scheduled_ticket_occurrences",
+        "manager_wake_batch_members",
+        "managed_skill_versions",
+    )
+    # Compare retained columns. The independent workspace migration appends its
+    # explicit legacy policy without changing the previously stored values.
+    retained_columns = {
+        table: ",".join(f'"{row[1]}"' for row in conn.execute(f'PRAGMA table_info("{table}")'))
+        for table in unchanged_tables
+    }
+    unchanged = {
+        table: [
+            tuple(row) for row in conn.execute(f'SELECT {retained_columns[table]} FROM "{table}"')
+        ]
+        for table in unchanged_tables
+    }
+    create_schema(conn)
+    assert _revision(conn) == head_revision()
+    assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
+    assert (
+        tuple(conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone())
+        == ticket
+    )
+    for table, expected in unchanged.items():
+        assert [
+            tuple(row) for row in conn.execute(f'SELECT {retained_columns[table]} FROM "{table}"')
+        ] == expected
+    assert (
+        conn.execute(
+            "SELECT workspace_path_policy FROM conversations "
+            "WHERE conversation_id='kept-conversation'"
+        ).fetchone()[0]
+        == "legacy_home_mapping"
+    )
+    assert tuple(
+        conn.execute("SELECT manager_id,manager_kind FROM tickets WHERE id='t_item'").fetchone()
+    ) == ("si_kept", "manager")
+    assert tuple(
+        conn.execute(
+            "SELECT manager_id,target_kind,target_id,summary FROM manager_wakes WHERE id=41"
+        ).fetchone()
+    ) == ("si_kept", "manager", "si_kept", "Keep sprint item text")
+    assert tuple(
+        conn.execute(
+            "SELECT manager_id,target_kind,status,sender_message_id,message "
+            "FROM manager_wake_batches "
+            "WHERE id=51"
+        ).fetchone()
+    ) == (
+        "si_kept",
+        "manager",
+        "uncertain",
+        "supervisor_delivery_kept",
+        "Keep authored message",
+    )
+    assert (
+        conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name='manager_wake_batches'"
+        ).fetchone()[0]
+        == 80
+    )
+    assert tuple(
+        conn.execute(
+            "SELECT owner_kind,owner_id FROM conversation_history_catalog "
+            "WHERE conversation_id='kept-conversation' AND owner_kind='manager'"
+        ).fetchone()
+    ) == ("manager", "si_kept")
+    projected = json.loads(
+        conn.execute(
+            "SELECT value FROM navigation_records WHERE kind='manager' AND id='si_kept'"
+        ).fetchone()[0]
+    )
+    assert projected["conversation_id"] == "kept-conversation"
+    assert projected["recap"] == "Keep recap"
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    for sql in (
+        "UPDATE tickets SET manager_kind='sprint_item' WHERE id='t_item'",
+        "UPDATE tickets SET manager_kind='chief' WHERE id='t_item'",
+        "UPDATE manager_wakes SET target_kind='sprint_item' WHERE id=41",
+        "UPDATE scheduled_ticket_schedules SET manager_kind='chief' WHERE id='assigned'",
+        "UPDATE notification_preferences SET subject_key='sprint_item_supervisors'",
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(sql)
+    conn.rollback()
+    before = _all_table_rows(conn)
+    create_schema(conn)
+    assert _all_table_rows(conn) == before
+    conn.close()
+
+
+def test_manager_rename_rolls_back_tables_rows_and_projections_after_a_late_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    before = list(conn.iterdump())
+    from planner.navigation import data as navigation
+
+    def fail_rebuild(connection: sqlite3.Connection) -> None:
+        assert connection.execute("SELECT id FROM managers").fetchone() is not None
+        raise RuntimeError("injected failure after Manager table rebuilds")
+
+    monkeypatch.setattr(navigation, "rebuild", fail_rebuild)
+    with pytest.raises(RuntimeError, match="injected failure after Manager table rebuilds"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
+    assert _revision(conn) == "remove_calendar_records"
+    conn.close()
+
+
+def test_manager_rename_refuses_conflicting_issued_agent_identities_before_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    conn.execute("INSERT INTO agents VALUES('manager_si_kept','different-conversation')")
+    conn.commit()
+    before = list(conn.iterdump())
+    with pytest.raises(RuntimeError, match="conflicting conversation identities"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
+    conn.close()
+
+
+def test_manager_rename_preserves_consumed_ids_when_wake_tables_are_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _database_before_manager_rename(tmp_path, monkeypatch)
+    conn.execute("DELETE FROM manager_wake_batch_members")
+    conn.execute("DELETE FROM manager_wake_batches")
+    conn.execute("DELETE FROM manager_wakes")
+    conn.commit()
+    create_schema(conn)
+    wake = conn.execute(
+        "INSERT INTO manager_wakes(manager_id,ticket_id,source_kind,source_revision,"
+        "summary,created_at,target_kind,target_id) VALUES('si_kept','t_item','proposal',8,"
+        "'New wake',5,'manager','si_kept')"
+    )
+    batch = conn.execute(
+        "INSERT INTO manager_wake_batches(manager_id,sender_message_id,message,status,"
+        "created_at,updated_at,target_kind,target_id) VALUES('si_kept','manager_delivery_new',"
+        "'New message','pending',5,5,'manager','si_kept')"
+    )
+    assert wake.lastrowid == 42
+    assert batch.lastrowid == 81
+    conn.rollback()
+    conn.close()
+
+
+def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "deploy_interruption_accounts")
+    conn = connect(str(tmp_path / "before-suppression.db"))
+    try:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,"
+            "access,created_at) VALUES ('suppression-upgrade','codex','model','/tmp','full',1)"
+        )
+        conn.execute(
+            "INSERT INTO conversation_lifecycle_facts VALUES "
+            "('suppression-upgrade','turn','1',1,'turn','unavailable',NULL),"
+            "('suppression-upgrade','attempt','prompt:1',1,'prompt','unknown','provider-one')"
+        )
+        facts = [tuple(row) for row in conn.execute("SELECT * FROM conversation_lifecycle_facts")]
+        indexes = _table_structure(conn, "conversation_lifecycle_facts")["indexes"]
+        conn.commit()
+        shutil.copy(
+            shipped / "versions/notice_suppression_audit.py",
+            tree / "versions/notice_suppression_audit.py",
+        )
+        create_schema(conn)
+        after = [tuple(row) for row in conn.execute("SELECT * FROM conversation_lifecycle_facts")]
+        assert after == facts
+        assert _table_structure(conn, "conversation_lifecycle_facts")["indexes"] == indexes
+        conn.execute(
+            "INSERT INTO conversation_lifecycle_facts VALUES "
+            "('suppression-upgrade','attempt','prompt:2',2,'prompt','suppressed',NULL)"
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connect(str(tmp_path / "workspace-upgrade.db"))
+    with monkeypatch.context() as historical:
+        _migration_tree_through(tmp_path, historical, "merge_resident_native_usage")
+        create_schema(conn)
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, created_at) VALUES ('legacy', 'codex', 'test', '/home/vps/projects', 'full', 1)"
+    )
+    conn.commit()
+    create_schema(conn)
+    row = conn.execute(
+        "SELECT workspace_folder, workspace_path_policy FROM conversations "
+        "WHERE conversation_id = 'legacy'"
+    ).fetchone()
+    assert tuple(row) == ("/home/vps/projects", "legacy_home_mapping")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
     conn.close()

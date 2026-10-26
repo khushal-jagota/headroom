@@ -2,7 +2,8 @@
 
 This module is the whole seam. The rest of Panels can start a conversation, send text
 into it, interrupt its running turn, kill its activity outright, and ask whether it is
-running. Nothing else crosses the boundary.
+running. Typed Signal publications supply complete attention and explicit availability
+at a serialized runtime and durable boundary.
 
 The conversation id is the identity everywhere. It is owned by the caller and it is the
 only name this contract knows a conversation by. The ACP session id of the backend
@@ -14,13 +15,17 @@ shape of an event record) and the concrete database schema are deferred to the r
 build. They are deliberately absent from this module rather than sketched.
 """
 
+# Versioned durable source and transaction participation: conversation.lifecycle.
+# Its knowledge outcomes never broaden the public delivery receipt contract here.
+
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Protocol, TypedDict
+from typing import Final, Literal, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
 from planner.core.contracts import ErrorCode, PlannerError, Principal
@@ -42,6 +47,202 @@ class ConversationAttention:
     signal: ConversationSignal
     awaiting_answer: bool
     last_turn_failed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationSignalPublicationV1:
+    """Complete canonical attention at one fenced conversation boundary.
+
+    Construction copies the existing mutable signal dictionary. Producers must also
+    copy publications at their public boundaries rather than expose owned objects.
+    """
+
+    conversation_id: str
+    runtime_epoch: str
+    conversation_revision: int
+    attention: ConversationAttention
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "attention",
+            replace(self.attention, signal=self.attention.signal.copy()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SignalCursor:
+    """Opaque producer continuity, independent of navigation continuity."""
+
+    scope: str
+    runtime_epoch: str
+    sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class SignalSnapshot:
+    """Every exact conversation at one producer cursor, including historical ones."""
+
+    installation_id: str
+    cursor: SignalCursor
+    values: tuple[ConversationSignalPublicationV1, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", tuple(replace(value) for value in self.values))
+
+
+@dataclass(frozen=True, slots=True)
+class SignalDeletion:
+    """Explicit removal fenced against obsolete conversation publications."""
+
+    conversation_id: str
+    runtime_epoch: str
+    conversation_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class SignalAssociationEffect:
+    """Both sides of an address change in its source transaction."""
+
+    owner_kind: Literal["ticket", "manager", "chief"]
+    owner_id: str
+    relation: Literal["current", "historical"]
+    before_conversation_id: str | None
+    after_conversation_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SignalBatch:
+    """One accepted source boundary, including association-only or order-only work."""
+
+    base_cursor: SignalCursor
+    cursor: SignalCursor
+    batch_id: str
+    operation_ids: tuple[str, ...]
+    fingerprint: str
+    replacements: tuple[ConversationSignalPublicationV1, ...]
+    deletions: tuple[SignalDeletion, ...]
+    associations: tuple[SignalAssociationEffect, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "replacements", tuple(replace(value) for value in self.replacements)
+        )
+
+
+class SignalInstaller(Protocol):
+    def __call__(self, connection: sqlite3.Connection, snapshot: SignalSnapshot, /) -> None:
+        """Install atomically on the source connection. Never commit, await or call providers."""
+        ...
+
+
+class SignalParticipant(Protocol):
+    def __call__(self, connection: sqlite3.Connection, batch: SignalBatch, /) -> None:
+        """Accept synchronously before source commit. A failure rolls back the boundary."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class SignalReadPermit:
+    """An attachment generation that cannot survive invalidation or reinstallation."""
+
+    scope: str
+    runtime_epoch: str
+    installation_id: str
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class SignalInvalidation:
+    """Unavailable before notification delivery, even if a subscriber fails."""
+
+    generation: int
+    reason: Literal[
+        "initializing",
+        "authority_lost",
+        "publication_failed",
+        "commit_uncertain",
+        "install_failed",
+        "detached",
+        "shutdown",
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class SignalDurableFacts:
+    """Separately knowable durable facts, without any assertion of runtime truth."""
+
+    message_for_owner: bool
+    last_turn_failed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SignalAvailability:
+    """Unknown runtime truth remains distinct from idle or false facts."""
+
+    generation: int
+    state: Literal["initializing", "current", "unavailable"]
+    reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SignalKnowledge:
+    """Unavailable knowledge has no current publication or fabricated runtime facts."""
+
+    conversation_id: str
+    availability: SignalAvailability
+    current: ConversationSignalPublicationV1 | None
+    durable: SignalDurableFacts | None
+
+    def __post_init__(self) -> None:
+        if self.current is not None:
+            object.__setattr__(self, "current", replace(self.current))
+
+
+class SignalUnavailable(RuntimeError):
+    """Producer truth or the requested attachment generation is unavailable."""
+
+
+class SignalAttachment(Protocol):
+    def capture_permit(self) -> SignalReadPermit:
+        """Capture current authority or raise SignalUnavailable."""
+        ...
+
+    def validate(self, permit: SignalReadPermit, /) -> None:
+        """Reject an obsolete permit even if current service subsequently resumes."""
+        ...
+
+    def close(self) -> None:
+        """Invalidate before detach, idempotently. Never close runtime ownership."""
+        ...
+
+
+class SignalPublicationSource(Protocol):
+    """Public operations of the domain coordinator, with no storage implementation."""
+
+    def read_durable_signal_knowledge(
+        self,
+        connection: sqlite3.Connection,
+        conversation_ids: tuple[str, ...],
+        expected_generation: int,
+        /,
+    ) -> tuple[SignalKnowledge, ...]:
+        """Read durable facts in the supplied transaction and validate its generation."""
+        ...
+
+    def signal_availability(self) -> SignalAvailability:
+        """Read atomic availability without admission to current facts or source writes."""
+        ...
+
+    def attach_signal_publication(
+        self,
+        *,
+        install: SignalInstaller,
+        participate: SignalParticipant,
+        unavailable: Callable[[SignalInvalidation], None],
+    ) -> SignalAttachment:
+        """Install complete state and register callbacks before current admission."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +368,13 @@ class ConversationRoleMaterials:
     identity_environment_variables: tuple[tuple[str, str], ...] = ()
 
 
+class WorkspacePathPolicy(StrEnum):
+    """How a remote executor interprets the stored absolute workspace path."""
+
+    legacy_home_mapping = "legacy_home_mapping"
+    native_absolute = "native_absolute"
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationStartRequest:
     """The concrete, already-resolved values a conversation is created from.
@@ -193,6 +401,7 @@ class ConversationStartRequest:
     role_materials: ConversationRoleMaterials | None = None
     workspace_folder: Path | None = None
     access: ConversationAccess | None = None
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +423,7 @@ class ResolvedConversationStart:
     role_materials: ConversationRoleMaterials | None
     workspace_folder: Path
     access: ConversationAccess
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
 
 
 class PromptDeliveryMode(StrEnum):
@@ -288,6 +498,7 @@ class PromptDeliveryRefusalReason(StrEnum):
 
     no_such_conversation = "no_such_conversation"
     backend_did_not_start = "backend_did_not_start"
+    model_resolution_failed = "model_resolution_failed"
     session_did_not_load = "session_did_not_load"
     write_to_backend_failed = "write_to_backend_failed"
     no_running_turn_to_steer_into = "no_running_turn_to_steer_into"
@@ -297,6 +508,34 @@ class PromptDeliveryRefusalReason(StrEnum):
     running_turn_cannot_accept_steer = "running_turn_cannot_accept_steer"
     message_cannot_be_steered = "message_cannot_be_steered"
     backend_rejected_steer = "backend_rejected_steer"
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentRecoveryReference:
+    """Internal capability naming immutable interrupted work and its selected stage."""
+
+    interruption_id: str
+    expected_stage: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDispatchDecision:
+    """One exact sender's final admission, after preparation and before backend I/O.
+
+    A missing suppression reason means allow. Notice eligibility belongs to its domain.
+    Ordinary messages pass through with ``is_manager_notice=False``.
+    """
+
+    sender_message_id: str | None
+    suppression_reason: str | None = None
+    is_manager_notice: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliverySuppressed:
+    """An intentional pre-wire discard, durably recorded for this sender identity."""
+
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,6 +625,7 @@ type PromptDeliveryFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 
@@ -408,6 +648,7 @@ type HeldPromptPromotionFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 
@@ -535,6 +776,7 @@ class ConversationSystem(Protocol):
         content: MessageContent,
         *,
         sender_label: str,
+        owner_read_through_sequence: int | None = None,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
@@ -543,6 +785,7 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -589,6 +832,7 @@ class ConversationSystem(Protocol):
         content: MessageContent,
         *,
         sender_label: str,
+        owner_read_through_sequence: int | None = None,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
@@ -597,12 +841,16 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
 
         Ordinary callers use ``send`` and receive only the stable public fate. This
         receipt exists so Send Message can credit a reply only for the first accepted
         delivery of a sender-minted message id.
+        A caller that retains a refused initial message sets ``record_refusal`` and
+        supplies a sender message id. Its refusal remains visible in the conversation.
         """
         ...
 
@@ -616,8 +864,12 @@ class ConversationSystem(Protocol):
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        credit_explicit_reply: bool = True,
     ) -> None:
-        """Record one addressed message that no backend receives."""
+        """Record one addressed message that no backend receives.
+
+        System notices disable reply credit because they do not answer a prompt.
+        """
         ...
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:

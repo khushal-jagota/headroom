@@ -7,13 +7,15 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:vitest": "vitest run --typecheck",
-    "test:legacy": "node tests/ideas-shell.test.mjs && node tests/feedback-inbox-browser.test.mjs && node tests/scheduled-tasks-browser.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/stage-owner-browser.test.mjs && node tests/conversation-pane-browser.test.mjs && node tests/live-conversation-switch-browser.test.mjs && node tests/live-conversation-unanswered-send-browser.test.mjs && node tests/voice-everywhere-browser.test.mjs && node tests/file-preview-browser.test.mjs && node tests/sprint-documents-browser.test.mjs && node tests/approve-default-browser.test.mjs && node tests/ticket-guidance-browser.test.mjs && node tests/workspace-rail-at-rest-browser.test.mjs && node tests/workspace-order-browser.test.mjs && node tests/open-stays-open-browser.test.mjs && node tests/orchestrator-groups-settled-browser.test.mjs && node tests/orchestrator-children-browser.test.mjs && node tests/orchestrator-group-reader-state-browser.test.mjs && node tests/ticket-machines-browser.test.mjs && node tests/ticket-machines-workspace-browser.test.mjs && node tests/executor-ask-evidence-browser.test.mjs",
-    "test": "npm run test:vitest && npm run test:legacy"
+    "test:legacy": "npm run test:browser",
+    "test": "npm run test:vitest && npm run test:browser",
+    "test:browser": "node tests/browser/run.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.2.1",
-    "@fontsource/newsreader": "^5.2.10",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tanstack/db": "0.15.0",
+    "@tanstack/svelte-db": "0.5.10",
     "@tanstack/svelte-query": "6.1.38",
     "rehype-remark": "10.0.1",
     "rehype-sanitize": "6.0.0",
@@ -21,7 +23,7 @@
     "remark-parse": "11.0.0",
     "remark-rehype": "11.1.2",
     "remark-stringify": "11.0.0",
-    "svelte": "^5.19.7",
+    "svelte": "5.56.4",
     "unified": "11.0.5",
     "unist-util-visit": "5.0.0",
     "vite": "^6.1.0",

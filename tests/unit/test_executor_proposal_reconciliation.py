@@ -8,7 +8,11 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import (
+    install_probe_registry,
+    seed_probe_worker_type,
+    uninstall_probe_registry,
+)
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.clock import TestClock as ClockForTest
@@ -72,6 +76,8 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
     cut_before_receipt: bool,
 ) -> None:
     install_probe_registry()
+    seed_probe_worker_type(tmp_db)
+    tmp_db.commit()
     spool: FilesystemSpool | None = None
     try:
         database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
@@ -86,7 +92,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             title="Mac collaborative proposal",
             worker_type=worker_type,
             principal=OWNER_PRINCIPAL,
-            kickoff_note="Brief",
+            brief="Brief",
             stated_ceiling=user_stage if at_ceiling else next_stage,
             stated_holder=CHIEF_PRINCIPAL,
             locale=TicketLocale.macos,

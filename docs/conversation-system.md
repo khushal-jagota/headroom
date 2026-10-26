@@ -19,6 +19,124 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Conversation directories
+
+An explicit workspace takes precedence over the Project folder. For Mac work, either
+path names an absolute directory on the Mac. The VPS forwards that path without
+checking its own disk or replacing its home prefix with the Mac home.
+
+The Mac resolves its own symlinks and checks that the directory exists before it starts
+the agent. A missing path or a path that names a file refuses the start. Panels does
+not substitute another directory or create the requested one.
+
+Without an explicit workspace or Project folder, Mac work uses the existing default.
+A default path beneath the VPS home maps to the same relative location beneath the Mac home.
+VPS work retains its existing rules: a Project folder must exist as a directory on the VPS.
+The VPS resolves that folder's symlinks. A missing or unset Project folder selects the default workspace.
+
+A conversation stores its selected directory and the rule for its interpretation together.
+Resume retains both after a Project folder changes or clears. Existing conversations retain
+the earlier home mapping rule.
+
+_Code paths:_ `src/planner/runtime/conversation_start.py`, `src/planner/conversation/`,
+`src/planner/executor/remote.py`, `src/planner/executor/runtime.py`.
+
+## Native execution and answer receipts
+
+Native events use the same lifecycle facts and publication transaction as local events.
+Public request IDs include the turn number. Provider IDs remain bound to the original native child and callback.
+The owner can save an exact pending answer during a Mac connection outage.
+VPS acceptance does not prove native callback delivery. Native application is a separate durable fact.
+A VPS restart retains native turn knowledge until executor reconciliation supplies evidence.
+Deployment recovery does not start a replacement turn over unresolved native work.
+
+## Diagnostic history expiry
+
+Diagnostic expiry remains an explicit offline operator action. Normal startup
+installs the empty omission table and a read index; it does not expire history.
+The index lets expanded history find earlier messages without scanning hidden tool
+calls or addressed messages. Omission records keep
+the original event positions. Retained events and live replay keep those same positions.
+
+When omissions exist, conversation status and legacy event pages report
+`diagnostics_expired`. The shared transcript says “Some diagnostic history expired.”
+That notice comes from omission records, never from a gap in event numbers. Page
+edges describe retained history, so a gap alone does not offer another empty page.
+
+An opened diagnostic detail whose source expired returns the named
+`diagnostic_expired` error with HTTP 410. The reader says “This diagnostic detail
+expired.” Unknown details still return 404; changed body references still return
+409; invalid references still return 422. Chunked and downloaded bodies use the
+same distinction. A retained source of the wrong kind is not classified as expired.
+
+The omission table is additive metadata. The selected-view projection version stays
+at 1, and saved event positions and cursors remain valid. Replacement snapshots,
+resets, and runtime changes discard previously held pages and detail output before
+fresh canonical reads. They advance a content generation counter to invalidate cached output;
+they do not change how transcript content is generated.
+
+## Durable lifecycle facts
+
+The notebook keeps completed receipts. A separate conversation-owned source keeps
+version 1 facts about turns, external attempts, and requests. These facts contain
+identities and outcomes, without message content, process handles, or callbacks.
+Turn numbers come from a database transaction. Durable occurrence identifiers also distinguish turns across a deployment rollback.
+Public request IDs include that durable turn identity. A live runtime maps them to
+the provider's request IDs. An old answer cannot address a later request that reuses
+the same provider ID.
+
+Panels commits intent before a prompt, steer, answer, or cancellation reaches the
+backend. Intent proves no delivery. A prompt outcome says `started` only when the
+adapter reports a successful wire write. A steer says `injected` only when the adapter
+reports admission to its target turn. Unknown external outcomes remain `unknown`.
+The public ordinary-send API still maps `PromptWriteFailed` to refusal. That mapping
+can conceal admission uncertainty and requires a separate approved receipt change.
+The durable source does not change that public mapping or claim proven non-admission.
+
+Related lifecycle facts and notebook receipts share their existing SQLite transaction.
+Read positions, attention, notices, model changes, and skill bindings keep their existing
+rules and commit boundaries. A synchronous transaction participant receives the same
+connection and typed candidate facts before commit. It can write related records within
+that transaction. It cannot commit, await, or call a provider. Any failure rolls back
+all those writes. Settled memory and live-tail publication follow commit.
+
+An answer first reserves its request durably. Concurrent answers cannot repeat the
+callback. After a successful external write, a failed database settlement retains the
+reservation and retries only the database operation after explicit reconciliation.
+Caller cancellation does not cancel that owned settlement. A proven callback write
+failure restores the pending request only after its failure facts commit.
+
+One runtime holds an exclusive lock beside the canonical database. A second runtime
+fails before schema changes or reconciliation and cannot invalidate the first runtime's live work.
+The application acquires this lock in its lifespan thread before migrations. The
+conversation system then accepts that exact handle. Startup failures release the
+handle through its current owner. Shutdown stops local writers before release.
+Startup converts lost turns and requests to unavailable facts and incomplete attempts
+to unknown facts before admissions, subscriptions, the janitor, or worker loops.
+It creates no provider ending, answer, or missing-reply marker. Historical notebook
+rows remain unchanged. Old databases have no recoverable live identities, so migration
+adds no invented lifecycle facts. An absent fact does not establish capability.
+
+Lifecycle reconciliation restores no queue content or callbacks. It sends no prompt or answer.
+Deployment recovery runs separately after runtime admission, as described below.
+The source contract lives in `conversation/lifecycle.py`. Its transaction and terminal-transition rules live beside the conversation store.
+
+## Sessions that a deploy ends
+
+A deploy leaves a durable account of the sessions that it interrupts. The account stays outside the application backup and restore set. A rollback therefore keeps evidence from both the old application and its replacement. Missing evidence means that the account is unavailable. It never means that no sessions were interrupted.
+
+After runtime admission, Panels resumes each eligible interrupted conversation through the ordinary send path. This includes Worker, Manager, Chief, and unowned conversations. Both interruption displays and their read API are removed.
+
+Recovery checks current ownership before dispatch. Worker recovery also checks the current claim, stage, ceiling, backlog, blockers, and pending proposal. A changed link or claim cannot authorize recovery of its replacement. Recovery never raises a ceiling or accepts a proposal.
+
+The recovery prompt explains that the prior turn ended and external actions can remain uncertain. The agent must inspect current work before it repeats an action. Panels never replays an unknown prompt or permission answer.
+
+A durable delivery intent prevents another restart from sending the same uncertain recovery again. A queued receipt does not count as resumption. Only a started turn with the notice in its actual prompt counts. Refusal or uncertain delivery receives no automatic retry.
+
+A genuine Worker delivery failure leaves its exact claim errored. The existing Errored group and Ticket attention carry that failure. Other conversations use their existing transcript rows: “not delivered” or “delivery uncertain · do not resend.” In the Chief conversation, Khushal sees that existing one-line row in his chat with Chief. Recovery adds no other owner-facing surface.
+
+An authorized supervisor or Khushal can still use Restart Worker or the existing composer. Those actions retain their ordinary admission rules.
+
 ## Exercising permission requests
 
 Real work always runs with full access. There is no selectable ask posture on a
@@ -41,15 +159,17 @@ dot: those dots mean an unread reply. The earlier inherited claim that an ask ha
 its own white mark was false; visible request and attention state coverage replace
 that check.
 
-Run `tests/integration/test_conversation_real_provider_permissions.py` with
+The real-provider permission host uses the production application lifespan, including
+Signal initialization, current navigation installation and shutdown. It retains the
+explicit native test-only permission mapping. Enable it with
 `PANELS_REAL_PERMISSION_TESTS=1`, an absolute `PANELS_PERMISSION_EVIDENCE_ROOT`,
-and the relevant `PANELS_REAL_HERMES_HOME_TEMPLATE` or
-`PANELS_REAL_CLAUDE_CONFIG_TEMPLATE`. These calls use real accounts and model
-usage. The tests save selected request, wait, answer, native configuration,
-version, source revision and file outcome receipts, including partial receipts
-when a case fails. They keep Codex on its existing credential home. Other homes
-isolate test configuration while sharing any rotating credential file instead of
-copying a login grant. These tests do not claim connection-drop recovery coverage.
+and an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT`. Select only the commissioned
+allow case per backend. It records native request/wait/answer/file outcomes and
+canonical start, pending and end attention. Calls use real accounts and model usage.
+The commissioned route uses the owner's normal authenticated native profiles, including
+normal login refresh, locks and fresh vendor session metadata. It never copies or links
+credentials or opens an existing conversation. Missing native authentication or model
+access stops that backend with its observed outcome. No connection-drop recovery is claimed.
 
 ## The notebook
 
@@ -67,12 +187,12 @@ dropped entirely, not stored and not shown.
 Late backend prose, deltas, tool activity, asks, usage, and extra endings remain
 live-turn facts and are discarded after the turn ends.
 
-Reading is one rule everywhere: fetch the rows after the last one you hold, then
-listen for new ones. Opening a conversation, reconnecting after a dropped
-connection, and a second device are all that same fetch. Nothing re-downloads
-mid-read.
+The durable event record remains authoritative. The browser reads indexed server views,
+not the complete event history. Each view supplies recent bounded pages, compact status,
+and one selected tail. Older pages remain available through the existing transcript and
+fold controls. Source references preserve access to complete large bodies.
 
-A browser with no saved lens choice opens through the Focus lens. Focus shows the
+A fresh conversation pane opens through the Focus lens. Focus shows the
 owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
@@ -91,12 +211,20 @@ core supplies an honest unknown-reason fallback if an adapter supplies no usable
 Full shows the complete runtime notebook, every held prompt, all live agent text, and
 every tool call without a Focus fold. The header toggle and the unmodified `f` key switch
 the lens without replacing the conversation. Editable controls keep the key. The browser
-keeps the choice across conversation switches, new conversations, and later visits.
+keeps an explicit choice across conversation switches and New within the mounted pane.
+A fresh pane starts in Focus again.
 
-The lens changes only what the person reads. Liveness, streaming, reconnects, and
-snapshots continue to use the complete feed. A switch to another conversation invalidates
-the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
-cannot change the newly opened conversation.
+Focus requests only visible content and compact current status. Full requests its history
+only after explicit selection. A Full request starts a temporary file for current-turn
+output. That file survives hidden views, rest, lens switches, and the final reader's exit.
+The canonical turn end or runtime reset removes it. Startup removes files from stale runtime
+identities. Open body responses keep their immutable file version through replacement.
+
+Rest and hidden panes release transcript bodies and native previews. They retain compact
+status and logical UI state. A conversation switch invalidates the old requests and tail.
+A late response from the previous conversation cannot change the new view. Page reads pause
+stream admission, then replay from unchanged coverage across every retained scope. A closed
+fold cancels its pending page. Page failures also resume the tail.
 
 While an active lens is open, the owner read position advances through the newest delivered
 row. Runtime-only rows can clear an unread mark because each lens displays every result that
@@ -118,10 +246,17 @@ establishes that nothing outside the conversation shows it.
 
 ## Work and messages on other screens
 
-Each Worker, supervisor, and Chief exposes the same `conversation_signal` from its own
+Each Worker, Manager, and Chief exposes the same `conversation_signal` from its own
 conversation. `working` means that its runtime is running. `message_for_owner` means that
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
+
+The three boolean runtime checks — whether a turn is running, a permission ask is
+pending, or user input is pending — inspect existing live state without reading a stored
+record or waiting for a conversation lock. A conversation absent from this runtime has
+no live work or pending answers. Opening or sending still loads its stored record when
+needed. These checks still reject reads when the runtime has shut down or Signal is
+unavailable.
 
 Each conversation shows one indicator: an unread message dot takes precedence over the
 working spinner. Reading the latest message reveals the spinner if work is still running.
@@ -129,7 +264,7 @@ This presentation does not change either fact or the shell's actual-work count.
 
 A turn ending stops work and creates no message mark. Pending approvals, permission asks,
 Ticket stages, and child activity do not define either mark. Child totals remain separate
-from the supervisor's own conversation signal. Existing answer, approval, error, and
+from the Manager's own conversation signal. Existing answer, approval, error, and
 notification facts remain available for their own purposes.
 
 Reading or sending a prompt advances only that conversation's established read position.
@@ -140,9 +275,9 @@ end. This publication follows the runtime state transition, so a query cannot re
 answer from before the prompt or ending commit settled. The event stream carries no
 payload. Mounted queries fetch the canonical conversation signal again.
 
-The shell's working count sums that same working fact across Worker, supervisor, and
+The shell's working count sums that same working fact across Worker, Manager, and
 Chief conversations. Each conversation counts once, even when multiple records refer to
-it. Settled supervisors and cancelled Workers still count when their conversations run.
+it. Settled Managers and backlogged Workers still count when their conversations run.
 Worker-step claims do not define this count. Its existing query uses the same change
 stream refresh as the individual marks.
 
@@ -289,7 +424,7 @@ completed turn with no compaction confirmation.
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It accepts the owner, Chief, Ticket, or Sprint Item principal. An
+same send operation. It accepts the owner, Chief, Ticket, or Manager principal. An
 employee-to-owner send appends an addressed `message_to_owner` row to the employee's
 current conversation without invoking a backend. An employee without a current
 conversation cannot send to the owner. Employee recipients use their normal current
@@ -297,8 +432,8 @@ conversation path, creating it when any send needs one. Every mode starts a turn
 recipient is idle. Agent keys remain a private resolution detail. The command adds no
 second transport, queue, or conversation record.
 
-Existing ordinary orchestrator supervisors can address each other through this same
-Send Message path. Both Sprint Items must exist. This grants no authority over the
+Existing ordinary Managers can address each other through this same
+Send Message path. Both Managers must exist. This grants no authority over the
 recipient's record or Workers. Worker messages and help-recipient overrides retain
 their existing chain boundary.
 
@@ -306,6 +441,13 @@ Every employee-authored send carries canonical sender and recipient principals d
 from the authenticated request. Panels records that address on every durable outcome,
 including held, refused, uncertain, and discarded prompts. Browser-supplied display
 labels are not authority.
+
+Automatic recap requests and saved-goal startup messages name Panels as their source.
+They carry no sender principal and no explicit reply requirement. Full shows these
+messages under the Panels label. Focus excludes them. The authenticated caller still
+controls authorization and launch choices. These automatic actions cannot settle a
+separate reply that the caller owes. HTTP and CLI callers cannot select system
+attribution. Earlier conversation rows keep their recorded source and visibility.
 
 Panels also derives an exact Send Message target from each authenticated sender. It adds
 that trusted reply requirement only to the backend wire prompt. When a genuine
@@ -318,6 +460,20 @@ Unaddressed loop and maintenance prompts do not. The agent role requires one exp
 send to each addressed sender before the turn ends.
 Panels classifies that accepted send as the reply, so its recipient receives no counter-
 reply requirement and agent conversations cannot form an acknowledgement loop.
+
+The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
+manager, or Chief principal. It empties the recap being replaced and steers the same
+fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
+keep it short and top level." Only the owner may ask, and the owner is the only principal
+it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
+the agent writes rather than words it sends back. This system message carries no reply
+requirement and leaves no missing-reply marker.
+
+Automatic manager startup sends the exact saved goal as a queued Panels message.
+Its answer is the work the manager does. It requires no explicit reply to its
+creator, so startup produces no `explicit_reply_missing` signal in Focus when the
+manager sends no reply. No replacement signal detects a clean delivery followed by
+silent inaction. Work indicators, failure rows, and delivery outcomes do not cover that gap.
 
 An actual native slash command uses its backend's exact control route, so its wire form
 does not carry the reply requirement. The adapter reports that fact with its delivery
@@ -337,10 +493,10 @@ produce none. The markers and ending are one ordered transaction.
 
 When a failed turn belongs to a Ticket's current conversation, that transaction also
 snapshots the Ticket's current ceiling holder. The existing owner attention flag handles
-an owner-held ceiling. A Chief, Sprint Item, or Ticket holder receives one durable Panels
+an owner-held ceiling. A Chief, Manager, or Ticket holder receives one durable Panels
 notice through that principal's canonical conversation door. The failed event's
 conversation and sequence identify the notice, so replay cannot duplicate it. Historical,
-unattached, Chief, and Sprint Item conversation failures create no Ticket notice. A turn
+unattached, Chief, and Manager conversation failures create no Ticket notice. A turn
 started by a failure notice cannot create another failure notice.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
@@ -360,9 +516,9 @@ A confirmed steer refusal does the same. An uncertain steer remains terminal and
 enters the queue, because a retry can deliver the same message twice.
 
 A lower-level raw send route remains for testing conversation mechanics in isolation. It
-rejects every conversation associated with a Ticket, the Chief, or a Sprint Item
-supervisor. It therefore is not an employee conversation door and does not participate in
-principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
+rejects every conversation associated with a Ticket, the Chief, or a Manager
+Manager. It therefore is not an employee conversation door and does not participate in
+principal addressing. No shipped screen uses it: Ticket, Chief, and Manager composers
 all use the addressed Send Message operation.
 
 The conversation owns each backend exchange until its receipt settles. If its caller
@@ -382,8 +538,33 @@ exact pending operation and accepted ownership. Operator inspection through
 `recording_failures` exposes the actual error. `resume_recording` resumes persistence
 explicitly after repair. This in-memory seam does not survive process loss.
 
-Prompt/model/attention/skill receipts remain one atomic transaction. Ancillary notice
-classification occurs before dispatch. After commit, local state uses the returned rows.
+Prompt/model/attention/skill receipts remain one atomic transaction. Internal proposal
+review notices receive final admission after model and session preparation, immediately
+before prompt composition or steering. The notice domain checks current revision and
+effective reviewer in the same SQLite write transaction that records any discard. This
+commit orders admission against canonical proposal writes; no database transaction spans
+backend I/O. Admission wins if resolution commits later.
+
+Admission uses durable conversation and sender message identity, never notice wording or
+sender labels. Each queued message is checked before survivors are combined. Reply
+obligations and automatic-notice classification are composed from survivors only. A
+replacement session gets a fresh check before its write. If no message survives, no turn
+starts, and a newly prepared replacement child is released without changing the durable
+model or effort.
+
+A suppressed delivery is an intentional pre-wire outcome, with its reason on the exact
+`prompt_discarded` receipt. Its attempt ends as `suppressed`; it is neither accepted work
+nor a failed backend write. Repeating the sender identity returns that same suppressed
+outcome without another write or a new explicit reply acknowledgment. The notice audit
+also preserves each obsolete source's original and current review facts and reason in
+`manager_wake_suppressions`, so operators can count what stopped and inspect why.
+
+Recovery settles exact durable receipts first. Known-held work receives admission on its
+next departure. A crash after admission without a receipt remains uncertain; historical
+dispatching or uncertain work is never reclassified as safely unsent or replayed merely
+because its proposal has since changed.
+
+After commit, local state uses the returned rows.
 A live-tail publication error does not invalidate the receipt or append it again.
 
 Historical uncertainty remains in the notebook. Reviewed, message-specific provider
@@ -494,6 +675,50 @@ delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
 
+### Current models within a variant
+
+A model choice selects a variant, such as Sol or Opus. Before each turn, Panels
+resolves that variant against the backend's current catalogue. Codex uses the newest
+enabled version within the selected variant. Claude keeps its native aliases, including
+their context suffixes. Hermes keeps its provider-qualified choices. A provider hint
+cannot select a different variant. Panels preserves an explicit reasoning effort and
+refuses the turn if the resolved model does not support it.
+
+Catalogue failure does not stop a variant with a last known-good resolution. Panels
+uses that resolution and reports that the catalogue is unavailable. Without a last
+known-good resolution, it refuses the turn with a clear error. The shared picker
+keeps that catalogue warning visible. Its closed face shows the readable resolved model
+and its applicable effort, for example “Opus 5.5 medium.” Context qualifiers remain
+visible. Models without effort show only their name. If resolution is unavailable, the
+face uses the available name without an invented version. Each option in the open
+list shows the same resolved model name on one line, without an alias or detail row.
+The effort has its own selection step. The selected value remains unchanged.
+
+Ticket creation also tries to resolve its model. If no usable catalogue or cached
+resolution exists, creation preserves the requested model and reasoning effort. It
+reports unavailable resolution without writing a successful cache entry. Missing
+evidence does not block a fresh installation. Available evidence still rejects an
+unknown or disabled selection, or an unsupported effort. This exception applies to
+creation only. A later turn still requires a successful resolution.
+
+This rule covers Workers, Chief, ordinary Managers, new conversations, reused
+conversations and queued messages. Steering retains the active turn's model. Saved legacy
+versions resolve within their own variant. New managers use the managed launch
+defaults instead of a model pinned by a database trigger.
+
+An explicit correction action previews saved choices and applies selected corrections.
+It works for idle Workers and user-owned Stages without a restart or a message.
+It preserves backend and reasoning choices. Active turns finish on their current model.
+The next turn resolves the corrected model within the same conversation.
+The action does not approve work, change a Stage, clear a claim, or start a turn.
+Both preview and apply resolve models outside a write transaction. Each accepted
+correction acquires a short writer transaction, checks current authority again, and
+compares the saved selection before its update. No resolver await crosses that
+transaction. Failed targets retain their individual errors in the batch.
+See [model correction commands](cli.md#correct-saved-models).
+
+Code: `src/planner/conversation/`, `src/planner/runtime/`.
+
 Hermes new and loaded sessions also return their exact current model through extension
 metadata. Panels omits the legacy model request only when that value exactly matches the
 requested model. A different model or absent metadata keeps the existing model route.
@@ -514,13 +739,14 @@ gets. Showing them is not choosing them: a picker nobody touched still sends
 nothing, and the message that makes the conversation is created on those values
 because they are what the server resolves again when it arrives.
 
-Nobody waits for the network to see what they typed or attached. The browser gives a message
-its own name and stamps the moment the person pressed send, draws it in the
-composer stack there and then, and empties the box. Those two stamps travel with
-the message and are kept on its row, so the shared held snapshot and the eventual
-notebook row can recognize the same message. If the message turns out to have got
-nowhere, the copy goes and its exact words, pictures and pending run choices come
-back to the box, unless something else has been composed there since.
+The browser gives each send its own identity and timestamp before the network answers.
+Messages drawn in the conversation retain one display slot through record admission.
+A receipt can release persistence before the matching row body arrives. The visible
+copy remains until that body replaces its contents. Explicit composer-stack and
+server-held messages still belong above the input.
+
+A durable refusal or uncertain outcome stays on the same bubble. A transport
+rejection without a recorded outcome returns the draft through the existing recovery path.
 
 Queue changes also travel on the conversation's live connection as a contentless
 wake. Every open binder then reads the shared snapshot again. The wake carries no
@@ -544,15 +770,14 @@ have disappears from the screen as soon as the record is read again. Waiting too
 little would put a frightening sentence on a message that was about to turn out
 fine.
 
-A message nobody answered for does not stay in the thread. The thread draws these
-copies after every row the conversation has, so one left there would sit under
-every later turn for as long as the tab stayed open, looking like the newest thing
-said. It moves up to the composer, with the other messages that have not landed,
-and it says that no answer came. Two things can be done with it there, and both
-belong to the browser rather than the record: stop showing it, or send the same
-words again. Sending again is a new message with a new name, so if the first one
-did arrive after all there are two — that is the person's call to make, and
-nothing guesses it for them.
+An unanswered send stays where it first appeared and says “no answer came”.
+Its bubble offers Stop showing this message and Send again at opposite ends.
+A resend uses a new transport identity but retains the display slot. If the resend
+fails before a durable outcome, the old copy returns. A recorded refusal or uncertain
+outcome replaces it in place. Historical rows still follow server chronology after reload.
+
+A dismissed local bubble fades for 160ms, then its space closes over 240ms.
+History eviction does not use this exit effect.
 
 None of that is a guess about whether the message arrived, and the question stays
 open until the record answers it. Most of the time the record already has the
@@ -560,14 +785,25 @@ answer and this browser simply missed it, so a conversation holding a send nobod
 answered for reads the record again the moment the server is reachable. If the row
 is there, the copy goes, the ordinary way.
 
-Sending also decides where the thread sits. The message that was just sent
-settles near the top of the view with the rest of it kept for the answer, and
+Acceptance also decides where the thread sits. The accepted message
+settles 32px below the top of the view with the rest of it kept for the answer, and
 then nothing moves for as long as the answer fits in that space. Once the turn
-outgrows the view the thread follows, by the least it can while keeping the
-newest line in sight, and never backwards. Scrolling away is read from the
+outgrows the view, new streaming text advances one line per 120ms step when the
+reader already follows newest. A multi-line chunk can take several steps, bounded
+by the height of the arriving text. Layout changes and entry do not use this path. An accepted
+send uses one precomputed destination over 240ms with linear timing. Fresh opens
+and lens switches establish their position before reveal. Later layout changes
+retain the bottom or held message without animated catch-up. Scrolling away is read from the
 person — a wheel, a finger, a hand on the scrollbar — so nothing the thread does
 to itself is mistaken for them; while they are reading elsewhere nothing moves
 them, and the jump button is the way back.
+
+Returning to a browser tab restores the line the person left and its offset in the
+view, even if they were at the newest message. The existing logical anchor carries
+that position. Content that arrived while the tab was hidden stays below it and
+does not start live follow. The reader restores a bounded neighborhood around the
+anchor before the viewport places it. If that read fails, the position stays pending
+and the person can retry. Visible live text keeps its normal line-by-line follow.
 
 ## Reading a turn
 
@@ -583,23 +819,27 @@ The newest plan is conversation status, not thread history. At rest, an active p
 step shows its position, its text, and the elapsed time. The position opens the whole
 checklist on pointer hover or keyboard focus. A permission request still replaces this
 line because it needs the person. Without an active step, the line keeps its normal
-elapsed time and newest tool call. In peeked and opened states, the same checklist sits
+elapsed time and newest tool call. In full conversation, the same checklist sits
 in a centered 34-pixel strip between the thread and composer while unfinished work runs.
 The plan never appears under the turn that first stated it.
 
-When the turn is over that head becomes a fold, and everything the turn produced
-goes behind it: its tool calls, and everything the agent said on the way to its
-answer. What stays out is the person's own message, the last thing the agent
-said, and — when a turn failed or was stopped — the line saying so. A turn that
-thought out loud for five paragraphs is exactly as long to scroll past as one
-that made five tool calls, so both collapse the same way and a finished turn
-reads as one paragraph with a "Worked for 14s" you can open. Opening it puts
-everything back where it happened, the commentary between the runs of tool calls
-it sat between rather than gathered up at the end. A turn that never said
-anything keeps nothing back, because there is no answer to hold; a turn still
-running folds nothing at all.
+Full shows every message and tool call. Its turn and work groups expand
+automatically. Focus shows the person's prompts, messages addressed to the owner,
+requests and answers, and failure or stop rows. Messages addressed to the owner
+never go behind a turn fold, including in the older transcript renderer.
 
-Each tool call inside that fold is one line: what happened, and the single fact
+A normally settled Focus turn keeps its head and its own line, such as
+"Worked for 14s". It has no chevron or toggle because nothing remains behind it.
+Focus reports zero folded messages and zero tool calls, even when the stored turn
+contains tools. A turn that stops without an ending and has nothing behind it
+keeps its stop row but has no head, as before.
+
+The fold rules assume that every `message_to_owner` event names the owner as its
+recipient. The body flag follows the event kind. SQL membership uses the
+recipient-sensitive Focus classification. If another recipient becomes valid for
+that event, both classifications must change together.
+
+Each tool call is one line: what happened, and the single fact
 that says which call it was — the command that ran, the path that was read, the
 pattern that was searched for. The three agents do not agree on how they say
 this, so the pane reads what each of them actually gives and says the same kind
@@ -628,6 +868,39 @@ do, which is whole.
 
 All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
+
+### Scrolling back, and what is known about it
+
+Scrolling back asks for one page at a time. Before each page the browser closes its live
+stream and re-opens it once the page has arrived. That looks wasteful and is not: a
+conversation being written to while somebody reads backwards would otherwise keep
+interrupting the read, and closing the stream for the length of one page is what stops
+that. Expect the stream to be torn down and re-opened once per page of scroll-back.
+
+Scrolling back a long way has been reported as feeling stuck, and the cause is not known.
+Two things have been ruled out by measurement, so that nobody spends time on them again.
+The reader keeps three hundred items and drops the other end as it goes; driven past that
+limit it slides its window correctly, one page at a time, and it still does so while an
+agent is writing into the conversation. The stream churn above is also not it.
+
+Two facts for anybody measuring this next.
+
+A test that drives scrolling directly can produce a state a person cannot. Asking for
+another page while one is still arriving is harmless on its own, because a second request
+for the same thing waits for the first, but it does close the stream again, and it can do
+that while the previous re-open is still in flight. No hand moves that fast. A measurement
+that scrolls by script and finds the stream thrashing may be measuring its own gesture.
+
+And most conversations cannot reach the three hundred item limit in Focus at all, because
+Focus leaves out ordinary agent output. Counted across every conversation on the live
+machine, no Ticket conversation holds three hundred items in Focus: the largest holds 197
+of its 1,108 rows, and one conversation of 6,847 rows holds ten. The limit is reachable in
+Full on any long conversation, and in Focus only in the few very long conversations that
+are not a Ticket's.
+
+One known hole in testing this from outside: a Ticket page opens its conversation at rest,
+and the Focus and Full controls are not reachable until it is opened, so a script cannot
+simply land on a Ticket page and put a long conversation on screen in Full.
 
 ## Permissions
 
@@ -700,6 +973,31 @@ adds Codex and Claude update advice and a one-click update when Panels can run o
 The update command comes from how the CLI was installed. Panels checks the card again
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
+
+### What a card costs, and the assumption that was wrong about it
+
+Reading the cards was slow for a long time, 118 to 149 milliseconds every time, and
+everyone who looked at it assumed the cards were being probed live. They were not. The
+probe runs once per process and is then kept; after the first call it answers in well
+under a millisecond, and the check for whether the kept answer had gone stale has never
+once said yes.
+
+The time went on describing the models. Each card lists the models its backend offers,
+and building that list asked a question for every single model: is this model switched
+off, what does the catalogue say about it, and is this catalogue the one we already had.
+Each of those questions opened its own connection to the database. Opening a connection
+here is not cheap, because the database has eighty tables and a new connection reads all
+of their definitions before it can answer anything: the first question on a fresh
+connection takes 2.39 milliseconds where the second takes 0.022. Describing 26 models
+that way meant 78 connections and 492 questions, for one screen asking what backends
+exist.
+
+It now asks once for the whole set and sorts the models out in memory, so the cost is the
+same whether a backend offers eight models or fifty. The lesson is worth more than the
+fix: three separate per-model loops had accumulated here over time and nothing failed,
+because every test of this route checks what the card says and no test checked what the
+card cost. There is one now, and it fails if the cost starts following the model count
+again.
 
 ### What a card can say about the codex login
 
@@ -842,11 +1140,10 @@ and the shutdown, and stops showing the code when its own limit passes. It does 
 the code was still valid up to that point.
 
 **The protocol shapes are pinned separately.** The login messages are vendored as their
-own subset, generated against `codex-cli 0.163.0`, with their own pin header. The
-thread-and-turn subset stays pinned where it was. The two are kept apart because
-regenerating everything together would change twenty-two definitions the thread and turn
-core depends on, and the login closure shares none of them — the generator refuses to run
-if the two bundles ever reach the same definition.
+own subset with their own pin header. Both the login and thread-and-turn subsets are
+generated against `codex-cli 0.163.0`, matching the installed runtime. They retain separate
+pins so a future change to either surface is deliberate. Their definitions remain
+disjoint; generating both together refuses if they reach the same definition.
 
 ### One home and one credential per agent
 
@@ -855,10 +1152,12 @@ A rotating refresh token must have one owner: refreshing a copied login in a sec
 home can leave the original holding a spent token. Hardlinks are unsafe too: they
 share a file only until a refresh replaces the canonical path by rename.
 
-Synthetic homes with invented credentials are fine. Tests can also copy configuration
-files while symlinking the credential path to the canonical file. That link follows
-the current credential rather than keeping a second copy. Copying a whole real home
-or a credential first is still unsafe.
+Synthetic homes with invented credentials are fine. Claude tests can copy settings
+while linking the credential path to the canonical file. That link follows the current
+credential rather than keeping a second copy. Copying a whole real home or a credential
+first is still unsafe. For Hermes, linking only the credential is insufficient: its
+auth lock is derived from the home path, so a second home separates lock identity even
+when both credential paths reach the same file.
 
 **The existing checks cover only part of this rule.** Before launching a Codex child,
 Panels compares its home with the home selected by the server's own environment.
@@ -884,12 +1183,29 @@ General coverage would require tracing helpers, branches, filesystem operations 
 launch paths. The bounded checks do not provide that general guarantee; review
 must enforce the invariant.
 
-The steering harness now follows the permission harness's canonical-credential pattern.
-Hermes copies only `config.yaml` and `.env`, and symlinks `auth.json` to the source home.
-Claude copies optional `settings.json`, and symlinks optional `.credentials.json` to its
-source home. Codex continues to use its real home because a copied login loses refresh
-rotation. The former whole-home Hermes copy and Claude credential copy are resolved.
-The current helper explains why credentials stay canonical.
+The commissioned steering and permission hosts use fresh synthetic Panels databases,
+conversations, workspaces and runtime paths. Owner authorization permits normal canonical
+HOME and native authenticated profiles, including login refresh/locks and newly created
+provider session metadata. Existing native configuration is consumed in place, never
+copied. No credentials, configuration, `.env` file or whole home is copied or linked.
+The canonical home is retained and never treated as disposable fixture state.
+
+Codex uses its normal CODEX_HOME. Claude uses its normal CLAUDE_CONFIG_DIR. Hermes uses
+its normal HERMES_HOME and PLAN_HERMES_HOME together, preserving the one native auth and
+refresh-lock identity, with its installed interpreter explicitly configured. No new login,
+purchase or authentication workaround is authorized. Native provider caches/logs/temp
+follow the production launcher; parent Panels process XDG/temp paths are synthetic.
+Hermes requests a filtered environment for the ACP child. The installed ACP transport
+merges a trimmed default environment that excludes `PYTEST_CURRENT_TEST`. The commissioned
+observer checks the actual ACP spawn and refuses that child if the marker is present.
+The model catalogue follows a separate production probe path that inherits the parent
+environment, including the marker. The observer records that catalogue environment and
+forwards it unchanged, so any native auth guard keeps its normal authority. A catalogue
+failure is not evidence that an ACP child failed. Do not remove the marker or bypass a
+native guard. Canonical home selection alone does not certify this execution prerequisite.
+Native provider temporary paths are not all synthetic. Missing supported native
+authentication or model access requires actual provider evidence, not an inference from a
+generic catalogue failure.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
 `tests/unit/test_no_codex_credential_copies.py`,
@@ -918,10 +1234,10 @@ conditional alias merges, byte transfers, or runtime paths. Synthetic credential
 and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
 A clean result does not certify safety.
 
-This standalone command is invoked explicitly rather than enforced in CI. Against the
-current source, it reports zero accusations and two Hermes configuration dismissals,
-exiting with status 0. That result verifies the checked source pattern; it does not
-certify credential safety, external configuration contents, or the omitted copy routes.
+This standalone command is invoked explicitly rather than enforced in CI. The two
+real-provider harnesses now contain no Hermes copy sites to dismiss. A clean scan
+verifies only the supported source patterns; it does not certify credential safety,
+external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -979,7 +1295,8 @@ New Chief conversations and Workers without a historical Ticket model also check
 resolved choice after overrides. An enabled override works even if the default is off.
 Chief and Worker default saves refuse an off model. Each refusal names the model and
 requires an enabled choice. Panels never silently substitutes another model.
-Existing Ticket choices and existing conversations remain intact.
+Existing choices retain their selected variant. The current-model rule above governs
+the concrete model used for each turn.
 
 ### Recorded local usage
 
@@ -1066,6 +1383,25 @@ offers skills. An at sign offers apps and plugins. Leading whitespace, an empty 
 line, or a trigger on a later line does not open the menu. The composer narrows that
 eligible list as text is typed.
 
+### When the menu arrives
+
+The catalog is read when the conversation opens and again each time a turn ends. It does
+not arrive with the record. It used to, and it dominated it: the largest real catalog is
+66,211 bytes for 155 entries, where everything else the record stores about a conversation
+comes to about 620. The record is re-read every time the conversation gains a row, so
+watching one agent work for seventy seconds sent the same closed menu 68 times, about
+2.3 MB of it.
+
+Turn end is the occasion because a backend only reports its commands a moment into its
+first turn. Reading the menu lazily, when somebody first types a trigger, would show an
+empty menu on a conversation that has a full one today.
+
+The cost of reading it then and not more often: for the length of one turn the menu can be
+out of date. A skill or command that appears while a turn is streaming is not offered until
+that turn ends or the conversation is reopened. A turn is seconds to minutes, the menu is
+only consulted when somebody opens it to type, and the alternative is re-sending all 66 KB
+of it every time an agent writes a line.
+
 The keyboard owns the highlight. It starts at the top of the list and moves with the
 arrow keys. A row takes the highlight when the pointer really moves onto it. A menu that
 opens or changes size under a pointer standing still does not move the highlight, because
@@ -1084,11 +1420,13 @@ follow the conversation folder. Their visible text is `/name`, and their inserti
 is `/name `. Their adapters retain the live command names so ordinary and steered command
 dispatch keeps the slash token at the absolute start.
 
-Codex reads its catalog from the app-server after each thread starts or resumes. It joins
-enabled skills, callable installed apps, and enabled installed plugins with the native
-`/compact`, `/review`, and `/goal` commands. App metadata comes from `app/list`. Current app
-callability comes from `app/installed`. This prevents an installed but unusable connector
-from appearing in the menu.
+Codex publishes its native commands when a thread starts or resumes, then reads enabled
+skills, callable installed apps, and enabled installed plugins in the background. Apps
+come from thread-scoped `app/installed` runtime state, using the runtime name or exact ID.
+Only enabled, callable apps appear. Optional `app/read` requests enrich their names and
+descriptions in batches of at most 100 IDs. Metadata cannot grant callability. Panels
+never reads the full app directory for this menu. Missing or failed metadata keeps the
+runtime labels, and slow metadata cannot hold up a message.
 
 Codex runs each of those commands through a call of its own, and every one of those
 calls starts a turn. So a Codex command cannot join a turn that is already running. A
@@ -1098,6 +1436,7 @@ the current one ends. The held row says it is waiting because a command runs as 
 turn. Hermes and Claude take a steered command inside the running turn, and keep their
 behaviour.
 
+<<<<<<< HEAD
 Codex reads every source at startup and after a skill change. An app notification supplies
 its own app snapshot, so its refresh does not request `app/list` again. Both refresh paths
 read skills, installed callability, and plugins. Equal app metadata can accompany changed
@@ -1114,6 +1453,22 @@ The first snapshot publishes even when it is empty. Later snapshots publish only
 visible entries change. A fresh snapshot still replaces invocation paths when its entries
 are equal. A failed publication leaves the previous snapshot and publication marker intact.
 A relay reconnect keeps this marker with the surviving child. A new child starts unpublished.
+=======
+App-change hints refresh installed state; skill-change hints refresh skills and plugins.
+Each of these sources, plus optional app metadata, runs independently. Bursts merge over
+50 milliseconds, and successful app refreshes wait at least one second before another.
+A failed source retries after 5, 10, 20, 40, 80, 160, then 300 seconds, without another
+hint. Further hints cannot shorten a failed source's wait. Failed skills, plugins, or
+installed state remove that source's entries until recovery; failed metadata retains
+runtime labels. Warnings contain only the source, error category, numeric error code
+when present, and retry delay, capped at 240 characters.
+
+Successful app metadata stays with that child for 15 minutes. An installed-state update
+fetches missing or expired metadata; expiry alone starts no polling. Removing an app
+also removes its metadata, and a late reply cannot restore its entry or invocation.
+Unchanged entries and invocations produce no catalog event. Stopping the child cancels
+and awaits its source requests and retries.
+>>>>>>> aae05a7a161c6c89e3b415684c81becae4a62f63
 
 Codex resolves a selected token against that complete snapshot when the prompt starts.
 Skills use Codex skill input. Apps and plugins use exact mention paths. Exact protocol
@@ -1160,46 +1515,37 @@ virtual environment:
 | `PANELS_REAL_HERMES_TESTS=1` | `tests/unit/test_conversation_hermes_acp.py` | 4 |
 | `PANELS_REAL_SYSTEM_STEERING_TESTS=1` | `tests/integration/test_conversation_real_provider_steering.py` | 3 |
 
-The first three drive one adapter directly. The fourth is the only one that runs the whole
-conversation system and its HTTP API against all three real agent processes, and it is
-where a steer is proved to cross into a live turn.
+The first three drive one adapter directly. The fourth uses `create_app` and its actual
+application lifespan against the real agent processes: Signal composition, navigation
+installation, conversation API, janitor and shutdown. Test mode omits background Worker
+scheduling. No conversation facade or transaction driver substitutes for production.
+The permission integration host uses the same lifespan. Controlled tests retain the
+failure, denial and uncertainty coverage.
 
-That fourth exercise asks for more before it will start. It refuses a dirty tree, so
-`git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these source directories
-for the isolated test homes:
+Both integration hosts require a clean source tree, absolute evidence destinations and
+an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT` containing their synthetic databases
+and runtime paths. The steering evidence destination is `PANELS_STEERING_EVIDENCE_ROOT`.
+The permission destination is `PANELS_PERMISSION_EVIDENCE_ROOT`. Before application
+import, isolate Panels databases, logs, backups, locks, workspaces, XDG and parent temporary
+paths. Normal HOME and native profile paths are the explicit owner-authorized exception.
+Never open a production Panels database or an existing provider conversation. The former
+home-template variables and credential-sharing helpers are removed. The supported native
+routing and exact host/launcher receive independent review before provider calls. The bounded commission is one steering/stop/
+resume scenario and one explicit-allow permission roundtrip per backend; it does not
+commission additional paid denial or failure permutations.
 
-- `PANELS_REAL_HERMES_HOME_TEMPLATE` — the canonical Hermes home itself, normally
-  `~/.hermes`. Do not make a copy. The harness copies `config.yaml` and `.env`
-  into an isolated home and symlinks `auth.json` back to this source. This requires
-  the canonical home: a symlink into a copied home still separates rotating auth
-  from the real login.
-- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — the canonical Claude home itself, normally
-  `~/.claude`. Do not make a copy. The harness copies optional `settings.json`
-  into an isolated home and symlinks optional `.credentials.json` back to this source.
-  A symlink into a copied home still separates rotating credentials from the real login.
-  The copied settings must contain no secrets.
+### Historical adapter observations
 
-If you followed the old instructions, switch both variables to their canonical homes
-and remove the obsolete copies. Neither source requires a directory that you prepare
-by hand.
+The following observations describe earlier runs, not current-tree execution or a
+current pass/fail count. Current integration results must identify their exact source,
+normal native profile routing and fresh Panels state.
 
-Codex is the exception, and deliberately. It keeps one account in one file and refreshes
-that file in whichever home it is pointed at, so a private copy takes the new token with
-it and leaves the real login holding one the server has already spent. Everything that
-uses codex afterwards then fails, and codex reports it as the subsystem that happened to
-ask first rather than as a login. So this exercise uses the real codex home, and Panels
-refuses to start any codex child whose `CODEX_HOME` holds a copy of that login.
-
-### A red run is expected today
-
-Seven or eight of the twenty-seven fail, and none of it is Panels being wrong. Expect it,
-and do not go looking for a defect you did not cause. Four groups:
-
-- **The whole steering exercise, one failure per backend.** All three die on the same
-  assertion, that a steer sent while nothing is running is refused. Panels now starts a turn
-  instead, and has since the send modes were named. Worth repairing, and it is one line:
-  these three cases are the only thing here that runs the contract against real adapters.
+- **The steering exercise.** Direct `steer` starts a new ordinary turn when idle in
+  current staging and the candidate. The no-running-turn refusal belongs to the separate
+  held-prompt promotion API. The paid integration host omits its obsolete idle-refusal
+  assertion; controlled conformance coverage owns idle normalization. Active steer
+  admission proves the provider accepted the exact running-turn request, not that the
+  model obeyed it. Requested and catalogue-resolved effective models remain distinct.
 - **Two claude cases, and they are not reliably red.** Both plant a codeword and ask for it
   back, and the model reads that as an attempt to smuggle instructions past it — sometimes.
   One run fails both, the next fails one. A case that turns on whether a model feels like
@@ -1214,8 +1560,9 @@ and do not go looking for a defect you did not cause. Four groups:
   weight — that a model sent with a turn reaches the model call — is proved by the case next
   to it, which sends a model that does not exist and reads the refusal back.
 
-What passes is worth knowing too. Every run so far has each of the three backends accept a
-steer into a turn that was genuinely running, on a receipt from the provider process itself.
+Earlier provider receipts show active-steer admission into a genuinely running turn.
+They remain evidence about their exact historical source, not execution of the current
+application lifespan with fresh synthetic homes.
 
 ## Code paths
 
@@ -1254,4 +1601,4 @@ steer into a turn that was genuinely running, on a receipt from the provider pro
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-10-17._
+_Last verified: 2026-10-18._

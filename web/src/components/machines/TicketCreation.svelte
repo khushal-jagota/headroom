@@ -6,9 +6,11 @@
   let { onCreated }: { onCreated:(id:string) => void } = $props();
   const workers = createQuery(() => queries.workerTypeManifests());
   const projects = createQuery(() => queries.projects());
+  const managers = createQuery(() => queries.managers());
+  let manager=$state("chief");
   let title=$state(""), kickoff=$state(""), worker=$state(""), project=$state(""), locale=$state<TicketLocale | "">("");
   let error=$state(""), creating=$state(false);
-  let body=$derived<TicketCreationDraft>({worker_type:worker, ...(project ? {project_id:project} : {}), ...(locale ? {locale} : {})});
+  let body=$derived<TicketCreationDraft>({manager:manager === "chief" ? {kind:"chief",id:"chief"} : {kind:"manager",id:manager},worker_type:worker, ...(project ? {project_id:project} : {}), ...(locale ? {locale} : {})});
   const projection = createQuery(() => ({...queries.ticketCreationContext(body), enabled:Boolean(worker)}));
   let context=$derived(!projection.isError && !projection.isFetching ? projection.data : undefined);
   let reading=$derived(projection.isFetching);
@@ -20,7 +22,7 @@
   async function create() {
     if (creating || projection.isFetching || projection.isError || !context || !compatible) return;
     creating=true; error="";
-    try { const result=await mutateJson<{id:string}>("/api/tickets",{method:"POST",body:{...body,title,kickoff_note:kickoff}}); onCreated(result.id); }
+    try { const result=await mutateJson<{id:string}>("/api/tickets",{method:"POST",body:{...body,title,brief:kickoff}}); onCreated(result.id); }
     catch(e) {error=e instanceof Error ? e.message : "Ticket creation failed.";}
     finally {creating=false;}
   }
@@ -30,6 +32,7 @@
   <label>Title<input bind:value={title} required /></label>
   <label>Brief<textarea bind:value={kickoff} required></textarea></label>
   <label>Worker<select aria-label="Worker" bind:value={worker}>{#each workers.data?.worker_types ?? [] as option}<option value={option.worker_type}>{option.label}</option>{/each}</select></label>
+  <label>Manager<select aria-label="Manager" bind:value={manager}><option value="chief">Chief of Staff</option>{#each managers.data?.managers ?? [] as option}<option value={option.id}>{option.title}</option>{/each}</select></label>
   <label>Project<select aria-label="Project" bind:value={project}><option value="">No project</option>{#each projects.data?.projects ?? [] as option}<option value={option.id}>{option.name}</option>{/each}</select></label>
   <label>Run on<select aria-label="Run on" bind:value={locale}><option value="">Use the work requirement, otherwise VPS</option><option value="macos">Mac</option><option value="vps">VPS</option></select></label>
   {#if reading}<p role="status">Resolving machine…</p>{/if}

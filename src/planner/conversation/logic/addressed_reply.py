@@ -18,8 +18,8 @@ def send_message_target(principal: Principal) -> str:
             return "--chief"
         case PrincipalKind.ticket:
             return f"--ticket {principal.id}"
-        case PrincipalKind.sprint_item:
-            return f"--sprint-item {principal.id}"
+        case PrincipalKind.manager:
+            return f"--manager {principal.id}"
         case unexpected:
             assert_never(unexpected)
 

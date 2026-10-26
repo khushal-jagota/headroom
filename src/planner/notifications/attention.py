@@ -23,6 +23,10 @@ from planner.conversation.events import (
     UserInputFailedEventPayload,
     UserInputRequestedEventPayload,
 )
+from planner.conversation.logic.pending_requests import (
+    REQUEST_TERMINATING_EVENT_KIND,
+    advance_pending_requests,
+)
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
 
@@ -72,12 +76,20 @@ class ConversationAttentionSnapshot:
 
 
 def conversation_attention_snapshot(
-    conn: sqlite3.Connection, conversation_id: str
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    *,
+    transaction_open: bool = False,
 ) -> ConversationAttentionSnapshot | None:
-    """Derive one consistent snapshot before a conversation asks for the write lock."""
+    """Own a short read transaction by default, or borrow the caller's open transaction.
 
-    owns_transaction = not conn.in_transaction
-    if owns_transaction:
+    The borrowed path leaves commit and rollback to the caller, including on read errors.
+    """
+
+    if transaction_open:
+        if not conn.in_transaction:
+            raise RuntimeError("attention snapshot requires an open source transaction")
+    else:
         conn.execute("BEGIN")
     try:
         conversation = conn.execute(
@@ -95,11 +107,11 @@ def conversation_attention_snapshot(
             (conversation_id,),
         ).fetchall()
     finally:
-        if owns_transaction:
+        if not transaction_open:
             conn.execute("COMMIT")
 
-    pending_permission_ask_ids: set[str] = set()
-    pending_user_input_request_ids: set[str] = set()
+    pending_permission_ask_ids: frozenset[str] = frozenset()
+    pending_user_input_request_ids: frozenset[str] = frozenset()
     latest_message_sequence = 0
     error_acknowledged_through_sequence = int(conversation["error_acknowledged_through_sequence"])
     errored = False
@@ -111,14 +123,21 @@ def conversation_attention_snapshot(
         occurred_at = max(occurred_at, int(row["created_at"]))
         if kind == "message_to_owner":
             latest_message_sequence = sequence
-        elif kind == "permission_asked":
-            pending_permission_ask_ids.add(str(payload["ask_id"]))
-        elif kind == "permission_answered":
-            pending_permission_ask_ids.discard(str(payload["ask_id"]))
-        elif kind == "user_input_requested":
-            pending_user_input_request_ids.add(str(payload["request_id"]))
-        elif kind in ("user_input_answered", "user_input_failed"):
-            pending_user_input_request_ids.discard(str(payload["request_id"]))
+        pending_permission_ask_ids, pending_user_input_request_ids = advance_pending_requests(
+            pending_permission_ask_ids,
+            pending_user_input_request_ids,
+            kind,
+            ask_id=(
+                str(payload["ask_id"])
+                if kind in ("permission_asked", "permission_answered")
+                else None
+            ),
+            request_id=(
+                str(payload["request_id"])
+                if kind in ("user_input_requested", "user_input_answered", "user_input_failed")
+                else None
+            ),
+        )
         if sequence > error_acknowledged_through_sequence:
             if kind == "prompt":
                 errored = False
@@ -131,8 +150,8 @@ def conversation_attention_snapshot(
         owner_read_through_sequence=int(conversation["owner_read_through_sequence"]),
         error_acknowledged_through_sequence=error_acknowledged_through_sequence,
         latest_message_sequence=latest_message_sequence,
-        pending_permission_ask_ids=frozenset(pending_permission_ask_ids),
-        pending_user_input_request_ids=frozenset(pending_user_input_request_ids),
+        pending_permission_ask_ids=pending_permission_ask_ids,
+        pending_user_input_request_ids=pending_user_input_request_ids,
         errored=errored,
         occurred_at=occurred_at,
     )
@@ -171,21 +190,37 @@ def advance_conversation_attention(
     """Apply one validated write batch without reading conversation events again."""
 
     latest_message_sequence = snapshot.latest_message_sequence
-    pending_permission_ask_ids = set(snapshot.pending_permission_ask_ids)
-    pending_user_input_request_ids = set(snapshot.pending_user_input_request_ids)
+    pending_permission_ask_ids = snapshot.pending_permission_ask_ids
+    pending_user_input_request_ids = snapshot.pending_user_input_request_ids
     errored = snapshot.errored
     for offset, payload in enumerate(payloads, start=1):
         sequence = snapshot.latest_sequence + offset
         if isinstance(payload, MessageToOwnerEventPayload):
             latest_message_sequence = sequence
-        elif isinstance(payload, PermissionAskedEventPayload):
-            pending_permission_ask_ids.add(payload.ask_id)
-        elif isinstance(payload, PermissionAnsweredEventPayload):
-            pending_permission_ask_ids.discard(payload.ask_id)
-        elif isinstance(payload, UserInputRequestedEventPayload):
-            pending_user_input_request_ids.add(payload.request_id)
-        elif isinstance(payload, (UserInputAnsweredEventPayload, UserInputFailedEventPayload)):
-            pending_user_input_request_ids.discard(payload.request_id)
+        pending_permission_ask_ids, pending_user_input_request_ids = advance_pending_requests(
+            pending_permission_ask_ids,
+            pending_user_input_request_ids,
+            payload.kind,
+            ask_id=(
+                payload.ask_id
+                if isinstance(
+                    payload, (PermissionAskedEventPayload, PermissionAnsweredEventPayload)
+                )
+                else None
+            ),
+            request_id=(
+                payload.request_id
+                if isinstance(
+                    payload,
+                    (
+                        UserInputRequestedEventPayload,
+                        UserInputAnsweredEventPayload,
+                        UserInputFailedEventPayload,
+                    ),
+                )
+                else None
+            ),
+        )
         if isinstance(payload, PromptEventPayload):
             errored = False
         elif isinstance(payload, TurnEndedEventPayload):
@@ -239,7 +274,10 @@ def conversation_attention(
     conversation_id: str | None = None,
 ) -> dict[str, ConversationAttention]:
     where = "WHERE c.conversation_id = ? " if conversation_id is not None else ""
-    parameters: tuple[str, ...] = (conversation_id,) if conversation_id is not None else ()
+    parameters: tuple[str, ...] = (
+        REQUEST_TERMINATING_EVENT_KIND,
+        REQUEST_TERMINATING_EVENT_KIND,
+    ) + ((conversation_id,) if conversation_id is not None else ())
     rows = conn.execute(
         "SELECT c.conversation_id, c.latest_sequence, "
         "COALESCE(MAX(CASE WHEN e.kind = 'message_to_owner' THEN e.sequence END), 0) "
@@ -249,14 +287,20 @@ def conversation_attention(
         "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
         "answered.conversation_id = c.conversation_id AND answered.kind = 'permission_answered' "
         "AND json_extract(answered.payload, '$.ask_id') = "
-        "json_extract(asked.payload, '$.ask_id') AND answered.sequence > asked.sequence)) "
+        "json_extract(asked.payload, '$.ask_id') AND answered.sequence > asked.sequence) "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events ended WHERE "
+        "ended.conversation_id = c.conversation_id AND ended.kind = ? "
+        "AND ended.sequence > asked.sequence)) "
         "OR EXISTS (SELECT 1 FROM conversation_events asked WHERE "
         "asked.conversation_id = c.conversation_id AND asked.kind = 'user_input_requested' "
         "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
         "answered.conversation_id = c.conversation_id "
         "AND answered.kind IN ('user_input_answered','user_input_failed') "
         "AND json_extract(answered.payload, '$.request_id') = "
-        "json_extract(asked.payload, '$.request_id') AND answered.sequence > asked.sequence)) "
+        "json_extract(asked.payload, '$.request_id') AND answered.sequence > asked.sequence) "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events ended WHERE "
+        "ended.conversation_id = c.conversation_id AND ended.kind = ? "
+        "AND ended.sequence > asked.sequence)) "
         "AS pending_ask, "
         "COALESCE((SELECT CASE WHEN recent.kind = 'turn_ended' "
         "AND json_extract(recent.payload, '$.ending') = 'failed' THEN 1 ELSE 0 END "
@@ -325,8 +369,7 @@ def capture_ticket_attention(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),
         ),
-        "errored": facts.ticket_status is TicketStatus.errored
-        or (conversation.errored and str(row["stage"]) != "cancelled"),
+        "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
     }
     for notification_type, active in flags.items():
         _record(conn, "ticket", ticket_id, notification_type, active, occurred_at)
@@ -351,9 +394,11 @@ def capture_conversation_attention(
             conversation_result=attention,
         )
     for row in conn.execute(
-        "SELECT CASE WHEN i.id IS NULL THEN 'agent' ELSE 'sprint_item' END subject_kind, "
+        "SELECT CASE WHEN i.id IS NULL THEN 'agent' ELSE 'manager' END subject_kind, "
         "COALESCE(i.id, a.agent_key) subject_id FROM agents a "
-        "LEFT JOIN sprint_items i ON a.agent_key='sprint_item_supervisor_' || i.id "
+        "LEFT JOIN managers i ON a.agent_key=coalesce((SELECT agent_key FROM agents "
+        "WHERE agent_key="
+        "'sprint_item_supervisor_' || i.id),'manager_' || i.id) "
         "WHERE a.conversation_id=? AND (a.agent_key='chief_of_staff' OR i.id IS NOT NULL)",
         (conversation_id,),
     ):

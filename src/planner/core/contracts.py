@@ -1,4 +1,4 @@
-"""Shared vocabulary used across every domain: principals, priorities,
+"""Shared vocabulary used across every domain: principals,
 Ticket blockers, and the structured-error contract that pure logic raises.
 
 Stdlib only. Nothing here imports another planner module."""
@@ -18,8 +18,14 @@ class PrincipalKind(StrEnum):
 
     owner = "owner"
     chief = "chief"
-    sprint_item = "sprint_item"
+    manager = "manager"
     ticket = "ticket"
+
+    @classmethod
+    def _missing_(cls, value: object) -> PrincipalKind | None:
+        if value == "sprint_item":
+            return cls.manager
+        return None
 
 
 OWNER_PRINCIPAL_ID: Final = "owner"
@@ -55,16 +61,9 @@ def principal_legacy_actor(principal: Principal) -> str:
     return {
         PrincipalKind.owner: "unattributed",
         PrincipalKind.chief: "chief",
-        PrincipalKind.sprint_item: "sprint_item_supervisor",
+        PrincipalKind.manager: "manager",
         PrincipalKind.ticket: "worker",
     }[principal.kind]
-
-
-class Priority(StrEnum):  # SPEC §3.2/§3.3 — homed in core (shared vocabulary)
-    P0 = "P0"
-    P1 = "P1"
-    P2 = "P2"
-    P3 = "P3"
 
 
 @dataclass(frozen=True)
@@ -99,8 +98,10 @@ class ErrorCode(StrEnum):
     agent_forbidden = "agent_forbidden"  # attributed agent hits a direct-only action
     gateway_offline = "gateway_offline"  # §11
     already_running = "already_running"  # Hermes 4009 session busy
+    diagnostic_expired = "diagnostic_expired"
     not_found = "not_found"
     validation = "validation"  # generic input validation
+    skill_save_incomplete = "skill_save_incomplete"
 
 
 class PlannerError(Exception):

@@ -20,7 +20,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any
 
-from tests.unit.test_conversation_codex_scripted_app_server import scripted_app_server_launch
+from tests.support.conversation_codex_scripted_app_server import scripted_app_server_launch
 
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,
@@ -55,7 +55,6 @@ def _message_files() -> ConversationMessageFiles:
     store goes.
     """
     return ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
-
 
 
 ROLE_TEXT = "You are the worker on ticket t-1."
@@ -106,10 +105,23 @@ class _RecordingSink:
         self.standard_error_tails: list[str | None] = []
         self.vendor_session_cursor: str | None = None
         self.composer_catalog_reports: list[tuple[ComposerCatalogEntry, ...]] = []
+        self._catalog_changed = asyncio.Event()
         self._turn_over = asyncio.Event()
         self._an_ask = asyncio.Event()
         self._user_input = asyncio.Event()
         self._user_input_failure = asyncio.Event()
+
+    async def wait_for_catalog(
+        self, predicate: Callable[[tuple[ComposerCatalogEntry, ...]], bool], *, seconds: float = 5
+    ) -> tuple[ComposerCatalogEntry, ...]:
+        async def ready() -> tuple[ComposerCatalogEntry, ...]:
+            while True:
+                self._catalog_changed.clear()
+                if self.composer_catalog_reports and predicate(self.composer_catalog_reports[-1]):
+                    return self.composer_catalog_reports[-1]
+                await self._catalog_changed.wait()
+
+        return await asyncio.wait_for(ready(), seconds)
 
     def expect_another_turn(self) -> None:
         self._turn_over.clear()
@@ -228,6 +240,7 @@ class _RecordingSink:
         self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         self.composer_catalog_reports.append(composer_catalog)
+        self._catalog_changed.set()
 
 
 @dataclass
@@ -349,9 +362,7 @@ async def _scripted_child(
         resolved_start=_resolved_start(workspace),
         event_sink=sink,
         message_files=message_files,
-        remembered_login_rejection=(
-            remembered_login_rejection or RememberedCodexLoginRejection()
-        ),
+        remembered_login_rejection=(remembered_login_rejection or RememberedCodexLoginRejection()),
     )
     try:
         yield _ScriptedChild(

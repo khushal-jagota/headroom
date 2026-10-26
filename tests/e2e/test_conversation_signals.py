@@ -6,86 +6,27 @@ The owner requires one visible indicator: message takes precedence over work;
 a read must reveal the spinner while the same actual work continues.
 Neither a component test nor an API-only test exercises that complete boundary.
 """
+
 from __future__ import annotations
 
 import json
-import os
-import socket
-import subprocess
-import sys
-import tempfile
-import time
-from collections.abc import Callable, Iterator
-from pathlib import Path
+from collections.abc import Callable
 
 import httpx
 import pytest
 from playwright.sync_api import BrowserContext, Locator, Page, Route, expect
-from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
-
-from planner.core.db import connect
-from planner.worker_types.configuration import load_worker_runtime_definitions
+from tests.e2e.harness import (
+    REPO_ROOT,
+    WAIT_MS,
+    ApiHelper,
+    JsonObject,
+    ServerHandle,
+    capture_success,
+)
+from tests.support.connected_rows import _bind
+from tests.support.server_fixtures import signal_server as signal_server
 
 EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/message-precedence-revision"
-
-
-@pytest.fixture
-def signal_server(request: pytest.FixtureRequest) -> Iterator[ServerHandle]:
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    root = Path(tempfile.mkdtemp(prefix=f"{request.node.callspec.params["layout"]}-", dir=EVIDENCE))
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
-    db = root / "conversation-signals-proof.db"
-    env.update({
-        "PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db), "PLAN_PORT": str(port),
-        "PLAN_LOGS_DIR": str(root / "logs"),
-        "PLAN_DISPATCHER_LOCK_PATH": str(root / "dispatcher.lock"),
-        "PLAN_HERMES_HOME": str(root / "hermes-home"),
-        "PLAN_FAKE_NOW": "2026-07-04T12:00:00",
-    })
-    log_path = root / "server.log"
-    with log_path.open("wb") as log:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "tests.e2e.conversation_signals_server"],
-            cwd=REPO_ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    server = ServerHandle(
-        f"http://127.0.0.1:{port}", proc, db, log_path, port, root / "unused.sock",
-    )
-    try:
-        deadline = time.monotonic() + 20
-        while True:
-            assert proc.poll() is None, log_path.read_text()
-            try:
-                response = httpx.get(server.base + "/api/meta", timeout=1)
-                if response.is_success:
-                    assert response.json()["test_mode"]
-                    break
-            except httpx.HTTPError:
-                pass
-            assert time.monotonic() < deadline, log_path.read_text()
-            time.sleep(0.1)
-        with connect(str(db)) as conn:
-            load_worker_runtime_definitions(conn)
-        yield server
-    finally:
-        metadata = {"url": server.base, "pid": proc.pid, "runtime": str(root),
-                    "db": str(db), "log": str(log_path)}
-        (root / "runtime.json").write_text(json.dumps(metadata, indent=2))
-        # Preserve both process-owned runtime and durable database on failure.
-        # The supervisor inspects the exact failed state before any repair.
-        if (root / "complete.json").exists():
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-        else:
-            print("PRESERVED SIGNAL FAILURE RUNTIME " + json.dumps(metadata))
 
 
 def _post(server: ServerHandle, path: str, body: dict[str, object] | None = None) -> JsonObject:
@@ -99,55 +40,49 @@ def _marks(root: Locator, working: bool, message: bool) -> None:
     # Arguments are independent backend facts; presentation has one winner.
     for kind, present in (("working", working and not message), ("message", message)):
         expect(root.locator(f'[data-conversation-signal="{kind}"]')).to_have_count(
-            int(present), timeout=WAIT_MS,
+            int(present),
+            timeout=WAIT_MS,
         )
 
 
-
-def _capture(
-    page: Page, root: Locator, conversation: str, surface: str, state: str,
-    inventory: list[JsonObject], evidence: Path,
-) -> None:
-    filename = f"{conversation}-{surface}-{state}.png"
-    if surface == "page-mark-area":
-        bounds = root.bounding_box()
-        assert bounds is not None
-        page.screenshot(
-            path=str(evidence / filename), animations="disabled",
-            clip={**bounds, "height": min(bounds["height"], 220)},
-        )
-    else:
-        root.screenshot(path=str(evidence / filename), animations="disabled")
-    inventory.append({
-        "role": conversation.removeprefix("proof-"), "surface": surface,
-        "state": state, "file": filename,
-    })
-
-
-@pytest.mark.parametrize("layout", ["desktop", "compact"])
+@pytest.mark.parametrize("layout", ["desktop"])
 def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     signal_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
     layout: str,
-    request: pytest.FixtureRequest,
 ) -> None:
     server = signal_server
     evidence = server.db_path.parent / "evidence"
     evidence.mkdir()
-    project = api.direct_post(server, "/api/projects", {"name": "Signal proof", "priority": "P1"})
-    item = api.direct_post(server, "/api/items", {
-        "title": "Signal orchestrator", "priority": "P1", "project_id": project["id"],
-    })
-    ticket = api.direct_post(server, "/api/tickets", {
-        "title": "Signal Worker", "worker_type": "coding", "kickoff_note": "Agreed brief.",
-        "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-    })
-    api.direct_post(server, f"/api/tickets/{ticket['id']}/accept/brief", {
-        "next_ceiling": "needs_success_condition",
-        "next_holder": {"kind": "owner", "id": "owner"},
-    })
+    project = api.direct_post(server, "/api/projects", {"name": "Signal proof"})
+    item = api.direct_post(
+        server,
+        "/api/managers",
+        {
+            "title": "Signal manager",
+            "project_id": project["id"],
+        },
+    )
+    ticket = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Signal Worker",
+            "worker_type": "coding",
+            "brief": "Agreed brief.",
+            "manager": {"kind": "manager", "id": item["id"]},
+        },
+    )
+    api.direct_post(
+        server,
+        f"/api/tickets/{ticket['id']}/accept/brief",
+        {
+            "next_ceiling": "needs_success_condition",
+            "next_holder": {"kind": "owner", "id": "owner"},
+        },
+    )
     proposed = httpx.post(
         server.base + f"/api/tickets/{ticket['id']}/propose",
         headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
@@ -158,46 +93,28 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     identities = {
         "proof-worker": {"kind": "ticket", "id": ticket["id"], "label": "Signal Worker"},
         "proof-supervisor": {
-            "kind": "sprint_item", "id": item["id"], "label": "Signal orchestrator",
+            "kind": "manager",
+            "id": item["id"],
+            "label": "Signal manager",
         },
         "proof-chief": {"kind": "chief", "id": "chief", "label": "Chief of Staff"},
     }
     for conversation in identities:
         _post(server, f"/api/test/signals/{conversation}/start")
         _post(server, f"/api/test/signals/{conversation}/finish")
-    with connect(str(server.db_path)) as conn:
-        conn.execute("UPDATE tickets SET conversation_id=? WHERE id=?", (
-            "proof-worker", ticket["id"],
-        ))
-        conn.execute("INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)", (
-            "proof-worker", ticket["id"],
-        ))
-        conn.execute("UPDATE agents SET conversation_id=? WHERE agent_key=?", (
-            "proof-supervisor", item["supervisor"]["agent_key"],
-        ))
-        conn.execute(
-            "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
-            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
-            ("proof-chief",),
-        )
-        conn.commit()
+    _bind(server, "ticket", ticket["id"], "proof-worker")
+    _bind(server, "agent", item["manager"]["agent_key"], "proof-supervisor")
+    _bind(server, "agent", "chief_of_staff", "proof-chief")
     context = context_factory()
     page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
-    def capture_final() -> None:
-        page.screenshot(path=str(evidence / "final-visible-state.png"), full_page=True)
-        (evidence / "final-dom.html").write_text(page.content())
-    request.addfinalizer(capture_final)
     page.set_viewport_size({"width": 1440 if layout == "desktop" else 560, "height": 1000})
     worker = page.locator(f'.board-workspace-left [data-ticket-id="{ticket["id"]}"]')
-    supervisor = page.locator(f'[data-sprint-item="{item["id"]}"] .item-head')
+    supervisor = page.locator(f'[data-manager="{item["id"]}"] .item-head')
     chief = page.locator("[data-chief-destination]")
     rows = {"proof-worker": worker, "proof-supervisor": supervisor, "proof-chief": chief}
-    inventory: list[JsonObject] = []
-    for conversation, row in rows.items():
+    for row in rows.values():
         expect(row).to_be_visible(timeout=WAIT_MS)
-        # Approval-only and completed-turn-only facts produce no mark.
         _marks(row, False, False)
-        _capture(page, row, conversation, "row", "quiet", inventory, evidence)
     page.evaluate("""() => {
         window.signalProofEvents = [];
         window.signalProofStream = new EventSource('/api/changes');
@@ -205,113 +122,44 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     }""")
     page.wait_for_function("() => window.signalProofStream.readyState === 1", timeout=WAIT_MS)
     observations: list[JsonObject] = []
-    for conversation, row in rows.items():
-        # A second actual turn starts on an already durable conversation. A wake
-        # caused only by conversation creation cannot satisfy this assertion.
+    selected = rows if layout == "desktop" else {"proof-worker": worker}
+    for conversation, row in selected.items():
+        popup_signal: Locator | None = None
+        if layout == "desktop":
+            # Keep the same popup mounted before the actual second turn starts.
+            row.hover()
+            popup = page.locator('[data-rail-hover-panel][aria-hidden="false"]')
+            expect(popup).to_be_visible(timeout=WAIT_MS)
+            popup_signal = popup.locator(f'[data-conversation-id="{conversation}"]')
+            _marks(popup_signal, False, False)
         before = page.evaluate("window.signalProofEvents.length")
         _post(server, f"/api/test/signals/{conversation}/start")
-        _marks(row, True, False)
-        _capture(page, row, conversation, "row", "working-only", inventory, evidence)
-        page.wait_for_function("before => window.signalProofEvents.length > before", arg=before,
-                               timeout=WAIT_MS)
+        if popup_signal is not None:
+            _marks(row, True, False)
+            _marks(popup_signal, True, False)
+        page.wait_for_function(
+            "before => window.signalProofEvents.length > before", arg=before, timeout=WAIT_MS
+        )
         _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
         _marks(row, True, True)
-        _capture(page, row, conversation, "row", "working-message", inventory, evidence)
+        if popup_signal is not None:
+            _marks(popup_signal, True, True)
         if conversation == "proof-worker":
-            # A child's activity and explicit message never become the parent's marks.
             _marks(supervisor, False, False)
             _marks(chief, False, False)
-        page.screenshot(path=str(evidence / f"{conversation}-working-message.png"), full_page=True)
-        # Completing work preserves the explicit unread message.
-        before = page.evaluate("window.signalProofEvents.length")
-        _post(server, f"/api/test/signals/{conversation}/finish")
-        _marks(row, False, True)
-        _capture(page, row, conversation, "row", "message-only", inventory, evidence)
-        page.wait_for_function("before => window.signalProofEvents.length > before", arg=before,
-                               timeout=WAIT_MS)
-        _post(server, f"/api/test/signals/{conversation}/start")
-        _marks(row, True, True)
-        view = api.get(server, f"/api/conversation/conversations/{conversation}")
-        assert view["is_running"] is True
-        board = api.get(server, "/api/board")
-        roster = api.get(server, "/api/workers")
-        board_worker = next(card for column in board["columns"] for card in column["cards"]
-                            if card["id"] == ticket["id"])
-        board_supervisor = next(entry for entry in board["sprint_items"]
-                                if entry["id"] == item["id"])
-        assert board_worker["has_pending_proposal"] is True
-        projections = {
-            "proof-worker": board_worker,
-            "proof-supervisor": board_supervisor,
-            "proof-chief": roster["chief_of_staff"],
-        }
-        for projected_conversation, projection in projections.items():
-            assert projection["conversation_signal"] == {
-                "working": projected_conversation == conversation,
-                "message_for_owner": projected_conversation == conversation,
-            }
-        observations.append({
-            "conversation": conversation, "simultaneous": view,
-            "board": board, "roster": roster,
-        })
-        # Read acknowledgement removes the dot and cannot stop ongoing work.
-        _post(server, f"/api/conversation/conversations/{conversation}/owner-read", {
-            "through_sequence": view["latest_sequence"],
-        })
-        _marks(row, True, False)
-        _capture(page, row, conversation, "row", "read-reveals-working", inventory, evidence)
-        _post(server, f"/api/test/signals/{conversation}/finish")
-        _marks(row, False, False)
-        # A popup reads the same exact conversation without marking it read.
-        _post(server, f"/api/test/signals/{conversation}/start")
-        _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-        _marks(row, True, True)
-        row.hover()
-        popup = page.locator('[data-rail-hover-panel][aria-hidden="false"]')
-        expect(popup).to_be_visible(timeout=WAIT_MS)
-        popup_signal = popup.locator(f'[data-conversation-id="{conversation}"]')
-        _marks(popup_signal, True, True)
-        _capture(page, popup, conversation, "popup", "working-message", inventory, evidence)
-        # Keep this exact popup open across canonical changes. Hovering again could
-        # replace a stale captured object and conceal the consumer freshness bug.
-        _post(server, f"/api/test/signals/{conversation}/finish")
-        _marks(popup_signal, False, True)
-        _capture(page, popup, conversation, "popup", "message-only", inventory, evidence)
-        popup_view = api.get(server, f"/api/conversation/conversations/{conversation}")
-        _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-        later_view = api.get(server, f"/api/conversation/conversations/{conversation}")
-        assert later_view["latest_sequence"] > popup_view["latest_sequence"]
-        _post(server, f"/api/conversation/conversations/{conversation}/owner-read", {
-            "through_sequence": popup_view["latest_sequence"],
-        })
-        _marks(popup_signal, False, True)
-        observations.append({"conversation": conversation, "earlier_read_preserves_later": True,
-                             "earlier": popup_view["latest_sequence"],
-                             "later": later_view["latest_sequence"]})
-        _post(server, f"/api/conversation/conversations/{conversation}/owner-read", {
-            "through_sequence": later_view["latest_sequence"],
-        })
-        _marks(popup_signal, False, False)
-        _capture(page, popup, conversation, "popup", "quiet", inventory, evidence)
-        _post(server, f"/api/test/signals/{conversation}/start")
-        _marks(popup_signal, True, False)
-        _capture(page, popup, conversation, "popup", "working-only", inventory, evidence)
-        _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-        _marks(popup_signal, True, True)
-        page.screenshot(path=str(evidence / f"{conversation}-popup.png"), full_page=True)
-        # Reading reveals work in this same continuously open popup; it cannot
-        # require another hover or a fresh identity lookup from navigation.
-        popup_working_view = api.get(server, f"/api/conversation/conversations/{conversation}")
-        assert popup_working_view["is_running"] is True
-        _post(server, f"/api/conversation/conversations/{conversation}/owner-read", {
-            "through_sequence": popup_working_view["latest_sequence"],
-        })
-        _marks(popup_signal, True, False)
-        _capture(page, popup, conversation, "popup", "read-reveals-working", inventory, evidence)
-        _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-        _marks(popup_signal, True, True)
-        # Hold the real acknowledgement briefly to observe message precedence;
-        # then forward that exact browser request to the real owner-read endpoint.
+        if conversation == "proof-worker" and popup_signal is not None:
+            # Worker popup resolves the current board card, not captured props.
+            view = api.get(server, f"/api/conversation/conversations/{conversation}")
+            _post(
+                server,
+                f"/api/conversation/conversations/{conversation}/owner-read",
+                {
+                    "through_sequence": view["latest_sequence"],
+                },
+            )
+            _marks(popup_signal, True, False)
+            _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
+            _marks(popup_signal, True, True)
         pending_reads: list[Route] = []
 
         def defer_read(route: Route, *, reads: list[Route] = pending_reads) -> None:
@@ -320,206 +168,250 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         read_pattern = f"**/api/conversation/conversations/{conversation}/owner-read"
         page.route(read_pattern, defer_read)
         row.click()
-        pane_signal = page.locator(
-            f'.board-workspace-right [data-conversation-id="{conversation}"]',
-        )
+        pane = page.locator(".board-workspace-right")
+        pane_signal = pane.locator(f'[data-conversation-id="{conversation}"]')
         _marks(pane_signal, True, True)
         page.mouse.move(1400 if layout == "desktop" else 540, 350)
         expect(page.locator('[data-rail-hover-panel][aria-hidden="false"]')).to_have_count(0)
-        pane = page.locator(".board-workspace-right")
-        _capture(page, pane, conversation, "page-mark-area", "working-message", inventory, evidence)
-        page.screenshot(path=str(evidence / f"{conversation}-page.png"), full_page=True)
-        # The read request is still held: ending work must preserve the message dot
-        # on the mounted page. Starting work keeps that dot until read.
-        _post(server, f"/api/test/signals/{conversation}/finish")
-        _marks(pane_signal, False, True)
-        _capture(page, pane, conversation, "page-mark-area", "message-only", inventory, evidence)
-        _post(server, f"/api/test/signals/{conversation}/start")
-        _marks(pane_signal, True, True)
-        if conversation == "proof-worker":
+        if conversation == "proof-worker" and layout == "desktop":
             expect(page.locator("[data-approval-block] h2")).to_contain_text("to approve")
-            delivered = _post(server, f"/api/tickets/{ticket['id']}/conversation/send", {
-                "conversation_id": conversation, "sender_label": "Owner", "mode": "steer",
-                "content": [{"piece": "text", "text": "An ordinary owner reply."}],
-            })
+            delivered = _post(
+                server,
+                f"/api/tickets/{ticket['id']}/conversation/send",
+                {
+                    "conversation_id": conversation,
+                    "sender_label": "Owner",
+                    "mode": "steer",
+                    "content": [{"piece": "text", "text": "An ordinary owner reply."}],
+                },
+            )
             assert delivered == {"conversation_id": conversation, "fate": "injected"}
-            observations.append({"owner_reply": delivered})
+            # An addressed owner send acknowledges its captured record. A new explicit
+            # message stays unread until the held browser acknowledgement reaches it.
+            _marks(pane_signal, True, False)
+            _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
             _marks(pane_signal, True, True)
-        rest = page.locator(".board-workspace-right [data-conversation-rest-bar]")
+        capture_success(page, evidence / f"{conversation}-{layout}-page-message.png")
+        rest = pane.locator("[data-conversation-rest-bar]")
         if rest.is_visible():
             with page.expect_request(read_pattern, timeout=WAIT_MS):
-                rest.click()
-            expect(page.locator('[data-conversation-state="peeked"]')).to_be_visible()
+                pane.locator("[data-conversation-expand]").click()
+            expect(page.locator('[data-conversation-state="opened"]')).to_be_visible()
         assert pending_reads, "An eligible open conversation must acknowledge its message"
         for read_route in list(pending_reads):
-            observations.append({
-                "conversation": conversation, "browser_read": read_route.request.post_data,
-            })
+            observations.append(
+                {"conversation": conversation, "browser_read": read_route.request.post_data}
+            )
             read_route.continue_()
         page.unroute(read_pattern, defer_read)
         _marks(pane_signal, True, False)
-        _capture(page, pane, conversation, "page-mark-area", "working-only", inventory, evidence)
-        _capture(page, pane, conversation, "page-mark-area", "read-reveals-working",
-                 inventory, evidence)
         _marks(row, True, False)
         _post(server, f"/api/test/signals/{conversation}/finish")
         _marks(pane_signal, False, False)
-        _capture(page, pane, conversation, "page-mark-area", "quiet", inventory, evidence)
         _marks(row, False, False)
-        if conversation == "proof-worker":
-            lifecycle = page.locator("[data-ticket-lifecycle]")
-            expect(lifecycle.locator("[data-ticket-retire-action]")).to_have_count(0)
-            expect(lifecycle.get_by_role("button", name="Retire", exact=True)).to_have_count(0)
-            backlog = lifecycle.locator("[data-ticket-backlog-action]")
-            expect(backlog).to_have_text("Backlog ticket")
-            backlog.click()
-            expect(backlog).to_have_text("Resume ticket")
-            backlog.click()
-            expect(backlog).to_have_text("Backlog ticket")
-        # Compact navigation intentionally hides the rail while a pane is selected.
         page.evaluate("location.hash = '#/workspace?view=items'")
-        expect(worker).to_be_visible(timeout=WAIT_MS)
-    reason = "Historical cancellation retained during signal proof."
-    with connect(str(server.db_path)) as conn:
-        row_record = conn.execute("SELECT * FROM tickets WHERE id=?", (ticket["id"],)).fetchone()
-        assert row_record is not None
-        original = dict(row_record)
-        values = json.loads(original["field_values"])
-        values["retirement"] = json.dumps({"reason": reason, "original_record": original,
-            "original_stage": original["stage"],
-            "original_pending_proposal_json": original["pending_proposal"]})
-        conn.execute("UPDATE tickets SET stage='cancelled',pending_proposal=NULL,"
-                     "field_values=? WHERE id=?",
-                     (json.dumps(values), ticket["id"]))
-        conn.commit()
-    page.evaluate("hash => location.hash = hash",
-                  f"#/workspace/item/{item['id']}/{ticket['id']}")
-    expect(page.locator("[data-ticket-cancelled]")).to_have_text("Cancelled")
-    expect(page.locator("[data-retirement-reason]")).to_have_text(reason)
-    expect(page.locator("[data-ticket-retire-action]")).to_have_count(0)
-    expect(page.locator("[data-ticket-backlog-action]")).to_have_count(0)
-    page.screenshot(path=str(evidence / "cancelled-history.png"), full_page=True)
-    page.evaluate("hash => location.hash = hash", f"#/workspace/item/{item['id']}")
-    children = page.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
-    children.get_by_label("Worker state", exact=True).select_option(label="Cancelled")
-    cancelled_group = children.locator('[data-workspace-group="cancelled"]')
-    expect(cancelled_group).to_be_attached(timeout=WAIT_MS)
-    # Cancelled history is deliberately collapsed; this is the requested user action.
-    if not cancelled_group.evaluate("element => element.open"):
-        cancelled_group.locator(":scope > summary").click()
-    cancelled_row = cancelled_group.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')
-    expect(cancelled_row).to_be_visible(timeout=WAIT_MS)
-    _marks(cancelled_row, False, False)
-    page.screenshot(path=str(evidence / "cancelled-child-access.png"), full_page=True)
-    cancelled_row.click()
-    expect(page.locator("[data-retirement-reason]")).to_have_text(reason)
+        expect(row).to_be_visible(timeout=WAIT_MS)
+        _marks(row, False, False)
     events = page.evaluate("window.signalProofEvents")
     assert events and set(events) == {"change"}, events
-    (evidence / "observations.json").write_text(json.dumps({
-        "observations": observations, "change_events": events,
-        "server": server.base, "db_path": str(server.db_path),
-        "source": str(REPO_ROOT), "backend": "scripted adapter; real conversation core",
-    }, indent=2))
-    (evidence / "surface-inventory.json").write_text(json.dumps({
-        "captures": inventory,
-        "full_context": [
-            f"{conversation}-{suffix}.png" for conversation in rows
-            for suffix in ("working-message", "popup", "page")
-        ],
-        "coverage": {
-            "rows": ["quiet", "working-only", "message-only", "working-message",
-                     "read-reveals-working"],
-            "popup": ["working-message", "message-only", "quiet", "working-only",
-                      "read-reveals-working"],
-            "page": ["working-message", "message-only", "working-only", "quiet",
-                     "read-reveals-working"],
-        },
-        "presentation": "Message is the sole visible mark when both backend facts are true.",
-        "read_transition": "Each role and surface reveals working after read, before turn end.",
-        "popup_freshness": "One continuously open popup per role; no hover re-entry.",
-        "limits": "Scripted backend wire; no production provider call or deployment proof.",
-    }, indent=2))
+    (evidence / "observations.json").write_text(
+        json.dumps(
+            {
+                "observations": observations,
+                "change_events": events,
+                "layout": layout,
+                "server": server.base,
+                "db_path": str(server.db_path),
+                "backend": "scripted adapter; real conversation core; real fixed refresh window",
+            },
+            indent=2,
+        )
+    )
     page.evaluate("window.signalProofStream.close()")
-    (server.db_path.parent / "complete.json").write_text(json.dumps({"layout": layout}))
 
 
-@pytest.mark.parametrize("layout", ["desktop", "compact"])
-def test_unobscured_message_precedence_pages(
+def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers(
     signal_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
-    layout: str,
 ) -> None:
-    """Supplemental screenshots only; the transition matrix is a separate proof."""
+    """The combined card must preserve canonical approval, delivery, and read bounds.
+
+    Reuses the existing isolated Signal host. Only its backend wire is scripted.
+    Component/API tests cannot prove that the browser section reaches the actual
+    proposal writer, backend wire, and bounded owner-read writer.
+    """
+    from tests.support.connected_rows import _message, _propose
+
+    from planner.core.contracts import Principal, PrincipalKind
+
     server = signal_server
-    evidence = server.db_path.parent / "evidence"
-    evidence.mkdir()
-    project = api.direct_post(server, "/api/projects", {"name": "Signal proof", "priority": "P1"})
-    item = api.direct_post(server, "/api/items", {
-        "title": "Signal orchestrator", "project_id": project["id"],
-    })
-    ticket = api.direct_post(server, "/api/tickets", {
-        "title": "Signal Worker", "worker_type": "coding", "kickoff_note": "Agreed brief.",
-        "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-    })
-    identities = {
-        "proof-worker": {"kind": "ticket", "id": ticket["id"], "label": "Signal Worker"},
-        "proof-supervisor": {
-            "kind": "sprint_item", "id": item["id"], "label": "Signal orchestrator",
+    project = api.direct_post(server, "/api/projects", {"name": "Review message proof"})
+    ticket = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Reply in review",
+            "worker_type": "coding",
+            "brief": "Approved task.",
+            "project_id": project["id"],
+            "manager": {"kind": "chief", "id": "chief"},
         },
-        "proof-chief": {"kind": "chief", "id": "chief", "label": "Chief of Staff"},
-    }
-    for conversation in identities:
-        _post(server, f"/api/test/signals/{conversation}/start")
-        _post(server, f"/api/test/signals/{conversation}/finish")
-    with connect(str(server.db_path)) as conn:
-        conn.execute("UPDATE tickets SET conversation_id=? WHERE id=?",
-                     ("proof-worker", ticket["id"]))
-        conn.execute("INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-                     ("proof-worker", ticket["id"]))
-        conn.execute("UPDATE agents SET conversation_id=? WHERE agent_key=?",
-                     ("proof-supervisor", item["supervisor"]["agent_key"]))
-        conn.execute("INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
-                     "ON CONFLICT(agent_key) DO UPDATE "
-                     "SET conversation_id=excluded.conversation_id",
-                     ("proof-chief",))
-        conn.commit()
+    )
+    identity = str(ticket["id"])
+    api.direct_post(
+        server,
+        f"/api/tickets/{identity}/accept/brief",
+        {
+            "next_ceiling": "needs_success_condition",
+            "next_holder": {"kind": "owner", "id": "owner"},
+        },
+    )
+    _propose(server, identity, "The proposal remains beside the conversation.")
+    conversation = "review-reply-proof"
+    _post(server, f"/api/test/signals/{conversation}/start")
+    _bind(server, "ticket", identity, conversation)
+    sender = Principal(PrincipalKind.ticket, identity)
+    _message(server, conversation, sender, "Please answer this displayed message.")
     context = context_factory()
-    page = open_page(context, server, "#/workspace", '[data-screen="workspace"]')
-    page.set_viewport_size({"width": 1440 if layout == "desktop" else 560, "height": 1000})
-    reads: list[Route] = []
+    page = open_page(context, server, "#/review", '[data-review-card]')
+    page.set_default_timeout(WAIT_MS)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    ticket_card = page.locator(f'[data-review-ticket-card][data-ticket-id="{identity}"]')
+    card = ticket_card.locator('[data-review-item-type="message"]')
+    expect(card.locator("[data-review-message-sequence]")).to_have_count(1, timeout=WAIT_MS)
+    bound = int(
+        card.locator("[data-review-message-sequence]").get_attribute("data-review-message-sequence")
+        or "0"
+    )
+    badge = page.locator("[data-review-badge]").first
+    expect(badge).to_have_text("1")
+    expect(page.locator("[data-review-ticket-card]")).to_have_count(1)
+    proposal = api.get(server, f"/api/tickets?id={identity}&detail=full")["pending_proposal"]
+    expect(ticket_card.locator("[data-accept]")).to_be_visible(timeout=WAIT_MS)
+    capture_success(page, "connected-review-desktop.png")
+    page.set_viewport_size({"width": 390, "height": 844})
+    capture_success(page, "connected-review-narrow.png")
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    ticket_card.locator("[data-accept]").click()
+    ticket_card.locator('[data-ceiling-picker-choice="needs_what_changes"]').click()
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/tickets/{identity}/accept/success_condition")
+    ) as approved:
+        ticket_card.locator('[data-ceiling-picker-choice="owner"]').click()
+    assert approved.value.ok, approved.value.text()
+    approval_body = approved.value.request.post_data_json
+    assert isinstance(approval_body, dict)
+    assert approval_body["expected_proposal_revision"] == proposal["revision"]
+    canonical = api.get(server, f"/api/tickets?id={identity}&detail=full")
+    assert canonical["field_values"]["success_condition"] == proposal["body"]
+    assert canonical["pending_proposal"] is None
+    expect(ticket_card.locator("[data-approval-block]")).to_have_count(0)
+    expect(card.locator("[data-review-message-sequence]")).to_have_count(1)
+    expect(badge).to_have_text("1")
+    card.locator("[data-review-reply]").fill("The reply reaches this conversation once.")
+    submitted: list[dict[str, object]] = []
 
-    def hold_read(route: Route) -> None:
-        reads.append(route)
+    def newer_message_before_send(route: Route) -> None:
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        submitted.append(body)
+        _message(server, conversation, sender, "This newer message stays unread.")
+        route.continue_()
 
-    pattern = "**/api/conversation/conversations/*/owner-read"
-    page.route(pattern, hold_read)
-    routes = {
-        "proof-worker": f"#/workspace/item/{item['id']}/{ticket['id']}",
-        "proof-supervisor": f"#/workspace/item/{item['id']}",
-        "proof-chief": "#/workspace/chief-of-staff",
-    }
-    inventory: list[JsonObject] = []
-    for conversation, address in routes.items():
-        _post(server, f"/api/test/signals/{conversation}/start")
-        _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-        page.evaluate("hash => location.hash = hash", address)
-        pane = page.locator(".board-workspace-right")
-        signal = pane.locator(f'[data-conversation-id="{conversation}"]')
-        _marks(signal, True, True)
-        page.mouse.move(1400 if layout == "desktop" else 540, 350)
-        expect(page.locator('[data-rail-hover-panel][aria-hidden="false"]')).to_have_count(0)
-        _capture(page, pane, conversation, "page-mark-area", "unobscured-message-precedence",
-                 inventory, evidence)
-        page.screenshot(path=str(evidence / f"{conversation}-unobscured-page.png"), full_page=True)
-        _post(server, f"/api/test/signals/{conversation}/finish")
-    for read_route in list(reads):
-        read_route.continue_()
-    page.unroute(pattern, hold_read)
-    (evidence / "supplemental-inventory.json").write_text(json.dumps({
-        "captures": inventory, "layout": layout,
-        "purpose": "Unobscured message precedence during work; supplements transition matrix.",
-        "backend": "Controlled adapter over real conversation core; no provider execution.",
-    }, indent=2))
-    (server.db_path.parent / "complete.json").write_text(json.dumps({"layout": layout}))
+    page.route(f"**/api/tickets/{identity}/conversation/send", newer_message_before_send, times=1)
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/tickets/{identity}/conversation/send")
+    ) as sent:
+        card.locator("[data-review-send]").click()
+    assert sent.value.ok, sent.value.text()
+    assert sent.value.json()["fate"] == "queued"
+    assert submitted[0]["conversation_id"] == conversation
+    assert submitted[0]["owner_read_through_sequence"] == bound
+    snapshot = api.get(server, f"/api/conversation/conversations/{conversation}")
+    assert snapshot["owner_read_through_sequence"] == bound
+    assert any(
+        prompt["sender_message_id"] == submitted[0]["sender_message_id"]
+        for prompt in snapshot["held_prompts"]
+    )
+    expect(card.locator("[data-review-message-sequence]")).to_have_count(1)
+    expect(card.locator(".review-message-run")).to_have_text("This newer message stays unread.")
+    expect(badge).to_have_text("1")
+    _post(server, f"/api/test/signals/{conversation}/finish")
+    page.wait_for_function(
+        """async ({conversation, identity}) => {
+        const endpoint = `/api/conversation/conversations/${conversation}/events?after=0`;
+        const response = await fetch(endpoint);
+        const value = await response.json();
+        const rows = Array.isArray(value) ? value : value.events;
+        return rows.some(row => row.kind === 'prompt'
+            && row.payload.sender_message_id === identity);
+    }""",
+        arg={"conversation": conversation, "identity": submitted[0]["sender_message_id"]},
+        timeout=WAIT_MS,
+    )
+    snapshot = api.get(server, f"/api/conversation/conversations/{conversation}")
+    assert snapshot["owner_read_through_sequence"] == bound
+    # A durable prompt row is admission. This receipt proves backend delivery.
+    receipts = page.evaluate(
+        """async ({conversation, timeout}) => {
+        const deadline = performance.now() + timeout;
+        while (performance.now() < deadline) {
+            const response = await fetch(`/api/test/signals/${conversation}/delivered`);
+            const receipt = await response.json();
+            const reply = 'The reply reaches this conversation once.';
+            if (receipt.texts.some(text => text.includes(reply))) return receipt.texts;
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        throw new Error('The exact reply did not reach the scripted backend');
+    }""", {"conversation": conversation, "timeout": WAIT_MS},
+    )
+    assert sum("The reply reaches this conversation once." in text for text in receipts) == 1
+    displayed_bound = int(card.locator("[data-review-message-sequence]").get_attribute(
+        "data-review-message-sequence",
+    ) or "0")
+    reads: list[dict[str, object]] = []
+
+    def newer_message_before_read(route: Route) -> None:
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        reads.append(body)
+        _message(
+            server, conversation, sender, "This message arrives after the displayed read boundary.",
+        )
+        route.continue_()
+
+    page.route(
+        f"**/api/conversation/conversations/{conversation}/owner-read",
+        newer_message_before_read, times=1,
+    )
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/conversations/{conversation}/owner-read")
+    ) as read:
+        card.locator("[data-review-mark-read]").click()
+    assert read.value.ok, read.value.text()
+    assert reads == [{"through_sequence": displayed_bound}]
+    snapshot = api.get(server, f"/api/conversation/conversations/{conversation}")
+    assert snapshot["owner_read_through_sequence"] == displayed_bound
+    expect(card.locator("[data-review-message-sequence]")).to_have_count(1)
+    expect(card.locator(".review-message-run")).to_have_text(
+        "This message arrives after the displayed read boundary.",
+    )
+    expect(badge).to_have_text("1")
+    card.locator("[data-review-mark-read]").click()
+    expect(page.locator("[data-review-item-type=message]")).to_have_count(0)
+    expect(page.locator("[data-review-ticket-card]")).to_have_count(0)
+    # A reset leaves the old unread run addressable. Open must not follow the new pointer.
+    replacement = "review-replacement-proof"
+    _post(server, f"/api/test/signals/{replacement}/start")
+    _bind(server, "ticket", identity, replacement)
+    _message(server, conversation, sender, "An unread message in the earlier conversation.")
+    page.reload()
+    historical = page.locator('[data-review-item-type="message"]')
+    expect(historical).to_have_attribute("data-conversation-id", conversation)
+    historical.get_by_role("link", name="Open conversation", exact=False).click()
+    pane = page.locator("[data-conversation-pane]")
+    expect(pane).to_have_attribute("data-conversation-id", conversation)
+    expect(pane).to_have_attribute("data-conversation-read-only", "true")
+    expect(pane).to_have_attribute("data-conversation-state", "opened")

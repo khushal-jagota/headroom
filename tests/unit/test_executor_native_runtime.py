@@ -21,6 +21,7 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
+    BackendSpawnFailed,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -29,6 +30,7 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     PromptDeliveryMode,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
@@ -38,6 +40,8 @@ from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSIO
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AuthorizedAction,
+    CanonicalSkillSnapshot,
+    CanonicalSkillSource,
     ChildCommand,
     ChildOperation,
     ChildReference,
@@ -64,6 +68,24 @@ from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import MacExecutor, as_object
 from planner.executor.runtime import NativeChildRegistry
 from planner.previews.forward import MacPreviewForwards
+
+
+def canonical_snapshot() -> CanonicalSkillSnapshot:
+    names = ("panels", "panels-worker", "panels-worker-coding")
+    return CanonicalSkillSnapshot(
+        tuple(
+            CanonicalSkillSource(
+                name, f"---\nname: {name}\ndescription: test\n---\n{name} database text\n"
+            )
+            for name in names
+        ),
+        names,
+    )
+
+
+@pytest.fixture(autouse=True)
+def isolated_native_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "native-codex-home"))
 
 
 class ScriptedChild:
@@ -114,6 +136,7 @@ def native_registry(
         return cast(BackendChildFactory, create)
 
     registry = NativeChildRegistry(
+        paths=ExecutorPaths(tmp_path / "executor"),
         incarnation=reference.executor_incarnation,
         spool=spool,
         factory=factory,
@@ -133,7 +156,10 @@ def native_registry(
         reference,
         ChildOperation.start,
         None,
-        {"resolved_start": encode_value(resolved)},
+        {
+            "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+            "resolved_start": encode_value(resolved),
+        },
     )
     try:
         yield registry, spool, native, start
@@ -338,7 +364,10 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             reference,
             ChildOperation.start,
             None,
-            {"resolved_start": encode_value(resolved)},
+            {
+                "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                "resolved_start": encode_value(resolved),
+            },
         )
         caller = asyncio.create_task(registry.execute_command(start))
         await asyncio.sleep(0)
@@ -550,6 +579,7 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
             return cast(BackendChildFactory, create)
 
         registry = NativeChildRegistry(
+            paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
             factory=factory,
@@ -571,7 +601,10 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
                     reference,
                     ChildOperation.start,
                     None,
-                    {"resolved_start": encode_value(resolved)},
+                    {
+                        "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                        "resolved_start": encode_value(resolved),
+                    },
                 )
             )
         )
@@ -635,6 +668,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             return cast(BackendChildFactory, create)
 
         registry = NativeChildRegistry(
+            paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
             factory=factory,
@@ -655,7 +689,10 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
                 reference,
                 ChildOperation.start,
                 None,
-                {"resolved_start": encode_value(resolved)},
+                {
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                    "resolved_start": encode_value(resolved),
+                },
             )
         )
         assert native.sink is not None
@@ -831,7 +868,10 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
                 reference,
                 ChildOperation.start,
                 None,
-                {"resolved_start": encode_value(resolved)},
+                {
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                    "resolved_start": encode_value(resolved),
+                },
             )
         )
         for owner in ("t_own", "t_other"):
@@ -869,9 +909,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         executor.registry.admission_stopped = True
         count = executor.spool.pending_count()
         refused = await executor.handle_ipc(replace(request, request_id="after-closure"))
-        assert refused.error == {
-            "message": "executor admission stopped", "type": "PermissionError"
-        }
+        assert refused.error == {"message": "executor admission stopped", "type": "PermissionError"}
         assert executor.spool.pending_count() == count
         executor.spool.close()
 
@@ -945,14 +983,21 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
             process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("policy", list(WorkspacePathPolicy))
 def test_native_start_localizes_vps_identity_and_home_relative_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    policy: WorkspacePathPolicy,
 ) -> None:
     async def run() -> None:
         vps_home, mac_home = tmp_path / "vps-home", tmp_path / "mac-home"
         workspace = mac_home / "projects" / "same-checkout"
         workspace.mkdir(parents=True)
+        configured_workspace = vps_home / "projects" / "same-checkout"
+        if policy is WorkspacePathPolicy.native_absolute:
+            # An available mapped checkout must not mask accidental home translation.
+            configured_workspace.mkdir(parents=True)
+            workspace = configured_workspace
         monkeypatch.setenv("HOME", str(mac_home))
         monkeypatch.setenv("CODEX_HOME", str(mac_home / ".codex"))
         paths = ExecutorPaths(mac_home / "executor-data")
@@ -968,6 +1013,18 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 vendor_session_cursor: str | None,
             ) -> None:
                 received.append(resolved_start)
+                native_home = Path(os.environ["CODEX_HOME"])
+                for source in canonical_snapshot().sources:
+                    assert (
+                        native_home / "skills" / source.skill_name / "SKILL.md"
+                    ).read_bytes() == source.source_text.encode("utf-8")
+                assert resolved_start.role_materials is not None
+                assert resolved_start.role_materials.role_text.startswith("worker\n\n")
+                assert "PLAN_TICKET_FILES_DIR supersedes" in resolved_start.role_materials.role_text
+                environment = dict(resolved_start.role_materials.identity_environment_variables)
+                (Path(environment["PLAN_TICKET_FILES_DIR"]) / "proof.txt").write_text(
+                    "native artifact"
+                )
 
         native = InspectingChild()
 
@@ -1001,8 +1058,9 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             "test",
             None,
             ConversationRoleMaterials("worker", remote_identity),
-            vps_home / "projects" / "same-checkout",
+            configured_workspace,
             ConversationAccess.full,
+            workspace_path_policy=policy,
         )
         from planner.executor.remote import RemoteBackendChild
 
@@ -1014,13 +1072,21 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
 
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
-        remote = RemoteBackendChild(reference, send)
+        remote = RemoteBackendChild(reference, send, lambda start: canonical_snapshot())
         await remote.start(resolved, vendor_session_cursor=None)
-        assert forwarded[0].arguments["workspace_home_relative"] == "projects/same-checkout"
+        if policy is WorkspacePathPolicy.legacy_home_mapping:
+            assert forwarded[0].arguments["workspace_home_relative"] == "projects/same-checkout"
+        else:
+            assert "workspace_home_relative" not in forwarded[0].arguments
+            forwarded_start = TypeAdapter(ResolvedConversationStart).validate_python(
+                forwarded[0].arguments["resolved_start"]
+            )
+            assert forwarded_start.workspace_folder == configured_workspace
         assert (
             registry.outcomes[forwarded[0].command_id].disposition == CommandDisposition.succeeded
         )
         assert received == constructed
+        assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"
         assert received[0].workspace_folder == workspace
         assert received[0].role_materials is not None
         identity = dict(received[0].role_materials.identity_environment_variables)
@@ -1056,6 +1122,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
 
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
         registry = NativeChildRegistry(
+            paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
             factory=factory,
@@ -1077,7 +1144,11 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
                 reference,
                 ChildOperation.start,
                 None,
-                {"resolved_start": encode_value(resolved), "workspace_home_relative": relative},
+                {
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                    "resolved_start": encode_value(resolved),
+                    "workspace_home_relative": relative,
+                },
             )
         )
         assert result.disposition == CommandDisposition.refused
@@ -1125,6 +1196,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             return cast(BackendChildFactory, create)
 
         registry = NativeChildRegistry(
+            paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
             spool=spool,
             factory=factory,
@@ -1145,7 +1217,10 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
                 reference,
                 ChildOperation.start,
                 None,
-                {"resolved_start": encode_value(resolved)},
+                {
+                    "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+                    "resolved_start": encode_value(resolved),
+                },
             )
         )
         turn = TurnToken("c_one", 1)
@@ -1830,7 +1905,10 @@ def test_cancelled_source_publication_remains_counted_until_durable_completion(
         task = asyncio.create_task(
             executor.handle_ipc(
                 IpcRequest(
-                    "admitted-write", IpcOperation.write, reference.child_id, "capability",
+                    "admitted-write",
+                    IpcOperation.write,
+                    reference.child_id,
+                    "capability",
                     {"operation": "ticket.note", "arguments": {}},
                 )
             )
@@ -1854,5 +1932,123 @@ def test_cancelled_source_publication_remains_counted_until_durable_completion(
             release.set()
             await asyncio.gather(task, return_exceptions=True)
             executor.spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("is_file", [False, True])
+def test_native_absolute_workspace_refuses_missing_directory_or_file_before_child_creation(
+    tmp_path: Path, is_file: bool
+) -> None:
+    async def run() -> None:
+        from planner.executor.remote import RemoteBackendChild
+
+        workspace = tmp_path / "native-checkout"
+        if is_file:
+            workspace.write_text("not a directory")
+        spool = FilesystemSpool(tmp_path / "spool")
+        created: list[bool] = []
+
+        def factory(
+            resolved: ResolvedConversationStart, capability: str, child: ChildReference
+        ) -> BackendChildFactory:
+            created.append(True)
+            return cast(BackendChildFactory, lambda **kwargs: ScriptedChild())
+
+        reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
+        registry = NativeChildRegistry(
+            paths=ExecutorPaths(tmp_path / "executor"),
+            incarnation=reference.executor_incarnation,
+            spool=spool,
+            factory=factory,
+            workspace_home=tmp_path,
+            message_files=ConversationMessageFiles(tmp_path / "unused"),
+        )
+        resolved = ResolvedConversationStart(
+            "c_one",
+            ConversationBackendKey.codex,
+            "test",
+            None,
+            None,
+            workspace,
+            ConversationAccess.full,
+            workspace_path_policy=WorkspacePathPolicy.native_absolute,
+        )
+        forwarded: list[ChildCommand] = []
+
+        async def send(command: ChildCommand) -> CommandOutcome:
+            forwarded.append(command)
+            return await registry.execute_command(command)
+
+        with pytest.raises(BackendSpawnFailed, match="Mac workspace unavailable"):
+            await RemoteBackendChild(reference, send, lambda _: canonical_snapshot()).start(
+                resolved, vendor_session_cursor=None
+            )
+        assert "workspace_home_relative" not in forwarded[0].arguments
+        assert registry.outcomes[forwarded[0].command_id].disposition is CommandDisposition.refused
+        assert created == []
+        assert registry.children == {}
+        spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("snapshot_value", [None, {}, {"sources": [], "required_skill_names": []}])
+def test_missing_or_invalid_snapshot_refuses_before_provider_creation(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    snapshot_value: object,
+) -> None:
+    async def run() -> None:
+        registry, _spool, native, start = native_registry
+        arguments = dict(start.arguments)
+        arguments.pop("canonical_skill_snapshot")
+        if snapshot_value is not None:
+            arguments["canonical_skill_snapshot"] = encode_value(snapshot_value)
+        outcome = await registry.execute_command(replace(start, arguments=arguments))
+        assert outcome.disposition is CommandDisposition.refused
+        assert outcome.result["error_type"] == "BackendSpawnFailed"
+        assert "Canonical skill bootstrap failed" in str(outcome.result["error_message"])
+        assert native.starts == 0
+        assert registry.children == {}
+        assert registry.paths is not None
+        assert not (Path(os.environ["CODEX_HOME"]) / "skills").exists()
+
+    asyncio.run(run())
+
+
+def test_native_start_replay_does_not_repeat_skill_bootstrap(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.executor.skills import install_native_skill_snapshot
+
+    installs: list[CanonicalSkillSnapshot] = []
+    install = install_native_skill_snapshot
+
+    def counted_install(
+        snapshot: CanonicalSkillSnapshot, *, paths: ExecutorPaths, native_home: Path
+    ) -> Path:
+        installs.append(snapshot)
+        return install(snapshot, paths=paths, native_home=native_home)
+
+    monkeypatch.setattr("planner.executor.runtime.install_native_skill_snapshot", counted_install)
+
+    async def run() -> None:
+        registry, _spool, native, start = native_registry
+        first = await registry.execute_command(start)
+        assert first.disposition is CommandDisposition.succeeded
+        replay = await registry.execute_command(start)
+        assert replay == first
+        assert native.starts == 1
+        assert installs == [canonical_snapshot()]
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION,
+            "a" * 40,
+            SPOOL_FORMAT_VERSION,
+            start.child.executor_incarnation,
+            1,
+        )
+        assert len(registry.inventory(identity).children) == 1
+        assert installs == [canonical_snapshot()]
 
     asyncio.run(run())

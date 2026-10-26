@@ -13,6 +13,8 @@ export type FetchOptions = {
   body?: unknown;
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  /** Optional response evidence. Domain results and error behavior stay unchanged. */
+  responseMetadata?: { headers?: Headers; decodedBytes?: number };
 };
 
 export class PlannerFetchError extends Error {
@@ -57,6 +59,10 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
   }
 
   const raw = await response.text();
+  if (options.responseMetadata) {
+    options.responseMetadata.headers = new Headers(response.headers);
+    options.responseMetadata.decodedBytes = new TextEncoder().encode(raw).byteLength;
+  }
   if (response.ok) {
     try {
       return (raw === "" ? {} : JSON.parse(raw)) as T;

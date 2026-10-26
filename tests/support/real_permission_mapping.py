@@ -67,6 +67,19 @@ def install_permission_mapping(
 
         def observe_claude(self: Any) -> list[str]:
             command: list[str] = original_command(self)
+            options = self._options
+            # The production catalogue uses an SDK startup handshake, not a mapped
+            # conversation. Preserve its command and native defaults unchanged.
+            is_catalogue = (
+                options.max_turns == 1
+                and options.permission_mode is None
+                and options.can_use_tool is None
+                and options.model is None
+                and options.cwd is None
+                and options.system_prompt is None
+            )
+            if is_catalogue:
+                return command
             index = command.index("--permission-mode")
             mode = command[index + 1]
             observations.append({"cli_permission_mode": mode})

@@ -10,19 +10,19 @@ from typing import Any, NoReturn, TextIO
 import click
 
 LEGACY_SUPERVISOR_RECOVERIES: dict[str, str] = {
-    "show": "panels sprint item show ITEM_ID",
-    "context": "panels sprint item workspace ITEM_ID",
+    "show": "panels manager show ITEM_ID",
+    "context": "panels manager workspace ITEM_ID",
     "ticket-context": "panels ticket show TICKET_ID",
     "history": "panels ticket history TICKET_ID",
     "message-worker": "panels send-message --ticket TICKET_ID --message TEXT",
     "restart-worker": "panels ticket restart-worker TICKET_ID",
-    "set-item": "panels sprint item set ITEM_ID FIELD --value VALUE",
+    "set-item": "panels manager set ITEM_ID FIELD --value VALUE",
     "set-ticket": "panels ticket edit TICKET_ID --input-json FILE",
-    "artifact-list": "panels sprint item artifact list ITEM_ID",
-    "artifact-write": ("panels sprint item artifact write ITEM_ID ARTIFACT_PATH --body-file FILE"),
-    "artifact-delete": "panels sprint item artifact delete ITEM_ID ARTIFACT_PATH",
-    "send": "panels send-message --sprint-item ITEM_ID --message TEXT",
-    "reset": "panels sprint item conversation reset ITEM_ID",
+    "artifact-list": "panels manager artifact list ITEM_ID",
+    "artifact-write": ("panels manager artifact write ITEM_ID ARTIFACT_PATH --body-file FILE"),
+    "artifact-delete": "panels manager artifact delete ITEM_ID ARTIFACT_PATH",
+    "send": "panels send-message --manager ITEM_ID --message TEXT",
+    "reset": "panels manager conversation reset ITEM_ID",
     "approve": "panels ticket proposal TICKET_ID accept --ceiling STAGE",
     "reject": "panels ticket proposal TICKET_ID revise < GUIDANCE_FILE",
 }
@@ -37,11 +37,12 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels worker-type skill": (
         "panels worker-type skill WORKER_TYPE --description TEXT < SKILL_FILE"
     ),
+    "panels skill edit": "panels skill edit NAME --description TEXT < SKILL_FILE",
     "panels project set": "panels project set PROJECT_ID FIELD --value VALUE",
     "panels ticket delete": "panels ticket delete TICKET_ID --yes",
     "panels ticket create": "panels ticket create --input-json FILE",
     "panels ticket assign": "panels ticket assign TICKET_ID --chief",
-    "panels orchestrator settle": "panels orchestrator settle ITEM_ID",
+    "panels manager settle": "panels manager settle ITEM_ID",
     "panels ticket edit": "panels ticket edit TICKET_ID --input-json FILE",
     "panels ticket proposal": "panels ticket proposal TICKET_ID ACTION",
     "panels ticket request-help": "panels ticket request-help TICKET_ID < MESSAGE_FILE",
@@ -51,16 +52,13 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels ticket place": "panels ticket place TICKET_ID --project-id PROJECT_ID",
     "panels ticket approve": "panels ticket approve TICKET_ID --ceiling STAGE",
     "panels ticket reject": "panels ticket reject TICKET_ID --message TEXT",
-    "panels sprint item create": ("panels sprint item create --title TEXT --project-id PROJECT_ID"),
-    "panels sprint item delete": "panels sprint item delete ITEM_ID --yes",
-    "panels sprint item set": "panels sprint item set ITEM_ID FIELD --value VALUE",
-    "panels sprint item conversation send": (
-        "panels sprint item conversation send ITEM_ID --message TEXT"
-    ),
+    "panels manager create": ("panels manager create --title TEXT --project-id PROJECT_ID"),
+    "panels manager delete": "panels manager delete ITEM_ID --yes",
+    "panels manager set": "panels manager set ITEM_ID FIELD --value VALUE",
+    "panels manager conversation send": ("panels manager conversation send ITEM_ID --message TEXT"),
     "panels worker propose": "panels worker propose TICKET_ID < PROPOSAL_FILE",
     "panels worker request-help": "panels worker request-help TICKET_ID < MESSAGE_FILE",
     "panels worker recap": "panels worker recap TICKET_ID < RECAP_FILE",
-    "panels worker note": "panels worker note TICKET_ID < GUIDANCE_FILE",
 }
 
 _PANELS_CALL = re.compile(r"(?:^|[`'\" ])panels(?:[ `]|$)")
@@ -261,8 +259,45 @@ def _show_click_exception(
     render_human_error(message, recovery=command_shape(ctx))
 
 
+class CompatibilityChoice(click.Choice[str]):
+    """Normalize issued Manager field names before canonical choice validation."""
+
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        if value in {"sprint-item", "orchestrator"} and "manager" in self.choices:
+            value = "manager"
+        return super().convert(value, param, ctx)
+
+
+class CompatibilityOption(click.Option):
+    """Keep issued spellings executable while help teaches the first spelling."""
+
+    def get_help_record(self, ctx: click.Context) -> tuple[str, str] | None:
+        original = self.opts
+        self.opts = original[:1]
+        try:
+            return super().get_help_record(ctx)
+        finally:
+            self.opts = original
+
+
+def _check_manager_options(args: Sequence[str]) -> None:
+    identities: dict[str, set[str]] = {}
+    aliases = {"--manager", "--sprint-item", "--orchestrator"}
+    for index, token in enumerate(args):
+        option, separator, value = token.partition("=")
+        if option in aliases:
+            if not separator and index + 1 < len(args):
+                value = args[index + 1]
+            identities.setdefault(option, set()).add(value)
+    if len(identities) > 1 and len({frozenset(values) for values in identities.values()}) > 1:
+        raise click.UsageError("conflicting Manager identity options")
+
+
 class PanelsGroup(click.Group):
     """Root group that replaces Click's usage walls with two-line errors."""
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return [name for name in super().list_commands(ctx) if name not in {"orchestrator"}]
 
     def main(
         self,
@@ -274,6 +309,7 @@ class PanelsGroup(click.Group):
         **extra: Any,
     ) -> Any:
         supplied_args = list(sys.argv[1:] if args is None else args)
+        _check_manager_options(supplied_args)
         if not standalone_mode:
             return super().main(
                 args=supplied_args,

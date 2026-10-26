@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import os
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -14,6 +15,7 @@ from typing import cast
 
 from pydantic import TypeAdapter
 
+from planner.conversation.backends.codex_app_server.login import codex_home
 from planner.conversation.backends.contracts import (
     BackendAdapterError,
     BackendChild,
@@ -42,6 +44,7 @@ from planner.executor.contracts import (
     AuthorizedAction,
     BackendEvent,
     BackendEventMethod,
+    CanonicalSkillSnapshot,
     ChildCommand,
     ChildInventory,
     ChildOperation,
@@ -59,6 +62,7 @@ from planner.executor.contracts import (
     SourceRetirementRequest,
 )
 from planner.executor.files import safe_component, snapshot_ticket
+from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
 
 
 def now_ms() -> int:
@@ -427,12 +431,18 @@ class NativeChildRegistry:
             artifact_root.mkdir(parents=True, exist_ok=True)
             identity["PLAN_EXECUTOR_ROOT"] = str(self.paths.root)
             identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
+        role_text = original.role_text if original else ""
+        if self.paths is not None:
+            role_text += (
+                "\n\nFor native execution, PLAN_TICKET_FILES_DIR supersedes all VPS-local "
+                "Ticket artifact write paths in the skills. Write Ticket artifacts beneath "
+                "PLAN_TICKET_FILES_DIR. Keep served /files/tickets/<ticket-id>/<relative-path> "
+                "links in Ticket fields."
+            )
         return replace(
             resolved,
             workspace_folder=workspace,
-            role_materials=ConversationRoleMaterials(
-                original.role_text if original else "", tuple(identity.items())
-            ),
+            role_materials=ConversationRoleMaterials(role_text, tuple(identity.items())),
         )
 
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
@@ -501,10 +511,29 @@ class NativeChildRegistry:
                         existing.ticket_id == ticket_id for existing in self.children.values()
                     ):
                         raise BackendSpawnFailed("Ticket already has a retained source child")
+                    try:
+                        snapshot = TypeAdapter(CanonicalSkillSnapshot).validate_python(
+                            command.arguments["canonical_skill_snapshot"]
+                        )
+                        validate_skill_snapshot(snapshot)
+                        if self.paths is None:
+                            raise ValueError("executor paths are required for canonical skills")
+                    except Exception as error:
+                        raise BackendSpawnFailed(
+                            f"Canonical skill bootstrap failed: {error}"
+                        ) from error
                     capability = secrets.token_urlsafe(32)
                     resolved = self._localize_start(
                         resolved, command.child, capability, command.arguments
                     )
+                    try:
+                        install_native_skill_snapshot(
+                            snapshot, paths=self.paths, native_home=codex_home(os.environ)
+                        )
+                    except Exception as error:
+                        raise BackendSpawnFailed(
+                            f"Canonical skill bootstrap failed: {error}"
+                        ) from error
                     native_command = replace(
                         command,
                         arguments={**command.arguments, "resolved_start": encode_value(resolved)},

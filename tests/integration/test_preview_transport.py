@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.integration.test_executor_end_to_end import boot, eventually
+from tests.integration.test_executor_end_to_end import boot, eventually, public_ask_id
 
 from planner.previews.configuration import MAX_PREVIEW_STREAMS
 
@@ -111,7 +111,7 @@ def test_stalled_preview_keeps_executor_events_live_and_drop_cleans_generation(
                     await harness.native.raise_ask()
                     await harness.wait_ask_reachable()
                     assert await endpoint.answer_permission(
-                        "c_scripted", "ask_permission", "allow", executor_ask=harness.ask
+                        "c_scripted", public_ask_id(harness.ask), "allow", executor_ask=harness.ask
                     )
                     await eventually(
                         lambda: harness.native.answers == [("ask_permission", "allow")],

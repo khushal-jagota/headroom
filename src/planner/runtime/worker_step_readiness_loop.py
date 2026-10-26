@@ -35,11 +35,13 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     compose_worker_step_prompt,
@@ -68,6 +70,7 @@ type WorkerStepDeliveryFate = Literal[
     "injected",
     "refused",
     "uncertain",
+    "suppressed",
 ]
 
 
@@ -97,6 +100,8 @@ class WorkerStepStartResult:
                 return cls(started=True, delivery_fate="injected")
             case PromptDeliveryRefused():
                 return cls(started=False, delivery_fate="refused")
+            case PromptDeliverySuppressed():
+                return cls(started=False, delivery_fate="suppressed")
             case PromptDeliveryUncertain():
                 return cls(started=False, delivery_fate="uncertain")
 
@@ -226,6 +231,11 @@ async def start_ready_worker_step(
             give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
+        if isinstance(fate, PromptDeliverySuppressed):
+            remove_tentative_bindings()
+            give_the_claim_back()
+            return WorkerStepStartResult.from_delivery_fate(fate)
+
         if isinstance(fate, PromptDeliveryUncertain):
             # The backend can have admitted this opener, so returning the claim would
             # permit an unsafe automatic replay. Keep it visible for the supervisor's
@@ -347,6 +357,8 @@ async def tell_a_worker_it_lost_its_memory(
                     delivered.fate.refusal_reason.value,
                 )
                 return False
+            if isinstance(delivered.fate, PromptDeliverySuppressed):
+                return False
             return True
         finally:
             conn.close()
@@ -384,10 +396,17 @@ class WorkerStepReadinessLoop:
         try:
             rows = conn.execute(_CANDIDATE_SQL).fetchall()
             ready_ticket_ids: list[str] = []
-            claimed_closeout_lanes: set[worker_step_readiness.CloseoutLaneIdentity] = set()
             registry = configured_worker_type_registry()
             for row in rows:
-                ticket = tickets_data.read_ticket(conn, str(row["id"]))
+                try:
+                    ticket = tickets_data.read_ticket(conn, str(row["id"]))
+                except PlannerError as error:
+                    if error.code is ErrorCode.not_found:
+                        # Deleted between the candidate select above and this read.
+                        # The deletion already succeeded; skip it rather than fail
+                        # every other ready Ticket in this pass.
+                        continue
+                    raise
                 worker_type_definition = registry.require(ticket.worker_type)
                 if not worker_step_readiness.is_ready_for_worker_step(
                     conn,
@@ -395,18 +414,6 @@ class WorkerStepReadinessLoop:
                     worker_type_definition=worker_type_definition,
                 ):
                     continue
-                closeout_lane = worker_step_readiness.closeout_lane_identity(
-                    conn,
-                    ticket,
-                    worker_type_definition=worker_type_definition,
-                )
-                if closeout_lane is not None:
-                    # One Closeout lane takes one Ticket per pass. The lane looks free to
-                    # every waiter until one of them actually flips, so without this the
-                    # same pass would send several into the same lane.
-                    if closeout_lane in claimed_closeout_lanes:
-                        continue
-                    claimed_closeout_lanes.add(closeout_lane)
                 ready_ticket_ids.append(ticket.id)
             return ready_ticket_ids
         finally:

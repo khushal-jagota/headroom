@@ -22,6 +22,7 @@
     summary,
     chevron = "trailing",
     onReaderToggle,
+    lazy = false,
     children,
     ...rest
   }: {
@@ -33,6 +34,7 @@
     chevron?: "trailing" | "leading" | "none";
     /** Called when the reader opens or closes this fold, never when the data does. */
     onReaderToggle?: (open: boolean) => void;
+    lazy?: boolean;
     children?: Snippet;
     [key: string]: unknown;
   } = $props();
@@ -42,6 +44,8 @@
    *  for a frame. Read once: the attribute must not be rewritten when the data moves. */
   // svelte-ignore state_referenced_locally
   const openAtFirstPaint = defaultOpen;
+  // svelte-ignore state_referenced_locally
+  let bodyOpen = $state(defaultOpen);
   /** How this fold stood when the data last set it, which is what tells a reader's
    *  toggle apart from this component's own write. */
   // svelte-ignore state_referenced_locally
@@ -55,10 +59,12 @@
     if (readerOwnsIt || !element) return;
     setFromData = wanted;
     element.open = wanted;
+    bodyOpen = wanted;
   });
 
   function toggled(): void {
     if (!element) return;
+    bodyOpen = element.open;
     if (!readerOwnsIt) {
       // Writing `element.open` above raises this event too, so the first touch counts
       // only when the fold disagrees with what the data last set.
@@ -92,6 +98,6 @@
     {/if}
   </summary>
   <div class="disclosure-body">
-    {@render children?.()}
+    {#if !lazy || bodyOpen}{@render children?.()}{/if}
   </div>
 </details>

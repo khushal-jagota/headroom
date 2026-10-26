@@ -1,5 +1,4 @@
 import type {
-  Priority,
   Principal,
   ScheduleCadence,
   ScheduledTask
@@ -7,12 +6,11 @@ import type {
 
 export type ScheduledTaskForm = {
   enabled: boolean;
-  orchestrator: Principal;
+  manager: Principal;
   local_time: string;
   title: string;
   worker_type: string;
   kickoff_note: string;
-  priority: Priority;
   deadline: string;
   project_id: string | null;
   employee_backend: string;
@@ -23,12 +21,11 @@ export type ScheduledTaskForm = {
 export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
   return {
     enabled: true,
-    orchestrator: { kind: "chief", id: "chief" },
+    manager: { kind: "chief", id: "chief" },
     local_time: "09:00",
     title: "",
     worker_type: workerType,
     kickoff_note: "",
-    priority: "P3",
     deadline: "",
     project_id: null,
     employee_backend: "",
@@ -40,14 +37,13 @@ export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
 export function scheduledTaskFormFromSchedule(schedule: ScheduledTask): ScheduledTaskForm {
   return {
     enabled: schedule.enabled,
-    orchestrator: schedule.orchestrator ?? (schedule.sprint_item_id
-      ? { kind: "sprint_item", id: schedule.sprint_item_id }
+    manager: schedule.manager ?? (schedule.manager_id
+      ? { kind: "manager", id: schedule.manager_id }
       : { kind: "chief", id: "chief" }),
     local_time: schedule.local_time,
     title: schedule.title,
     worker_type: schedule.worker_type,
     kickoff_note: schedule.kickoff_note,
-    priority: schedule.priority,
     deadline: schedule.deadline || "",
     project_id: schedule.project_id,
     employee_backend: schedule.employee_backend || "",
@@ -67,12 +63,11 @@ export function scheduledTaskPayload(form: ScheduledTaskForm): Record<string, un
   return {
     enabled: form.enabled,
     cadence: "daily",
-    orchestrator: form.orchestrator,
+    manager: form.manager,
     local_time: form.local_time,
     title: form.title.trim(),
     worker_type: form.worker_type,
     kickoff_note: form.kickoff_note,
-    priority: form.priority,
     deadline: form.deadline.trim() || null,
     project_id: form.project_id,
     employee_backend: form.employee_backend.trim() || null,

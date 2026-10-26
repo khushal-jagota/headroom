@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "../components/SkeletonRegion.svelte";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import ResourceState from "../components/ResourceState.svelte";
@@ -164,7 +165,7 @@
     <h1>Notifications</h1>
   </header>
 
-  <ResourceState {...resourceStateForQueries(settings)} loadingText="Loading notifications…">
+  <ResourceState shape="block" {...resourceStateForQueries(settings)} loadingText="Loading notifications…">
     <section class="notifications-section">
       <h2>What counts</h2>
       {#each settings.data?.subjects || [] as subject (subject.key)}
@@ -201,9 +202,8 @@
 
     <section class="notifications-section" data-device-state={deviceState}>
       <h2>This device</h2>
-      {#if deviceState === "checking"}
-        <p>Checking notification support…</p>
-      {:else if deviceState === "install"}
+      <SkeletonRegion shape="block" loading={deviceState === "checking"} loadingText="Checking notification support…">
+      {#if deviceState === "install"}
         <p>Add Panels to the Home Screen, open that app, then enable notifications here.</p>
       {:else if deviceState === "unsupported"}
         <p>This browser does not support Web Push. Panels continues to work normally.</p>
@@ -214,7 +214,7 @@
         <button type="button" class="notification-action" onclick={() => void disableDevice()}>
           Disable on this device
         </button>
-      {:else}
+      {:else if deviceState !== "checking"}
         <p>Enable this device to receive selected notifications while Panels is closed.</p>
         <button
           type="button"
@@ -225,6 +225,7 @@
           {deviceState === "working" ? "Enabling…" : "Enable on this device"}
         </button>
       {/if}
+      </SkeletonRegion>
       {#if deviceError}
         <div class="error-line">{errorMessage(deviceError)}</div>
       {/if}

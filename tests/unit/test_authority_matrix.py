@@ -38,7 +38,6 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.sprints import data as sprint_data
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _SNAPSHOT: Final = Path(__file__).with_name("authority_matrix.snapshot.txt")
@@ -58,7 +57,6 @@ class Seed:
     ticket_planning: str
     ticket_planning_sprint: str
     ticket_user_owned: str
-    sprint_id: str
     gating_field: str
 
 
@@ -136,7 +134,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Target ticket",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                     "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
                 },
             )
@@ -147,7 +145,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Stranger ticket",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                     "orchestrator": {"kind": "sprint_item", "id": item_b["id"]},
                 },
             )
@@ -165,7 +163,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Plan the day",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                 },
             )
         )
@@ -175,7 +173,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Plan the sprint",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                 },
             )
         )
@@ -185,22 +183,13 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "A user-owned gate",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                     "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
                 },
             )
         )
         # Historical calendar data is fixture setup, never a live HTTP writer.
         with connect(str(db_path)) as conn:
-            config = load_config(path=None, env={"PLAN_TEST_MODE": "1"})
-            historical = sprint_data.create_sprint(
-                conn,
-                name="Matrix sprint",
-                date_start="2026-09-21",
-                date_end="2026-10-04",
-                clock=build_clock(config),
-            )
-            sprint = {"id": historical.id}
             for worker_type in ("personal", "planning-day", "planning-sprint"):
                 seed_historical_worker_type(conn, worker_type)
             for ticket, worker_type in (
@@ -224,7 +213,6 @@ def _seed(db_path: Path) -> Seed:
         ticket_planning=str(ticket_planning["id"]),
         ticket_planning_sprint=str(ticket_planning_sprint["id"]),
         ticket_user_owned=str(ticket_user_owned["id"]),
-        sprint_id=str(sprint["id"]),
     )
 
 
@@ -247,7 +235,7 @@ def _create(**extra: Any) -> Call:
         {
             "worker_type": "coding",
             "title": "A created ticket",
-            "kickoff_note": "Start here.",
+            "brief": "Start here.",
             **extra,
         },
     )
@@ -276,10 +264,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
     (
         "GET    /tickets (detail=full)",
         lambda s: Call("GET", f"/api/tickets?detail=full&id={s.ticket_a}"),
-    ),
-    (
-        "PATCH  /tickets/{t} priority",
-        lambda s: Call("PATCH", f"/api/tickets/{s.ticket_a}", {"priority": "P2"}),
     ),
     (
         "PATCH  /tickets/{t} title",
@@ -406,41 +390,14 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("PUT", f"/api/collections/outcome_tickets/{s.item_b}/{s.ticket_a}"),
     ),
     (
-        "PUT    /collections/day_tickets",
-        lambda s: Call("PUT", f"/api/collections/day_tickets/{_DAY}/{s.ticket_a}"),
-    ),
-    (
         "PUT    /collections/blockers",
         lambda s: Call("PUT", f"/api/collections/blockers/{s.ticket_a}/{s.ticket_b}"),
-    ),
-    (
-        "PUT    /collections/sprint_outcomes",
-        lambda s: Call("PUT", f"/api/collections/sprint_outcomes/{s.sprint_id}/{s.item_a}"),
-    ),
-    # --- the plan
-    ("PATCH  /day/{d} focus", lambda s: Call("PATCH", f"/api/day/{_DAY}", {"focus": "One thing."})),
-    (
-        "PATCH  /day/{d} midday_reconciliation",
-        lambda s: Call("PATCH", f"/api/day/{_DAY}", {"midday_reconciliation": "Checked."}),
-    ),
-    ("PATCH  /day/{d} notes", lambda s: Call("PATCH", f"/api/day/{_DAY}", {"notes": "Mine."})),
-    (
-        "POST   /sprints",
-        lambda s: Call(
-            "POST",
-            "/api/sprints",
-            {"name": "Later sprint", "date_start": "2026-10-05", "date_end": "2026-10-18"},
-        ),
-    ),
-    (
-        "PATCH  /sprints/{s}",
-        lambda s: Call("PATCH", f"/api/sprints/{s.sprint_id}", {"name": "Renamed sprint"}),
     ),
     # --- what Khushal owns outright
     ("POST   /projects", lambda s: Call("POST", "/api/projects", {"name": "New project"})),
     (
         "PATCH  /projects/{p}",
-        lambda s: Call("PATCH", "/api/projects/project_other", {"priority": "P2"}),
+        lambda s: Call("PATCH", "/api/projects/project_other", {"name": "Renamed project"}),
     ),
     (
         "PUT    /workers/{w}/launch-defaults",
@@ -468,6 +425,14 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
             {"target": {"kind": "ticket", "id": s.ticket_a}, "message": "Hello."},
         ),
     ),
+    (
+        "POST   /recap-requests",
+        lambda s: Call(
+            "POST",
+            "/api/recap-requests",
+            {"target": {"kind": "ticket", "id": s.ticket_a}},
+        ),
+    ),
 )
 
 
@@ -490,17 +455,7 @@ UNGUARDED_OPERATIONS: Final = frozenset(
 )
 
 
-RETIRED_OPERATIONS: Final = frozenset(
-    {
-        "PUT    /collections/day_tickets",
-        "PUT    /collections/sprint_outcomes",
-        "PATCH  /day/{d} focus",
-        "PATCH  /day/{d} midday_reconciliation",
-        "PATCH  /day/{d} notes",
-        "POST   /sprints",
-        "PATCH  /sprints/{s}",
-    }
-)
+RETIRED_OPERATIONS: Final[frozenset[str]] = frozenset()
 
 
 def _classify(response: Any) -> str:

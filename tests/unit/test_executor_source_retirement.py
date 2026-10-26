@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from tests.unit.test_executor_native_runtime import ScriptedChild
+from tests.unit.test_executor_native_runtime import ScriptedChild, canonical_snapshot
 
 from planner.conversation.backends.contracts import (
     BackendChild,
@@ -26,7 +26,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AskReference,
@@ -50,6 +50,11 @@ from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
 
 IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
+
+
+@pytest.fixture(autouse=True)
+def native_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
 
 
 class Native(ScriptedChild):
@@ -79,6 +84,7 @@ def build(tmp_path: Path) -> tuple[NativeChildRegistry, Native, ChildCommand]:
         incarnation=IDENTITY.executor_incarnation,
         spool=FilesystemSpool(tmp_path / "spool"),
         factory=factory,
+        paths=ExecutorPaths(tmp_path / "executor"),
         message_files=ConversationMessageFiles(tmp_path / "unused"),
     )
     child = ChildReference(IDENTITY.executor_incarnation, "child", "c_source")
@@ -92,7 +98,14 @@ def build(tmp_path: Path) -> tuple[NativeChildRegistry, Native, ChildCommand]:
         ConversationAccess.full,
     )
     command = ChildCommand(
-        "start", child, ChildOperation.start, None, {"resolved_start": encode_value(resolved)}
+        "start",
+        child,
+        ChildOperation.start,
+        None,
+        {
+            "resolved_start": encode_value(resolved),
+            "canonical_skill_snapshot": encode_value(canonical_snapshot()),
+        },
     )
     return registry, native, command
 
@@ -247,7 +260,9 @@ def test_source_fence_covers_awaited_stop_and_leaves_other_ticket_usable(tmp_pat
             conversation_id="c_other",
             role_materials=ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "t_other"),)),
         )
-        other_start = replace(other_start, arguments={"resolved_start": encode_value(settings)})
+        other_start = replace(
+            other_start, arguments={**start.arguments, "resolved_start": encode_value(settings)}
+        )
         assert (
             await registry.execute_command(other_start)
         ).disposition is CommandDisposition.succeeded

@@ -1,3 +1,5 @@
+import { writable } from "svelte/store";
+
 export const COMPOSITION_STATE_EVENT = "panels:composition-state";
 
 export type ReleaseSnapshot = {
@@ -136,4 +138,36 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
   }
 
   return { start, stop, check, requestReload, subscribe };
+}
+
+// One monitor for the whole app. ShellStatus is mounted once per breakpoint and both
+// mounts stay in the DOM, so a monitor owned by the component would poll twice and
+// hold two independent reload requests.
+export const releaseState = writable<ReleaseSnapshot>({
+  updateAvailable: false,
+  compositionActive: false,
+  reloadRequested: false
+});
+
+let sharedMonitor: ReturnType<typeof createReleaseMonitor> | null = null;
+let unsubscribeShared: (() => void) | null = null;
+
+export function startReleaseMonitor(): void {
+  if (sharedMonitor) return;
+  const monitor = createReleaseMonitor({ bootSha: readBootAppSha(document), document, window });
+  sharedMonitor = monitor;
+  unsubscribeShared = monitor.subscribe((value) => releaseState.set(value));
+  monitor.start();
+}
+
+export function stopReleaseMonitor(): void {
+  if (!sharedMonitor) return;
+  sharedMonitor.stop();
+  unsubscribeShared?.();
+  unsubscribeShared = null;
+  sharedMonitor = null;
+}
+
+export function requestReleaseReload(): void {
+  sharedMonitor?.requestReload();
 }

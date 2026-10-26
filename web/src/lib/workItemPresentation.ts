@@ -1,17 +1,27 @@
-import type { Priority, WorkAttention } from "./types";
+import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
-export type WorkItemTicketFacts = WorkAttention & {
+export type WorkItemAttentionFacts = Omit<WorkAttention, 'awaiting_reply' | 'awaiting_answer' | 'agent_state'> & {
+  awaiting_reply: boolean | null;
+  awaiting_answer: boolean | null;
+  agent_state: import('./types').AgentState | null;
+};
+
+export type WorkItemTicketFacts = WorkItemAttentionFacts & {
   locale?: import("./ticketMachines").TicketLocale;
-  conversation_signal?: import("./conversationSignal").ConversationSignal;
+  conversation_signal?: Partial<import("./conversationSignal").ConversationSignal>;
   id: string;
   title: string;
-  priority: Priority;
+  recap?: string;
+  recap_reference?:import("./navigation/contracts").ViewContentReference|null;
+  recap_preview?: string;
+  blocked?: boolean;
   stage: string;
   worker_type?: string;
   conversation_id?: string | null;
   ticket_status: string;
-  waiting_to_closeout?: boolean;
+  is_backlogged?: boolean;
+  waiting_to_closeout?: boolean | null;
   gating_field?: string | null;
   activity_at?: number;
 };
@@ -22,6 +32,7 @@ export type WorkItemTicketGroupKey =
   | "assigned"
   | "awaiting_reply"
   | "errored"
+  | "backlog"
   | "agent"
   | "waiting_to_closeout"
   | "status_awaiting_approval"
@@ -41,6 +52,7 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "assigned", label: "Yours", quiet: false },
   { key: "awaiting_reply", label: "Messages", quiet: false },
   { key: "errored", label: "Errored", quiet: false },
+  { key: "backlog", label: "Backlog", quiet: false },
   { key: "agent", label: "Agent", quiet: false },
   { key: "waiting_to_closeout", label: "Waiting on Consequences", quiet: true },
   {
@@ -59,13 +71,14 @@ export type WorkItemTicketGroup<T extends WorkItemTicketFacts> =
 export function workItemTicketGroupKey(
   ticket: WorkItemTicketFacts
 ): WorkItemTicketGroupKey {
+  if (ticket.is_backlogged) return "backlog";
   const attention = primaryWorkAttention(ticket);
   if (attention !== null) return attention;
+  if (ticket.blocked || ticket.ticket_status === "blocked") return "blocked";
   if (ticket.agent_state === "errored") return "errored";
   if (agentHoldsTicket(ticket)) return "agent";
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
   if (ticket.awaiting_agent_approval) return "status_awaiting_approval";
-  if (ticket.ticket_status === "blocked") return "blocked";
   if (ticket.stage === "done") return "done";
   return "empty";
 }
@@ -85,10 +98,29 @@ export function workItemTicketGroups<T extends WorkItemTicketFacts>(
   tickets: readonly T[],
   keys: readonly WorkItemTicketGroupKey[] = WORK_ITEM_TICKET_GROUPS.map((group) => group.key)
 ): WorkItemTicketGroup<T>[] {
+  return groupTickets(tickets, keys, workItemTicketGroupKey);
+}
+
+/** Work lists share classification and initial order; unread remains a row fact. */
+export function workItemWorkGroups<T extends WorkItemTicketFacts>(
+  tickets: readonly T[]
+): WorkItemTicketGroup<T>[] {
+  return groupTickets(
+    tickets,
+    WORK_ITEM_TICKET_GROUPS.filter((group) => group.key !== "awaiting_reply").map((group) => group.key),
+    (ticket) => workItemTicketGroupKey({...ticket, awaiting_reply: false})
+  );
+}
+
+function groupTickets<T extends WorkItemTicketFacts>(
+  tickets: readonly T[],
+  keys: readonly WorkItemTicketGroupKey[],
+  groupKey: (ticket: T) => WorkItemTicketGroupKey
+): WorkItemTicketGroup<T>[] {
   const definitions = new Map(WORK_ITEM_TICKET_GROUPS.map((group) => [group.key, group]));
   return keys.flatMap((key) => {
     const grouped = tickets
-      .filter((ticket) => workItemTicketGroupKey(ticket) === key)
+      .filter((ticket) => groupKey(ticket) === key)
       .sort(workItemTicketOrder);
     const definition = definitions.get(key);
     return grouped.length && definition ? [{ ...definition, tickets: grouped }] : [];

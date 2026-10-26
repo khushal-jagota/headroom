@@ -26,8 +26,10 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import UserInputAnswer
+from planner.core import db
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.executor.codec import encode_value
 from planner.executor.configuration import SSH_UNIX_SOCKET_MAX_BYTES
@@ -39,6 +41,7 @@ from planner.executor.contracts import (
     AuthorizedAction,
     BackendEvent,
     BackendEventMethod,
+    CanonicalSkillSnapshot,
     ChildCommand,
     ChildInventory,
     ChildOperation,
@@ -67,6 +70,7 @@ from planner.executor.contracts import (
 from planner.executor.files import directory_descriptor, snapshot_file
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
+from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
 from planner.executor.transfers import GenerationTransfers
 from planner.executor.wire import (
@@ -205,7 +209,9 @@ class ExecutorEndpoint:
         self._send_lock = asyncio.Lock()
         self._input_transfer_locks: dict[str, asyncio.Lock] = {}
         self._conversation_locks: dict[str, asyncio.Lock] = {}
-        self.factory = RemoteBackendChildFactory(self.assign_child, self.send_command)
+        self.factory = RemoteBackendChildFactory(
+            self.assign_child, self.send_command, self._read_skill_snapshot
+        )
         self.file_receiver: Any = None
         self._responses: dict[str, asyncio.Future[WireMessage]] = {}
         self.clock_sample: ClockSample | None = None
@@ -264,6 +270,20 @@ class ExecutorEndpoint:
     def source_for_move(self, ticket_id: str, conversation_id: str | None) -> MoveSourceRetirement:
         return _MoveSource(self, ticket_id, conversation_id)
 
+    def _read_skill_snapshot(self, start: ResolvedConversationStart) -> CanonicalSkillSnapshot:
+        environment = dict(
+            start.role_materials.identity_environment_variables if start.role_materials else ()
+        )
+        ticket_id = environment.get("PLAN_TICKET_ID")
+        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+            raise BackendSpawnFailed("Canonical skill bootstrap requires a Worker Ticket identity")
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("BEGIN")
+            return read_canonical_skill_snapshot(conn, ticket_id)
+        finally:
+            conn.close()
+
     def assign_child(
         self, start: ResolvedConversationStart, sink: BackendEventSink
     ) -> ChildReference:
@@ -282,13 +302,20 @@ class ExecutorEndpoint:
             principal = Principal(PrincipalKind.ticket, env["PLAN_TICKET_ID"])
         elif actor == "chief":
             principal = Principal(PrincipalKind.chief, "chief")
-        elif actor == "sprint_item_supervisor":
-            principal = Principal(PrincipalKind.sprint_item, env["PLAN_SPRINT_ITEM_ID"])
+        elif actor in {"manager", "sprint_item_supervisor"}:
+            from planner.core.authctx import normalize_manager_identity
+
+            manager_id = normalize_manager_identity(
+                env.get("PLAN_MANAGER_ID"), env.get("PLAN_SPRINT_ITEM_ID")
+            )
+            if manager_id is None:
+                raise BackendSpawnFailed("remote Manager needs its assigned identity")
+            principal = Principal(PrincipalKind.manager, manager_id)
         else:
             raise BackendSpawnFailed("remote children need a server-assigned Worker identity")
         self.store.register_child(child, principal.kind.value, principal.id, now_ms())
         self.sinks[child.child_id] = sink
-        proxy = RemoteBackendChild(child, self.send_command)
+        proxy = RemoteBackendChild(child, self.send_command, self._read_skill_snapshot)
         self.children[child.child_id] = proxy
         return child
 
@@ -517,7 +544,7 @@ class ExecutorEndpoint:
             if event.child.conversation_id != envelope.conversation_id:
                 raise ValueError("event conversation conflicts with envelope")
 
-            def accept(row: QueuedEnvelope, write: Any) -> AcceptanceReceipt:
+            def accept(row: QueuedEnvelope, write: Any, **publication: Any) -> AcceptanceReceipt:
                 def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
                     conn = connection
                     accepted = envelope
@@ -558,7 +585,7 @@ class ExecutorEndpoint:
                         )
                     return cast(JsonObject, result)
 
-                return self.store.accept(row, effect, now_ms(), identity=identity)
+                return self.store.accept(row, effect, now_ms(), identity=identity, **publication)
 
             return cast(
                 AcceptanceReceipt,
@@ -576,12 +603,63 @@ class ExecutorEndpoint:
                 )
                 return await self._native_message(envelope, write, principal, identity)
             principal = self._assignment(write.child)
-            return self.store.accept(
-                envelope,
-                lambda conn, row: write_ticket_mutation(conn, write, principal, self.clock),
-                now_ms(),
-                identity=identity,
-            )
+            preparation_error: PlannerError | None = None
+            if write.operation == "ticket.create":
+                from planner.tickets.api import _marshal_create_ticket, warm_ticket_creation_model
+
+                connection = connect(self.db_path)
+                try:
+                    body = write.arguments.get("body")
+                    if not isinstance(body, dict):
+                        raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
+                    parsed = _marshal_create_ticket(body)
+                    resolver = getattr(self.runtime, "model_resolution", None)
+                    if resolver is None:
+                        raise PlannerError(
+                            ErrorCode.gateway_offline, "the model resolver is unavailable", {}
+                        )
+                    await warm_ticket_creation_model(
+                        connection,
+                        resolver,
+                        worker_type=parsed["worker_type"],
+                        employee_backend=parsed.get("employee_backend"),
+                        employee_launch_model=parsed.get("employee_launch_model"),
+                        employee_launch_reasoning_effort=parsed.get(
+                            "employee_launch_reasoning_effort"
+                        ),
+                    )
+                except PlannerError as error:
+                    if error.code == ErrorCode.gateway_offline:
+                        raise
+                    preparation_error = error
+                finally:
+                    connection.close()
+            # Preparation can await. Recheck the assignment before the canonical transaction.
+            if self._assignment(write.child) != principal:
+                raise PlannerError(ErrorCode.agent_forbidden, "child assignment changed", {})
+            from planner.tickets.contracts import ReviewTransferNotice
+            from planner.tickets.review_transfer import notify_review_transfers
+
+            notices: list[ReviewTransferNotice] = []
+
+            def mutate(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+                if preparation_error is not None:
+                    raise preparation_error
+                return write_ticket_mutation(
+                    connection, write, principal, self.clock, review_transfer_notices=notices
+                )
+
+            receipt = self.store.accept(envelope, mutate, now_ms(), identity=identity)
+            if notices:
+                connection = connect(self.db_path)
+                try:
+                    await notify_review_transfers(
+                        self.runtime.system, connection, notices, now=self.clock.now_unix()
+                    )
+                finally:
+                    connection.close()
+            return receipt
+
         if envelope.kind is EnvelopeKind.command_outcome:
             outcome = TypeAdapter(CommandOutcome).validate_python(envelope.payload)
             if outcome.child.conversation_id != envelope.conversation_id:
@@ -624,7 +702,9 @@ class ExecutorEndpoint:
                 receipt = await self.runtime.system.receive_remote_answer_application(
                     application,
                     envelope,
-                    lambda row, write: self.store.accept(row, write, now_ms(), identity=identity),
+                    lambda row, write, **publication: self.store.accept(
+                        row, write, now_ms(), identity=identity, **publication
+                    ),
                     record,
                 )
                 self._resolve_command(outcome)
@@ -645,7 +725,9 @@ class ExecutorEndpoint:
                 await self.runtime.system.receive_remote_answer_application(
                     application,
                     envelope,
-                    lambda row, write: self.store.accept(row, write, now_ms(), identity=identity),
+                    lambda row, write, **publication: self.store.accept(
+                        row, write, now_ms(), identity=identity, **publication
+                    ),
                     self.store.record_application_in_transaction,
                 ),
             )
@@ -771,7 +853,7 @@ class ExecutorEndpoint:
             return None
         for evidence in reversed(self.store.evidence_for_conversation(conversation_id)):
             if (
-                evidence.ask.ask_id == ask_id
+                f"{evidence.ask.turn.turn_number}:{kind.value}:{evidence.ask.ask_id}" == ask_id
                 and evidence.ask.child == context.child
                 and evidence.ask.turn == context.turn
                 and evidence.ask.kind is kind
@@ -801,7 +883,7 @@ class ExecutorEndpoint:
         if (
             executor_ask is None
             or executor_ask.child.conversation_id != conversation_id
-            or executor_ask.ask_id != ask_id
+            or f"{executor_ask.turn.turn_number}:permission:{executor_ask.ask_id}" != ask_id
             or executor_ask.kind is not AskKind.permission
         ):
             return False
@@ -824,7 +906,7 @@ class ExecutorEndpoint:
         if (
             executor_ask is None
             or executor_ask.child.conversation_id != conversation_id
-            or executor_ask.ask_id != request_id
+            or f"{executor_ask.turn.turn_number}:user_input:{executor_ask.ask_id}" != request_id
             or executor_ask.kind is not AskKind.user_input
         ):
             return False
@@ -1040,7 +1122,9 @@ class ExecutorEndpoint:
                     self._inventory[item.child.child_id] = item
                     proxy = self.children.get(item.child.child_id)
                     if proxy is None:
-                        proxy = RemoteBackendChild(item.child, self.send_command)
+                        proxy = RemoteBackendChild(
+                            item.child, self.send_command, self._read_skill_snapshot
+                        )
                         self.children[item.child.child_id] = proxy
                     await self.runtime.system.adopt_remote_child(item, proxy)
                 for outcome in inventory.retained_command_outcomes:
@@ -1137,12 +1221,14 @@ class ExecutorEndpoint:
             (
                 "/api/tickets",
                 "/api/items",
+                "/api/managers",
                 "/api/sprint",
                 "/api/projects",
                 "/api/worker-types",
                 "/api/skills",
                 "/api/feedback",
                 "/files/sprint-items/",
+                "/files/managers/",
             )
         ):
             raise ValueError("unsupported executor read")
@@ -1154,8 +1240,8 @@ class ExecutorEndpoint:
         headers = {"X-Plan-Actor": principal_legacy_actor(principal)}
         if principal.kind is PrincipalKind.ticket:
             headers["X-Plan-Ticket-ID"] = principal.id
-        elif principal.kind is PrincipalKind.sprint_item:
-            headers["X-Plan-Sprint-Item-ID"] = principal.id
+        elif principal.kind is PrincipalKind.manager:
+            headers["X-Plan-Manager-ID"] = principal.id
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://executor"
         ) as client:

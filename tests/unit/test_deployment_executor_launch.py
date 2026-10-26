@@ -234,8 +234,17 @@ def test_cli_supplies_only_validated_explicit_configuration(
         return DeploymentResult("succeeded", SHA_B, SHA_A, None)
 
     monkeypatch.setattr(cli, "deploy_app", run)
+    # Staging requires reviewed gate evidence even when executor mode is explicit.
+    evidence = tmp_path / "gate.json"
+    evidence.write_text("{}")
+    monkeypatch.setattr(
+        "planner.environments.deployment_gate.read_gate_evidence",
+        lambda _: {"observation": {"health_url": "http://localhost:12345/health"}},
+    )
     arguments = [
         "app-deploy",
+        "--gate-evidence",
+        str(evidence),
         "--candidate-app",
         str(candidate),
         "--current-root",

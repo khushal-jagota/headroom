@@ -85,9 +85,19 @@ PY
 ```
 
 Check that the resolved commit equals the reviewed full SHA.
-Record the candidate constants: wire protocol 6 and journal format 2.
-Both Mac and VPS peers must match protocol 6 before work. Coordinate the peer
+Record the candidate constants: wire protocol 7 and journal format 2.
+Both Mac and VPS peers must match protocol 7 before work. Coordinate the peer
 transition through the Manager and installation Worker before any application.
+
+Protocol 7 supplies exact canonical database skills before each new native Worker starts.
+It repairs canonical entries in the normal account's Codex skills home and preserves unrelated account skills and credentials.
+Review that account path before authorized application. Do not redirect HOME or CODEX_HOME to bypass a conflict.
+Retain the existing executor root and journal. The bootstrap uses local copies beneath that root.
+
+After authorized application, check an ordinary native Worker without a packaged-skill exception in its prompt.
+Check that it reads canonical skills and writes an artifact through `PLAN_TICKET_FILES_DIR`.
+Check that the served Ticket link opens the expected artifact.
+Isolated software tests do not replace this installed-account check.
 
 Read fresh installed Mac health through the installed console:
 
@@ -351,4 +361,4 @@ Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/cli.
 `src/planner/executor/preflight.py`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
-_Last verified: 2026-10-25. Commands checked against source; no live Mac operation occurred._
+_Last verified: 2026-10-26. Commands checked against source; no live Mac operation occurred._

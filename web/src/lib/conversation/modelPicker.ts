@@ -1,4 +1,5 @@
 import { effortOptionsFor, modelDisplayName } from "./composer";
+import { resolvedModelPickerLabel } from "./modelPickerLabel";
 import {
   CONVERSATION_BACKEND_KEYS,
   type BackendModel,
@@ -38,6 +39,7 @@ export type ModelPickerView = Readonly<{
   defaultReasoningEffort: string | null;
   staleModelReason: string | null;
   reasoningUnavailableReason: string | null;
+  catalogueWarning: string | null;
 }>;
 
 export type ModelPickerInput = Readonly<{
@@ -93,6 +95,8 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
   const defaultModel = input.defaultModel ?? snapshot?.default_model_id ?? null;
   const modelValue = input.model ?? defaultModel ?? "";
   const modelName = modelDisplayName(catalogModels, modelValue === "" ? null : modelValue) ?? "";
+  const selectedModel = catalogModels.find((candidate) => candidate.model_id === modelValue);
+  const modelFace = resolvedModelPickerLabel(catalogModels, modelValue);
   const efforts = effortOptionsFor(
     catalogModels,
     modelValue === "" ? null : modelValue,
@@ -115,7 +119,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     modelValue,
     modelName,
     reasoningEffort,
-    face: [modelName, efforts.length > 0 ? reasoningEffort : ""].filter(Boolean).join(" "),
+    face: [modelFace, efforts.length > 0 ? reasoningEffort : ""].filter(Boolean).join(" "),
     backends: MODEL_PICKER_BACKEND_KEYS.map((key) => {
       const candidate = input.backends.find((item) => item.backend_key === key);
       const lockedReason = input.backendLocked && key !== input.backendKey
@@ -130,11 +134,12 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     }),
     models: models.map((candidate) => ({
       value: candidate.model_id,
-      name: candidate.display_name ?? candidate.model_id
+      name: resolvedModelPickerLabel(catalogModels, candidate.model_id)
     })),
     efforts: efforts.map((effort) => ({ value: effort, name: effort })),
     defaultModel,
     defaultReasoningEffort,
+    catalogueWarning: selectedModel?.catalogue_warning ?? null,
     staleModelReason: staleModel
       ? `${name || "This backend"} no longer offers ${modelValue}.`
       : null,

@@ -1,42 +1,43 @@
 # Projects
 
 Projects are a small catalog, not a fixed enum. Each project has a stable ID, a
-display name, an optional folder path, and a priority. Priority is either P0–P3 or unassessed. Unassessed is
-stored and returned as `null`; it is never interpreted as P3. The live rows include a
-Personal Project for planning work. New rows can be added without changing code.
+display name, an optional folder path, and a summary. New rows can be added without
+changing code.
 
 ```
-Project ──► Ticket ──► optional Sprint Item classification
-   └─────► Sprint Item
+Project ──► Ticket ──► optional Manager classification
+   └─────► Manager
    └─────► Idea
 ```
 
-Existing and built-in Projects may be unassessed. Creating a new Project through the
-ordinary API or CLI requires an explicit P0–P3. The ordinary API and CLI can reassess
-an existing Project to P0–P3. They cannot return it to the unassessed state.
-
 Each Project folder is explicit and does not depend on the Project name. Panels expands
-paths that start with `~` and stores an absolute path. The folder can be absent on disk.
-Panels does not create it. A clear operation returns the stored path to `null`.
+paths that start with `~` against the server's home and stores an absolute path.
+New writes preserve the absolute path without resolving symlinks on the server.
+Existing stored paths stay unchanged. The folder can be absent on the server, and Panels does not create it.
+A clear operation returns the stored path to `null`.
+
+The host that runs the work checks the directory. Mac work uses its configured Project
+folder even when that folder is absent on the VPS. See [conversation directories](conversation-system.md#conversation-directories)
+for directory selection and resume behavior.
 
 Each project also has one free-text summary. That summary is the project context
 for humans and agents: what the project is, what matters about it, and any repo or
 file locations worth remembering. A repository can be one item inside the Project
 folder. Panels does not define or manage the folder contents.
 
-Sprint Items, ideas, and standalone Tickets store `project_id`. A parented Ticket derives
-its Project from its Sprint Item. API responses
+Managers, ideas, and standalone Tickets store `project_id`. A parented Ticket derives
+its Project from its Manager. API responses
 also include the legacy `project` field as the display name so older callers can keep
 reading it. Placement and categorization writes accept either `project_id` or the
 legacy project name. If both are sent and they point to different rows, the server
 rejects the request.
 
-A Ticket has an effective Project and an optional Sprint. When it names a Sprint Item,
-the Item owns its Project classification. Moving a Sprint Item changes each child Ticket's
-effective Project and updates schedule templates, without changing any Sprint placement.
+A Ticket has an effective Project. When it names a Manager,
+the Item owns its Project classification. Moving a Manager changes each child Ticket's
+effective Project and updates schedule templates.
 
-Workspace groups Tickets by their assigned Chief or ordinary orchestrator. Project facts
-remain visible on individual Ticket and orchestrator pages as text. The removed global
+Workspace groups Tickets by their assigned Chief or ordinary Manager. Project facts
+remain visible on individual Ticket and manager pages as text. The removed global
 Workers page no longer supplies a project-filtered list.
 
 ## Surfaces
@@ -44,13 +45,12 @@ Workers page no longer supplies a project-filtered list.
 - `GET /api/projects?detail=summary|full` reads the catalog at the level asked for.
   `detail` is required and has no default. Add `id=<project_id>` with `detail=full` to
   read one canonical Project record.
-- `POST /api/projects {name, priority, summary?, folder_path?}` creates an assessed project.
-- `PATCH /api/projects/{project_id}` updates the name, summary, priority, or folder path.
+- `POST /api/projects {name, summary?, folder_path?}` creates a Project.
+- `PATCH /api/projects/{project_id}` updates the name, summary, or folder path.
 - `panels project list`, `panels project show <project_id> [summary]`,
-  `panels project create --name ... --priority P0|P1|P2|P3 --summary ... --folder-path ...`, and
-  `panels project set <project_id> priority --value P0|P1|P2|P3` expose the same
-  catalog. The `set` command also supports the `name`, `summary`, and `folder-path`
-  fields. Use `--clear` to clear the folder path.
+  `panels project create --name ... --summary ... --folder-path ...`, and
+  `panels project set <project_id> name|summary|folder-path --value ...` expose the same
+  catalog. Use `--clear` to clear the folder path.
 - Frontend project selectors fetch the `projects` resource and use project IDs as
   values with project names as labels.
 
@@ -61,7 +61,7 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 
 ## Handoffs
 
-- **Sprints** (`sprints.md`) — Tickets and Sprint Items use Projects in sprint tracking.
+- **Managers** (`managers.md`) — shared context and Project classification.
 - **Tickets & the gates** (`tickets-and-gates.md`) — Tickets expose effective Project
   placement.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — both capture surfaces use the catalog.
@@ -69,7 +69,7 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 ## Deferred
 
 - **Project removal.** There is no delete or archive flow. Trigger: the catalog needs
-  lifecycle management beyond reassessment.
+  lifecycle management beyond name and context edits.
 
 ---
 

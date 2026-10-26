@@ -23,10 +23,37 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 6. Earlier peers refuse work before replay. The
+The wire protocol is version 7. Earlier peers refuse work before replay. The
 journal format is version 2. Earlier journal formats refuse ordinary startup
 and deployment before mutation. Wire compatibility and journal compatibility are
 separate checks. Neither compatibility check converts stored work.
+
+## Native skills and artifact paths
+
+Each new Mac Worker start receives the current canonical skills from the VPS database.
+The Mac exposes their exact text through the account's ordinary Codex skills home before the backend starts.
+Packaged defaults never replace unavailable canonical skills.
+
+The executor stages one complete local copy before it changes account skill links.
+It repairs stale or broken canonical entries and preserves unrelated account skills and external link targets.
+The normal account home, Codex home, and credentials stay unchanged.
+A failed bootstrap refuses the backend start.
+
+A new start, including a resumed provider session, reads current database rows.
+Transport retries keep the snapshot that belongs to the original start command.
+Adoption of a surviving child does not repeat bootstrap or restart that child.
+Later starts can update the account's shared skill paths.
+
+Native launch context directs artifact writes through `PLAN_TICKET_FILES_DIR`.
+This instruction overrides VPS artifact destinations in the skills without changing their text.
+Ticket fields retain their served `/files/tickets/<ticket-id>/<relative-path>` links.
+
+The complete encoded start command must fit the existing one-megabyte frame limit.
+Oversized or invalid snapshots refuse startup without truncation or another transport.
+Protocol 7 requires this bootstrap on both peers. Journal format 2 stays unchanged.
+
+Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
+`src/planner/executor/runtime.py`, `src/planner/executor/vps.py`.
 
 ## The journal is transport, not a second Panels
 
@@ -308,7 +335,7 @@ The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Earlier peers refuse the protocol 6 handshake before replay.
+Earlier peers refuse the protocol 7 handshake before replay.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac
@@ -379,7 +406,7 @@ contention remains. Missing capabilities refuse work and grant no authority for
 host configuration changes.
 
 Active transfers prevent quiescence. Durable reservations, verified receiver
-copies, and first receipts retain their existing recovery rules. Wire protocol 6
+copies, and first receipts retain their existing recovery rules. Wire protocol 7
 requires matching Mac and VPS peers. The Manager coordinates that transition with
 the installation Worker; a reviewed coding candidate grants no live application
 or SSH configuration authority.

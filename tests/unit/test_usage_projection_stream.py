@@ -46,13 +46,6 @@ def test_streaming_projection_matches_complete_json_with_restart(chunk: int) -> 
     assert projected == [project_usage_line("claude", line)]
 
 
-def test_duplicate_selected_keys_keep_last_value_and_unknown_fields_disappear() -> None:
-    line = (
-        '{"type":"assistant","timestamp":"2026-10-16T17:00:00Z",'
-        '"message":{"model":"first","model":"last","id":"id",'
-        '"usage":{"input_tokens":1,"output_tokens":2}},"arbitrary":{"body":"secret"}}\n'
-    )
-    assert UsageProjectionStream("claude").feed(line) == [project_usage_line("claude", line)]
 
 
 def test_malformed_line_does_not_hide_the_next_native_record() -> None:

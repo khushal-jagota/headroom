@@ -17,9 +17,9 @@ from planner.core import ticket_blocks
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.notifications import attention as attention_data
 from planner.notifications.contracts import (
+    MANAGER_NOTIFICATION_SUBJECT_KEY,
     NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
-    SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
     TICKET_NOTIFICATION_SUBJECT_KEY,
     AttentionEdge,
     EdgeKey,
@@ -93,16 +93,17 @@ def set_preference(
 
 # The one preference this build ships turned off. Everything else is on until the owner
 # says otherwise, so only the exception is stored.
-SHIPPED_DISABLED_PREFERENCES: Final = (
-    (SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY, "errored"),
-)
+SHIPPED_DISABLED_PREFERENCES: Final = ((MANAGER_NOTIFICATION_SUBJECT_KEY, "errored"),)
 
 
 def seed_shipped_notification_preferences(conn: sqlite3.Connection) -> None:
     """Put the shipped preferences in an empty table, and nothing in a populated one."""
     if conn.execute("SELECT 1 FROM notification_preferences LIMIT 1").fetchone() is not None:
         return
+    historical = conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone()
     for subject_key, notification_type in SHIPPED_DISABLED_PREFERENCES:
+        if historical and subject_key == "managers":
+            subject_key = "sprint_item_supervisors"
         conn.execute(
             "INSERT INTO notification_preferences"
             "(subject_key, notification_type, enabled, updated_at) VALUES (?, ?, 0, 0)",
@@ -202,8 +203,8 @@ def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Princi
     """Translate unchanged notification rows to the shared identity contract."""
     if subject_kind == "ticket":
         return Principal(PrincipalKind.ticket, subject_id)
-    if subject_kind == "sprint_item":
-        return Principal(PrincipalKind.sprint_item, subject_id)
+    if subject_kind == "manager":
+        return Principal(PrincipalKind.manager, subject_id)
     if subject_kind == "agent" and subject_id == CHIEF_SETTINGS_KEY:
         return CHIEF_PRINCIPAL
     raise ValueError(f"unknown notification subject: {subject_kind}/{subject_id}")
@@ -212,15 +213,15 @@ def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Princi
 def _preference_subject_key(edge: AttentionEdge) -> str:
     """Which saved switch decides this edge.
 
-    Every Ticket shares one switch, and every Sprint Item shares one: a sprint holds
+    Every Ticket shares one switch, and every Manager shares one: a sprint holds
     twenty or thirty Items and they are replaced each sprint, so a switch per Item would
     be a screen of rows that die. An agent is its own subject, because there is one of
     each.
     """
     if edge.subject.kind is PrincipalKind.ticket:
         return TICKET_NOTIFICATION_SUBJECT_KEY
-    if edge.subject.kind is PrincipalKind.sprint_item:
-        return SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY
+    if edge.subject.kind is PrincipalKind.manager:
+        return MANAGER_NOTIFICATION_SUBJECT_KEY
     if edge.subject.kind is PrincipalKind.chief:
         return CHIEF_SETTINGS_KEY
     raise ValueError(f"unsupported notification subject: {edge.subject.kind.value}")
@@ -257,9 +258,9 @@ def _prune_missing_subjects(conn: sqlite3.Connection) -> None:
             f"DELETE FROM {table} WHERE "
             "(subject_kind = 'ticket' AND NOT EXISTS ("
             f"SELECT 1 FROM tickets WHERE tickets.id = {table}.subject_id)) "
-            "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
-            "SELECT 1 FROM sprint_items "
-            f"WHERE sprint_items.id = {table}.subject_id)) "
+            "OR (subject_kind = 'manager' AND NOT EXISTS ("
+            "SELECT 1 FROM managers "
+            f"WHERE managers.id = {table}.subject_id)) "
             "OR (subject_kind = 'agent' AND NOT EXISTS ("
             f"SELECT 1 FROM agents WHERE agents.agent_key = {table}.subject_id))"
         )
@@ -297,8 +298,7 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
                 stage=str(row["stage"]),
                 worker_type=str(row["worker_type"]),
             ),
-            "errored": facts.ticket_status is TicketStatus.errored
-            or (conversation.errored and str(row["stage"]) != "cancelled"),
+            "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
         }
         for notification_type, active in flags.items():
             occurred_at = (
@@ -320,14 +320,15 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
 
     agent_rows = conn.execute(
         "SELECT a.agent_key, a.conversation_id, i.id AS item_id, i.title AS item_title "
-        "FROM agents a LEFT JOIN sprint_items i "
-        "ON a.agent_key = 'sprint_item_supervisor_' || i.id "
+        "FROM agents a LEFT JOIN managers i "
+        "ON a.agent_key = coalesce((SELECT agent_key FROM agents WHERE agent_key="
+        "'sprint_item_supervisor_' || i.id),'manager_' || i.id) "
         "WHERE a.agent_key = ? OR i.id IS NOT NULL",
         (CHIEF_SETTINGS_KEY,),
     ).fetchall()
     for row in agent_rows:
         is_item = row["item_id"] is not None
-        subject_kind = "sprint_item" if is_item else "agent"
+        subject_kind = "manager" if is_item else "agent"
         subject_id = str(row["item_id"] if is_item else row["agent_key"])
         subject = _principal_from_stored_subject(subject_kind, subject_id)
         label = str(row["item_title"]) if is_item else _agent_label(subject_id)
@@ -385,9 +386,9 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
             label_row = conn.execute(
                 "SELECT title FROM tickets WHERE id=?", (subject_key[1],)
             ).fetchone()
-        elif subject_key[0] == "sprint_item":
+        elif subject_key[0] == "manager":
             label_row = conn.execute(
-                "SELECT title FROM sprint_items WHERE id=?", (subject_key[1],)
+                "SELECT title FROM managers WHERE id=?", (subject_key[1],)
             ).fetchone()
         else:
             label_row = (_agent_label(subject_key[1]),)
@@ -403,9 +404,7 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
         )
         intent = decide_notification(
             edge,
-            enabled=preferences.get(
-                (_preference_subject_key(edge), edge.notification_type), False
-            ),
+            enabled=preferences.get((_preference_subject_key(edge), edge.notification_type), False),
         )
         if intent is not None:
             for subscription_id in subscriptions:
@@ -451,8 +450,8 @@ def queue_deliveries(conn: sqlite3.Connection, now: int) -> int:
 _SUBJECT_STILL_EXISTS = (
     "((d.subject_kind = 'ticket' "
     "AND EXISTS (SELECT 1 FROM tickets WHERE tickets.id = d.subject_id)) "
-    "OR (d.subject_kind = 'sprint_item' "
-    "AND EXISTS (SELECT 1 FROM sprint_items WHERE sprint_items.id = d.subject_id)) "
+    "OR (d.subject_kind = 'manager' "
+    "AND EXISTS (SELECT 1 FROM managers WHERE managers.id = d.subject_id)) "
     "OR (d.subject_kind = 'agent' "
     "AND EXISTS (SELECT 1 FROM agents WHERE agents.agent_key = d.subject_id)))"
 )

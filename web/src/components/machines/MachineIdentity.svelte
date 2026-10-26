@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { navigationApplication } from "../../lib/navigation/application.svelte";
+  import { ticketCommandImpact } from "../../lib/ticketNavigationImpact";
+  const navigation=navigationApplication();
   import { fetchJson } from "../../lib/api";
   import { mutateJson } from "../../lib/mutate";
   import type { TicketDetail } from "../../lib/types";
@@ -19,12 +22,15 @@
   async function move() {
     if (!current?.record_sha256) return;
     busy=true; error="";
-    try { await mutateJson(`/api/tickets/${encodeURIComponent(ticketId)}/move`, {method:"POST",body:{locale:destination,expected_record_sha256:current.record_sha256}}); dialog?.close(); }
+    try { const body={locale:destination,expected_record_sha256:current.record_sha256};
+      const write=(responseMetadata?:import("../../lib/api").FetchOptions["responseMetadata"])=>mutateJson(`/api/tickets/${encodeURIComponent(ticketId)}/move`, {method:"POST",body,responseMetadata});
+      if(navigation) await navigation.runCommand(ticketCommandImpact(navigation.state.effective,ticketId,"move"),write,"move Ticket");
+      else await write(); dialog?.close(); }
     catch (e) { error=e instanceof Error ? e.message : "The move was refused."; current=null; }
     finally { busy=false; }
   }
 </script>
-<button type="button" class="machine-identity" title={`Runs on ${machineName(locale)}`} aria-label={`Runs on ${machineName(locale)}. Show machine details`} onclick={explain}><MachineSymbol {locale} /></button>
+<button type="button" class="machine-identity" data-ticket-locale={locale} title={`Runs on ${machineName(locale)}`} aria-label={`Runs on ${machineName(locale)}. Show machine details`} onclick={explain}><MachineSymbol {locale} /></button>
 <dialog bind:this={dialog} aria-label={moving ? "Move Ticket" : `Runs on ${machineName(locale)}`}>
   {#if moving}
     <h2>Move Ticket</h2>

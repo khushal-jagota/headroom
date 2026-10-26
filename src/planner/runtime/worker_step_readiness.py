@@ -9,62 +9,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.tickets import derivation, locale_configuration
+from planner.tickets import locale_configuration
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkerTypeDefinition
-
-CloseoutLaneIdentity = tuple[str | None, str]
-
-
-def closeout_lane_identity(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> CloseoutLaneIdentity | None:
-    """Return the effective project-and-Worker-type lane for a Closeout Ticket."""
-    if worker_type_definition.gating_field(ticket.stage) != CONSEQUENCES_FIELD_ID:
-        return None
-    effective_project_id = ticket.project_id
-    if ticket.sprint_item_id is not None:
-        row = conn.execute(
-            "SELECT project_id FROM sprint_items WHERE id = ?",
-            (ticket.sprint_item_id,),
-        ).fetchone()
-        effective_project_id = str(row["project_id"]) if row is not None else None
-    return effective_project_id, ticket.worker_type
-
-
-def _closeout_lane_is_occupied(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> bool:
-    lane = closeout_lane_identity(
-        conn,
-        ticket,
-        worker_type_definition=worker_type_definition,
-    )
-    if lane is None:
-        return False
-    effective_project_id, worker_type = lane
-    closeout_stage = worker_type_definition.stage_gated_by(CONSEQUENCES_FIELD_ID)
-    return (
-        conn.execute(
-            "SELECT 1 FROM tickets t "
-            "LEFT JOIN sprint_items si ON si.id = t.sprint_item_id "
-            "WHERE t.id != ? AND t.worker_type = ? AND t.stage = ? "
-            # A resting Closeout Ticket does not occupy the lane, and a blocked one is
-            # resting. The predicate is the derivation's own, so the two cannot drift.
-            f"AND NOT ({derivation.RESTS_PREDICATE}) "
-            "AND CASE WHEN t.sprint_item_id IS NOT NULL THEN si.project_id "
-            "ELSE t.project_id END IS ? LIMIT 1",
-            (ticket.id, worker_type, closeout_stage, effective_project_id),
-        ).fetchone()
-        is not None
-    )
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 def worker_step_blocker(
@@ -106,12 +54,6 @@ def worker_step_blocker(
             return "the user-owned Stage opener already ran for this Stage entry"
     if worker_type_definition.gating_field(ticket.stage) is None:
         return f"the Stage {ticket.stage} has no field for a worker to fill"
-    if _closeout_lane_is_occupied(
-        conn,
-        ticket,
-        worker_type_definition=worker_type_definition,
-    ):
-        return "another Closeout Ticket holds this lane"
     return None
 
 

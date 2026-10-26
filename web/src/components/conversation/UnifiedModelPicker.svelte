@@ -72,7 +72,7 @@
   );
   let rows = $derived((showing === "models" ? view.models : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? view.modelValue : view.reasoningEffort);
-  let foot = $derived(feedback ?? view.staleModelReason);
+  let foot = $derived(feedback ?? view.staleModelReason ?? view.catalogueWarning);
   let pickerBusy = $derived(disabled || refreshing);
   let refreshControl = $derived(backendRefreshControl(refreshing));
 
@@ -296,7 +296,7 @@
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
-  .model-picker-choice-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-foot {
     grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);
     background: var(--surface-recessed); color: var(--text-faint); font-size: var(--type-xs);

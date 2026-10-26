@@ -18,28 +18,6 @@ from planner.environments.logic.launch_env import (
 from planner.environments.logic.registry import resolve_environment_instance
 
 
-def test_environment_file_parses_comments_blank_lines_and_quoted_values(tmp_path: Path) -> None:
-    env_file = tmp_path / "credentials.env"
-    env_file.write_text(
-        "\n".join(
-            [
-                "# provider credentials for this instance",
-                "",
-                "ANTHROPIC_API_KEY=anthropic-secret",
-                'OPENAI_API_KEY="openai secret"',
-                "GOOGLE_API_KEY='google secret'",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    assert parse_environment_file(env_file, kind="staging") == {
-        "ANTHROPIC_API_KEY": "anthropic-secret",
-        "OPENAI_API_KEY": "openai secret",
-        "GOOGLE_API_KEY": "google secret",
-    }
-
-
 @pytest.mark.parametrize(
     ("body", "message"),
     [

@@ -1,0 +1,1 @@
+"""Pure diagnostic retention rules."""

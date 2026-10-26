@@ -10,13 +10,13 @@ import json
 import os
 import sqlite3
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.unit.test_conversation_codex_scripted_app_server import scripted_app_server_launch
+from tests.support.conversation_codex_scripted_app_server import scripted_app_server_launch
 
 from planner.conversation.backends.codex_app_server import login
 from planner.conversation.backends.codex_app_server.adapter import (
@@ -176,13 +176,13 @@ async def _notice_bench(
             remembered_login_rejection=RememberedCodexLoginRejection(),
         )
 
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
         ticket = tickets_data.create_ticket(
             conn,
             worker_type="coding",
             title="Synthetic memory notice evidence",
-            kickoff_note="Isolated evidence only",
+            brief="Isolated evidence only",
             principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,

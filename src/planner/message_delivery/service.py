@@ -11,6 +11,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
 )
 from planner.conversation.message_content import text_message_content
 from planner.core import authority
@@ -18,19 +19,19 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.managers import data as managers_data
+from planner.managers import service as managers_service
 from planner.message_delivery.contracts import (
     MessageDeliveryMode,
     MessageDeliveryResult,
     MessageRecordedToOwner,
 )
-from planner.message_delivery.logic.permissions import permits_supervisor_message
+from planner.message_delivery.logic.permissions import permits_manager_message
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
     ConversationStartOverrides,
 )
-from planner.sprints import data as sprints_data
-from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
@@ -58,7 +59,7 @@ def sender_label(ctx: RequestContext) -> str:
         return "Chief"
     if ctx.principal.kind is PrincipalKind.ticket:
         return f"Ticket {ctx.principal.id}"
-    return f"Sprint Item {ctx.principal.id}"
+    return f"Manager {ctx.principal.id}"
 
 
 def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDeliveryMode:
@@ -76,9 +77,9 @@ def _sender_conversation_id(conn: sqlite3.Connection, sender: Principal) -> str 
         return tickets_data.read_ticket(conn, sender.id).conversation_id
     if sender.kind is PrincipalKind.chief:
         return conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
-    if sender.kind is PrincipalKind.sprint_item:
-        item = sprints_data.read_item(conn, sender.id).item
-        return conversation_start.read_agent_conversation(conn, item.supervisor_agent_key)
+    if sender.kind is PrincipalKind.manager:
+        item = managers_data.read_manager(conn, sender.id).item
+        return conversation_start.read_agent_conversation(conn, item.manager_agent_key)
     return None
 
 
@@ -87,9 +88,9 @@ def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -
         return f"ticket:{sender.id}"
     if sender.kind is PrincipalKind.chief:
         return f"agent:{CHIEF_SETTINGS_KEY}"
-    if sender.kind is PrincipalKind.sprint_item:
-        item = sprints_data.read_item(conn, sender.id).item
-        return f"agent:{item.supervisor_agent_key}"
+    if sender.kind is PrincipalKind.manager:
+        item = managers_data.read_manager(conn, sender.id).item
+        return f"agent:{item.manager_agent_key}"
     raise ValueError("the owner has no sender conversation link")
 
 
@@ -101,8 +102,8 @@ def _as_target(principal: Principal) -> authority.Target | None:
     """
     if principal.kind is PrincipalKind.ticket:
         return authority.ticket(principal.id)
-    if principal.kind is PrincipalKind.sprint_item:
-        return authority.outcome(principal.id)
+    if principal.kind is PrincipalKind.manager:
+        return authority.manager(principal.id)
     return None
 
 
@@ -115,7 +116,7 @@ def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Princi
     a Worker answering the Outcome that asked it something is speaking, and refusing that
     would make the reply every addressed prompt requires impossible to send.
 
-    Existing ordinary orchestrator supervisors can also speak to one another. This
+    Existing ordinary Managers can also speak to one another. This
     message-only permission grants no authority over either supervisor or its Tickets.
     Other strangers are neither, and they refuse.
 
@@ -125,9 +126,9 @@ def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Princi
     its own ceiling holder for help names a principal Panels addressed it to, which is not
     the caller reaching anywhere.
     """
-    if permits_supervisor_message(caller, recipient):
-        sprints_data.read_item(conn, caller.id)
-        sprints_data.read_item(conn, recipient.id)
+    if permits_manager_message(caller, recipient):
+        managers_data.read_manager(conn, caller.id)
+        managers_data.read_manager(conn, recipient.id)
         return
     target = _as_target(recipient)
     if target is None:
@@ -152,19 +153,43 @@ async def send_message(
     conversation_id: str | None = None,
     created_conversation_id: str | None = None,
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
+    retain_created_conversation: bool = False,
+    expects_reply: bool = True,
+    system_message: bool = False,
 ) -> MessageDeliveryResult:
-    """Send one text message to one resolved Panels conversation owner."""
-    label = sender_label(ctx)
+    """Send one text message to one resolved Panels conversation owner.
+
+    ``system_message`` records an automatic action as Panels without changing the caller's
+    authority or launch choices. Only trusted internal callers select it. A system action
+    creates no reply requirement and cannot settle the caller's existing reply obligation.
+
+    ``expects_reply`` is False for a message whose answer is a thing the recipient does
+    rather than words it sends back. Such a message adds no reply requirement to the wire
+    prompt and leaves no missing-reply marker when the turn ends.
+    """
+    caller = ctx.principal
+    if owner_read_through_sequence is not None and (
+        caller.kind is not PrincipalKind.owner or system_message
+    ):
+        raise ValueError("only the owner can acknowledge messages with a reply")
+    if system_message and recipient.kind is PrincipalKind.owner:
+        raise PlannerError(
+            ErrorCode.validation,
+            "a system message cannot be addressed to the owner",
+            {},
+        )
+    label = "Panels" if system_message else sender_label(ctx)
     content: ConversationMessageContent = (
         text_message_content(message) if isinstance(message, str) else message
     )
     prompt_mode = _prompt_mode(mode)
-    sender = ctx.principal
+    sender = None if system_message else caller
     source_turn = None
-    if sender.kind is not PrincipalKind.owner:
-        source_conversation_id = _sender_conversation_id(conn, sender)
+    if not system_message and caller.kind is not PrincipalKind.owner:
+        source_conversation_id = _sender_conversation_id(conn, caller)
         if source_conversation_id is not None:
             source_turn = await conversations.active_turn_reference(source_conversation_id)
     is_reply = bool(
@@ -172,28 +197,28 @@ async def send_message(
     )
 
     if recipient.kind is PrincipalKind.owner:
-        if sender.kind is PrincipalKind.owner:
+        if caller.kind is PrincipalKind.owner:
             raise PlannerError(
                 ErrorCode.validation,
                 "the owner cannot send a message to the owner",
                 {},
             )
         async with conversation_start.conversation_link_lock(
-            _sender_conversation_link_key(conn, sender)
+            _sender_conversation_link_key(conn, caller)
         ):
-            sending_into = _sender_conversation_id(conn, sender)
+            sending_into = _sender_conversation_id(conn, caller)
             if sending_into is None:
                 raise PlannerError(
                     ErrorCode.not_found,
                     "the sender has no current conversation",
-                    {"kind": sender.kind.value, "id": sender.id},
+                    {"kind": caller.kind.value, "id": caller.id},
                 )
             resolved_content = await content(sending_into) if callable(content) else content
             await conversations.record_message_to_owner(
                 sending_into,
                 resolved_content,
                 sender_label=label,
-                sender=sender,
+                sender=caller,
                 recipient=recipient,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -211,7 +236,7 @@ async def send_message(
                 content,
                 conversation_id=(
                     conversation_id
-                    if conversation_id is not None and sender.kind is PrincipalKind.owner
+                    if conversation_id is not None and caller.kind is PrincipalKind.owner
                     else ticket.conversation_id
                 ),
                 created_conversation_id=created_conversation_id
@@ -219,11 +244,12 @@ async def send_message(
                 runs_under=runs_under,
                 sender_label=label,
                 mode=prompt_mode,
+                owner_read_through_sequence=owner_read_through_sequence,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
-                reply_requested=not is_reply,
+                reply_requested=not system_message and expects_reply and not is_reply,
                 now=clock.now_unix(),
             )
     elif recipient.kind is PrincipalKind.chief:
@@ -240,7 +266,7 @@ async def send_message(
                 ),
                 conversation_id=(
                     conversation_id
-                    if conversation_id is not None and sender.kind is PrincipalKind.owner
+                    if conversation_id is not None and caller.kind is PrincipalKind.owner
                     else conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
                 ),
                 created_conversation_id=created_conversation_id
@@ -248,36 +274,33 @@ async def send_message(
                 runs_under=runs_under,
                 sender_label=label,
                 mode=prompt_mode,
+                owner_read_through_sequence=owner_read_through_sequence,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
-                reply_requested=not is_reply,
+                reply_requested=not system_message and expects_reply and not is_reply,
             )
-    elif recipient.kind is PrincipalKind.sprint_item:
+    elif recipient.kind is PrincipalKind.manager:
         item_id = recipient.id
-        async with sprints_service.supervisor_lifecycle_lock(item_id):
-            item = sprints_data.read_item(conn, item_id).item
-            async with conversation_start.conversation_link_lock(
-                f"agent:{item.supervisor_agent_key}"
-            ):
-                current = conversation_start.read_agent_conversation(
-                    conn, item.supervisor_agent_key
-                )
+        async with managers_service.manager_lifecycle_lock(item_id):
+            item = managers_data.read_manager(conn, item_id).item
+            async with conversation_start.conversation_link_lock(f"agent:{item.manager_agent_key}"):
+                current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
                 resolved = (
-                    conversation_start.sprint_item_supervisor_resolve(item)
+                    conversation_start.manager_resolve(item)
                     if runs_under is NO_CONVERSATION_START_OVERRIDES
-                    else conversation_start.sprint_item_supervisor_resolve(item, runs_under)
+                    else conversation_start.manager_resolve(item, runs_under)
                 )
                 delivered = await conversation_start.send_to_agent_conversation(
                     conversations,
                     conn,
-                    item.supervisor_agent_key,
+                    item.manager_agent_key,
                     content,
                     resolved,
                     conversation_id=(
                         conversation_id
-                        if conversation_id is not None and sender.kind is PrincipalKind.owner
+                        if conversation_id is not None and caller.kind is PrincipalKind.owner
                         else current
                     ),
                     created_conversation_id=created_conversation_id
@@ -285,14 +308,16 @@ async def send_message(
                     runs_under=runs_under,
                     sender_label=label,
                     mode=prompt_mode,
+                    owner_read_through_sequence=owner_read_through_sequence,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=not is_reply,
-                    required_sprint_item_id=item_id,
+                    reply_requested=not system_message and expects_reply and not is_reply,
+                    required_manager_id=item_id,
+                    retain_created_conversation=retain_created_conversation,
                 )
-                if sender.kind is PrincipalKind.owner and (
+                if caller.kind is PrincipalKind.owner and (
                     (current is None and delivered.conversation_id is not None)
                     or (
                         isinstance(delivered.fate, PromptDeliveryStarted)
@@ -303,16 +328,17 @@ async def send_message(
                         )
                     )
                 ):
-                    sprints_data.update_supervisor_launch_configuration(
+                    managers_data.update_manager_launch_configuration(
                         conn,
                         item_id,
-                        item.supervisor_launch_configuration.__class__(
+                        item.manager_launch_configuration.__class__(
                             employee_backend=resolved.backend_key,
                             employee_launch_model=resolved.model,
                             employee_launch_reasoning_effort=resolved.reasoning_effort,
                         ),
-                        principal=sender,
+                        principal=caller,
                         clock=clock,
+                        expected_configuration=item.manager_launch_configuration,
                     )
     else:
         raise PlannerError(
@@ -328,7 +354,7 @@ async def send_message(
     )
     if (
         source_turn is not None
-        and not isinstance(delivered.fate, PromptDeliveryRefused)
+        and not isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliverySuppressed))
         and delivered.newly_accepted
     ):
         await conversations.record_explicit_reply(source_turn, recipient)

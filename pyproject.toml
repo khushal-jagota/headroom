@@ -18,6 +18,7 @@ dependencies = [
   "httpx",
   "pydantic",
   "PyYAML",
+  "PyICU==2.16.2",
   "pywebpush==2.3.0",
 ]
 
@@ -41,6 +42,7 @@ planner = [
   "core/migrations/planning_retirement_skill_corrections.json",
   "core/migrations/planning_retirement_skill_appendices.json",
   "worker_types/shipped_worker_types.json",
+  "environments/related_checks_map.json",
   "skills/*/SKILL.md",
   "skills/*/agents/*.yaml",
   "skills/*/references/*.md",

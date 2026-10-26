@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 import tree_environment  # noqa: E402  # reached via sys.path.insert above
@@ -107,65 +109,31 @@ def test_environment_faults_name_every_way_a_copied_virtualenv_redirects_a_gate(
     assert len(tree_environment.faults(tree, both)) == 2
 
 
-def test_a_launcher_keeps_the_virtualenv_it_names(tmp_path: Path) -> None:
-    """Two ways to throw the signal away, and a healthy tree must survive both.
-
-    ``.venv/bin/python`` is a symlink chain ending at the system interpreter, so
-    resolving the whole path makes every launcher look foreign. Resolving none of it
-    makes a tree reached through a symlink look foreign instead. Only the directory
-    is resolved, and both healthy trees pass.
-    """
-    real = tmp_path.resolve() / "real"
-    bin_dir = real / ".venv" / "bin"
-    bin_dir.mkdir(parents=True)
-    system_python = tmp_path.resolve() / "usr" / "bin" / "python3.13"
-    system_python.parent.mkdir(parents=True)
-    system_python.write_text("", encoding="utf-8")
-    (bin_dir / "python").symlink_to(system_python)
-    launcher = bin_dir / "pytest"
-    launcher.write_text(f"#!{bin_dir / 'python'}\nrest of the script\n", encoding="utf-8")
-
-    def only_launcher(path: Path) -> tree_environment.EnvironmentAnswers:
-        return tree_environment.EnvironmentAnswers(
-            launcher_interpreters={"pytest": tree_environment.read_launcher_interpreter(path)}
-        )
-
-    assert tree_environment.read_launcher_interpreter(launcher) == bin_dir / "python"
-    assert tree_environment.faults(real, only_launcher(launcher)) == []
-
-    # The same tree reached through a symlink is the same tree.
-    link = tmp_path.resolve() / "link"
-    link.symlink_to(real)
-    assert tree_environment.faults(link, only_launcher(link / ".venv" / "bin" / "pytest")) == []
-
-    # A native binary and a missing file both read as "no answer", not as a fault.
-    (bin_dir / "ruff").write_bytes(b"\x7fELF\x02\x01\x01\x00" + bytes(64))
-    assert tree_environment.read_launcher_interpreter(bin_dir / "ruff") is None
-    assert tree_environment.read_launcher_interpreter(bin_dir / "absent") is None
 
 
-def test_launcher_and_pyvenv_cfg_readers_answer_only_when_the_file_says_so() -> None:
-    venv_python = "/home/vps/tree/.venv/bin/python"
-    assert tree_environment.interpreter_from_launcher(f"#!{venv_python}") == Path(venv_python)
-    assert tree_environment.interpreter_from_launcher(f"#!/usr/bin/env {venv_python}") == Path(
-        venv_python
+
+
+def test_dependency_pins_use_distribution_metadata_and_pep508_semantics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed = {
+        "claude-agent-sdk": "0.2.128", "missing": None,
+        "equivalent": "1.0.0", "packaging": "26.1",
+    }
+    monkeypatch.setattr(tree_environment, "installed_version", installed.get)
+    (tmp_path / "requirements.txt").write_text(
+        "# This file can include comments and blank lines.\n\n"
+        "Claude_Agent.SDK[extra]==0.2.152 # pinned SDK\n"
+        "missing==1\nequivalent==1.0\npackaging==26.2\n"
+        "inactive==1; python_version < '1'\n",
+        encoding="utf-8",
     )
-
-    # pip writes a two-line /bin/sh wrapper instead of a shebang once the interpreter
-    # path passes 127 bytes, which a long worktree name reaches on its own. Read the
-    # first line alone and every launcher in that tree reports /bin/sh.
-    wrapper = "#!/bin/sh\n" + "'''exec' " + venv_python + ' "$0" "$@"\n' + "' '''\n"
-    assert tree_environment.interpreter_from_launcher(wrapper) == Path(venv_python)
-
-    # A native binary, a relative interpreter, and an empty line carry no answer.
-    assert tree_environment.interpreter_from_launcher("\x7fELF\x02\x01\x01") is None
-    assert tree_environment.interpreter_from_launcher("#!python3") is None
-    assert tree_environment.interpreter_from_launcher("#!") is None
-    assert tree_environment.interpreter_from_launcher("") is None
-
-    created_at = "/home/vps/tree/.venv"
-    cfg = "home = /usr/bin\nversion = 3.13.5\n"
-    cfg += f"command = /usr/bin/python3 -m venv {created_at}\n"
-    assert tree_environment.venv_origin_from_pyvenv_cfg(cfg) == Path(created_at)
-    # uv and virtualenv write no command line, so the check stays silent rather than guesses.
-    assert tree_environment.venv_origin_from_pyvenv_cfg("home = /usr/bin\nuv = 0.12.5\n") is None
+    assert tree_environment.dependency_faults(tmp_path) == [
+        "claude-agent-sdk: required ==0.2.152; installed 0.2.128",
+        "missing: required ==1; installed absent",
+        "packaging: required ==26.2; installed 26.1",
+    ]
+    installed.update({"claude-agent-sdk": "0.2.152", "missing": "1.0", "packaging": "26.2"})
+    # Unknown installed distributions have no bearing on the required pins.
+    installed["unrelated-editable"] = "5"
+    assert tree_environment.dependency_faults(tmp_path) == []

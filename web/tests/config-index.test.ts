@@ -31,6 +31,7 @@ const workers: WorkersResponse = {
   chief_of_staff: {
     employee_id: "chief",
     label: "Chief of Staff",
+    recap: "",
     skill: { name: "panels-chief-of-staff", description: "Long Chief skill description", markdown_body: "Chief body" },
     launch_defaults: defaults,
     conversation_id: null,
@@ -48,7 +49,7 @@ const workers: WorkersResponse = {
 const skills: SkillsHomeResponse = {
   skills: [
     { name: "panels-worker", description: "Long shared skill description", markdown_body: "Worker body" },
-    { name: "panels-sprint-item-supervisor", description: "Long supervisor description", markdown_body: "Supervisor body" }
+    { name: "panels-manager", description: "Long manager description", markdown_body: "Manager body" }
   ]
 };
 
@@ -89,7 +90,7 @@ describe("Config destinations", () => {
     const markup = render(BackendsRoute, { props: { tab: "config" } }).body;
     expect(markup).toContain("Usage</h1>");
     expect(markup).toMatch(/href="#\/backends\/config"[^>]*aria-current="page"/);
-    for (const suffix of ["chief-of-staff", "sprint-item-supervisor", "worker-skill", "workers/coding"]) {
+    for (const suffix of ["chief-of-staff", "manager", "worker-skill", "workers/coding"]) {
       expect(markup).toContain(`href="#/backends/config/${suffix}"`);
     }
     expect(markup).toContain('data-screen="config"');
@@ -102,7 +103,7 @@ describe("Config destinations", () => {
   it.each([
     { roleKind: "agent" as const, roleId: "chief_of_staff" },
     { roleKind: "skill" as const, roleId: "panels-worker" },
-    { roleKind: "skill" as const, roleId: "panels-sprint-item-supervisor" },
+    { roleKind: "skill" as const, roleId: "panels-manager" },
     { roleKind: "worker" as const, roleId: "coding" }
   ])("retains the Usage tab strip and back link on Config $roleId details", (selection) => {
     const markup = render(BackendsRoute, { props: { tab: "config", ...selection } }).body;
@@ -136,7 +137,9 @@ describe("Config destinations", () => {
     expect(index()).toMatch(/2\s+Stages/);
     setManifests(undefined, null, true);
     const markup = index();
-    expect(markup).toContain("Loading Stages…");
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).not.toContain("Loading Stages…");
+    expect(markup).not.toContain("Stages unavailable");
     expect(markup).toContain('href="#/settings/config/workers/research"');
     expect(markup).not.toMatch(/0\s+Stages/);
   });

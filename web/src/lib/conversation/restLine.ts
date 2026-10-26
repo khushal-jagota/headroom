@@ -242,7 +242,7 @@ function whateverHappenedLast(
  * one that is waiting is the whole of the case above, and an ask that has been answered
  * or has died with its turn is a decision that is over.
  */
-function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened | null {
+export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened | null {
   switch (row.kind) {
     case "prompt":
       return { who: senderOf(row.senderLabel, ownSenderLabel), text: oneLine(messageContentText(row.content)) };
@@ -292,7 +292,7 @@ function senderOf(senderLabel: string, ownSenderLabel: string): string {
 
 /** A tool call as the one string this line has room for — the same two halves the row in
  *  the transcript is drawn from, joined the way the pane joins a fact to its reason. */
-function toolCallSentence(row: ToolCallRow): string {
+export function toolCallSentence(row: ToolCallRow): string {
   const presentation = presentToolCall(row);
   return oneLine(
     presentation.summary === null

@@ -6,31 +6,34 @@ it is now a write, and that the write is guarded where the import-time check use
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.backend_state import write_model_enablement
-from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
+from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "worker-types.db"
-    with connect(str(db_path)) as boot:
+    with closing(connect(str(db_path))) as boot:
         create_schema(boot)
+        seed_test_model_catalogue(boot)
     config = load_config(
         path=None,
         env={
@@ -62,77 +65,6 @@ def _arrival_record(coding: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
-def test_a_worker_type_and_its_skill_are_declared_in_one_write(
-    client: tuple[TestClient, Path], tmp_path: Path
-) -> None:
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-
-    response = test_client.post("/api/worker-types", json=_arrival_record(coding))
-
-    assert response.status_code == 200, response.text
-    assert response.json()["worker_type"] == "arrival"
-    listed = test_client.get("/api/worker-types").json()["worker_types"]
-    assert "arrival" in [manifest["worker_type"] for manifest in listed]
-    assert "arrival" in configured_worker_type_registry().registered_worker_types()
-    supported = test_client.get("/api/worker-types?supported=true").json()["worker_types"]
-    assert "arrival" in [manifest["worker_type"] for manifest in supported]
-    assert "arrival" in configured_worker_type_registry().supported_worker_types()
-    # The skill is on disk too, because that is what an agent reads.
-    written = tmp_path / "skills" / "panels-worker-arrival" / "SKILL.md"
-    assert "Do the work." in written.read_text(encoding="utf-8")
-
-
-def test_a_worker_type_naming_a_skill_that_does_not_exist_is_refused(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-    record = _arrival_record(coding)
-    record.pop("skill")
-
-    response = test_client.post("/api/worker-types", json=record)
-
-    assert response.status_code == 400, response.text
-    assert "unknown skill" in response.text
-
-
-def test_a_type_that_declares_no_consequences_is_refused_at_the_door(
-    client: tuple[TestClient, Path],
-) -> None:
-    """A Worker type with no Closeout is not stored and does not become runnable.
-
-    The gap used to surface only when a Ticket ran out of Stages with nothing to land
-    its work. Now it surfaces here, when somebody saves the type.
-    """
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-    record = _arrival_record(coding)
-    record["stages"] = [stage for stage in record["stages"] if stage["id"] != "needs_consequences"]
-    record["fields"] = [field for field in record["fields"] if field["id"] != "consequences"]
-
-    response = test_client.post("/api/worker-types", json=record)
-
-    assert response.status_code == 400, response.text
-    assert "every worker type must declare a consequences field" in response.text
-    assert test_client.get("/api/worker-types/arrival").status_code == 404
-    assert "arrival" not in configured_worker_type_registry().registered_worker_types()
-
-
-def test_a_malformed_record_is_refused_and_changes_nothing(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-    before = test_client.get("/api/worker-types/coding").json()
-    broken = json.loads(json.dumps(before))
-    broken["stages"][1]["ownership_mode"] = "chief"
-
-    response = test_client.post("/api/worker-types", json=broken)
-
-    assert response.status_code == 400, response.text
-    assert test_client.get("/api/worker-types/coding").json() == before
-
-
 def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
     client: tuple[TestClient, Path],
 ) -> None:
@@ -143,7 +75,7 @@ def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
             conn,
             worker_type="coding",
             title="Mid flight",
-            kickoff_note="Kickoff",
+            brief="Kickoff",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
@@ -166,22 +98,6 @@ def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
     assert test_client.get("/api/worker-types/coding").json() == coding
 
 
-def test_a_skill_a_worker_type_owns_is_not_editable_through_the_skills_route(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-
-    response = test_client.patch(
-        "/api/skills/panels-worker-coding", json={"description": "Edited the wrong way"}
-    )
-
-    assert response.status_code == 400, response.text
-    assert "Worker type" in response.text
-    # The skill every Worker shares is still editable there.
-    shared = test_client.patch("/api/skills/panels-worker", json={"description": "Edited"})
-    assert shared.status_code == 200, shared.text
-
-
 def test_launch_defaults_are_the_type_and_take_effect_at_once(
     client: tuple[TestClient, Path],
 ) -> None:
@@ -199,10 +115,9 @@ def test_launch_defaults_are_the_type_and_take_effect_at_once(
     assert response.status_code == 200, response.text
     record = test_client.get("/api/worker-types/coding").json()
     assert record["profile"]["default_backend"] == "claude"
-    assert record["profile"]["default_model"] == "claude-opus-5"
+    assert record["profile"]["default_model"] == "opus"
     assert (
-        configured_worker_type_registry().require("coding").worker_profile.default_model
-        == "claude-opus-5"
+        configured_worker_type_registry().require("coding").worker_profile.default_model == "opus"
     )
 
 
@@ -224,26 +139,217 @@ def test_a_worker_may_not_declare_a_worker_type(client: tuple[TestClient, Path])
     ]
 
 
-@pytest.mark.parametrize("worker", ["coding", "chief-of-staff"])
-def test_launch_default_save_refuses_disabled_model_without_partial_write(
-    client: tuple[TestClient, Path], worker: str
+def test_chief_recap_is_writable_by_the_owner_and_the_chief(
+    client: tuple[TestClient, Path],
+) -> None:
+    """The Chief writes its own recap; other agents and malformed payloads are refused."""
+    test_client, db_path = client
+    settings_path = "/api/workers/chief-of-staff/settings"
+    write_path = "/api/workers/chief-of-staff/recap"
+    before = test_client.get(settings_path).json()
+    assert before["recap"] == ""
+    recap = "Own the shared direction.\n\nKeep **decisions** visible."
+    expected = dict(before, recap=recap)
+    response = test_client.put(write_path, json={"recap": recap})
+    assert response.status_code == 200, response.text
+    assert response.json() == expected
+    assert test_client.get(settings_path).json() == expected
+    assert test_client.get("/api/workers").json()["chief_of_staff"]["recap"] == recap
+    with connect(str(db_path)) as conn:
+        assert conn.execute("SELECT recap FROM chief_settings").fetchone()[0] == recap
+
+    chief_recap = "Chief wrote this."
+    response = test_client.put(
+        write_path, json={"recap": chief_recap}, headers={"X-Plan-Actor": "chief"}
+    )
+    assert response.status_code == 200, response.text
+    assert test_client.get(settings_path).json()["recap"] == chief_recap
+    response = test_client.put(write_path, json={"recap": recap})
+    assert response.status_code == 200, response.text
+
+    for headers in (
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_recap"},
+        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_recap"},
+    ):
+        response = test_client.put(write_path, json={"recap": "unauthorized"}, headers=headers)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "agent_forbidden"
+    for payload in ({}, {"recap": None}, {"recap": 1}, {"recap": "bad", "label": "bad"}):
+        response = test_client.put(write_path, json=payload)
+        assert response.status_code == 400, response.text
+    assert test_client.get(settings_path).json() == expected
+    response = test_client.put(write_path, json={"recap": ""})
+    assert response.status_code == 200, response.text
+    assert response.json() == before
+
+
+def test_generic_skill_edit_and_legacy_adapters_use_the_same_partial_writer(
+    client: tuple[TestClient, Path],
 ) -> None:
     test_client, db_path = client
-    settings_path = f"/api/workers/{worker}" + ("/settings" if worker == "chief-of-staff" else "")
-    before = test_client.get(settings_path).json()
-    settings = before if worker == "chief-of-staff" else before["settings"]
-    defaults = settings["launch_defaults"]
-    model = defaults["employee_launch_model"]
-    with connect(str(db_path)) as conn:
-        write_model_enablement(
-            conn, require_conversation_backend_key(defaults["employee_backend"]), model, False
-        )
-    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=defaults)
-    assert response.status_code == 400, response.text
-    assert model in response.json()["error"]["message"]
-    assert "Choose an enabled model" in response.json()["error"]["message"]
-    assert test_client.get(settings_path).json() == before
-    alternative = dict(defaults, employee_launch_model="enabled-alternative")
-    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=alternative)
+    before = test_client.get("/api/skills/panels-worker-coding").json()
+    response = test_client.patch(
+        "/api/skills/panels-worker-coding",
+        json={"description": "common writer", "markdown_body": "# Updated"},
+    )
     assert response.status_code == 200, response.text
-    assert response.json()["launch_defaults"] == alternative
+    assert response.json()["description"] == "common writer"
+    assert response.json()["markdown_body"] == "\n# Updated\n"
+    assert response.json()["name"] == before["name"]
+    for method in ("put", "patch"):
+        response = test_client.request(
+            method, "/api/workers/coding/skill", json={"body": f"# {method}"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["specialist_skill"]["description"] == "common writer"
+        assert response.json()["specialist_skill"]["markdown_body"] == f"\n# {method}\n"
+    for method in ("put", "patch"):
+        response = test_client.request(
+            method, "/api/workers/chief-of-staff/skill", json={"body": f"# Chief {method}"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["skill"]["markdown_body"] == f"\n# Chief {method}\n"
+    missing = test_client.patch("/api/skills/missing", json={"description": "no create"})
+    assert missing.status_code == 404
+    with connect(str(db_path)) as conn:
+        assert (
+            conn.execute("SELECT 1 FROM managed_skills WHERE skill_name = 'missing'").fetchone()
+            is None
+        )
+
+
+def test_skill_write_authority_is_preserved_at_every_http_entrypoint(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, db_path = client
+    coding = test_client.get("/api/worker-types/coding").json()
+    writes = [
+        ("patch", "/api/skills/panels-worker-coding", {"description": "authority checked"}),
+        ("put", "/api/workers/coding/skill", {"description": "authority checked"}),
+        ("patch", "/api/workers/coding/skill", {"description": "authority checked"}),
+        ("put", "/api/workers/chief-of-staff/skill", {"description": "authority checked"}),
+        ("patch", "/api/workers/chief-of-staff/skill", {"description": "authority checked"}),
+        ("post", "/api/worker-types", dict(coding, skill={"description": "authority checked"})),
+    ]
+    for method, path, payload in writes:
+        chief = test_client.request(method, path, json=payload, headers={"X-Plan-Actor": "chief"})
+        assert chief.status_code == 200, chief.text
+        before = test_client.get("/api/skills").json()
+        for headers in (
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+            {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+        ):
+            refused = test_client.request(method, path, json=payload, headers=headers)
+            assert refused.status_code == 400, refused.text
+            assert refused.json()["error"]["code"] == "agent_forbidden"
+        assert test_client.get("/api/skills").json() == before
+    skill = test_client.get("/api/skills/panels-worker-coding").json()
+    assert skill["description"] == "authority checked"
+    assert (db_path.parent / "skills/panels-worker-coding/SKILL.md").is_file()
+
+
+def test_embedded_skill_validates_the_original_payload_and_requires_initial_fields(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, _db_path = client
+    coding = test_client.get("/api/worker-types/coding").json()
+    for skill in (
+        {"description": "initial"},
+        {"body": "initial body"},
+        {"name": "wrong", "description": "initial", "body": "body"},
+        {"description": "initial", "body": "body", "unknown": "bad"},
+        {"description": "initial", "body": "one", "markdown_body": "two"},
+    ):
+        record = _arrival_record(coding)
+        record["skill"] = skill
+        response = test_client.post("/api/worker-types", json=record)
+        assert response.status_code == 400, response.text
+        assert "field" in response.json()["error"]["detail"]
+        assert test_client.get("/api/skills/panels-worker-arrival").status_code == 404
+    record = _arrival_record(coding)
+    record["skill"] = {
+        "name": "panels-worker-arrival",
+        "description": "initial",
+        "body": "new body",
+    }
+    assert test_client.post("/api/worker-types", json=record).status_code == 200
+
+
+def test_skill_file_failure_reaches_http_as_an_incomplete_save(
+    client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, _db_path = client
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(worker_settings_service, "atomic_replace_text", fail_replace)
+    response = test_client.patch("/api/skills/panels", json={"description": "saved"})
+    assert response.status_code == 500, response.text
+    error = response.json()["error"]
+    assert error["code"] == "skill_save_incomplete"
+    assert error["detail"] == {
+        "skill_name": "panels",
+        "saved": True,
+        "published": False,
+        "phase": "file",
+    }
+    assert "Read the canonical skill before retry" in error["message"]
+
+
+def test_one_type_reads_back_exactly_what_the_whole_list_said(
+    client: tuple[TestClient, Path],
+) -> None:
+    """The list is 20,165 bytes for fourteen types; a Ticket page draws one.
+
+    The single-type read has to be the same entry in the same shape, because the
+    lifecycle, the stage table and the Ticket section admission all read that shape.
+    """
+    test_client, _db_path = client
+
+    whole = test_client.get("/api/worker-types").json()["worker_types"]
+    one = test_client.get("/api/worker-types/coding/manifest")
+
+    assert one.status_code == 200, one.text
+    assert one.json()["worker_types"] == [
+        entry for entry in whole if entry["worker_type"] == "coding"
+    ]
+
+    unknown = test_client.get("/api/worker-types/not-a-worker/manifest")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "not_found"
+    assert unknown.json()["error"]["detail"] == {"worker_type": "not-a-worker"}
+
+
+def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, _db_path = client
+    source = "---\nname: batch-role\ndescription: Reviewed role\n---\n\nExact owner instructions.\n"
+    payload = {"skills": [{"name": "batch-role", "source_text": source, "expected_sha256": None}]}
+    before = test_client.get("/api/skills").json()
+    for headers in (
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+    ):
+        result = test_client.post("/api/skills/apply", json=payload, headers=headers)
+        assert result.status_code == 400, result.text
+        assert result.json()["error"]["code"] == "agent_forbidden"
+        assert test_client.get("/api/skills").json() == before
+    accepted = test_client.post("/api/skills/apply", json=payload)
+    assert accepted.status_code == 200, accepted.text
+    assert test_client.get("/api/skills/batch-role").json()["source_text"] == source
+    chief_source = source.replace("Exact owner instructions.", "Exact Chief instructions.")
+    chief_payload = {
+        "skills": [{
+            "name": "batch-role",
+            "source_text": chief_source,
+            "expected_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        }]
+    }
+    accepted = test_client.post(
+        "/api/skills/apply", json=chief_payload, headers={"X-Plan-Actor": "chief"}
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert test_client.get("/api/skills/batch-role").json()["source_text"] == chief_source

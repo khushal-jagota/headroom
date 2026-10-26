@@ -13,6 +13,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.executor.contracts import CliWrite, JsonObject
 from planner.tickets import actions, views
+from planner.tickets.contracts import ReviewTransferNotice
 
 
 def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
@@ -43,7 +44,12 @@ def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
 
 
 def write_ticket_mutation(
-    connection: sqlite3.Connection, write: CliWrite, principal: Principal, clock: Clock
+    connection: sqlite3.Connection,
+    write: CliWrite,
+    principal: Principal,
+    clock: Clock,
+    *,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> JsonObject:
     """Effect and receipt use the caller's open transaction; no native I/O here."""
     from planner.tickets.api import write_create_ticket, write_patch_ticket
@@ -98,5 +104,12 @@ def write_ticket_mutation(
         )
         return views.ticket_json(ticket, clock.now_unix())
     if write.operation == "ticket.edit":
-        return write_patch_ticket(ticket_id, body, connection, RequestContext(principal), clock)
+        return write_patch_ticket(
+            ticket_id,
+            body,
+            connection,
+            RequestContext(principal),
+            clock,
+            review_transfer_notices=review_transfer_notices,
+        )
     raise PlannerError(ErrorCode.validation, "unsupported transactional executor mutation", {})

@@ -44,16 +44,16 @@ export type FeedbackPageContext = {
 };
 
 const SCREEN_LABELS: Record<string, string> = {
-  day: "Home",
   review: "Review",
   workspace: "Workspace",
-  sprint: "Sprint",
   backlog: "Backlog",
   ideas: "Ideas",
   feedback: "Feedback",
   config: "Config",
   settings: "Settings",
-  backends: "Backends",
+  backends: "Usage",
+  usage: "Usage",
+  vps: "VPS",
   notifications: "Notifications",
   "scheduled-tasks": "Scheduled tasks",
   preview: "Preview"
@@ -68,10 +68,10 @@ function decoded(segment: string): string {
 }
 
 export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPageContext {
-  const address = hash && hash !== "#" ? hash : "#/day";
+  const address = hash && hash !== "#" ? hash : "#/workspace/chief-of-staff";
   const path = address.replace(/^#/, "").split("?")[0];
   const segments = path.split("/").filter(Boolean);
-  const screen = segments[0] || "day";
+  const screen = segments[0] || "workspace";
   const title = detailTitle.trim();
 
   if (screen === "settings") {
@@ -79,16 +79,19 @@ export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPag
     return { address, label: `Settings · ${SCREEN_LABELS[section] || decoded(section)}` };
   }
   if (screen === "workspace") {
-    if (segments[1] === "item" && segments.length === 3) {
-      return { address, label: title ? `Sprint Item · ${title}` : "Sprint Item" };
+    if (segments[1] === "utility" && segments[2]) {
+      const utility = segments[2];
+      const label = SCREEN_LABELS[utility] || decoded(utility);
+      return { address, label: utility === "settings" ? `${label} · ${SCREEN_LABELS[segments[3] || "config"] || decoded(segments[3])}` : label };
     }
-    if ((segments[1] === "item" && segments.length === 4) ||
+    if (segments[1] === "chief-of-staff") return { address, label: "Chief of Staff" };
+    if (["manager", "item"].includes(segments[1]) && segments.length === 3) {
+      return { address, label: title ? `Manager · ${title}` : "Manager" };
+    }
+    if ((["manager", "item"].includes(segments[1]) && segments.length === 4) ||
         (segments.length === 2 && segments[1] !== "chief-of-staff")) {
       return { address, label: title ? `Ticket · ${title}` : "Ticket" };
     }
-  }
-  if (screen === "sprint" && new URLSearchParams(address.split("?")[1] || "").has("item")) {
-    return { address, label: title ? `Sprint Item · ${title}` : "Sprint Item" };
   }
   return { address, label: SCREEN_LABELS[screen] || decoded(screen) };
 }
@@ -118,7 +121,7 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.stage === "done") return "Done";
   if (ticket.ticket_status === "blocked") return "Blocked";
   const attention = primaryWorkAttention(ticket);
-  // The same four facts the Workspace rail and the Sprint Item page head their groups
+  // The same four facts the Workspace rail and the Manager page head their groups
   // with, in the same words. One fact is named one way wherever it is read.
   if (attention === "awaiting_approval") return "Needs your approval";
   if (attention === "awaiting_answer") return "Needs your answer";

@@ -27,6 +27,22 @@ type JsonObject = dict[str, JsonValue]
 
 
 @dataclass(frozen=True, slots=True)
+class CanonicalSkillSource:
+    """One authoritative database row, transported without text transformation."""
+
+    skill_name: str
+    source_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalSkillSnapshot:
+    """The complete canonical skills and the minimum set this Worker needs."""
+
+    sources: tuple[CanonicalSkillSource, ...]
+    required_skill_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutorIdentity:
     protocol_version: int
     application_revision: str

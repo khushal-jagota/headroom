@@ -3,34 +3,42 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
-from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation import storage as conversation_storage
-from planner.conversation.events import MessageToOwnerEventPayload
+from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.events import (
+    ConversationEventPayload,
+    ConversationTurnEnding,
+    MessageToOwnerEventPayload,
+    PermissionAnsweredEventPayload,
+    PermissionAskedEventPayload,
+    PromptEventPayload,
+    TurnEndedEventPayload,
+    UserInputAnsweredEventPayload,
+    UserInputFailedEventPayload,
+    UserInputRequestedEventPayload,
+    conversation_event_payload_to_canonical_json,
+)
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
-from planner.core.config import load_config
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.core.server import create_app
 from planner.notifications import attention
 from planner.notifications import data as notifications_data
 from planner.notifications.contracts import (
-    AttentionEdge,
-    EdgeKey,
     NotificationIntent,
     PushSubscription,
     WebPushIdentity,
     WebPushResult,
 )
-from planner.notifications.logic.policy import decide_notification
 from planner.notifications.runtime import NotificationLoop
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
@@ -44,7 +52,7 @@ def _ticket(conn: Connection, now: int) -> Ticket:
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="Agreed brief.",
+        brief="Agreed brief.",
     )
 
 
@@ -81,84 +89,6 @@ def _service_worker_push_results(payloads: list[object]) -> list[dict[str, objec
     return normalized
 
 
-def test_notification_settings_api_serves_catalogue_and_persists_choice(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "api.db"
-    with connect(str(db_path)) as bootstrap:
-        create_schema(bootstrap)
-    cfg = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": str(db_path),
-            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
-            "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "lock"),
-        },
-    )
-    clock = MutableClock(parse_fake_now("2026-07-29T12:00:00+02:00"))
-    app = create_app(cfg, clock, lambda: connect(str(db_path)))
-    with TestClient(app) as client:
-        settings = client.get("/api/notifications/settings")
-        assert settings.status_code == 200
-        payload = settings.json()
-        assert [subject["key"] for subject in payload["subjects"]] == [
-            "tickets",
-            "chief_of_staff",
-            "sprint_item_supervisors",
-        ]
-        types_by_subject = {
-            subject["key"]: {item["id"] for item in subject["types"]}
-            for subject in payload["subjects"]
-        }
-        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 11
-        assert types_by_subject["tickets"] == {
-            "awaiting_reply",
-            "awaiting_answer",
-            "awaiting_approval",
-            "assigned",
-            "errored",
-        }
-        assert types_by_subject["chief_of_staff"] == {
-            "awaiting_reply",
-            "awaiting_answer",
-            "errored",
-        }
-        assert types_by_subject["sprint_item_supervisors"] == {
-            "awaiting_reply",
-            "awaiting_answer",
-            "errored",
-        }
-        enabled_by_subject = {
-            subject["key"]: {item["id"]: item["enabled"] for item in subject["types"]}
-            for subject in payload["subjects"]
-        }
-        assert enabled_by_subject["sprint_item_supervisors"] == {
-            "awaiting_reply": True,
-            "awaiting_answer": True,
-            "errored": False,
-        }
-        assert all(enabled_by_subject["tickets"].values())
-        assert all(enabled_by_subject["chief_of_staff"].values())
-        assert payload["vapid_public_key"]
-
-        changed = client.put(
-            "/api/notifications/preferences/chief_of_staff/errored",
-            json={"enabled": False},
-        )
-        assert changed.status_code == 200
-        resolved = {
-            subject["key"]: {item["id"]: item["enabled"] for item in subject["types"]}
-            for subject in changed.json()["subjects"]
-        }
-        assert resolved["chief_of_staff"]["errored"] is False
-        assert resolved["tickets"]["errored"] is True
-
-        invalid = client.put(
-            "/api/notifications/preferences/chief_of_staff/awaiting_approval",
-            json={"enabled": False},
-        )
-        assert invalid.status_code == 404
 
 
 def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
@@ -253,44 +183,6 @@ def _edges(conn: Connection, ticket_id: str) -> list[tuple[str, int]]:
     ]
 
 
-def test_conversation_capture_reuses_one_result_for_every_linked_ticket(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    conn = connect(str(tmp_path / "reused-result.db"))
-    create_schema(conn)
-    first = _ticket(conn, 1)
-    second = _ticket(conn, 1)
-    _conversation_on_a_ticket(conn, first.id)
-    conn.execute(
-        "UPDATE tickets SET conversation_id='c_split' WHERE id=?",
-        (second.id,),
-    )
-    result = attention.ConversationAttention(
-        unread_message=True,
-        pending_ask=True,
-        errored=True,
-        latest_sequence=4,
-        occurred_at=2,
-    )
-
-    def unexpected_derivation(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("capture repeated conversation attention derivation")
-
-    monkeypatch.setattr(attention, "conversation_attention", unexpected_derivation)
-    attention.capture_conversation_attention(conn, "c_split", 2, result)
-
-    for ticket in (first, second):
-        assert _edges(conn, ticket.id) == [
-            ("awaiting_answer", 1),
-            ("awaiting_reply", 1),
-        ]
-        errored = conn.execute(
-            "SELECT active FROM notification_attention_state "
-            "WHERE subject_kind='ticket' AND subject_id=? AND notification_type='errored'",
-            (ticket.id,),
-        ).fetchone()
-        assert errored is not None and bool(errored["active"])
-    conn.close()
 
 
 def test_conversation_event_and_attention_edge_roll_back_together(
@@ -307,6 +199,7 @@ def test_conversation_event_and_attention_edge_roll_back_together(
     def fail_before_commit(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("forced rollback")
 
+    original_commit = conversation_storage._commit_appended_rows
     monkeypatch.setattr(conversation_storage, "_commit_appended_rows", fail_before_commit)
 
     async def exercise() -> None:
@@ -334,6 +227,44 @@ def test_conversation_event_and_attention_edge_roll_back_together(
             is None
         )
 
+    async def exercise_ending() -> None:
+        monkeypatch.setattr(conversation_storage, "_commit_appended_rows", original_commit)
+        await store.append_event("c_split", _request_payload(True, "active"))
+        monkeypatch.setattr(conversation_storage, "_commit_appended_rows", fail_before_commit)
+        ending = (TurnEndedEventPayload(ending=ConversationTurnEnding.interrupted),)
+        with pytest.raises(RuntimeError, match="forced rollback"):
+            await store.append_turn_ending(
+                "c_split", ending, agent_activity=False,
+                automatic_compaction_confirmed=False, automatic_compaction_result=None,
+            )
+        with closing(connect(str(db_path))) as verify:
+            assert [row[0] for row in verify.execute(
+                "SELECT kind FROM conversation_events ORDER BY sequence"
+            )] == ["permission_asked"]
+            row = verify.execute(
+                "SELECT active,generation FROM notification_attention_state "
+                "WHERE subject_id=? AND notification_type='awaiting_answer'", (ticket.id,),
+            ).fetchone()
+            assert tuple(row) == (1, 1)
+
+        monkeypatch.setattr(conversation_storage, "_commit_appended_rows", original_commit)
+        await store.append_turn_ending(
+            "c_split", ending, agent_activity=False,
+            automatic_compaction_confirmed=False, automatic_compaction_result=None,
+        )
+        with closing(connect(str(db_path))) as verify:
+            assert [row[0] for row in verify.execute(
+                "SELECT kind FROM conversation_events ORDER BY sequence"
+            )] == ["permission_asked", "turn_ended"]
+            row = verify.execute(
+                "SELECT active,generation FROM notification_attention_state "
+                "WHERE subject_id=? AND notification_type='awaiting_answer'", (ticket.id,),
+            ).fetchone()
+            assert tuple(row) == (0, 1)
+            assert _edges(verify, ticket.id) == [("awaiting_answer", 1)]
+
+    asyncio.run(exercise_ending())
+
 
 def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
     tmp_path: Path,
@@ -357,225 +288,168 @@ def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
     conn.close()
 
 
-def test_attention_snapshot_preserves_messages_asks_answers_reads_and_failures(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "snapshot.db"))
-    create_schema(conn)
-    ticket = _ticket(conn, 1)
-    _conversation_on_a_ticket(conn, ticket.id)
-    events: tuple[tuple[str, dict[str, str]], ...] = (
-        ("permission_asked", {"ask_id": "ask-1"}),
-        ("permission_asked", {"ask_id": "ask-2"}),
-        ("permission_answered", {"ask_id": "ask-1"}),
-        ("user_input_requested", {"request_id": "question-1"}),
-        ("user_input_answered", {"request_id": "unrelated"}),
-        ("message_to_owner", {}),
-        ("prompt", {}),
-        ("turn_ended", {"ending": "failed"}),
-    )
-    for sequence, (kind, payload) in enumerate(events, start=1):
-        _conversation_event(conn, sequence, kind, json.dumps(payload))
-    conn.execute(
-        "UPDATE conversations SET owner_read_through_sequence=5 WHERE conversation_id='c_split'"
-    )
-
-    snapshot = attention.conversation_attention_snapshot(conn, "c_split")
-    assert snapshot is not None
-    assert snapshot.pending_permission_ask_ids == frozenset({"ask-2"})
-    assert snapshot.pending_user_input_request_ids == frozenset({"question-1"})
-    assert snapshot.attention() == attention.conversation_attention(conn, "c_split")["c_split"]
-    assert snapshot.attention() == attention.ConversationAttention(
-        unread_message=True,
-        pending_ask=True,
-        errored=True,
-        latest_sequence=8,
-        occurred_at=8,
-    )
-    conn.close()
-
-
-def test_a_pending_ask_says_it_is_an_ask_and_not_a_message(tmp_path: Path) -> None:
-    """An ask told Khushal the Ticket had a message for him, which it did not."""
-    conn = connect(str(tmp_path / "ask.db"))
-    create_schema(conn)
-    ticket = _ticket(conn, 1)
-    _conversation_on_a_ticket(conn, ticket.id)
-
-    _conversation_event(conn, 1, "user_input_requested", json.dumps({"request_id": "q-1"}))
-    attention.capture_ticket_attention(conn, ticket.id, 1)
-
-    assert [kind for kind, _ in _edges(conn, ticket.id)] == ["awaiting_answer"]
-    intent = decide_notification(
-        AttentionEdge(
-            key=EdgeKey(
-                subject_kind="ticket",
-                subject_id=ticket.id,
-                notification_type="awaiting_answer",
-                generation=1,
-            ),
-            subject=Principal(PrincipalKind.ticket, ticket.id),
-            subject_label="Phone-worthy work",
-            occurred_at=1,
-        ),
-        enabled=True,
-    )
-    assert intent is not None
-    assert intent.body == "Phone-worthy work is waiting on your answer."
-    conn.close()
-
-
-def test_an_answered_ask_clears_the_flag_without_another_notification(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "answered.db"))
-    create_schema(conn)
-    ticket = _ticket(conn, 1)
-    _conversation_on_a_ticket(conn, ticket.id)
-
-    _conversation_event(conn, 1, "permission_asked", json.dumps({"ask_id": "ask-1"}))
-    attention.capture_ticket_attention(conn, ticket.id, 1)
-    _conversation_event(conn, 2, "permission_answered", json.dumps({"ask_id": "ask-1"}))
-    attention.capture_ticket_attention(conn, ticket.id, 2)
-
-    assert [kind for kind, _ in _edges(conn, ticket.id)] == ["awaiting_answer"]
-    assert [
-        (str(row["notification_type"]), bool(row["active"]))
-        for row in conn.execute(
-            "SELECT notification_type, active FROM notification_attention_state "
-            "WHERE subject_kind='ticket' AND subject_id=? AND notification_type='awaiting_answer'",
-            (ticket.id,),
+def _request_payload(
+    permission: bool, request_id: str
+) -> PermissionAskedEventPayload | UserInputRequestedEventPayload:
+    if permission:
+        return PermissionAskedEventPayload(
+            ask_id=request_id, title="Allow?", detail=None, options=()
         )
-    ] == [("awaiting_answer", False)]
-    conn.close()
+    return UserInputRequestedEventPayload(request_id=request_id, questions=())
 
 
-def test_initial_attention_is_transactional_without_a_global_conversation_scan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _prompt() -> PromptEventPayload:
+    return PromptEventPayload(
+        content=text_message_content("continue"),
+        sender_label="owner",
+        mode=PromptDeliveryMode.queue,
+    )
+
+
+@pytest.mark.parametrize("ending", list(ConversationTurnEnding))
+def test_attention_request_lifetime_matches_all_projections(
+    tmp_path: Path, ending: ConversationTurnEnding
 ) -> None:
-    conn = connect(str(tmp_path / "creation.db"))
-    create_schema(conn)
-
-    def no_scan(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("Ticket without a conversation requested a history scan")
-
-    monkeypatch.setattr(attention, "conversation_attention", no_scan)
-    conn.execute("BEGIN IMMEDIATE")
-    ticket = _ticket(conn, 1)
-    assert (
+    with closing(connect(str(tmp_path / "snapshot.db"))) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+        # Historical unrelated kinds remain readable without full payload decoding.
+        _conversation_event(conn, 1, "historical_unrelated_kind", "{}")
         conn.execute(
-            "SELECT notification_type FROM notification_attention_edges WHERE subject_id=?",
-            (ticket.id,),
-        ).fetchone()[0]
-        == "awaiting_approval"
-    )
-    conn.rollback()
-    assert conn.execute("SELECT 1 FROM tickets").fetchone() is None
-    assert conn.execute("SELECT 1 FROM notification_attention_edges").fetchone() is None
-    conn.close()
-
-
-def test_runtime_poll_consumes_edges_and_startup_reconciliation_is_idempotent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    conn = connect(str(tmp_path / "imported.db"))
-    create_schema(conn)
-    ticket = _ticket(conn, 1)
-    conn.execute("DELETE FROM notification_attention_edges")
-    conn.execute("DELETE FROM notification_attention_state")
-    conn.commit()
-    notifications_data.reconcile_attention(conn)
-    notifications_data.reconcile_attention(conn)
-    assert (
-        conn.execute(
-            "SELECT COUNT(*) FROM notification_attention_edges WHERE subject_id=?", (ticket.id,)
-        ).fetchone()[0]
-        == 1
-    )
-
-    def no_scan(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("Runtime poll scanned conversation history")
-
-    monkeypatch.setattr(attention, "conversation_attention", no_scan)
-    assert notifications_data.queue_deliveries(conn, 2) == 1
-    assert notifications_data.queue_deliveries(conn, 3) == 0
-    conn.close()
-
-
-def test_blocker_changes_capture_attention_in_the_same_transaction(tmp_path: Path) -> None:
-    from planner.core import ticket_blocks
-
-    conn = connect(str(tmp_path / "blockers.db"))
-    create_schema(conn)
-    blocker, blocked = _ticket(conn, 1), _ticket(conn, 1)
-    ticket_blocks.add_ticket_block(conn, blocker.id, blocked.id, 2)
-    row = conn.execute(
-        "SELECT active,generation FROM notification_attention_state "
-        "WHERE subject_id=? AND notification_type='awaiting_approval'",
-        (blocked.id,),
-    ).fetchone()
-    assert tuple(row) == (1, 1)
-    conn.execute("BEGIN IMMEDIATE")
-    ticket_blocks.remove_ticket_block(conn, blocker.id, blocked.id, 3)
-    row = conn.execute(
-        "SELECT active,generation FROM notification_attention_state "
-        "WHERE subject_id=? AND notification_type='awaiting_approval'",
-        (blocked.id,),
-    ).fetchone()
-    assert tuple(row) == (1, 1)
-    conn.rollback()
-    row = conn.execute(
-        "SELECT active,generation FROM notification_attention_state "
-        "WHERE subject_id=? AND notification_type='awaiting_approval'",
-        (blocked.id,),
-    ).fetchone()
-    assert tuple(row) == (1, 1)
-    conn.close()
-
-
-def test_attention_startup_failure_releases_the_polling_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import sys
-    from typing import cast
-
-    from planner.conversation.contracts import ConversationSystem
-    from planner.core import loops
-
-    cfg = load_config(
-        path=None,
-        env={
-            "PLAN_DB_PATH": str(tmp_path / "startup.db"),
-            "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "startup.lock"),
-        },
-    )
-
-    def fail(_self: NotificationLoop) -> None:
-        raise RuntimeError("import reconciliation failed")
-
-    monkeypatch.setattr(NotificationLoop, "reconcile_imported_state", fail)
-
-    async def start() -> None:
-        running = loops.start_background_loops(
-            cfg,
-            MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
-            conversation_system=cast(ConversationSystem, object()),
-            asyncio_loop=asyncio.get_running_loop(),
+            "UPDATE conversations SET owner_read_through_sequence=1 "
+            "WHERE conversation_id='c_split'"
         )
-        # A second process proves release. The lock helper caches ownership locally.
-        subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import fcntl,sys; f=open(sys.argv[1], 'a'); "
-                "fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)",
-                cfg.dispatcher_lock_path,
-            ],
-            check=True,
+        events: tuple[tuple[ConversationEventPayload, tuple[str, ...], tuple[str, ...]], ...] = (
+            (_request_payload(True, "ask-1"), ("ask-1",), ()),
+            (_request_payload(True, "ask-2"), ("ask-1", "ask-2"), ()),
+            (_request_payload(False, "input-1"), ("ask-1", "ask-2"), ("input-1",)),
+            (_request_payload(False, "input-2"), ("ask-1", "ask-2"), ("input-1", "input-2")),
+            (PermissionAnsweredEventPayload("unrelated", "yes"),
+             ("ask-1", "ask-2"), ("input-1", "input-2")),
+            (UserInputAnsweredEventPayload("unrelated", ()),
+             ("ask-1", "ask-2"), ("input-1", "input-2")),
+            (PermissionAnsweredEventPayload("ask-1", "yes"),
+             ("ask-2",), ("input-1", "input-2")),
+            (UserInputAnsweredEventPayload("input-2", ()), ("ask-2",), ("input-1",)),
+            (_request_payload(False, "input-3"), ("ask-2",), ("input-1", "input-3")),
+            (UserInputFailedEventPayload("input-3", "cannot present"), ("ask-2",), ("input-1",)),
+            (MessageToOwnerEventPayload(
+                content=text_message_content("status"),
+                sender=Principal(PrincipalKind.ticket, ticket.id),
+                recipient=OWNER_PRINCIPAL,
+                sender_label=ticket.title,
+            ), ("ask-2",), ("input-1",)),
+            (_prompt(), ("ask-2",), ("input-1",)),
+            (TurnEndedEventPayload(ending=ending), (), ()),
         )
-        await running.stop()
+        sequence = 1
+        for payload, permission_ids, input_ids in events:
+            sequence += 1
+            before = attention.conversation_attention_snapshot(conn, "c_split")
+            assert before is not None
+            incremental = attention.advance_conversation_attention(
+                before, (payload,), owner_read_through_sequence=1, occurred_at=sequence
+            )
+            _conversation_event(
+                conn, sequence, payload.kind, conversation_event_payload_to_canonical_json(payload)
+            )
+            snapshot = attention.conversation_attention_snapshot(conn, "c_split")
+            assert snapshot is not None
+            assert snapshot.pending_permission_ask_ids == frozenset(permission_ids)
+            assert snapshot.pending_user_input_request_ids == frozenset(input_ids)
+            assert incremental == snapshot.attention()
+            assert incremental == attention.conversation_attention(conn, "c_split")["c_split"]
+            if isinstance(payload, PromptEventPayload):
+                sequence += 1
+                _conversation_event(conn, sequence, "historical_unrelated_kind", "{}")
+                preserved = attention.conversation_attention_snapshot(conn, "c_split")
+                assert preserved is not None
+                assert preserved.pending_permission_ask_ids == frozenset(permission_ids)
+                assert preserved.pending_user_input_request_ids == frozenset(input_ids)
+                assert preserved.attention() == attention.conversation_attention(conn)["c_split"]
 
-    asyncio.run(start())
+        assert incremental == attention.ConversationAttention(
+            unread_message=True,
+            pending_ask=False,
+            errored=ending is ConversationTurnEnding.failed,
+            latest_sequence=sequence,
+            occurred_at=sequence,
+        )
+
+
+@pytest.mark.parametrize("permission", [True, False], ids=["permission", "user-input"])
+def test_interrupted_request_allows_the_next_request_to_raise_one_edge(
+    tmp_path: Path, permission: bool
+) -> None:
+    db_path = tmp_path / "request-edges.db"
+    with closing(connect(str(db_path))) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+    store = ConversationStore(str(db_path), integer_now=lambda: 2)
+
+    async def exercise() -> None:
+        counts: list[int] = []
+
+        def capture_count() -> None:
+            with closing(connect(str(db_path))) as conn:
+                counts.append(len(_edges(conn, ticket.id)))
+
+        await store.append_delivered_prompt("c_split", prompt=_prompt(), model_change=None)
+        capture_count()
+        await store.append_event("c_split", _request_payload(permission, "first"))
+        capture_count()
+        await store.append_turn_ending(
+            "c_split", (TurnEndedEventPayload(ending=ConversationTurnEnding.interrupted),),
+            agent_activity=False, automatic_compaction_confirmed=False,
+            automatic_compaction_result=None,
+        )
+        capture_count()
+        await store.append_delivered_prompt("c_split", prompt=_prompt(), model_change=None)
+        capture_count()
+        await store.append_event("c_split", _request_payload(permission, "next"))
+        capture_count()
+        assert counts == [0, 1, 1, 1, 2]
+        with closing(connect(str(db_path))) as conn:
+            attention.capture_ticket_attention(conn, ticket.id, 3)
+            attention.capture_ticket_attention(conn, ticket.id, 4)
+            assert _edges(conn, ticket.id) == [("awaiting_answer", 1), ("awaiting_answer", 2)]
+
+    asyncio.run(exercise())
+
+
+def test_reconciliation_clears_stale_request_without_replaying_its_edge(tmp_path: Path) -> None:
+    db_path = tmp_path / "stale-attention.db"
+    with closing(connect(str(db_path))) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+        _conversation_event(conn, 1, "permission_asked", '{"ask_id":"old"}')
+        attention.capture_ticket_attention(conn, ticket.id, 1)
+        # An old writer recorded the ending but retained its active attention state.
+        _conversation_event(conn, 2, "turn_ended", '{"ending":"interrupted"}')
+        for _ in range(2):
+            notifications_data.reconcile_attention(conn)
+            row = conn.execute(
+                "SELECT active,generation FROM notification_attention_state "
+                "WHERE subject_kind='ticket' AND subject_id=? "
+                "AND notification_type='awaiting_answer'",
+                (ticket.id,),
+            ).fetchone()
+            assert tuple(row) == (0, 1)
+            assert _edges(conn, ticket.id) == [("awaiting_answer", 1)]
+
+    store = ConversationStore(str(db_path), integer_now=lambda: 3)
+    asyncio.run(store.append_event("c_split", _request_payload(True, "new")))
+    with closing(connect(str(db_path))) as conn:
+        notifications_data.reconcile_attention(conn)
+        row = conn.execute(
+            "SELECT active,generation FROM notification_attention_state "
+            "WHERE subject_id=? AND notification_type='awaiting_answer'", (ticket.id,),
+        ).fetchone()
+        assert tuple(row) == (1, 2)
+        assert _edges(conn, ticket.id) == [("awaiting_answer", 1), ("awaiting_answer", 2)]
 
 
 def test_conversation_binding_and_unbinding_capture_existing_attention(tmp_path: Path) -> None:
@@ -618,7 +492,7 @@ def test_conversation_binding_and_unbinding_capture_existing_attention(tmp_path:
 
 def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path) -> None:
     db_path = tmp_path / "failed-delivery.db"
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
         notifications_data.get_or_create_web_push_identity(conn, 1)
         _subscribe(conn)

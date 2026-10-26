@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from tests.e2e.harness import BOOT_BUDGET_S, PLAN_BIN
+from tests.support.server import BOOT_BUDGET_S, PLAN_BIN
 
 _STAGING_URL_RE = re.compile(r"staging (?P<url>http://127\.0\.0\.1:\d+)")
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -48,7 +48,7 @@ def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
         _wait_for_health(first, first_url, log_path)
         created = httpx.post(
             f"{first_url}/api/projects",
-            json={"name": "Retained staging activity", "priority": "P2"},
+            json={"name": "Retained staging activity"},
             timeout=5.0,
         )
         assert created.status_code < 300, created.text

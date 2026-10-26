@@ -46,7 +46,7 @@ def mac_ticket(connection: Connection) -> Ticket:
         locale=TicketLocale.macos,
         employee_backend="codex",
         employee_launch_model="scripted-model",
-        kickoff_note="Brief.",
+        brief="Brief.",
     )
     return data.accept_proposal(
         connection,

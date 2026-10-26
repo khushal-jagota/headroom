@@ -16,8 +16,9 @@
     composerGap?: boolean;
   } = $props();
 
+  let total = $derived(progress.totalCount ?? progress.entries.length);
   let visible = $derived(
-    progress.entries.length > 0 &&
+    total > 0 &&
       (variant === "rest"
         ? running && progress.currentEntry !== null
         : running && progress.hasUnfinishedEntry)
@@ -26,6 +27,13 @@
     progress.currentPosition ??
       progress.entries.findIndex((entry) => entry.status !== "completed") + 1
   );
+
+  function releaseIfOutside(event: FocusEvent | PointerEvent): void {
+    const container = (event.currentTarget as HTMLElement).closest('[data-conversation-task-strip]') ?? event.currentTarget as HTMLElement;
+    if (event.relatedTarget instanceof Node && container.contains(event.relatedTarget)) return;
+    if (container.matches(':hover') || container.contains(document.activeElement)) return;
+    progress.onRelease?.();
+  }
 
   function statusClass(status: string): string {
     if (status === "completed") return "done";
@@ -61,28 +69,34 @@
       type="button"
       class="c2-rest-progress"
       data-conversation-task-control
+      onpointerenter={() => progress.onDemand?.()}
+      onfocus={() => progress.onDemand?.()}
+      onpointerleave={releaseIfOutside}
+      onblur={releaseIfOutside}
       data-conversation-task-progress
-      aria-label={`${progress.completedCount} of ${progress.entries.length} tasks complete`}
+      aria-label={`${progress.completedCount} of ${total} tasks complete`}
     >
-      {position}/{progress.entries.length}
+      {position}/{total}
       {@render checklist()}
     </button>
   {/if}
-{:else}
-  <div class="task-strip" class:has-composer-gap={composerGap} data-conversation-task-strip>
-    {#if visible}
+{:else if visible}
+  <div class="task-strip" role="group" class:has-composer-gap={composerGap} data-conversation-task-strip onpointerleave={releaseIfOutside}>
       <button
         type="button"
         class="task-pill"
         data-conversation-task-control
+      onpointerenter={() => progress.onDemand?.()}
+      onfocus={() => progress.onDemand?.()}
+      onpointerleave={releaseIfOutside}
+      onblur={releaseIfOutside}
         data-conversation-task-progress
-        aria-label={`${progress.completedCount} of ${progress.entries.length} tasks complete`}
+        aria-label={`${progress.completedCount} of ${total} tasks complete`}
       >
         {#if moving}<span class="acp-spin" aria-hidden="true"></span>{/if}
-        <span class="task-count">{position} / {progress.entries.length} tasks</span>
+        <span class="task-count">{position} / {total} tasks</span>
       </button>
       {@render checklist()}
-    {/if}
   </div>
 {/if}
 

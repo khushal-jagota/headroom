@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from planner.conversation.backends import contracts as backend
@@ -13,19 +13,26 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import decode_prompt_result, encode_value
 from planner.executor.contracts import (
+    CanonicalSkillSnapshot,
     ChildCommand,
     ChildOperation,
     ChildReference,
     CommandDisposition,
     CommandOutcome,
     JsonObject,
+    WireMessage,
+    WireMessageKind,
 )
+from planner.executor.skills import validate_skill_snapshot
+from planner.executor.wire import ProtocolRefused, encode_frame
 
+type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
 type AssignChild = Callable[[ResolvedConversationStart, backend.BackendEventSink], ChildReference]
 
@@ -34,6 +41,7 @@ type AssignChild = Callable[[ResolvedConversationStart, backend.BackendEventSink
 class RemoteBackendChildFactory:
     assign_child: AssignChild
     send_command: SendCommand
+    skill_snapshot_supplier: SkillSnapshotSupplier
 
     def __call__(
         self,
@@ -43,28 +51,48 @@ class RemoteBackendChildFactory:
         message_files: ConversationMessageFiles,
     ) -> RemoteBackendChild:
         del message_files
-        return RemoteBackendChild(self.assign_child(resolved_start, event_sink), self.send_command)
+        return RemoteBackendChild(
+            self.assign_child(resolved_start, event_sink),
+            self.send_command,
+            self.skill_snapshot_supplier,
+        )
 
 
 class RemoteBackendChild:
     """A disconnect leaves command futures pending; it never fabricates a refusal."""
 
-    def __init__(self, reference: ChildReference, send_command: SendCommand) -> None:
+    def __init__(
+        self,
+        reference: ChildReference,
+        send_command: SendCommand,
+        skill_snapshot_supplier: SkillSnapshotSupplier,
+    ) -> None:
         self.reference = reference
         self._send_command = send_command
+        self._skill_snapshot_supplier = skill_snapshot_supplier
 
     async def _call(
         self, operation: ChildOperation, turn: backend.TurnToken | None = None, **arguments: Any
     ) -> JsonObject:
-        result = await self._send_command(
-            ChildCommand(
-                command_id=str(uuid4()),
-                child=self.reference,
-                operation=operation,
-                turn=turn,
-                arguments={key: encode_value(value) for key, value in arguments.items()},
-            )
+        command = ChildCommand(
+            command_id=str(uuid4()),
+            child=self.reference,
+            operation=operation,
+            turn=turn,
+            arguments={key: encode_value(value) for key, value in arguments.items()},
         )
+        if operation is ChildOperation.start:
+            try:
+                encode_frame(
+                    WireMessage(
+                        WireMessageKind.command,
+                        command.command_id,
+                        cast(JsonObject, encode_value(command)),
+                    )
+                )
+            except ProtocolRefused as error:
+                raise backend.BackendSpawnFailed(str(error)) from error
+        result = await self._send_command(command)
         if result.disposition is CommandDisposition.uncertain:
             if operation is ChildOperation.steer:
                 return {
@@ -94,18 +122,29 @@ class RemoteBackendChild:
     async def start(
         self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
     ) -> None:
+        try:
+            snapshot = self._skill_snapshot_supplier(resolved_start)
+            validate_skill_snapshot(snapshot)
+        except Exception as error:
+            raise backend.BackendSpawnFailed(
+                f"Canonical skill snapshot unavailable: {error}"
+            ) from error
         arguments: dict[str, Any] = {
+            "canonical_skill_snapshot": snapshot,
             "resolved_start": resolved_start,
             "vendor_session_cursor": vendor_session_cursor,
         }
-        try:
-            relative = resolved_start.workspace_folder.resolve().relative_to(Path.home().resolve())
-        except ValueError:
-            pass
-        else:
-            arguments["workspace_home_relative"] = (
-                "" if relative == Path(".") else relative.as_posix()
-            )
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.legacy_home_mapping:
+            try:
+                relative = resolved_start.workspace_folder.resolve().relative_to(
+                    Path.home().resolve()
+                )
+            except ValueError:
+                pass
+            else:
+                arguments["workspace_home_relative"] = (
+                    "" if relative == Path(".") else relative.as_posix()
+                )
         await self._call(ChildOperation.start, **arguments)
 
     async def write_prompt(

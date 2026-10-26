@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
@@ -111,12 +111,12 @@ def test_wrong_present_origin_rejected_for_unsafe_http_and_absent_origin_allowed
     with TestClient(app) as client:
         wrong = client.post(
             "/api/tickets",
-            json={"title": "Wrong origin", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "Wrong origin", "worker_type": "coding", "brief": "k"},
             headers={**REMOTE, "Origin": "https://evil.example"},
         )
         absent = client.post(
             "/api/tickets",
-            json={"title": "Allowed origin", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "Allowed origin", "worker_type": "coding", "brief": "k"},
             headers=REMOTE,
         )
 
@@ -161,3 +161,69 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     assert allowed_ticket_file.status_code == 200
 
 
+def test_manager_identity_generations_agree_and_conflicts_refuse() -> None:
+    import pytest
+
+    from planner.core.authctx import request_context
+    from planner.core.errors import PlannerError
+
+    def principal(headers: dict[str, str]) -> str:
+        request = Request(
+            {
+                "type": "http",
+                "headers": [
+                    (key.lower().encode(), value.encode()) for key, value in headers.items()
+                ],
+            }
+        )
+        result = request_context(request).principal
+        assert result.kind.value == "manager"
+        return result.id
+
+    assert principal({"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_one"}) == "si_one"
+    assert (
+        principal({"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_one"})
+        == "si_one"
+    )
+    assert (
+        principal(
+            {
+                "X-Plan-Actor": "manager",
+                "X-Plan-Manager-ID": "si_one",
+                "X-Plan-Sprint-Item-ID": "si_one",
+            }
+        )
+        == "si_one"
+    )
+    with pytest.raises(PlannerError, match="conflicting Manager"):
+        principal(
+            {
+                "X-Plan-Actor": "manager",
+                "X-Plan-Manager-ID": "si_one",
+                "X-Plan-Sprint-Item-ID": "si_other",
+            }
+        )
+
+
+def test_hosted_owner_strips_both_manager_identity_generations(tmp_path: Path) -> None:
+
+    from planner.core.authctx import request_context
+
+    app, _db_path = _make_app(tmp_path)
+
+    @app.get("/identity-boundary-proof")
+    def identity_boundary(request: Request) -> dict[str, str]:
+        principal = request_context(request).principal
+        return {"kind": principal.kind.value, "id": principal.id}
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/identity-boundary-proof",
+            headers={
+                **REMOTE,
+                "X-Plan-Actor": "manager",
+                "X-Plan-Manager-ID": "si_one",
+                "X-Plan-Sprint-Item-ID": "si_other",
+            },
+        )
+    assert response.json() == {"kind": "owner", "id": "owner"}

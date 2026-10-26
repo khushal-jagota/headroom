@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,12 +14,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TextIO
+from uuid import uuid4
 
 import httpx
 
 from planner.environments.app import AppManifest, AppValidationError, validate_app_manifest
 from planner.environments.backup import SNAPSHOT_METADATA_NAME, is_verified_snapshot
+from planner.environments.deployment_configuration import DEPLOYMENT_HEALTH_TIMEOUT_SECONDS
+from planner.environments.deployment_gate import verify_gate_evidence
+from planner.environments.deployment_gate_contracts import GateEvidence
 from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
+from planner.environments.interruption_capture import capture_after_stop
 from planner.environments.vps_launch import (
     read_vps_launch,
     restore_vps_launch,
@@ -108,9 +114,10 @@ class SubprocessServiceController:
                 capture_output=True,
                 text=True,
             )
-            if inspection.returncode != 0 or re.search(
-                r"(?m)^\s*pid = \d+\s*$", inspection.stdout
-            ) is None:
+            if (
+                inspection.returncode != 0
+                or re.search(r"(?m)^\s*pid = \d+\s*$", inspection.stdout) is None
+            ):
                 break
             if time.monotonic() >= deadline:
                 raise DeploymentError("user LaunchAgent did not stop cleanly")
@@ -229,10 +236,12 @@ def deploy_app(
     service: ServiceController,
     health: HealthClient,
     now: Callable[[], float] = time.monotonic,
-    health_timeout_seconds: float = 30.0,
+    health_timeout_seconds: float = DEPLOYMENT_HEALTH_TIMEOUT_SECONDS,
     lock_path: Path | None = None,
     lifecycle_transition: LifecycleTransition | None = None,
     executor_launch_configuration: VpsExecutorLaunchConfiguration | None = None,
+    gate_evidence: GateEvidence | None = None,
+    deployment_id: str | None = None,
 ) -> DeploymentResult:
     """Replace only ``current/app`` and recover the prior app on post-move failure."""
     if health_timeout_seconds <= 0:
@@ -244,6 +253,11 @@ def deploy_app(
     current_app = root / "app"
     effective_lock_path = lock_path or (root.parent / ".panels-app-deploy.lock")
     with deployment_lock(effective_lock_path):
+        if gate_evidence is not None:
+            try:
+                verify_gate_evidence(gate_evidence, root, candidate_app)
+            except (OSError, ValueError) as exc:
+                raise DeploymentError(str(exc)) from exc
         _validate_current_root(root)
         candidate_manifest = _validate_app(
             candidate_app, "candidate app", require_runtime=True
@@ -285,6 +299,7 @@ def deploy_app(
                 launch_changed=launch_changed,
                 apply_launch=apply_launch,
                 restore_launch=restore_launch,
+                expected_digest=gate_evidence["artifact_digest"] if gate_evidence else None,
             )
         if prior_manifest.app_sha == candidate_manifest.app_sha and not launch_changed:
             _publish_lifecycle(lifecycle_transition, "verifying")
@@ -310,14 +325,20 @@ def deploy_app(
         fallback = root / f".app-fallback-{os.getpid()}"
         _require_unused(staged)
         _require_unused(fallback)
+        capture_deployment_id = deployment_id or uuid4().hex
         try:
             shutil.copytree(candidate_app, staged, symlinks=True)
-            _validate_app(
+            staged_manifest = _validate_app(
                 staged,
                 "staged candidate app",
                 expected_sha=candidate_manifest.app_sha,
                 require_runtime=True,
             )
+            if (
+                gate_evidence
+                and staged_manifest.artifact_digest != gate_evidence["artifact_digest"]
+            ):
+                raise DeploymentError("copied candidate differs from checked artifact")
             try:
                 _publish_lifecycle(lifecycle_transition, "restarting")
                 service.stop()
@@ -351,6 +372,7 @@ def deploy_app(
                 raise DeploymentError(
                     "service stop failed; current app was unchanged, restarted, and verified"
                 ) from exc
+            _capture_stopped_sessions(source_db, capture_deployment_id)
             try:
                 snapshot = backup(prior_manifest.app_sha)
             except BaseException as exc:
@@ -431,6 +453,8 @@ def deploy_app(
             except BaseException as exc:
                 detail = _restore_fallback(
                     current_app=current_app,
+                    source_db=source_db,
+                    deployment_id=capture_deployment_id,
                     fallback=fallback,
                     snapshot=snapshot,
                     restore=restore,
@@ -486,18 +510,21 @@ def _install_first_app(
     launch_changed: bool,
     apply_launch: Callable[[], None],
     restore_launch: Callable[[], None],
+    expected_digest: str | None = None,
 ) -> DeploymentResult:
     current_app.parent.mkdir(parents=True, exist_ok=True)
     staged = current_app.parent / f".app-candidate-{os.getpid()}"
     _require_unused(staged)
     try:
         shutil.copytree(candidate_app, staged, symlinks=True)
-        _validate_app(
+        staged_manifest = _validate_app(
             staged,
             "staged candidate app",
             expected_sha=candidate_manifest.app_sha,
             require_runtime=True,
         )
+        if expected_digest and staged_manifest.artifact_digest != expected_digest:
+            raise DeploymentError("copied candidate differs from checked artifact")
         os.replace(staged, current_app)
         try:
             _publish_lifecycle(lifecycle_transition, "restarting")
@@ -593,6 +620,8 @@ def _require_unused(path: Path) -> None:
 def _restore_fallback(
     *,
     current_app: Path,
+    source_db: Path,
+    deployment_id: str,
     fallback: Path,
     snapshot: Path,
     restore: Restore,
@@ -609,6 +638,7 @@ def _restore_fallback(
     try:
         _publish_lifecycle(lifecycle_transition, "restarting")
         service.stop()
+        _capture_stopped_sessions(source_db, deployment_id)
         restore(snapshot)
         _require_unused(failed)
         if current_app.exists() or current_app.is_symlink():
@@ -660,3 +690,14 @@ def _publish_lifecycle(
 ) -> None:
     if transition is not None:
         transition(phase, serving_sha=serving_sha, detail=detail, code=code)
+
+
+def _capture_stopped_sessions(source_db: Path, deployment_id: str) -> None:
+    # Diagnostics cannot change backup, health, rollback, or release success.
+    try:
+        capture_after_stop(source_db, deployment_id)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Deployment %s interruption capture failed; release gates remain unchanged",
+            deployment_id,
+        )

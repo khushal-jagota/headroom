@@ -8,26 +8,88 @@ on:
         description: Full 40-character commit SHA to deploy
         required: true
         type: string
+      rehearsal:
+        description: Run the complete deploy against a disposable hosted VM
+        required: false
+        default: false
+        type: boolean
+      baseline_sha:
+        description: Full known-good SHA to serve before a rehearsal (must differ)
+        required: false
+        type: string
+permissions:
+  contents: read
 concurrency:
-  group: production-deploy
+  group: ${{ inputs.rehearsal && format('deploy-rehearsal-{0}', github.run_id) || 'production-deploy' }}
   cancel-in-progress: false
 env:
   PANELS_REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
 jobs:
   deploy:
-    runs-on: [self-hosted, linux, production, panels-deploy]
+    if: ${{ inputs.rehearsal || github.ref == 'refs/heads/main' }}
+    runs-on: ${{ inputs.rehearsal && 'ubuntu-24.04' || fromJSON('["self-hosted", "linux", "production", "panels-deploy"]') }}
+    env:
+      PANELS_REHEARSAL: ${{ inputs.rehearsal && 'true' || 'false' }}
+      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha }}
+    defaults:
+      run:
+        shell: python3 scripts/deployment_progress.py {0}
     steps:
-      - name: Set runner-temporary deployment paths
-        run: |
-          echo "PANELS_CANDIDATE_SOURCE=$RUNNER_TEMP/panels-source-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
-          echo "PANELS_CANDIDATE_APP=$RUNNER_TEMP/panels-candidate-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
-          echo "PANELS_DEPLOY_VENV=$RUNNER_TEMP/panels-deploy-venv-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
-          echo "PANELS_DEPLOYMENT_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
-          echo "PANELS_LIFECYCLE_PATH=$HOME/Deployments/Panels/current/data/deployment-lifecycle.json" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        if: ${{ inputs.rehearsal }}
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: ${{ inputs.rehearsal }}
+        with:
+          node-version: '22'
+      - name: Bootstrap disposable hosted runner
+        if: ${{ inputs.rehearsal }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap dbus-user-session ffmpeg
+          # Hosted Ubuntu's AppArmor policy otherwise denies unprivileged bwrap.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+          sudo mkdir -p /home/vps/Deployments/Panels
+          sudo chown "$(id -u):$(id -g)" /home/vps/Deployments/Panels
+      - name: Set deployment paths
+        run: python3 scripts/deployment_rehearsal.py configure
+      - name: Provision offline Hermes packaging prerequisite
+        if: ${{ inputs.rehearsal }}
+        run: |
+          set -o pipefail
+          # Only the real core + ACP package is needed; never provider credentials/extras.
+          hermes_source="$HOME/.hermes/hermes-agent"
+          hermes_sha=76d832d3857551a029c4b39c23945eb47c16fe5b
+          test ! -e "$hermes_source"
+          echo "PANELS_REHEARSAL_HERMES_ROOT=$hermes_source" >> "$GITHUB_ENV"
+          git init "$hermes_source"
+          git -C "$hermes_source" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$hermes_source" fetch --depth=1 origin "$hermes_sha"
+          git -C "$hermes_source" checkout --detach FETCH_HEAD
+          test "$(git -C "$hermes_source" rev-parse HEAD)" = "$hermes_sha"
+          python3 -m venv "$hermes_source/venv"
+          "$hermes_source/venv/bin/python" -m pip install --editable "$hermes_source[acp]" \
+            2>&1 | tee "$PANELS_GATE_DIR/hermes-install.log"
+          echo "$hermes_sha" > "$PANELS_GATE_DIR/hermes-revision.txt"
+      - name: Prepare rehearsal runtime
+        if: ${{ inputs.rehearsal }}
+        run: &prepare_deployment_runtime |
+          python3 -m venv "$PANELS_DEPLOY_VENV"
+          "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
+          "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
+      - name: Start known-good rehearsal release
+        if: ${{ inputs.rehearsal }}
+        run: |
+          "$PANELS_DEPLOY_VENV/bin/python" scripts/deployment_rehearsal.py start
       - name: Start deployment lifecycle
         id: lifecycle-start
         run: |
@@ -44,7 +106,7 @@ jobs:
             expected_args=(--expected-deployment-id "$expected_id")
           fi
           prior_sha="$(
-            python3 - "$HOME/Deployments/Panels/current/app/manifest.json" <<'PY'
+            python3 - "$PANELS_CURRENT_ROOT/app/manifest.json" <<'PY'
           import json
           import pathlib
           import re
@@ -67,6 +129,7 @@ jobs:
             --requested-sha "$PANELS_REQUESTED_SHA" \
             "${expected_args[@]}" \
             "${prior_args[@]}"
+          echo "PANELS_DEPLOYMENT_PROGRESS_ACTIVE=true" >> "$GITHUB_ENV"
       - name: Prove exact temporary source
         run: |
           printf '%s\n' "$PANELS_REQUESTED_SHA" | grep -Eq '^[0-9a-f]{40}$' || {
@@ -79,42 +142,235 @@ jobs:
           python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python 3.12 or newer is required"'
           node -e 'const major = Number(process.versions.node.split(".")[0]); if (major !== 22) throw new Error("Node 22 is required")'
       - name: Prepare deployment runtime
+        if: ${{ !inputs.rehearsal }}
+        run: *prepare_deployment_runtime
+      - name: Observe served release and select related checks
         run: |
-          python3 -m venv "$PANELS_DEPLOY_VENV"
-          "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
-          "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
-      - name: Build and validate exact app
+          mkdir -p "$PANELS_GATE_DIR"
+          "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.deployment_gate observe \
+            --current-root "$PANELS_CURRENT_ROOT" \
+            --health-url "$PANELS_HEALTH_URL" \
+            --output "$PANELS_GATE_DIR/observation.json"
+          base_sha="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["base_sha"] or "")' "$PANELS_GATE_DIR/observation.json")"
+          base_args=()
+          if [ -n "$base_sha" ]; then base_args=(--base-sha "$base_sha"); fi
+          "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.related_checks \
+            --source-root "$PANELS_CANDIDATE_SOURCE" \
+            --requested-sha "$PANELS_REQUESTED_SHA" --control-sha "${{ github.sha }}" \
+            "${base_args[@]}" --output "$PANELS_GATE_DIR/selection.json"
+          cat "$PANELS_GATE_DIR/selection.json"
+          if [ "$PANELS_REHEARSAL" = true ]; then
+            python3 "$GITHUB_WORKSPACE/scripts/deployment_rehearsal.py" check-selection
+          fi
+      - name: Prepare requested-source check environment
+        id: checks_setup
+        run: |
+          # Never inherit service/database/provider configuration into requested checks.
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable .
+          # Candidate construction also needs both lockfile-controlled dependency trees.
+          npm ci --prefix web
+          npm ci --prefix agent_backends
+          if [ "$PANELS_REHEARSAL" = true ]; then
+            .venv/bin/python -m playwright install --with-deps chromium
+          else
+            .venv/bin/python -m playwright install chromium
+          fi
+          codex_bin="$(.venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" setup --source-root "$PANELS_CANDIDATE_SOURCE" --tools-dir "$PANELS_CODEX_TOOLS")"
+          echo "$codex_bin" >> "$GITHUB_PATH"
+          export PATH="$codex_bin:$PATH"
+          npm --prefix web run build
+          # A missing sandbox fails before any selected connected host starts.
+          connected="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; s=json.load(open(sys.argv[1])); print(bool(s["e2e"] or s["browser"]))' "$PANELS_GATE_DIR/selection.json")"
+          if [ "$connected" = True ]; then
+            command -v bwrap
+          fi
+          mkdir -p "$PANELS_GATE_DIR/artifact-shadow" "$PANELS_REPORT_DIR"
+      - name: Ruff at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          selected_text="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; assert isinstance(v,list) and all(isinstance(p,str) and p for p in v), "invalid selected paths"; print("\n".join(v))' "$PANELS_GATE_DIR/selection.json" "ruff_paths")"
+          if [ -z "$selected_text" ]; then exit 0; fi
+          mapfile -t selected <<< "$selected_text"
+          .venv/bin/ruff check "${selected[@]}"
+      - name: mypy at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          enabled="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))["mypy"]; assert isinstance(v,bool), "invalid check flag"; print(str(v).lower())' "$PANELS_GATE_DIR/selection.json")"
+          if [ "$enabled" != true ]; then exit 0; fi
+          .venv/bin/mypy
+      - name: pytest unit at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          selected_text="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; assert isinstance(v,list) and all(isinstance(p,str) and p for p in v), "invalid selected paths"; print("\n".join(v))' "$PANELS_GATE_DIR/selection.json" "unit")"
+          if [ -z "$selected_text" ]; then exit 0; fi
+          mapfile -t selected <<< "$selected_text"
+          .venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" verify --source-root "$PANELS_CANDIDATE_SOURCE"
+          .venv/bin/pytest "${selected[@]}" --junitxml="$PANELS_REPORT_DIR/unit.xml"
+          "$PANELS_DEPLOY_VENV/bin/python" "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" pytest "$PANELS_REPORT_DIR/unit.xml" "${selected[@]}"
+      - name: pytest integration at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          selected_text="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; assert isinstance(v,list) and all(isinstance(p,str) and p for p in v), "invalid selected paths"; print("\n".join(v))' "$PANELS_GATE_DIR/selection.json" "integration")"
+          if [ -z "$selected_text" ]; then exit 0; fi
+          mapfile -t selected <<< "$selected_text"
+          .venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" verify --source-root "$PANELS_CANDIDATE_SOURCE"
+          .venv/bin/pytest "${selected[@]}" --junitxml="$PANELS_REPORT_DIR/integration.xml"
+          "$PANELS_DEPLOY_VENV/bin/python" "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" pytest "$PANELS_REPORT_DIR/integration.xml" "${selected[@]}"
+      - name: pytest E2E at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          selected_text="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; assert isinstance(v,list) and all(isinstance(p,str) and p for p in v), "invalid selected paths"; print("\n".join(v))' "$PANELS_GATE_DIR/selection.json" "e2e")"
+          if [ -z "$selected_text" ]; then exit 0; fi
+          mapfile -t selected <<< "$selected_text"
+          .venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" verify --source-root "$PANELS_CANDIDATE_SOURCE"
+          bwrap --bind / / --dev-bind /dev /dev \
+            --bind "$PANELS_GATE_DIR/artifact-shadow" /home/vps/Deployments/Panels \
+            --bind "$PANELS_CANDIDATE_SOURCE" "$PANELS_CANDIDATE_SOURCE" \
+            --bind "$PANELS_REPORT_DIR" "$PANELS_REPORT_DIR" \
+            --bind "$PANELS_CODEX_TOOLS" "$PANELS_CODEX_TOOLS" \
+            --chdir "$PANELS_CANDIDATE_SOURCE" -- \
+            .venv/bin/pytest "${selected[@]}" --junitxml="$PANELS_REPORT_DIR/e2e.xml"
+          "$PANELS_DEPLOY_VENV/bin/python" "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" pytest "$PANELS_REPORT_DIR/e2e.xml" "${selected[@]}"
+      - name: Frontend check at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          enabled="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))["web_check"]; assert isinstance(v,bool), "invalid check flag"; print(str(v).lower())' "$PANELS_GATE_DIR/selection.json")"
+          if [ "$enabled" != true ]; then exit 0; fi
+          npm --prefix web run check
+      - name: Typechecked Vitest at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          selected_text="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; assert isinstance(v,list) and all(isinstance(p,str) and p for p in v), "invalid selected paths"; print("\n".join(v))' "$PANELS_GATE_DIR/selection.json" "vitest")"
+          if [ -z "$selected_text" ]; then exit 0; fi
+          mapfile -t selected <<< "$selected_text"
+          for index in "${!selected[@]}"; do selected[$index]="${selected[$index]#web/}"; done
+          npm --prefix web run test:vitest -- "${selected[@]}" --reporter=default --reporter=json --outputFile="$PANELS_REPORT_DIR/vitest.json"
+          "$PANELS_DEPLOY_VENV/bin/python" "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" vitest "$PANELS_REPORT_DIR/vitest.json" "${selected[@]}"
+      - name: Browser hosts at requested source
+        if: ${{ !cancelled() && steps.checks_setup.outcome == 'success' }}
+        run: |
+          for key in $(compgen -e); do
+            case "$key" in PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR) unset "$key" ;; esac
+          done
+          cd "$PANELS_CANDIDATE_SOURCE"
+          selected_text="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; assert isinstance(v,list) and all(isinstance(p,str) and p for p in v), "invalid selected paths"; print("\n".join(v))' "$PANELS_GATE_DIR/selection.json" "browser")"
+          if [ -z "$selected_text" ]; then exit 0; fi
+          mapfile -t selected <<< "$selected_text"
+          browser_format="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["browser_format"])' "$PANELS_GATE_DIR/selection.json")"
+          if [ "$browser_format" = shared-v1 ]; then
+            invocation_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-browser"
+            # The receipt proves its own revision with git, so the checkout's git
+            # directory must survive the artifact shadow it can sit underneath.
+            git_common_dir="$(git -C "$PANELS_CANDIDATE_SOURCE" rev-parse --path-format=absolute --git-common-dir)"
+            bwrap --bind / / --dev-bind /dev /dev \
+              --bind "$PANELS_GATE_DIR/artifact-shadow" /home/vps/Deployments/Panels \
+              --bind "$PANELS_CANDIDATE_SOURCE" "$PANELS_CANDIDATE_SOURCE" \
+              --ro-bind "$git_common_dir" "$git_common_dir" \
+              --bind "$PANELS_REPORT_DIR" "$PANELS_REPORT_DIR" \
+              --bind "$PANELS_CODEX_TOOLS" "$PANELS_CODEX_TOOLS" \
+              --chdir "$PANELS_CANDIDATE_SOURCE/web" -- \
+              node tests/browser/run.mjs --report "$PANELS_REPORT_DIR/browser.json" \
+                --revision "$PANELS_REQUESTED_SHA" --invocation-id "$invocation_id" "${selected[@]}"
+            "$PANELS_DEPLOY_VENV/bin/python" "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" \
+              browser "$PANELS_REPORT_DIR/browser.json" "${selected[@]}" \
+              --source-root "$PANELS_CANDIDATE_SOURCE" --revision "$PANELS_REQUESTED_SHA" \
+              --invocation-id "$invocation_id"
+          elif [ "$browser_format" = legacy ]; then
+            # Rollback source predates case receipts. Preserve its original exit checks.
+            status=0
+            for host in "${selected[@]}"; do
+              bwrap --bind / / --dev-bind /dev /dev \
+                --bind "$PANELS_GATE_DIR/artifact-shadow" /home/vps/Deployments/Panels \
+                --bind "$PANELS_CANDIDATE_SOURCE" "$PANELS_CANDIDATE_SOURCE" \
+                --bind "$PANELS_REPORT_DIR" "$PANELS_REPORT_DIR" \
+                --bind "$PANELS_CODEX_TOOLS" "$PANELS_CODEX_TOOLS" \
+                --chdir "$PANELS_CANDIDATE_SOURCE/web" -- \
+                node "${host#web/}" || status=1
+            done
+            exit "$status"
+          else
+            echo "Unsupported browser proof format: $browser_format" >&2
+            exit 1
+          fi
+      - name: Build exact candidate once
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-build \
             --source-root "$PANELS_CANDIDATE_SOURCE" \
             --requested-sha "$PANELS_REQUESTED_SHA" \
             --candidate-app "$PANELS_CANDIDATE_APP"
+      - name: Prove isolated installed candidate and seal gate evidence
+        run: |
+          "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.deployment_gate smoke \
+            --candidate-app "$PANELS_CANDIDATE_APP" \
+            --requested-sha "$PANELS_REQUESTED_SHA" \
+            --observation "$PANELS_GATE_DIR/observation.json" \
+            --output "$PANELS_GATE_DIR/evidence.json"
       - name: Deploy exact app
         run: |
-          "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-deploy \
+          env HOME="$PANELS_APP_HOME" "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-deploy \
             --candidate-app "$PANELS_CANDIDATE_APP" \
-            --current-root "$HOME/Deployments/Panels/current" \
-            --source-db "$HOME/Deployments/Panels/current/data/planner.db" \
-            --backup-dir "$HOME/Deployments/Panels/current/data/backups" \
-            --health-url "http://127.0.0.1:8767/api/health" \
+            --gate-evidence "$PANELS_GATE_DIR/evidence.json" \
+            --current-root "$PANELS_CURRENT_ROOT" \
+            --source-db "$PANELS_CURRENT_ROOT/data/planner.db" \
+            --backup-dir "$PANELS_CURRENT_ROOT/data/backups" \
+            --health-url "$PANELS_HEALTH_URL" \
             --service-manager systemctl \
-            --service-name panels-live.service \
+            --service-name "$PANELS_SERVICE_NAME" \
             --lifecycle-path "$PANELS_LIFECYCLE_PATH" \
             --deployment-id "$PANELS_DEPLOYMENT_ID"
-      - name: Provision production agent skills
+      - name: Check published HTTP/2
+        if: ${{ !inputs.rehearsal }}
+        env:
+          PANELS_PUBLISHED_ORIGIN: ${{ vars.PANELS_PUBLISHED_ORIGIN }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/check_published_http2.py"
+      - name: Provision agent skills
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills \
-            --database-parent "$HOME/Deployments/Panels/current/data" \
-            --hermes-home "$HOME/.hermes" \
-            --codex-home "$HOME/.codex" \
-            --claude-home "$HOME/.claude"
-      - name: Remove runner-temporary deployment state
-        if: always()
-        run: |
-          git worktree remove --force "$PANELS_CANDIDATE_SOURCE" || rm -rf -- "$PANELS_CANDIDATE_SOURCE"
-          rm -rf -- "$PANELS_CANDIDATE_APP" "$PANELS_DEPLOY_VENV"
+            --database-parent "$PANELS_CURRENT_ROOT/data" \
+            --hermes-home "$PANELS_APP_HOME/.hermes" \
+            --codex-home "$PANELS_APP_HOME/.codex" \
+            --claude-home "$PANELS_APP_HOME/.claude"
+      - name: Remove production deployment temporary state
+        shell: python3 scripts/deployment_progress.py --cleanup {0}
+        if: ${{ always() && !inputs.rehearsal }}
+        run: &cleanup_deployment_state python3 scripts/deployment_rehearsal.py cleanup
       - name: Finalize deployment lifecycle
-        if: always() && steps.lifecycle-start.outcome == 'success'
+        shell: bash
+        if: always()
         env:
           PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
         run: |
@@ -138,3 +394,19 @@ jobs:
             --code "$code" \
             --preserve-terminal \
             "${serving_args[@]}"
+      - name: Collect rehearsal proof
+        if: ${{ always() && inputs.rehearsal }}
+        env:
+          PANELS_REHEARSAL_JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/deployment_rehearsal.py capture
+      - name: Retain rehearsal proof
+        if: ${{ always() && inputs.rehearsal }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deploy-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PANELS_GATE_DIR }}
+          if-no-files-found: error
+      - name: Remove rehearsal temporary state
+        shell: python3 scripts/deployment_progress.py --cleanup {0}
+        if: ${{ always() && inputs.rehearsal }}
+        run: *cleanup_deployment_state

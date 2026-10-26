@@ -1,4 +1,4 @@
-"""HTTP routes for managed files: a Ticket's, and an Outcome's."""
+"""HTTP routes for managed files: a Ticket's, and a Manager's."""
 
 from __future__ import annotations
 
@@ -21,8 +21,12 @@ from planner.core.authority import require_above_or_self
 from planner.core.contracts import JsonDict
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.files import sprint_item_files
-from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
+from planner.files import manager_files
+from planner.files.logic.paths import (
+    resolve_html_navigation,
+    resolve_manager_file,
+    resolve_ticket_file,
+)
 from planner.files.logic.reuse import (
     holds_the_current_copy,
     is_played_with_ranges,
@@ -66,51 +70,70 @@ _INLINE_MEDIA_TYPES = _INLINE_IMAGE_TYPES | frozenset(
 async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> Response:
     _reject_raw_encoded_unsafe_path(request)
     try:
-        ticket_file = resolve_ticket_file(request.app.state.config.db_path, ticket_id, file_path)
-    except ValueError as exc:
+        ticket_file = (
+            resolve_html_navigation(
+                request.app.state.config.db_path,
+                request.headers["x-panels-artifact-root"],
+                request.scope["raw_path"].decode("ascii"),
+            )
+            if "x-panels-artifact-root" in request.headers
+            else resolve_ticket_file(
+                request.app.state.config.db_path, ticket_id, file_path
+            ).absolute_path
+        )
+    except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
         raise PlannerError(ErrorCode.not_found, "ticket file not found") from exc
 
     media_type = (
-        mimetypes.guess_type(ticket_file.absolute_path.name)[0] or "application/octet-stream"
+        mimetypes.guess_type(ticket_file.name)[0] or "application/octet-stream"
     )
     disposition = "inline" if _may_inline(media_type) else "attachment"
     response = FileResponse(
-        ticket_file.absolute_path,
+        ticket_file,
         media_type=media_type,
-        filename=ticket_file.absolute_path.name,
+        filename=ticket_file.name,
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return await _reusable(request, response, ticket_file.absolute_path, media_type)
+    return await _reusable(request, response, ticket_file, media_type)
 
 
-@router.get("/files/sprint-items/{sprint_item_id}/{file_path:path}")
-async def get_sprint_item_file(
-    request: Request, sprint_item_id: str, file_path: str
+@router.get("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
+@router.get("/files/managers/{manager_id}/{file_path:path}")
+async def get_manager_file(
+    request: Request, manager_id: str, file_path: str
 ) -> Response:
-    _reject_raw_encoded_unsafe_path(request, "Sprint Item file not found")
+    _reject_raw_encoded_unsafe_path(request, "Manager file not found")
     with connect(request.app.state.config.db_path) as conn:
         require_above_or_self(
-            conn, request_context(request).principal, authority.outcome(sprint_item_id)
+            conn, request_context(request).principal, authority.manager(manager_id)
         )
     try:
-        managed_file = resolve_sprint_item_file(
-            request.app.state.config.db_path, sprint_item_id, file_path
+        managed_file = (
+            resolve_html_navigation(
+                request.app.state.config.db_path,
+                request.headers["x-panels-artifact-root"],
+                request.scope["raw_path"].decode("ascii"),
+            )
+            if "x-panels-artifact-root" in request.headers
+            else resolve_manager_file(
+                request.app.state.config.db_path, manager_id, file_path
+            ).absolute_path
         )
-    except ValueError as exc:
-        raise PlannerError(ErrorCode.not_found, "Sprint Item file not found") from exc
+    except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
+        raise PlannerError(ErrorCode.not_found, "Manager file not found") from exc
     media_type = (
-        mimetypes.guess_type(managed_file.absolute_path.name)[0] or "application/octet-stream"
+        mimetypes.guess_type(managed_file.name)[0] or "application/octet-stream"
     )
     disposition = "inline" if _may_inline(media_type) else "attachment"
     response = FileResponse(
-        managed_file.absolute_path,
+        managed_file,
         media_type=media_type,
-        filename=managed_file.absolute_path.name,
+        filename=managed_file.name,
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return await _reusable(request, response, managed_file.absolute_path, media_type)
+    return await _reusable(request, response, managed_file, media_type)
 
 
 async def _reusable(
@@ -169,37 +192,39 @@ async def _reusable(
     return kept
 
 
-@router.put("/files/sprint-items/{sprint_item_id}/{file_path:path}")
-async def write_sprint_item_file(
-    request: Request, sprint_item_id: str, file_path: str, raw: dict[str, Any]
+@router.put("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
+@router.put("/files/managers/{manager_id}/{file_path:path}")
+async def write_manager_file(
+    request: Request, manager_id: str, file_path: str, raw: dict[str, Any]
 ) -> JsonDict:
-    """Write one of this Outcome's managed files, at the path that reads it back.
+    """Write one of this Manager's managed files, at the path that reads it back.
 
     The same address as the GET above, so a caller writes the string it will later read.
     """
-    _reject_raw_encoded_unsafe_path(request, "Sprint Item file not found")
+    _reject_raw_encoded_unsafe_path(request, "Manager file not found")
     db_path = request.app.state.config.db_path
     with connect(db_path) as conn:
-        return sprint_item_files.write_file(
+        return manager_files.write_file(
             conn,
             request_context(request).principal,
-            sprint_item_id,
+            manager_id,
             db_path,
             file_path,
             body_str(raw, "content"),
         )
 
 
-@router.delete("/files/sprint-items/{sprint_item_id}/{file_path:path}")
-async def delete_sprint_item_file(
-    request: Request, sprint_item_id: str, file_path: str
+@router.delete("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
+@router.delete("/files/managers/{manager_id}/{file_path:path}")
+async def delete_manager_file(
+    request: Request, manager_id: str, file_path: str
 ) -> JsonDict:
-    """Remove one of this Outcome's managed files."""
-    _reject_raw_encoded_unsafe_path(request, "Sprint Item file not found")
+    """Remove one of this Manager's managed files."""
+    _reject_raw_encoded_unsafe_path(request, "Manager file not found")
     db_path = request.app.state.config.db_path
     with connect(db_path) as conn:
-        return sprint_item_files.delete_file(
-            conn, request_context(request).principal, sprint_item_id, db_path, file_path
+        return manager_files.delete_file(
+            conn, request_context(request).principal, manager_id, db_path, file_path
         )
 
 

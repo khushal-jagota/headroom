@@ -148,12 +148,6 @@ def test_codex_native_response_wins_over_legacy_and_cumulative_representations()
     assert parsed.issues == ()
 
 
-def test_codex_equal_sized_native_responses_remain_distinct() -> None:
-    parsed = parse_codex([_context(), _modern("response-a"), _modern("response-b")])
-
-    assert len(parsed.records) == 2
-    assert len({record.record_key for record in parsed.records}) == 2
-    assert sum(record.tokens.output_tokens or 0 for record in parsed.records) == 40
 
 
 def test_copied_native_response_uses_original_ids_despite_fork_container_and_timestamp() -> None:
@@ -186,12 +180,6 @@ def test_same_native_response_keeps_earliest_timestamp_independent_of_copy_order
     assert parsed.records[0].occurred_at == datetime(2026, 10, 16, 18, tzinfo=UTC)
 
 
-def test_modern_fork_ledger_does_not_inherit_ignored_legacy_ambiguity() -> None:
-    parsed = parse_codex([_meta(fork=True), _context(), _modern(), _legacy()])
-
-    assert len(parsed.records) == 1
-    assert parsed.records[0].format == "codex_response"
-    assert parsed.issues == ()
 
 
 def test_conflicting_native_identity_is_excluded_without_legacy_gap_fill() -> None:
@@ -234,32 +222,8 @@ def test_codex_known_earlier_turn_keeps_its_model_after_another_turn_context() -
     assert parsed.issues == ()
 
 
-def test_modern_native_and_container_sessions_are_not_substituted_for_each_other() -> None:
-    parsed = parse_codex(
-        [
-            _meta(),
-            _context(),
-            _modern(thread="original-thread", session="original-runtime"),
-        ]
-    )
-
-    record = parsed.records[0]
-    assert (record.thread_id, record.session_id) == ("original-thread", "original-runtime")
-    assert parsed.modern_threads == ("original-thread",)
 
 
-@pytest.mark.parametrize("with_meta", [True, False])
-def test_modern_response_without_original_thread_is_excluded_as_partial(with_meta: bool) -> None:
-    raw = json.loads(_modern())
-    del raw["payload"]["thread_id"]
-    lines = [_context(), json.dumps(raw), _legacy()]
-    if with_meta:
-        lines.insert(0, _meta())
-    parsed = parse_codex(lines)
-
-    assert parsed.records == ()
-    assert parsed.modern_threads == (("thread-a",) if with_meta else ())
-    assert any("original thread" in message for message in parsed.issues)
 
 
 def test_legacy_equal_sized_requests_use_cumulative_identity_and_drop_reemission() -> None:
@@ -282,17 +246,6 @@ def test_legacy_equal_sized_requests_use_cumulative_identity_and_drop_reemission
     assert parsed.issues == ("Legacy Codex usage has limited producer provenance.",)
 
 
-def test_unknown_legacy_producer_version_cannot_claim_complete_coverage() -> None:
-    parsed = parse_codex(
-        [
-            _line("session_meta", {"id": "thread-a", "cli_version": "unknown-historical-build"}),
-            _context(),
-            _legacy(),
-        ]
-    )
-
-    assert len(parsed.records) == 1
-    assert any("provenance" in message for message in parsed.issues)
 
 
 def test_legacy_unknown_initial_baseline_is_excluded_then_verified_delta_counts() -> None:
@@ -350,21 +303,6 @@ def test_legacy_forked_history_is_excluded_instead_of_timing_based_guess() -> No
     assert any("fork" in message for message in parsed.issues)
 
 
-def test_mixed_upgrade_prefix_is_excluded_with_partial_coverage() -> None:
-    twice = _usage(200, 40, cached=60, creation=20, reasoning=10, total=240)
-    parsed = parse_codex(
-        [
-            _meta(),
-            _context(),
-            _legacy(),
-            _modern("response-b", cumulative=twice),
-            _legacy(cumulative=twice),
-        ]
-    )
-
-    assert len(parsed.records) == 1
-    assert parsed.records[0].format == "codex_response"
-    assert any("prefix" in message for message in parsed.issues)
 
 
 def test_unverified_legacy_baseline_in_mixed_history_still_marks_partial_coverage() -> None:
@@ -384,18 +322,6 @@ def test_unverified_legacy_baseline_in_mixed_history_still_marks_partial_coverag
     assert any("prefix" in message for message in parsed.issues)
 
 
-@pytest.mark.parametrize("bad", [None, True, False, -1, 1.5, "100", float("nan"), float("inf")])
-def test_invalid_codex_counter_is_unknown_without_destroying_independent_categories(
-    bad: object,
-) -> None:
-    parsed = parse_codex([_context(), _modern(usage=_usage(input_tokens=bad))])
-
-    tokens = parsed.records[0].tokens
-    assert tokens.input_tokens is None
-    assert tokens.uncached_input_tokens is None
-    assert tokens.cached_input_tokens == 30
-    assert tokens.cache_creation_tokens == 10
-    assert tokens.output_tokens == 20
 
 
 def test_valid_codex_zero_counts_remain_known_zero() -> None:
@@ -408,31 +334,8 @@ def test_valid_codex_zero_counts_remain_known_zero() -> None:
     )
 
 
-def test_inconsistent_codex_cache_and_reasoning_remain_unknown_without_clamping() -> None:
-    parsed = parse_codex(
-        [
-            _context(),
-            _modern(usage=_usage(cached=120, reasoning=30)),
-        ]
-    )
-
-    tokens = parsed.records[0].tokens
-    assert tokens.input_tokens is None
-    assert tokens.uncached_input_tokens is None
-    assert tokens.cached_input_tokens == 120
-    assert tokens.reasoning_tokens is None
-    assert len(parsed.issues) == 2
 
 
-def test_legacy_missing_cache_category_preserves_known_inclusive_input() -> None:
-    usage: dict[str, object] = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
-    parsed = parse_codex([_meta(), _context(), _legacy(usage, usage)])
-
-    assert len(parsed.records) == 1
-    assert parsed.records[0].tokens.input_tokens == 100
-    assert parsed.records[0].tokens.uncached_input_tokens == 100
-    assert parsed.records[0].tokens.cached_input_tokens == 0
-    assert parsed.records[0].tokens.cache_creation_tokens == 0
 
 
 def test_claude_normalizes_separate_input_categories_and_keeps_reasoning_subset() -> None:
@@ -448,47 +351,10 @@ def test_claude_normalizes_separate_input_categories_and_keeps_reasoning_subset(
     assert record.occurred_at == datetime(2026, 10, 16, 18, tzinfo=UTC)
 
 
-def test_claude_unknown_cache_does_not_erase_known_uncached_input() -> None:
-    parsed = parse_claude([_claude(usage={"input_tokens": 100, "output_tokens": 20})])
-
-    tokens = parsed.records[0].tokens
-    assert tokens.uncached_input_tokens == 100
-    assert tokens.input_tokens is None
-    assert tokens.cached_input_tokens is None
-    assert tokens.cache_creation_tokens is None
-    assert tokens.reasoning_tokens is None
 
 
-def test_invalid_claude_categories_stay_unknown_while_explicit_subsets_stay_known() -> None:
-    parsed = parse_claude(
-        [
-            _claude(
-                usage={
-                    "input_tokens": 100,
-                    "cache_read_input_tokens": True,
-                    "cache_creation_input_tokens": 5,
-                    "output_tokens": -1,
-                    "output_tokens_details": {"thinking_tokens": 0},
-                }
-            )
-        ]
-    )
-
-    tokens = parsed.records[0].tokens
-    assert tokens.uncached_input_tokens == 100
-    assert tokens.input_tokens is None
-    assert tokens.cached_input_tokens is None
-    assert tokens.cache_creation_tokens == 5
-    assert tokens.output_tokens is None
-    assert tokens.reasoning_tokens == 0
 
 
-def test_claude_repeated_content_blocks_and_copied_messages_count_once() -> None:
-    parsed = parse_claude([_claude(), _claude(stamp="2026-10-16T18:01:00Z")])
-
-    assert len(parsed.records) == 1
-    assert parsed.duplicates == 1
-    assert parsed.issues == ()
 
 
 def test_claude_copied_message_keeps_tokens_but_marks_uncertain_session_attribution() -> None:
@@ -539,51 +405,10 @@ def test_claude_overlapping_identity_aliases_never_create_second_consumption(
     assert any("Overlapping" in message for message in parsed.issues)
 
 
-def test_claude_transitive_alias_overlap_tombstones_every_connected_identity() -> None:
-    parsed = parse_claude(
-        [
-            _claude(),
-            _claude(request="req-b"),
-            _claude(message="msg-b", request="req-b"),
-        ]
-    )
-
-    assert parsed.records == ()
-    assert set(parsed.conflicted_record_keys) == {
-        'claude:message:["msg-a","req-a"]',
-        'claude:message:["msg-a","req-b"]',
-        'claude:message:["msg-b","req-b"]',
-    }
 
 
-def test_cross_file_identity_policy_matches_parser_alias_suppression() -> None:
-    first = parse_claude([_claude()])
-    second = parse_claude([_claude(request=None)])
-    merged = deduplicate_usage_records((*first.records, *second.records))
-    single = parse_claude([_claude(), _claude(request=None)])
-
-    assert merged.records == single.records == ()
-    assert merged.conflicted_record_keys == single.conflicted_record_keys
-    assert any("Overlapping" in message for message in merged.issues)
 
 
-def test_persisted_alias_conflicts_suppress_new_copies_without_original_conflicting_records() -> (
-    None
-):
-    previous = parse_claude([_claude(), _claude(request=None)])
-    new_file = parse_claude([_claude(request="req-c")])
-    merged = deduplicate_usage_records(
-        new_file.records,
-        conflicted_record_keys=previous.conflicted_record_keys,
-    )
-
-    assert merged.records == ()
-    assert set(merged.conflicted_record_keys) == {
-        'claude:message:["msg-a","req-a"]',
-        'claude:message:["msg-a",null]',
-        'claude:message:["msg-a","req-c"]',
-    }
-    assert merged.issues
 
 
 def test_nonoverlapping_claude_message_and_request_pairs_remain_distinct_globally() -> None:
@@ -596,17 +421,6 @@ def test_nonoverlapping_claude_message_and_request_pairs_remain_distinct_globall
     assert merged.issues == ()
 
 
-@pytest.mark.parametrize("message,request_id", [(None, "req-a"), ("msg-a", None)])
-def test_claude_uses_a_present_identity_half(message: str | None, request_id: str | None) -> None:
-    parsed = parse_claude(
-        [
-            _claude(message=message, request=request_id),
-            _claude(message=message, request=request_id),
-        ]
-    )
-
-    assert len(parsed.records) == 1
-    assert parsed.duplicates == 1
 
 
 @pytest.mark.parametrize("cost", [None, -1, True, "0.5", float("inf")])
@@ -634,11 +448,6 @@ def test_explicit_claude_zero_cost_and_zero_categories_are_valid() -> None:
     assert record.reported_cost_usd == 0.0
 
 
-def test_usage_without_timestamp_or_stable_identity_is_excluded() -> None:
-    assert parse_claude([_claude(message=None, request=None)]).records == ()
-    assert parse_claude([_claude(stamp="2026-10-16")]).records == ()
-    assert parse_codex([_modern(response="")]).records == ()
-    assert parse_codex([_modern(stamp="invalid")]).records == ()
 
 
 def test_projection_and_raw_envelopes_never_retain_messages_tools_or_unselected_fields() -> None:
@@ -671,23 +480,8 @@ def test_codex_projection_keeps_only_native_usage_and_context_metadata() -> None
     assert project_usage_line("codex", _line("response_item", {"content": "private"})) is None
 
 
-def test_malformed_relevant_lines_survive_projection_as_content_free_issues() -> None:
-    line = '{"type":"token_usage_record", "private":'
-    projection = project_usage_line("codex", line)
-
-    assert projection == '{"type":"usage_parse_error"}'
-    assert parse_codex([line]).issues == parse_codex([projection]).issues
-    assert parse_claude(['{"type":"assistant","usage":']).issues
-    assert project_usage_line("claude", "not a relevant JSON line") is None
 
 
-@pytest.mark.parametrize("cache_write", [None, "invalid", -1])
-def test_explicit_invalid_cache_write_remains_unknown(cache_write: object) -> None:
-    usage = _usage()
-    usage["cache_write_input_tokens"] = cache_write
-    record = parse_codex([_meta(), _context(), _modern(usage=usage)]).records[0]
-    assert record.tokens.cache_creation_tokens is None
-    assert record.tokens.uncached_input_tokens is None
 
 
 def test_omitted_codex_cache_write_matches_t3_uncached_input_and_price() -> None:

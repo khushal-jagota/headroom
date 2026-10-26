@@ -6,7 +6,7 @@ re-implements a domain rule.
 This module also homes the shared request plumbing (config/clock accessors, the
 per-request connection dependency, the transaction context manager, and the enum
 and body-key marshallers). The other api modules import these from here; the direction
-is strictly one-way (sprints/days/dispatch api -> tickets api), and views modules
+is strictly one-way (domain API -> tickets API), and views modules
 import no api module at all.
 
 Request bodies arrive as plain dicts and are marshalled into the TypedDict shapes
@@ -31,14 +31,17 @@ from planner.conversation.api import (
     conversation_message_content,
     delivery_fate_json,
 )
-from planner.conversation.backend_state import model_is_enabled
+from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
-    ConversationBackendKey,
     ConversationSystem,
     require_conversation_backend_key,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.snapshot import BackendSnapshotService
+from planner.conversation.model_resolution.contracts import (
+    CurrentModelResolver,
+    ModelResolutionUnavailable,
+)
+from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.conversation.storage import ConversationStore
 from planner.core import authority
 from planner.core.authctx import (
@@ -53,7 +56,6 @@ from planner.core.contracts import (
     JsonDict,
     Principal,
     PrincipalKind,
-    Priority,
 )
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
@@ -65,6 +67,7 @@ from planner.list_reads.detail import (
     reject_parameters,
     require_full_for_one,
 )
+from planner.managers.assignment import normalize_assignment
 from planner.message_delivery import service as message_delivery_service
 from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
 from planner.projects import data as projects_data
@@ -91,6 +94,7 @@ from planner.tickets.contracts import (
     GateCompletionBody,
     ProposalBody,
     RejectionBody,
+    ReviewTransferNotice,
     Ticket,
     TicketCreationContextRead,
     TicketEdit,
@@ -99,6 +103,7 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import admission
+from planner.tickets.review_transfer import notify_review_transfers
 from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
@@ -126,6 +131,14 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+def get_model_resolver(request: Request) -> CurrentModelResolver:
+    runtime = getattr(request.app.state, "conversation", None)
+    resolver = getattr(runtime, "model_resolution", None)
+    if resolver is None:
+        raise PlannerError(ErrorCode.gateway_offline, "the model resolver is unavailable", {})
+    return cast(CurrentModelResolver, resolver)
 
 
 def get_conversation_system(request: Request) -> ConversationSystem:
@@ -161,6 +174,7 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
+ModelResolver = Annotated[CurrentModelResolver, Depends(get_model_resolver)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
@@ -220,7 +234,7 @@ async def silence_the_worker_before_deleting(
 
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
-    """Wrap a NON-self-transacting writer (days/dispatch/Ticket blocks) so a mid-sequence
+    """Wrap a NON-self-transacting writer (Ticket blocks) so a mid-sequence
     PlannerError rolls back cleanly. Never wrap a ticket/sprint writer — those open
     their own BEGIN IMMEDIATE and would raise 'transaction within a transaction'."""
     conn.execute("BEGIN IMMEDIATE")
@@ -336,20 +350,23 @@ def _marshal_settled_field_values(
 
 
 def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicketBody:
-    obsolete = set(raw) & {"sprint_id", "sprint_item_id", "day", "day_id"}
+    raw = normalize_assignment(raw)
+    obsolete = set(raw) & {"sprint_id", "manager_id", "sprint_item_id", "day", "day_id"}
     if obsolete:
         raise PlannerError(
-            ErrorCode.validation, "use orchestrator assignment instead of calendar placement"
+            ErrorCode.validation, "use manager assignment instead of calendar placement"
         )
+    for key in raw:
+        if key not in CreateTicketBody.__annotations__:
+            raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
         title="" if draft else body_str(raw, "title"),
-        kickoff_note="" if draft else body_str(raw, "kickoff_note"),
-        priority=body_opt_str(raw, "priority"),
+        brief="" if draft else body_str(raw, "brief"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
-        orchestrator=raw.get("orchestrator"),
+        manager=raw.get("manager"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
@@ -362,6 +379,10 @@ def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicke
         body["employee_backend"] = body_str(raw, "employee_backend")
     if "employee_launch_model" in raw:
         body["employee_launch_model"] = body_str(raw, "employee_launch_model")
+    if "employee_launch_reasoning_effort" in raw:
+        body["employee_launch_reasoning_effort"] = body_opt_str(
+            raw, "employee_launch_reasoning_effort"
+        )
     return body
 
 
@@ -393,7 +414,7 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
     if not isinstance(kind_raw, str):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            f"{field} kind must be owner, chief, manager, or ticket",
             {field: raw},
         )
     try:
@@ -401,7 +422,7 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
     except (TypeError, ValueError):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            f"{field} kind must be owner, chief, manager, or ticket",
             {field: raw},
         ) from None
     if not isinstance(principal_id, str):
@@ -412,12 +433,12 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
         raise PlannerError(ErrorCode.validation, str(exc), {field: raw}) from exc
 
 
-def _parse_orchestrator(raw: object) -> Principal:
-    orchestrator = _parse_principal(raw, "orchestrator")
-    if orchestrator is None:
-        raise PlannerError(ErrorCode.validation, "orchestrator must name Chief or an orchestrator")
-    admission.validate_orchestrator(orchestrator)
-    return orchestrator
+def _parse_manager(raw: object) -> Principal:
+    manager = _parse_principal(raw, "manager")
+    if manager is None:
+        raise PlannerError(ErrorCode.validation, "manager must name Chief or a Manager")
+    admission.validate_manager(manager)
+    return manager
 
 
 def _parse_stated_holder(raw: object, field: str) -> Principal:
@@ -464,21 +485,62 @@ def _parse_next_ceiling(
 # --- ticket routes -------------------------------------------------------------
 
 
-def write_create_ticket(
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
+async def warm_ticket_creation_model(
+    conn: sqlite3.Connection,
+    resolver: CurrentModelResolver,
+    *,
+    worker_type: str,
+    employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
+    model_source_is_historical: bool = False,
+) -> None:
+    """Resolve outside the creation transaction so cold catalogues can be awaited."""
+    launch_configuration = tickets_data.requested_ticket_launch_configuration(
+        worker_type,
+        employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+    )
+    assert launch_configuration.employee_launch_model is not None
+    backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
+    if employee_launch_model and not model_source_is_historical:
+        require_enabled_model(conn, backend_key, employee_launch_model)
+    try:
+        resolve_cached_model(
+            conn,
+            backend_key,
+            launch_configuration.employee_launch_model,
+            launch_configuration.employee_launch_reasoning_effort,
+        )
+    except ModelResolutionUnavailable as error:
+        if error.variant is None and employee_launch_reasoning_effort is None:
+            # There is no known family to probe. Creation retains the opaque value.
+            return
+    try:
+        await resolver.resolve(
+            backend_key,
+            launch_configuration.employee_launch_model,
+            launch_configuration.employee_launch_reasoning_effort,
+        )
+    except ModelResolutionUnavailable as error:
+        if employee_launch_reasoning_effort is not None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "cannot validate explicit reasoning effort without a model catalogue",
+            ) from error
+        # The synchronous creation boundary reports and retains the unresolved choice.
+        pass
+
+
+def write_create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    """Apply creation through the same writer inside HTTP or executor transactions."""
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
-    orchestrator = (
-        _parse_orchestrator(body["orchestrator"])
-        if "orchestrator" in raw
+    manager = (
+        _parse_manager(body["manager"])
+        if "manager" in raw or "orchestrator" in raw
         else Principal(PrincipalKind.chief, "chief")
-    )
-    priority = (
-        parse_enum(Priority, body["priority"], "priority") if body["priority"] is not None else None
     )
     project = projects_data.resolve_project(
         conn,
@@ -491,26 +553,21 @@ def write_create_ticket(
         principal=ctx.principal,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note=body["kickoff_note"],
+        brief=body["brief"],
         project_id=project.id if project is not None else None,
-        priority=priority,
         deadline=body["deadline"],
-        sprint_item_id=(
-            orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None
-        ),
-        orchestrator_kind=orchestrator.kind.value,
+        manager_id=(manager.id if manager.kind is PrincipalKind.manager else None),
+        manager_kind=manager.kind.value,
         worker_type=body["worker_type"],
         locale=body.get("locale"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
-        planning_now=clk.now(),
-        sprint_item_id_explicit=orchestrator.kind is PrincipalKind.sprint_item,
-        project_id_explicit="project" in raw or "project_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_creation_json(conn, ticket, now)
 
 
 @router.post("/tickets/creation-context")
@@ -524,9 +581,9 @@ async def read_ticket_creation_context(
     # The existing marshaller owns draft input validation as well as final creation.
     # Text is irrelevant to this projection and is never passed to its resolver.
     body = _marshal_create_ticket(raw, draft=True)
-    orchestrator = (
-        _parse_orchestrator(body["orchestrator"])
-        if "orchestrator" in raw
+    manager = (
+        _parse_manager(body["manager"])
+        if "manager" in raw or "orchestrator" in raw
         else Principal(PrincipalKind.chief, "chief")
     )
     project = projects_data.resolve_project(
@@ -538,8 +595,9 @@ async def read_ticket_creation_context(
         locale=body.get("locale"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
         project_id=project.id if project is not None else None,
-        sprint_item_id=orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None,
+        manager_id=manager.id if manager.kind is PrincipalKind.manager else None,
         deadline=body["deadline"],
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
     )
@@ -563,8 +621,22 @@ async def read_ticket_creation_context(
 
 @router.post("/tickets")
 async def create_ticket(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    model_resolver: ModelResolver,
 ) -> JsonDict:
+    body = _marshal_create_ticket(raw)
+    await warm_ticket_creation_model(
+        conn,
+        model_resolver,
+        worker_type=body["worker_type"],
+        employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+    )
     return write_create_ticket(raw, conn, ctx, clk)
 
 
@@ -587,15 +659,27 @@ async def read_tickets(
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
-    sprint_id: str | None = None,
-    sprint_item_id: str | None = None,
-    orchestrator_kind: str | None = None,
-    orchestrator_id: str | None = None,
-    day: str | None = None,
+    manager_id: str | None = None,
+    manager_kind: str | None = None,
+    sprint_item_id: Annotated[str | None, Query(include_in_schema=False)] = None,
+    orchestrator_kind: Annotated[str | None, Query(include_in_schema=False)] = None,
+    orchestrator_id: Annotated[str | None, Query(include_in_schema=False)] = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> JsonDict:
     """Read Tickets at the level the caller asks for, or one Ticket by id."""
+    for legacy_id in (sprint_item_id, orchestrator_id):
+        if legacy_id is not None:
+            if manager_id is not None and manager_id != legacy_id:
+                raise PlannerError(ErrorCode.validation, "conflicting Manager filters")
+            manager_id = legacy_id
+    if manager_kind == "sprint_item":
+        manager_kind = "manager"
+    if orchestrator_kind is not None:
+        previous_kind = "manager" if orchestrator_kind == "sprint_item" else orchestrator_kind
+        if manager_kind is not None and manager_kind != previous_kind:
+            raise PlannerError(ErrorCode.validation, "conflicting Manager filters")
+        manager_kind = previous_kind
     level = parse_read_detail(detail)
     scope = {
         "stage": stage,
@@ -608,11 +692,8 @@ async def read_tickets(
         "search": search,
         "project": project,
         "project_id": project_id,
-        "sprint_id": sprint_id,
-        "sprint_item_id": sprint_item_id,
-        "orchestrator_kind": orchestrator_kind,
-        "orchestrator_id": orchestrator_id,
-        "day": day,
+        "manager_id": manager_id,
+        "manager_kind": manager_kind,
         "limit": limit,
         "offset": offset,
     }
@@ -628,15 +709,13 @@ async def read_tickets(
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
-    if day is not None or sprint_id is not None:
-        raise PlannerError(ErrorCode.validation, "calendar filters are retired")
 
     if level is ReadDetail.full:
         reject_parameters(
             "detail=full",
             {
-                "orchestrator_kind": orchestrator_kind,
-                "orchestrator_id": orchestrator_id,
+                "manager_kind": manager_kind,
+                "manager_id": manager_id,
                 "is_backlogged": is_backlogged,
                 "worker_type": worker_type,
                 "exclude_stage": exclude_stage,
@@ -659,22 +738,17 @@ async def read_tickets(
             clk.now_unix(),
             stage=stage[0] if stage else None,
             project_id=resolved_project.id if resolved_project is not None else None,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
+            manager_id=manager_id,
         )
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
         return {"tickets": rows}
 
-    orchestrator = None
-    if orchestrator_kind is not None or orchestrator_id is not None:
-        orchestrator = _parse_orchestrator(
+    manager = None
+    if manager_kind is not None or manager_id is not None:
+        manager = _parse_manager(
             {
-                "kind": orchestrator_kind,
-                "id": (
-                    "chief"
-                    if orchestrator_kind == "chief" and orchestrator_id is None
-                    else orchestrator_id
-                ),
+                "kind": manager_kind or "manager",
+                "id": ("chief" if manager_kind == "chief" and manager_id is None else manager_id),
             }
         )
 
@@ -684,7 +758,6 @@ async def read_tickets(
         registry.require(worker_type).completed_stage()
         for worker_type in registry.registered_worker_types()
     }
-    terminal_stages.add("cancelled")
     requested_terminal = sorted(set(included_stages) & terminal_stages)
     if requested_terminal and not include_terminal:
         raise PlannerError(
@@ -706,7 +779,7 @@ async def read_tickets(
             offset=0 if offset is None else offset,
         ),
         filters=TicketListFilters(
-            orchestrator=orchestrator,
+            manager=manager,
             stages=included_stages,
             excluded_stages=tuple(exclude_stage or ()),
             ticket_statuses=statuses,
@@ -717,56 +790,10 @@ async def read_tickets(
             search=search,
         ),
         project_id=resolved_project.id if resolved_project is not None else None,
-        sprint_id=sprint_id,
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
     )
     await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
     return page.response("tickets")
-
-
-def _backend_snapshots(request: Request) -> BackendSnapshotService:
-    runtime = getattr(request.app.state, "conversation", None)
-    service = getattr(runtime, "backend_snapshots", None) if runtime is not None else None
-    if service is None:
-        raise PlannerError(
-            ErrorCode.gateway_offline,
-            "the agent backends are unavailable",
-            {},
-        )
-    return cast(BackendSnapshotService, service)
-
-
-async def _advertised_launch_options(
-    request: Request,
-    backend_key: ConversationBackendKey,
-    candidate_model: str | None,
-) -> tuple[frozenset[str], frozenset[str]]:
-    """What this backend can actually be launched as: its models, and the efforts for one.
-
-    Reasoning effort belongs to the model that will run rather than to the backend in
-    general — a model that names its own efforts is believed, including when it names
-    none, and a model that names nothing takes the backend's list. That is the same rule
-    the composer applies in the browser, stated once more here because this is the door a
-    saved configuration comes through.
-    """
-    service = _backend_snapshots(request)
-    try:
-        snapshot = await service.snapshot(backend_key)
-    except Exception as error:
-        raise PlannerError(
-            ErrorCode.gateway_offline,
-            "the agent backends are unavailable",
-            {},
-        ) from error
-    efforts = snapshot.reasoning_effort_options
-    for model in snapshot.available_models:
-        if model.model_id == candidate_model:
-            efforts = model.reasoning_effort_options
-            break
-    return (
-        frozenset(model.model_id for model in snapshot.available_models),
-        frozenset(efforts),
-    )
 
 
 @dataclass(frozen=True)
@@ -774,7 +801,7 @@ class ResolvedEmployeeConfiguration:
     """A launch configuration that has passed every check a write can make beforehand.
 
     Holding it as a value is what lets a caller validate at one moment and write at
-    another. The supervisor restart needs exactly that: a configuration it cannot write
+    another. The Manager restart needs exactly that: a configuration it cannot write
     must be refused before the old conversation is killed, or a bad argument would cost
     the Ticket its worker and give it nothing back.
     """
@@ -797,48 +824,21 @@ async def resolve_employee_configuration(
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
-    """Check a launch configuration against the backend registry and its catalog.
-
-    Every check that can be made without writing is made here: the backend is registered,
-    the model is not disabled, and a same-backend change is measured against what that
-    backend advertises. A backend change carries no catalog, for the reason
-    ``normalize_employee_launch_configuration`` gives — the old backend's catalog is the
-    wrong one to ask.
-    """
+    """Resolve an owner's enabled choice to the current member of its variant."""
     expected = tickets_data.employee_launch_configuration(tickets_data.read_ticket(conn, ticket_id))
     registered_backend = require_conversation_backend_key(employee_backend)
-    advertised_models: frozenset[str] | None = None
-    reasoning_supported: bool | None = None
-    advertised_reasoning_efforts: frozenset[str] | None = None
-    candidate = EmployeeLaunchConfiguration(
-        employee_backend=registered_backend,
-        employee_launch_model=employee_launch_model,
-        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+    require_enabled_model(conn, registered_backend, employee_launch_model)
+    resolved = await get_model_resolver(request).resolve(
+        registered_backend, employee_launch_model, employee_launch_reasoning_effort
     )
-    if not model_is_enabled(conn, registered_backend, employee_launch_model):
-        raise PlannerError(
-            ErrorCode.validation,
-            "Employee model is disabled",
-            {
-                "employee_backend": str(registered_backend),
-                "employee_launch_model": employee_launch_model,
-            },
-        )
-    if registered_backend == expected.employee_backend and candidate != expected:
-        advertised_models, advertised_reasoning_efforts = await _advertised_launch_options(
-            request,
-            registered_backend,
-            employee_launch_model,
-        )
-        reasoning_supported = len(advertised_reasoning_efforts) > 0
     return ResolvedEmployeeConfiguration(
         expected=expected,
-        employee_backend=employee_backend,
-        employee_launch_model=employee_launch_model,
-        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
-        advertised_models=advertised_models,
-        reasoning_supported=reasoning_supported,
-        advertised_reasoning_efforts=advertised_reasoning_efforts,
+        employee_backend=registered_backend,
+        employee_launch_model=resolved.model,
+        employee_launch_reasoning_effort=resolved.reasoning_effort,
+        advertised_models=frozenset({resolved.model}),
+        reasoning_supported=bool(resolved.supported_reasoning_efforts),
+        advertised_reasoning_efforts=frozenset(resolved.supported_reasoning_efforts),
     )
 
 
@@ -953,7 +953,7 @@ async def restart_ticket_worker(
     """Start this Ticket's worker step again, optionally on a named configuration.
 
     New on Khushal's surface. No ordinary route did this: reset and re-configure exist
-    separately, and neither releases the claim and starts. Only an Outcome manager could
+    separately, and neither releases the claim and starts. Only a Manager could
     reach it, through a wrapper of its own.
 
     The configuration is resolved before the restart, so a backend or model this Ticket
@@ -1016,10 +1016,10 @@ async def delete_ticket(
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    # An Outcome deletes its own child Ticket outright, and force is how the user reaches
+    # A Manager deletes its own child Ticket outright, and force is how the user reaches
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
-    even_while_running = force or ctx.principal.kind is PrincipalKind.sprint_item
+    even_while_running = force or ctx.principal.kind is PrincipalKind.manager
     if even_while_running:
         await silence_the_worker_before_deleting(conn, conversations, ticket_id)
     else:
@@ -1035,26 +1035,28 @@ async def delete_ticket(
         "ok": True,
         "ticket_id": deleted.ticket_id,
         "title": deleted.title,
-        "day_ids": list(deleted.day_ids),
-        "sprint_item_ids": list(deleted.sprint_item_ids),
-        "sprint_ids": list(deleted.sprint_ids),
+        "manager_ids": list(deleted.manager_ids),
         "linked_ticket_ids": list(deleted.linked_ticket_ids),
     }
 
 
 def write_patch_ticket(
-    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    *,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> JsonDict:
+    body = normalize_assignment(body)
     recognized = (
         "title",
-        "priority",
         "deadline",
         "project",
         "project_id",
-        "orchestrator",
+        "manager",
         "recap",
-        "guidance",
-        "guidance_append",
         "field_values",
         "ceiling",
         "ceiling_holder",
@@ -1064,10 +1066,6 @@ def write_patch_ticket(
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
-    if "guidance" in body and "guidance_append" in body:
-        raise PlannerError(
-            ErrorCode.validation, "guidance is either replaced or appended to, not both", {}
-        )
     # The floor: a stranger is refused here, before any of this body is looked at. Which
     # of these fields need a caller above the Ticket rather than the Ticket itself is
     # edit_ticket's question, asked once, where the write happens.
@@ -1076,8 +1074,6 @@ def write_patch_ticket(
     edit = TicketEdit()
     if "title" in body:
         edit["title"] = body_str(body, "title")
-    if "priority" in body:
-        edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
         edit["deadline"] = body_opt_str(body, "deadline")
 
@@ -1088,14 +1084,10 @@ def write_patch_ticket(
             conn, project_id=project_id_raw, project_name=project_raw
         )
         edit["project_id"] = project.id if project is not None else None
-    if "orchestrator" in body:
-        edit["orchestrator"] = _parse_orchestrator(body["orchestrator"])
+    if "manager" in body:
+        edit["manager"] = _parse_manager(body["manager"])
     if "recap" in body:
         edit["recap"] = body_str(body, "recap")
-    if "guidance" in body:
-        edit["guidance"] = body_str(body, "guidance")
-    if "guidance_append" in body:
-        edit["guidance_append"] = body_str(body, "guidance_append")
     if "ceiling" in body:
         edit["ceiling"] = body_str(body, "ceiling")
     if "ceiling_holder" in body:
@@ -1103,6 +1095,7 @@ def write_patch_ticket(
     if "field_values" in body:
         edit["field_values"] = _marshal_settled_field_values(conn, ticket_id, body["field_values"])
     now = clk.now_unix()
+    notices: list[ReviewTransferNotice] = []
     ticket = tickets_data.edit_ticket(
         conn,
         ticket_id,
@@ -1110,15 +1103,27 @@ def write_patch_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         principal=ctx.principal,
         now=now,
+        review_transfer_notices=notices,
     )
+    if review_transfer_notices is not None:
+        review_transfer_notices.extend(notices)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.patch("/tickets/{ticket_id}")
 async def patch_ticket(
-    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
-    return write_patch_ticket(ticket_id, body, conn, ctx, clk)
+    notices: list[ReviewTransferNotice] = []
+    result = write_patch_ticket(ticket_id, body, conn, ctx, clk, review_transfer_notices=notices)
+    await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
+    return result
 
 
 @router.post("/tickets/{ticket_id}/propose")
@@ -1285,11 +1290,17 @@ async def send_to_chief_conversation(
         clk,
         ctx,
         CHIEF_PRINCIPAL,
-        partial(conversation_message_content, message_files, sent=body.content),
+        partial(
+            conversation_message_content,
+            message_files,
+            sent=body.content,
+            sender_message_id=body.sender_message_id,
+        ),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=runs_under,
         mode=body.mode,
+        owner_read_through_sequence=body.owner_read_through_sequence,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
     )
@@ -1348,11 +1359,17 @@ async def send_to_ticket_conversation(
         clk,
         ctx,
         Principal(PrincipalKind.ticket, ticket_id),
-        partial(conversation_message_content, message_files, sent=body.content),
+        partial(
+            conversation_message_content,
+            message_files,
+            sent=body.content,
+            sender_message_id=body.sender_message_id,
+        ),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=_what_this_message_runs_under(body),
         mode=body.mode,
+        owner_read_through_sequence=body.owner_read_through_sequence,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
     )
@@ -1464,15 +1481,13 @@ async def add_conversation_row_signals(
 ) -> JsonDict:
     """Attach the shared owner-attention and agent-state projection to board rows."""
     cards = [card for column in board["columns"] for card in column["cards"]]
-    children = [ticket for item in board["sprint_items"] for ticket in item["tickets"]]
+    children = [ticket for item in board["managers"] for ticket in item["tickets"]]
     await add_work_attention(
-        # This helper predates the shared projection. Keep its public name until the Day
-        # route moves with the other callers, but give it the one canonical behavior.
         conn,
         conversation_system,
         conversation_record,
         tickets=(*cards, *children),
-        sprint_items=board["sprint_items"],
+        managers=board["managers"],
     )
     return board
 
@@ -1485,16 +1500,9 @@ async def board(
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    # Unread messages remain discoverable, including on historical Workers.
-    unread = await conversation_record.conversation_ids_holding_unread_owner_message()
     return await add_conversation_row_signals(
         conn,
-        tickets_views.board_view(
-            conn,
-            ticket_ids_holding_unread_owner_message=tickets_views.ticket_ids_for_conversations(
-                conn, unread
-            ),
-        ),
+        tickets_views.board_view(conn),
         conversations,
         conversation_record,
     )

@@ -1,36 +1,86 @@
 <script lang="ts">
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import MachineIdentity from "./machines/MachineIdentity.svelte";
+  import { macActivityKnown } from "../lib/ticketMachines";
+  import { MACHINE_ACTIVITY_UNKNOWN } from "../lib/machines/config";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { fetchJson } from "../lib/api";
-  import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
-  import { workspaceWorkerStages, type WorkspaceTicketGroup } from "../lib/workspaceRail";
-  import type { BoardCard } from "../lib/types";
+  import { queries } from "../lib/queryCatalogue";
+  import { lifecycleFor } from "../lib/lifecycle";
+  import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
+  import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  let { visible, instant, target, title, kicker, groups = null, worker = null, cards, rail, signal = undefined, conversationId = null }: {
+  import RequestRecapAction from "./RequestRecapAction.svelte";
+  import RecapSlot from "./RecapSlot.svelte";
+  /* ``recapTarget`` is the agent that can be asked for a fresh recap.
+   * ``onKeepOpen`` and ``onLeave`` hand the panel the same hover intent the rows use, so
+   * the pointer can cross the gap and press what is inside without the panel closing. */
+  let { visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
     visible: boolean; instant: boolean; target: HTMLElement | null; title: string; kicker: string;
-    groups?: WorkspaceTicketGroup[] | null; worker?: WorkItemTicketFacts | null;
-    cards: BoardCard[]; rail: HTMLElement | null;
-    signal?: ConversationSignal; conversationId?: string | null;
+    recap?: string; worker?: WorkItemTicketFacts | null;
+    rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
+    signal?: Partial<ConversationSignal>; conversationId?: string | null;
+    recapTarget?: { kind: "ticket" | "manager" | "chief"; id: string } | null;
+    onKeepOpen?: () => void; onLeave?: () => void;
+    element?: HTMLDivElement | null;
   } = $props();
-  const manifests = createQuery(() => ({ queryKey: ["worker-types"], queryFn: () => fetchJson<WorkerTypesResponse>("/api/worker-types") }));
-  let card = $derived(cards.find((entry) => entry.id === worker?.id));
-  let currentWorker = $derived(card ?? worker);
-  let stages = $derived(currentWorker ? workspaceWorkerStages(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : []);
-  let panel = $state<HTMLDivElement | null>(null);
+  const manifests = createQuery(() => queries.workerTypeManifests());
+  let currentWorker = $derived(worker);
+  const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
+  let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
+  let stageSentence = $derived(unknownMac ? MACHINE_ACTIVITY_UNKNOWN : currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
+  let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
+  let recapElement = $state<HTMLDivElement | null>(null);
+  let recapLines = $state(1);
+  // Measure the fixed content, never the clamped recap. This keeps the budget
+  // independent of the height that the budget itself produces.
+  $effect(() => {
+    recapText; stageSentence; title; kicker;
+    if (!visible || !element || !recapElement) return;
+    const panel = element;
+    const recapBox = recapElement;
+    const budget = () => {
+      const css = getComputedStyle(panel);
+      const recapCss = getComputedStyle(recapBox);
+      const px = (value: string) => Number.parseFloat(value) || 0;
+      const edges = (style: CSSStyleDeclaration) => px(style.paddingTop) + px(style.paddingBottom) + px(style.borderTopWidth) + px(style.borderBottomWidth);
+      const outerHeight = (child: Element) => {
+        const style = getComputedStyle(child);
+        return child.getBoundingClientRect().height + px(style.marginTop) + px(style.marginBottom);
+      };
+      // The ask shares the recessed block with the recap, so it is fixed content that
+      // happens to sit inside the box being measured.
+      const ask = recapBox.querySelector("[data-request-recap]");
+      const fixed = [...panel.children].filter(child => child !== recapBox);
+      if (ask) fixed.push(ask);
+      const fixedHeight = fixed.reduce((height, child) => height + outerHeight(child), 0);
+      const available = px(css.maxHeight) - edges(css) - fixedHeight - edges(recapCss) - px(recapCss.marginTop) - px(recapCss.marginBottom);
+      recapLines = Math.min(RAIL_HOVER_RECAP_MAX_LINES, Math.max(0, Math.floor(available / px(recapCss.lineHeight))));
+    };
+    const observer = new ResizeObserver(budget);
+    for (const child of panel.children) if (child !== recapBox) observer.observe(child);
+    void tick().then(budget);
+    window.addEventListener("resize", budget);
+    return () => { observer.disconnect(); window.removeEventListener("resize", budget); };
+  });
   let left = $state(0);
   let top = $state(0);
+  /* The panel can only take the pointer where it is clear of the rail. A narrow window
+   * clamps it back over the rows, and a panel that took the pointer there would cover
+   * the row the pointer is travelling to. Hovering the rail is the common act and wins. */
+  let clearOfRail = $state(false);
   $effect(() => {
-    if (!target || !rail || !visible || !panel) return;
+    if (!target || !rail || !visible || !element) return;
     const currentTarget = target;
     const currentRail = rail;
-    const currentPanel = panel;
+    const currentPanel = element;
     const place = () => {
       const rect = currentTarget.getBoundingClientRect();
-      left = Math.max(12, Math.min(currentRail.getBoundingClientRect().right + 14, window.innerWidth - currentPanel.offsetWidth - 12));
+      const railRight = currentRail.getBoundingClientRect().right;
+      left = Math.max(12, Math.min(railRight + 14, window.innerWidth - currentPanel.offsetWidth - 12));
       top = Math.max(12, Math.min(rect.top - 8, window.innerHeight - currentPanel.offsetHeight - 12));
+      clearOfRail = left >= railRight;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -40,36 +90,45 @@
     return () => { observer.disconnect(); window.removeEventListener("resize", place); };
   });
 </script>
-<div bind:this={panel} class="rail-hover-panel" class:visible class:instant style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}>
+<div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
+  onpointerenter={() => onKeepOpen?.()} onpointerleave={() => onLeave?.()}
+  onfocusin={() => onKeepOpen?.()}
+  onfocusout={(event) => {
+    // Focus landing somewhere outside is someone leaving. Focus landing nowhere is the
+    // control they just pressed being replaced by what it did, and they are still here.
+    const moved = event.relatedTarget as Node | null;
+    if (moved !== null && !element?.contains(moved)) onLeave?.();
+  }}>
   <div class="kicker">{kicker}</div>
-  <div class="title"><span>{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} completed={currentWorker?.stage === "done" || currentWorker?.stage === "cancelled"} /></div>
-  {#if worker}
-    <div class="label">Stages</div>
-    {#each stages as stage (stage.id)}
-      <div class="stage {stage.state}"><i class="pip"></i><span>{stage.label}</span>{#if stage.state === "now"}<span class="here">Here</span>{/if}</div>
-    {/each}
-  {:else if groups}
-    {#each groups as group (group.key)}
-      <div class="label">{group.label}</div>
-      {#each group.cards as ticket (ticket.id)}<div class="worker"><span>{ticket.title}</span><MachineActivityMark locale={ticket.locale} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} completed={ticket.stage === "done" || ticket.stage === "cancelled"} /></div>{/each}
-    {/each}
+  <div class="title">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} ticketId={currentWorker.id} />{/if}<span>{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
+       block where it is and the budget above keeps measuring. -->
+  {#if recapText || recapTarget}
+    <div bind:this={recapElement} class="recap" class:no-space={recapLines === 0 && !recapTarget}>
+      {#key recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null}
+        <RecapSlot>
+          {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
+        </RecapSlot>
+      {/key}
+      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
+    </div>
   {/if}
+  {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
   .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(340px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-2); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
+  .interactive { pointer-events:auto; }
   .instant { transition:none; }
   .kicker { font-size:12px; color:var(--text-faintest); margin-bottom:5px; }
-  .title, .worker { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
+  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
   .title { font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); overflow-wrap:anywhere; }
-  .label { margin:var(--space-4) 0 7px; font-size:10.5px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); }
-  .worker { padding:var(--space-1) 0; font-size:12.5px; line-height:1.4; color:var(--text-default); }
-  .stage { display:flex; align-items:center; gap:9px; padding:3px 0; font-size:12.5px; }
-  .pip { flex:none; width:7px; height:7px; border-radius:var(--radius-pill); border:1.5px solid var(--text-faintest); box-sizing:border-box; }
-  .done .pip { background:var(--accent-done); border-color:var(--accent-done); }
-  .done,.todo { color:var(--text-faintest); }
-  .now .pip { background:var(--accent-bright); border-color:var(--accent-bright); }
-  .now { color:var(--text-strong); font-weight:600; }
-  .todo { opacity:0.75; }
-  .here { margin-left:auto; font-size:10.5px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent-bright); }
+  .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--surface-recessed); border-radius:var(--radius-md); font-size:12.5px; line-height:1.5; color:var(--text-default); }
+  .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
+  /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
+  .recap.no-space, .recap-text.no-room { display:none; }
+  /* The ask lives inside the recessed block, under the line it replaces. */
+  .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:12px; }
+  .doing { margin-top:var(--space-3); font-size:12.5px; color:var(--text-faint); }
+  @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

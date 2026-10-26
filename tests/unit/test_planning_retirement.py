@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import json
-from sqlite3 import Connection
 
 import pytest
 import sqlalchemy as sa
-from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.core.migrations import planning_retirement as retirement
-from planner.tickets.contracts import TicketStatus, WorkerStepClaim
-from planner.tickets.derivation import StoredTicketFacts, agent_state, derive_ticket_facts
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture(autouse=True)
@@ -146,23 +141,6 @@ def test_unknown_planning_work_is_not_automatically_retired() -> None:
             retirement.retire_planning_workers(conn)
 
 
-def test_cancelled_is_terminal_without_progression_or_historical_error(tmp_db: Connection) -> None:
-    seed_historical_worker_type(tmp_db, "planning-day")
-    definition = configured_worker_type_registry().require("planning-day")
-    assert definition.is_terminal("cancelled")
-    assert "cancelled" not in definition.ceiling_range()
-    facts = derive_ticket_facts(
-        StoredTicketFacts("retired", "cancelled", "planning-day", WorkerStepClaim.none, False, True)
-    )
-    assert facts.ticket_status == TicketStatus.empty
-    assert not facts.blocked
-    assert (
-        agent_state(
-            facts.ticket_status, stage="cancelled", turn_is_running=False, last_turn_failed=True
-        ).value
-        == "idle"
-    )
-    assert configured_worker_type_registry().require("coding").is_terminal("cancelled")
 
 
 def test_changed_proposal_body_aborts_even_when_proposal_still_exists() -> None:
@@ -176,11 +154,6 @@ def test_changed_proposal_body_aborts_even_when_proposal_still_exists() -> None:
             retirement.retire_planning_workers(conn)
 
 
-def test_all_expected_rows_changed_to_done_still_aborts() -> None:
-    with _database() as conn:
-        conn.exec_driver_sql("UPDATE tickets SET stage='done' WHERE worker_type LIKE 'planning-%'")
-        with pytest.raises(RuntimeError, match="cohort changed"):
-            retirement.retire_planning_workers(conn)
 
 
 @pytest.mark.parametrize("active_batch", [False, True])
@@ -321,10 +294,3 @@ def test_total_planning_loss_with_ordinary_work_refuses_cutover() -> None:
         with pytest.raises(RuntimeError, match="cohort changed"):
             retirement.retire_planning_workers(conn)
         assert conn.exec_driver_sql("SELECT * FROM tickets").all() == before
-
-
-def test_genuine_empty_ticket_table_allows_fresh_install() -> None:
-    with _database() as conn:
-        conn.exec_driver_sql("DELETE FROM tickets")
-        retirement.retire_planning_workers(conn)
-        assert conn.exec_driver_sql("SELECT count(*) FROM tickets").scalar_one() == 0

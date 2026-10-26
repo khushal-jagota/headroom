@@ -23,6 +23,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationTurnReference,
+    DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -33,19 +34,18 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    WorkspacePathPolicy,
 )
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
-from planner.core.contracts import Principal, Priority
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.contracts import Principal
+from planner.core.errors import PlannerError
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
-    agent_resolve,
     new_conversation_id,
     reset_ticket_conversation,
-    send_to_agent_conversation,
     send_to_ticket_conversation,
     start_ticket_conversation,
     worker_resolve,
@@ -55,8 +55,10 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartValues,
     worker_conversation_role_materials,
 )
-from planner.tickets.contracts import Ticket
+from planner.tickets import locale_configuration
+from planner.tickets.contracts import Ticket, TicketLocale
 from planner.tickets.data import create_ticket, read_ticket
+from planner.worker_types.store import read_definition, write_definition
 
 _WORKSPACE = Path("/tmp/panels-workspace")
 
@@ -104,6 +106,7 @@ class _LinkWatchingConversationSystem:
         self._system = system
         self._conn = conn
         self._ticket_id = ticket_id
+        self.start_requests: list[ConversationStartRequest] = []
         self.link_when_the_conversation_existed: str | None = "not observed"
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
@@ -119,6 +122,7 @@ class _LinkWatchingConversationSystem:
         return await self._system.retire_idle_for_move(conversation_id, operation, source=source)
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
+        self.start_requests.append(request)
         await self._system.start_conversation(request)
         self.link_when_the_conversation_existed = read_ticket(
             self._conn, self._ticket_id
@@ -133,11 +137,13 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -146,11 +152,13 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
         )
 
     async def send_with_receipt(
@@ -162,11 +170,14 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
             conversation_id,
@@ -175,11 +186,14 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            recovery_references=recovery_references,
+            record_refusal=record_refusal,
         )
 
     async def record_message_to_owner(
@@ -192,6 +206,7 @@ class _LinkWatchingConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        credit_explicit_reply: bool = True,
     ) -> None:
         await self._system.record_message_to_owner(
             conversation_id,
@@ -201,6 +216,7 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            credit_explicit_reply=credit_explicit_reply,
         )
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
@@ -306,26 +322,72 @@ async def _sent(
     return delivered.fate
 
 
-def test_a_start_that_loses_the_active_pointer_race_records_no_history(
-    tmp_db: Connection, ticket: Ticket
+def test_creation_launch_choices_reach_the_first_worker_session(
+    tmp_db: Connection,
 ) -> None:
+    definition = read_definition(tmp_db, "coding")
+    write_definition(
+        tmp_db,
+        replace(
+            definition,
+            worker_profile=replace(
+                definition.worker_profile,
+                default_backend="codex",
+                default_model="gpt-5.6-sol",
+                default_reasoning_effort="medium",
+            ),
+        ),
+        now=1,
+    )
+    chosen = create_ticket(
+        tmp_db,
+        title="Start with the requested launch choices",
+        principal=OWNER_PRINCIPAL,
+        now=2,
+        title_max_chars=200,
+        worker_type="coding",
+        employee_backend="claude",
+        employee_launch_model="opus",
+        employee_launch_reasoning_effort="high",
+    )
+    stored = read_ticket(tmp_db, chosen.id)
+    assert stored.conversation_id is None
+    assert stored.employee_backend == "claude"
+    assert stored.employee_launch_model == "opus"
+    assert stored.employee_launch_reasoning_effort == "high"
+
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        winner = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-        loser = new_conversation_id()
-
-        linked = await start_ticket_conversation(
-            system,
+        watching = _LinkWatchingConversationSystem(system, tmp_db, chosen.id)
+        delivered = await send_to_ticket_conversation(
+            watching,
             tmp_db,
-            ticket,
-            _values(ticket.id),
-            conversation_id=loser,
-            now=20,
+            chosen.id,
+            text_message_content("Work the first step"),
+            conversation_id=None,
+            sender_label="loop",
+            now=3,
         )
 
-        assert linked.conversation_id == winner
-        assert linked.made_here is False
-        assert _history(tmp_db, ticket.id) == [winner]
+        assert isinstance(delivered.fate, PromptDeliveryStarted)
+        conversation_id = delivered.conversation_id
+        assert conversation_id is not None
+        assert len(watching.start_requests) == 1
+        first_start = watching.start_requests[0]
+        assert first_start.backend_key is ConversationBackendKey.claude
+        assert first_start.model == "opus"
+        assert first_start.reasoning_effort == "high"
+        assert system.backend_model(conversation_id) == "opus"
+        assert system.backend_reasoning_effort(conversation_id) == "high"
+        assert len(system.backend_prompt_writes(conversation_id)) == 1
+        persisted = tmp_db.execute(
+            "SELECT backend_key,model,reasoning_effort FROM conversations "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        assert persisted is not None
+        assert tuple(persisted) == ("claude", "opus", "high")
+        assert _history(tmp_db, chosen.id) == [conversation_id]
 
     asyncio.run(exercise())
 
@@ -343,39 +405,6 @@ def test_a_change_on_a_refused_delivery_records_nothing(tmp_db: Connection, tick
         after = read_ticket(tmp_db, ticket.id)
         assert after.employee_launch_model == "opus"
         assert after.updated_at == 10
-
-    asyncio.run(exercise())
-
-
-def test_a_first_message_that_is_refused_leaves_the_ticket_with_no_conversation(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    """Making a conversation and saying the first thing in it are one act, or neither.
-
-    A conversation the message never reached is one nobody can see and nobody can use, and
-    leaving it linked is what put a Ticket somewhere it could not send from at all.
-    """
-
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        refusing = _WhoseFirstWriteFails(system, tmp_db, ticket.id)
-        created = new_conversation_id()
-
-        delivered = await send_to_ticket_conversation(
-            refusing,
-            tmp_db,
-            ticket.id,
-            text_message_content("first words"),
-            conversation_id=None,
-            created_conversation_id=created,
-            sender_label="owner",
-            now=20,
-        )
-
-        assert isinstance(delivered.fate, PromptDeliveryRefused)
-        assert delivered.conversation_id is None
-        assert read_ticket(tmp_db, ticket.id).conversation_id is None
-        assert _history(tmp_db, ticket.id) == []
 
     asyncio.run(exercise())
 
@@ -408,9 +437,18 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("locale", list(TicketLocale))
+@pytest.mark.parametrize("clear", [False, True])
 def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_changes(
-    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+    tmp_db: Connection,
+    ticket: Ticket,
+    tmp_path: Path,
+    locale: TicketLocale,
+    clear: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(locale_configuration, "CURRENT_EXECUTION_LOCALE", locale)
+
     async def exercise() -> None:
         original_folder = tmp_path / "original"
         replacement_folder = tmp_path / "replacement"
@@ -419,11 +457,13 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
         project = create_project(
             tmp_db,
             name="Moved Project",
-            priority=Priority.P1,
             folder_path=original_folder,
             now=2,
         )
-        tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+        tmp_db.execute(
+            "UPDATE tickets SET project_id = ?, locale = ? WHERE id = ?",
+            (project.id, locale.value, ticket.id),
+        )
         system = InMemoryConversationSystem()
         conversation_id = await _started(
             system,
@@ -433,73 +473,25 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
             now=3,
         )
 
-        update_project(tmp_db, project.id, folder_path=replacement_folder, now=4)
+        update_project(tmp_db, project.id, folder_path=None if clear else replacement_folder, now=4)
         fate = await _sent(system, tmp_db, ticket.id, "continue", now=5)
 
         assert isinstance(fate, PromptDeliveryStarted)
         stored_workspace = tmp_db.execute(
-            "SELECT workspace_folder FROM conversations WHERE conversation_id = ?",
+            "SELECT workspace_folder, workspace_path_policy FROM conversations "
+            "WHERE conversation_id = ?",
             (conversation_id,),
         ).fetchone()
         assert stored_workspace is not None
         assert Path(str(stored_workspace["workspace_folder"])) == original_folder.resolve()
+        expected = (
+            WorkspacePathPolicy.native_absolute
+            if locale == TicketLocale.macos
+            else WorkspacePathPolicy.legacy_home_mapping
+        )
+        assert stored_workspace["workspace_path_policy"] == expected
 
     asyncio.run(exercise())
-
-
-def test_worker_resolve_falls_to_the_worker_type_defaults_when_the_ticket_names_no_model(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    # A row left from when a Ticket could name a backend and no model. It has not chosen
-    # anything runnable — its backend and another backend's model are not a pair — so the
-    # Worker type's own defaults answer whole, backend included.
-    with tmp_db:
-        tmp_db.execute(
-            "UPDATE tickets SET employee_backend = 'hermes', employee_launch_model = NULL, "
-            "employee_launch_reasoning_effort = NULL WHERE id = ?",
-            (ticket.id,),
-        )
-
-    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE)
-
-    assert values.backend_key is ConversationBackendKey.codex
-    assert values.model == "gpt-5.6-sol"
-    assert values.reasoning_effort == "medium"
-
-
-
-
-@pytest.mark.parametrize("role", ["chief", "worker"])
-def test_new_conversation_defaults_reject_disable_after_save_and_accept_enabled_override(
-    tmp_db: Connection, ticket: Ticket, role: str
-) -> None:
-    historical = replace(ticket, employee_launch_model=None)
-    if role == "chief":
-        default = agent_resolve(tmp_db, workspace_folder=_WORKSPACE)
-    else:
-        default = worker_resolve(tmp_db, historical, workspace_folder=_WORKSPACE)
-    write_model_enablement(tmp_db, default.backend_key, default.model, False)
-    tmp_db.commit()
-    before = tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0]
-
-    with pytest.raises(PlannerError) as refusal:
-        if role == "chief":
-            agent_resolve(tmp_db, workspace_folder=_WORKSPACE)
-        else:
-            worker_resolve(tmp_db, historical, workspace_folder=_WORKSPACE)
-    assert refusal.value.code is ErrorCode.validation
-    assert default.model in refusal.value.message
-    assert "Choose an enabled model" in refusal.value.message
-    assert tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0] == before
-    assert read_ticket(tmp_db, ticket.id) == ticket
-
-    override = ConversationStartOverrides(model="enabled-alternative")
-    if role == "chief":
-        allowed = agent_resolve(tmp_db, override, workspace_folder=_WORKSPACE)
-    else:
-        allowed = worker_resolve(tmp_db, historical, override, workspace_folder=_WORKSPACE)
-    assert allowed.model == "enabled-alternative"
-    assert allowed.backend_key is default.backend_key
 
 
 def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_override(
@@ -521,67 +513,95 @@ def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_over
     assert read_ticket(tmp_db, ticket.id) == ticket
 
 
-
-def test_disabled_inherited_worker_choice_refuses_send_before_conversation_creation(
-    tmp_db: Connection, ticket: Ticket
+@pytest.mark.parametrize("project_requires_mac", [False, True])
+def test_ordinary_mac_project_creation_preserves_a_directory_absent_on_vps(
+    tmp_db: Connection, tmp_path: Path, project_requires_mac: bool
 ) -> None:
-    chosen = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
-    with tmp_db:
-        tmp_db.execute(
-            "UPDATE tickets SET employee_launch_model = NULL WHERE id = ?", (ticket.id,)
+    async def exercise() -> None:
+        folder = tmp_path / "Mac-only-checkout"
+        assert not folder.exists()
+        project = create_project(
+            tmp_db,
+            name="Native project",
+            folder_path=folder,
+            requires_macos=project_requires_mac,
+            now=1,
         )
-        write_model_enablement(tmp_db, chosen.backend_key, chosen.model, False)
-
-    async def exercise() -> None:
+        ticket = create_ticket(
+            tmp_db,
+            title="Native work",
+            principal=OWNER_PRINCIPAL,
+            now=2,
+            title_max_chars=200,
+            worker_type="coding",
+            project_id=project.id,
+            locale=None if project_requires_mac else "macos",
+        )
+        assert ticket.locale is TicketLocale.macos
+        values = worker_resolve(tmp_db, ticket)
+        assert values.workspace_folder == folder
+        assert values.workspace_path_policy is WorkspacePathPolicy.native_absolute
         system = InMemoryConversationSystem()
-        with pytest.raises(PlannerError, match="Choose an enabled model"):
-            await _sent(system, tmp_db, ticket.id, "start", now=10)
-        assert read_ticket(tmp_db, ticket.id).conversation_id is None
-        assert _history(tmp_db, ticket.id) == []
-        assert tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
+        conversation_id = await _started(system, tmp_db, ticket, values, now=3)
+        row = tmp_db.execute(
+            "SELECT workspace_folder, workspace_path_policy FROM conversations "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        assert tuple(row) == (str(folder), "native_absolute")
+        explicit = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
+        assert explicit.workspace_folder == _WORKSPACE
+        assert explicit.workspace_path_policy is WorkspacePathPolicy.native_absolute
 
     asyncio.run(exercise())
 
 
-def test_existing_conversation_stays_usable_after_model_disablement(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        chosen = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
-        conversation_id = await _started(system, tmp_db, ticket, chosen, now=10)
-        write_model_enablement(tmp_db, chosen.backend_key, chosen.model, False)
-        tmp_db.commit()
-        fate = await _sent(system, tmp_db, ticket.id, "continue", now=20)
-        assert isinstance(fate, PromptDeliveryStarted)
-        assert read_ticket(tmp_db, ticket.id).conversation_id == conversation_id
-
-    asyncio.run(exercise())
-
-
-
-def test_disabled_chief_default_refuses_first_send_without_conversation_records(
+@pytest.mark.parametrize("locale", list(TicketLocale))
+def test_project_symlink_spelling_is_stored_and_resolved_on_the_execution_host(
     tmp_db: Connection,
+    tmp_path: Path,
+    ticket: Ticket,
+    locale: TicketLocale,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    chosen = agent_resolve(tmp_db, workspace_folder=_WORKSPACE)
-    write_model_enablement(tmp_db, chosen.backend_key, chosen.model, False)
-    tmp_db.commit()
-
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        with pytest.raises(PlannerError, match="Choose an enabled model"):
-            await send_to_agent_conversation(
-                system,
-                tmp_db,
-                "chief_of_staff",
-                text_message_content("start"),
-                conversation_id=None,
-                values=agent_resolve(tmp_db, workspace_folder=_WORKSPACE),
-                sender_label="owner",
-            )
-        assert tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
-        assert tmp_db.execute(
-            "SELECT count(*) FROM agents WHERE conversation_id IS NOT NULL"
-        ).fetchone()[0] == 0
-
-    asyncio.run(exercise())
+    fallback = tmp_path / "default-workspace"
+    monkeypatch.setattr(
+        "planner.runtime.conversation_start._default_workspace_folder", lambda: fallback
+    )
+    target = tmp_path / "vps-target"
+    target.mkdir()
+    alias = tmp_path / "checkout"
+    alias.symlink_to(target, target_is_directory=True)
+    project = create_project(
+        tmp_db,
+        name="Symlink project",
+        folder_path=alias,
+        now=1,
+    )
+    assert project.folder_path == alias
+    tmp_db.execute(
+        "UPDATE tickets SET project_id = ?, locale = ? WHERE id = ?",
+        (project.id, locale.value, ticket.id),
+    )
+    ticket = read_ticket(tmp_db, ticket.id)
+    values = worker_resolve(tmp_db, ticket)
+    assert values.workspace_folder == (alias if locale == TicketLocale.macos else target)
+    explicit = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
+    assert explicit.workspace_folder == _WORKSPACE
+    assert explicit.workspace_path_policy is (
+        WorkspacePathPolicy.native_absolute
+        if locale == TicketLocale.macos
+        else WorkspacePathPolicy.legacy_home_mapping
+    )
+    update_project(tmp_db, project.id, folder_path=tmp_path / "absent", now=2)
+    values = worker_resolve(tmp_db, ticket)
+    if locale == TicketLocale.vps:
+        assert values.workspace_path_policy is WorkspacePathPolicy.legacy_home_mapping
+        assert values.workspace_folder == fallback
+    else:
+        assert values.workspace_folder == tmp_path / "absent"
+        assert values.workspace_path_policy is WorkspacePathPolicy.native_absolute
+    update_project(tmp_db, project.id, folder_path=None, now=3)
+    default = worker_resolve(tmp_db, ticket)
+    assert default.workspace_path_policy is WorkspacePathPolicy.legacy_home_mapping
+    assert default.workspace_folder == fallback

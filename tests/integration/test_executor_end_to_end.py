@@ -225,6 +225,11 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         await super()._send(message)
 
 
+def public_ask_id(ask: AskReference) -> str:
+    """Public views scope native callback IDs to the exact turn and ask kind."""
+    return f"{ask.turn.turn_number}:{ask.kind.value}:{ask.ask_id}"
+
+
 async def eventually(condition: Callable[[], bool], detail: str, seconds: float = 8) -> None:
     deadline = asyncio.get_running_loop().time() + seconds
     while not condition():
@@ -285,6 +290,9 @@ class ExecutorHarness:
     async def restart_vps_core(self, *, wait_ready: bool = True) -> None:
         await asyncio.wait_for(self.endpoint.close(), 2)
         self.old_systems.append(self.system)
+        # A process exit releases the lifecycle lease without a native stop.
+        # This in-process crash fixture must model that kernel-owned release.
+        self.system._runtime_ownership.close()
         self.endpoint = CutReceiptEndpoint(self.endpoint.db_path)
         self.system = make_core(self.endpoint)
         self.endpoint.runtime = SimpleNamespace(
@@ -331,35 +339,32 @@ def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
     )
 
 
-async def boot(
-    root: Path, monkeypatch: pytest.MonkeyPatch, *, with_worker_ticket: bool = False
-) -> ExecutorHarness:
+async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     from planner.executor import mac as mac_module
 
     monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
+    monkeypatch.setenv("CODEX_HOME", str(root / "native-codex-home"))
     vps_root = root / "vps"
     vps_root.mkdir()
     db_path = str(vps_root / "panels.sqlite")
     connection = connect(db_path)
-    worker_ticket_id = "t_scripted"
     try:
         create_schema(connection)
-        if with_worker_ticket:
-            from planner.tickets import data
-            from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
+        from planner.tickets import data
+        from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
-            ticket = data.create_ticket(
-                connection,
-                title="Reconnect worker",
-                worker_type="coding",
-                principal=OWNER_PRINCIPAL,
-                now=1,
-                title_max_chars=TITLE_MAX_CHARS,
-                locale=TicketLocale.macos,
-                employee_backend="codex",
-                employee_launch_model="scripted",
-            )
-            worker_ticket_id = ticket.id
+        ticket = data.create_ticket(
+            connection,
+            title="Reconnect worker",
+            worker_type="coding",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            locale=TicketLocale.macos,
+            employee_backend="codex",
+            employee_launch_model="scripted",
+        )
+        worker_ticket_id = ticket.id
     finally:
         connection.close()
     socket_path = root / "vps.sock"
@@ -493,7 +498,7 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
     from planner.tickets import data
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, with_worker_ticket=True)
+        harness = await boot(tmp_path, monkeypatch)
         first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
         try:
             child = next(iter(harness.mac.registry.children.values()))
@@ -663,7 +668,7 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
     from planner.tickets import data
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, with_worker_ticket=True)
+        harness = await boot(tmp_path, monkeypatch)
         first_inventory, release_inventory = asyncio.Event(), asyncio.Event()
         try:
             registered = next(iter(harness.mac.registry.children.values()))
@@ -680,7 +685,7 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
             accept = harness.endpoint._accept_envelope
             send = harness.endpoint._send
 
-            async def read_snapshot() -> _CatalogSnapshot:
+            def read_snapshot(*_sources: object) -> _CatalogSnapshot:
                 return snapshot
 
             # Reuse the bench constructor without starting another process. Its
@@ -690,7 +695,10 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
             async with _scripted_child(workspace, script={}) as bench:
                 adapter = bench.child
                 adapter._sink = sink
-                monkeypatch.setattr(adapter, "_read_catalog_snapshot", read_snapshot)
+                monkeypatch.setattr(
+                    "planner.conversation.backends.codex_app_server.adapter._catalog_snapshot",
+                    read_snapshot,
+                )
 
                 async def publish_change(token: str) -> None:
                     nonlocal snapshot
@@ -701,7 +709,7 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                             ),
                         )
                     )
-                    await adapter._refresh_catalog()
+                    await adapter._publish_catalog()
                     produced[pass_number].append(harness.mac.spool.pending()[-1])
                     await sink.agent_message_delta(turn, f"retained pass {pass_number}")
                     produced[pass_number].append(harness.mac.spool.pending()[-1])
@@ -751,12 +759,12 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                 await asyncio.wait_for(first_inventory.wait(), 5)
                 assert not harness.endpoint.ready
                 assert not harness.mac.spool.pending()
-                await adapter._refresh_catalog()  # Initial empty publication is real work.
+                await adapter._publish_catalog()  # Initial empty publication is real work.
                 initial = harness.mac.spool.pending()
                 assert len(initial) == 1
                 produced[0].extend(initial)
                 for _ in range(300):
-                    await adapter._refresh_catalog()
+                    await adapter._publish_catalog()
                 # Equality creates no durable sequence ahead of the canonical write
                 # or the replay prefix. No queue reset/filter supplies this result.
                 assert harness.mac.spool.pending() == initial
@@ -813,7 +821,7 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                     connection.close()
                 # The same producer retains its marker over the real relay reconnect.
                 before = len(accepted)
-                await adapter._refresh_catalog()
+                await adapter._publish_catalog()
                 assert not harness.mac.spool.pending() and len(accepted) == before
                 assert harness.native.start_count == harness.native.prompt_count == 1
                 assert next(iter(harness.mac.registry.children.values())) is registered
@@ -822,8 +830,11 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                 new_workspace.mkdir()
                 async with _scripted_child(new_workspace, script={}) as replacement:
                     replacement.child._sink = sink
-                    monkeypatch.setattr(replacement.child, "_read_catalog_snapshot", read_snapshot)
-                    await replacement.child._refresh_catalog()
+                    monkeypatch.setattr(
+                        "planner.conversation.backends.codex_app_server.adapter._catalog_snapshot",
+                        read_snapshot,
+                    )
+                    await replacement.child._publish_catalog()
                     assert len(harness.mac.spool.pending()) == 1
                     await eventually(
                         lambda: not harness.mac.spool.pending(),
@@ -947,7 +958,9 @@ def test_binary_artifact_is_complete_before_dependent_backend_row(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         try:
-            artifact = harness.mac.paths.artifacts / "t_scripted" / "binary.dat"
+            ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
+            assert ticket_id is not None
+            artifact = harness.mac.paths.artifacts / ticket_id / "binary.dat"
             artifact.parent.mkdir(parents=True, exist_ok=True)
             contents = bytes(range(256)) * 2000
             artifact.write_bytes(contents)
@@ -962,7 +975,9 @@ def test_binary_artifact_is_complete_before_dependent_backend_row(
                 lambda: harness.events("tool_call_finished") == 1,
                 "File-dependent backend event did not commit",
             )
-            assert (tmp_path / "vps/files/tickets/t_scripted/binary.dat").read_bytes() == contents
+            assert (
+                tmp_path / "vps/files/tickets" / ticket_id / "binary.dat"
+            ).read_bytes() == contents
             await eventually(
                 lambda: not harness.mac.spool.pending(),
                 "Committed file event receipt did not drain",
@@ -1075,7 +1090,7 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
             await harness.native.raise_ask()
             await harness.wait_ask_reachable()
             assert await harness.endpoint.answer_permission(
-                "c_scripted", "ask_permission", "allow", executor_ask=harness.ask
+                "c_scripted", public_ask_id(harness.ask), "allow", executor_ask=harness.ask
             )
             await eventually(
                 lambda: harness.events("permission_answered") == 1, "first answer did not commit"
@@ -1096,11 +1111,13 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
             await harness.wait_ask_reachable()
             assert harness.ask != first_ask and harness.ask.ask_id == first_ask.ask_id
             assert (
-                harness.endpoint.ask_status("c_scripted", "ask_permission")["answer_available"]
+                harness.endpoint.ask_status("c_scripted", public_ask_id(harness.ask))[
+                    "answer_available"
+                ]
                 is True
             )
             assert await harness.endpoint.answer_permission(
-                "c_scripted", "ask_permission", "deny", executor_ask=harness.ask
+                "c_scripted", public_ask_id(harness.ask), "deny", executor_ask=harness.ask
             )
             await eventually(
                 lambda: harness.events("permission_answered") == 2,
@@ -1246,6 +1263,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
 
     async def run() -> None:
         monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "native-codex-home"))
         monkeypatch.setenv("PLAN_EXECUTOR_MODE", "remote")
         socket_path = tmp_path / "server.sock"
         monkeypatch.setenv("PLAN_EXECUTOR_VPS_SOCKET", str(socket_path))
@@ -1345,7 +1363,10 @@ def test_complete_user_input_map_is_durable_before_drop_and_normalized_once(
             )
             for answers in invalid_maps:
                 assert not await harness.endpoint.answer_user_input(
-                    "c_scripted", "request_input", answers, executor_ask=harness.input_ask
+                    "c_scripted",
+                    public_ask_id(harness.input_ask),
+                    answers,
+                    executor_ask=harness.input_ask,
                 )
             assert harness.endpoint.store.recorded_answer(harness.input_ask) is None
             generation = harness.mac.identity.connection_generation
@@ -1435,7 +1456,10 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
             await harness.wait_input_reachable()
             first = harness.input_ask
             assert await harness.endpoint.answer_user_input(
-                "c_scripted", "request_input", INPUT_ANSWERS, executor_ask=harness.input_ask
+                "c_scripted",
+                public_ask_id(harness.input_ask),
+                INPUT_ANSWERS,
+                executor_ask=harness.input_ask,
             )
             await eventually(
                 lambda: harness.events("user_input_answered") == 1,
@@ -1462,7 +1486,10 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
             )
             assert harness.input_ask != first
             assert await harness.endpoint.answer_user_input(
-                "c_scripted", "request_input", second_answers, executor_ask=harness.input_ask
+                "c_scripted",
+                public_ask_id(harness.input_ask),
+                second_answers,
+                executor_ask=harness.input_ask,
             )
             await eventually(
                 lambda: harness.events("user_input_answered") == 2,
@@ -1510,7 +1537,10 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
             generation = harness.mac.identity.connection_generation
             harness.endpoint.cut_user_input_application = True
             assert await harness.endpoint.answer_user_input(
-                "c_scripted", "request_input", INPUT_ANSWERS, executor_ask=harness.input_ask
+                "c_scripted",
+                public_ask_id(harness.input_ask),
+                INPUT_ANSWERS,
+                executor_ask=harness.input_ask,
             )
             await eventually(
                 lambda: harness.endpoint.cut_count == 1,
@@ -1530,7 +1560,10 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
             assert harness.events("user_input_answered") == 1
             replacement = (UserInputAnswer("q_one", ("No",)), UserInputAnswer("q_two", ("Blue",)))
             assert not await harness.endpoint.answer_user_input(
-                "c_scripted", "request_input", replacement, executor_ask=harness.input_ask
+                "c_scripted",
+                public_ask_id(harness.input_ask),
+                replacement,
+                executor_ask=harness.input_ask,
             )
             assert harness.events("user_input_answered") == 1
         finally:
@@ -1698,7 +1731,9 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
             monkeypatch.setattr(harness.endpoint, "_send", corrupt_ack)
             monkeypatch.setattr(harness.mac, "_replay_envelope", observe_rejection)
             monkeypatch.setattr(harness.mac, "_request", count_completions)
-            artifact = harness.mac.paths.artifacts / "t_scripted" / "typed-ack.bin"
+            ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
+            assert ticket_id is not None
+            artifact = harness.mac.paths.artifacts / ticket_id / "typed-ack.bin"
             artifact.parent.mkdir(parents=True, exist_ok=True)
             contents = bytes(range(256)) * 2000
             artifact.write_bytes(contents)
@@ -1710,7 +1745,7 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
                 detail="The file needs an authorized upload slot.",
             )
             await asyncio.wait_for(rejected.wait(), 8)
-            target = tmp_path / "vps/files/tickets/t_scripted/typed-ack.bin"
+            target = tmp_path / "vps/files/tickets" / ticket_id / "typed-ack.bin"
             assert not target.exists()
             assert harness.events("tool_call_finished") == 0
             assert completed == 0
@@ -1904,7 +1939,10 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
                 )
             else:
                 assert await harness.endpoint.answer_user_input(
-                    "c_scripted", "request_input", INPUT_ANSWERS, executor_ask=harness.input_ask
+                    "c_scripted",
+                    public_ask_id(harness.input_ask),
+                    INPUT_ANSWERS,
+                    executor_ask=harness.input_ask,
                 )
             await eventually(lambda: bool(dropped), "Direct command acknowledgment was not lost")
             await eventually(
@@ -2005,11 +2043,11 @@ async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict
     body = {"executor_ask": encode_value(ask)}
     if ask.kind is AskKind.permission:
         path = "permission-answers"
-        body.update(ask_id=ask.ask_id, option_id="allow")
+        body.update(ask_id=public_ask_id(ask), option_id="allow")
     else:
         path = "user-input-answers"
         body.update(
-            request_id=ask.ask_id,
+            request_id=public_ask_id(ask),
             answers={
                 answer.question_id: {"answers": list(answer.answers)} for answer in INPUT_ANSWERS
             },
@@ -2176,7 +2214,9 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             )
             assert (
                 harness.endpoint._current_ask_evidence(
-                    "c_scripted", "request_late", AskKind.user_input
+                    "c_scripted",
+                    f"{ask.turn.turn_number}:user_input:request_late",
+                    AskKind.user_input
                 )
                 is None
             )

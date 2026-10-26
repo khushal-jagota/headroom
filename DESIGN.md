@@ -3,7 +3,7 @@
 The *values* live in `assets/tokens.css` (the only place a colour, radius, spacing step,
 duration, or type size is written — never hardcode one). This file is the *how*: the
 principles those tokens serve. Warm near-black surfaces, one amber accent that means
-"needs the human", a closed five-size type scale. Restraint over decoration.
+"needs the human", a shared sans type scale. Restraint over decoration.
 
 Distilled from `tokens.css`, `PRINCIPLES.md`, and the Vylo conversation reference (no-divider fades,
 bubble-less assistant, recessed composer).
@@ -51,18 +51,18 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **The scales are closed.** The sans type sizes, the 4/8/12 radius steps, the fixed spacing
-   scale. Snap to them; don't invent a size for a one-off. A new category needs evidence of need
-   (`PRINCIPLES.md`), not taste. The one added category is the **serif ladder** (`--font-serif`
-   plus its six `--type-serif-*` sizes) — the voice below earns it.
+8. **Use the shared scales.** Typography uses 11, 13, 15, 18, 20, 28, and 30px.
+   The owner asked to preserve sizes while removing serif, so the 18px prose,
+   28px display, and 30px hero sizes are an explicit exception to the five-size
+   limit. Existing sans size exceptions remain unchanged. The radius and spacing
+   scales stay fixed; new sizes need an explicit design decision.
 
-9. **The system speaks in serif; the machine stays sans.** Everything the product or its agents
-   *say* is set in serif (Newsreader) — ticket titles and prose, recaps, proposals, notes, field
-   values, day and sprint bodies, conversation messages, the capture inputs, the empty-state lines.
-   Everything that is a *control or a fact* stays in the sans UI face — the nav, labels, pills,
-   buttons, filters, counts, key hints, status words, dates. The split *is* the hierarchy: on any
-   surface the words are the content and the small sans elements are the machinery. No italics
-   except input placeholders.
+9. **One sans voice.** Content and controls use the same system sans stack
+   (`--font-ui`). Hierarchy comes from size, weight, spacing, and emphasis. Former
+   serif text keeps its larger 18px prose, 28px display, and 30px hero sizes.
+   Smaller body text uses 15px and section titles use 20px. Code, diffs, tool output,
+   and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. No italics except
+   input placeholders.
 
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
     and a long soft shadow, with the solid-amber Approve glowing beneath.
@@ -77,10 +77,10 @@ bubble-less assistant, recessed composer).
   bubble-less **worker** prose, compact closed thought and tool details, one persistent
   status line, explicit permissions, and a recessed composer carrying the model and effort
   in force plus Steer, Send Now, run-when-free, Stop and New when applicable.
-- **The serif redesign, across every screen** (`assets/tokens.css` serif ladder;
-  `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — the serif/sans voice
-  split, the amber-only accent, the line diet, and the single depth-bearing ask surface, applied
-  to Day, Review, Workspace, Ticket, Sprint, Backlog, and Ideas, plus the shell presence readout.
+- **Shared typography across every screen** (`assets/tokens.css` type scale;
+  `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — one
+  system sans voice for content and controls, with monospace for aligned technical
+  text. Size, spacing, and emphasis carry the hierarchy.
 
 ## Framing
 

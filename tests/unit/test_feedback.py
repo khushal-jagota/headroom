@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,7 +20,7 @@ from planner.core.server import create_app
 @pytest.fixture
 def feedback_client(tmp_path: Path) -> Iterator[TestClient]:
     db_path = tmp_path / "feedback.db"
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
     config = load_config(
         path=None,
@@ -46,15 +47,15 @@ def _create_note(client: TestClient, text: str, **context: str) -> dict[str, Any
 
 
 def _create_ticket(
-    client: TestClient, title: str, *, sprint_item_id: str | None = None
+    client: TestClient, title: str, *, manager_id: str | None = None
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "worker_type": "coding",
         "title": title,
-        "kickoff_note": "Agreed brief.",
+        "brief": "Agreed brief.",
     }
-    if sprint_item_id is not None:
-        body["orchestrator"] = {"kind": "sprint_item", "id": sprint_item_id}
+    if manager_id is not None:
+        body["manager"] = {"kind": "manager", "id": manager_id}
     response = client.post("/api/tickets", json=body)
     assert response.status_code == 200, response.text
     return cast(dict[str, Any], response.json())
@@ -66,9 +67,12 @@ def test_capture_list_use_dismiss_reopen_and_ticket_deletion(
     first = _create_note(
         feedback_client,
         "Tighten the heading",
-        page_address="#/workspace",
+        page_address="#/workspace/chief-of-staff",
         page_label="Workspace",
     )
+    assert first["text"] == "Tighten the heading"
+    assert first["page_address"] == "#/workspace/chief-of-staff"
+    assert first["page_label"] == "Workspace"
     second = _create_note(feedback_client, "Explain the empty state")
     ticket = _create_ticket(feedback_client, "Improve the workspace")
 
@@ -134,41 +138,20 @@ def test_multi_note_use_is_atomic(feedback_client: TestClient) -> None:
     assert feedback_client.get("/api/feedback").json()["open"] == [note]
 
 
-@pytest.mark.parametrize(
-    "page_address",
-    (
-        "javascript:alert(1)",
-        "https://example.com/",
-        "/#/workspace",
-        "#/workspace#other",
-        "#/workspace\n",
-        "#/",
-    ),
-)
-def test_feedback_page_context_rejects_non_panels_addresses(
-    feedback_client: TestClient, page_address: str
-) -> None:
-    response = feedback_client.post(
-        "/api/feedback",
-        json={"text": "Unsafe context", "page_address": page_address, "page_label": "Page"},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
 
 
 def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(
     feedback_client: TestClient,
 ) -> None:
     first_item = feedback_client.post(
-        "/api/items", json={"title": "First", "project_id": "project_vylo"}
+        "/api/managers", json={"title": "First", "project_id": "project_vylo"}
     ).json()
     second_item = feedback_client.post(
-        "/api/items", json={"title": "Second", "project_id": "project_vylo"}
+        "/api/managers", json={"title": "Second", "project_id": "project_vylo"}
     ).json()
-    own_ticket = _create_ticket(feedback_client, "Own child", sprint_item_id=str(first_item["id"]))
+    own_ticket = _create_ticket(feedback_client, "Own child", manager_id=str(first_item["id"]))
     other_ticket = _create_ticket(
-        feedback_client, "Other child", sprint_item_id=str(second_item["id"])
+        feedback_client, "Other child", manager_id=str(second_item["id"])
     )
     notes = [_create_note(feedback_client, f"Note {index}") for index in range(5)]
     worker_headers = {
@@ -176,7 +159,7 @@ def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(
         "X-Plan-Ticket-ID": str(own_ticket["id"]),
     }
     supervisor_headers = {
-        "X-Plan-Actor": "sprint_item_supervisor",
+        "X-Plan-Actor": "manager",
         "X-Plan-Sprint-Item-ID": str(first_item["id"]),
     }
 

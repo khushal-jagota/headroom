@@ -6,40 +6,38 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Collection, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from typing import cast
 
 from planner.core import ticket_blocks
-from planner.core.contracts import BlockerSummary, JsonDict
+from planner.core.contracts import BlockerSummary, JsonDict, PrincipalKind
 from planner.files.lifecycle import database_path
 from planner.files.logic.listing import entries_as_json, fold_directory
 from planner.files.logic.paths import ticket_files_root
-from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
+from planner.managers import data as managers_data
+from planner.managers import views as managers_views
+from planner.navigation.review import review_message_items
+from planner.navigation.review_contracts import ReviewMessageItem, ReviewProposalItem
+from planner.navigation.review_logic import group_review_items
 from planner.runtime import conversation_start, worker_memory
-from planner.sprints import data as sprints_data
-from planner.sprints import views as sprints_views
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
 from planner.tickets.contracts import (
     BoardCardSource,
-    BoardSprintItemSource,
+    BoardManagerSource,
     Ticket,
     TicketListFilters,
     TicketStatus,
 )
 from planner.tickets.derivation import TicketFacts
-from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic import fields_codec, machine, proposal_routing
+from planner.tickets.logic.creation_receipt import supervision_receipt
+from planner.tickets.logic.recap import recap_preview
+from planner.tickets.logic.review import eligible_for_owner_review
 from planner.worker_types.configuration import configured_worker_type_registry
-
-# §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
-_PRIORITY_RANK = ("P0", "P1", "P2", "P3")
-
-
-def _prio_rank(priority: str) -> int:
-    return _PRIORITY_RANK.index(priority)
-
 
 # --- serializers ---------------------------------------------------------------
 
@@ -71,43 +69,16 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "employee_launch_model": ticket.employee_launch_model,
         "employee_launch_reasoning_effort": ticket.employee_launch_reasoning_effort,
         "stage": str(ticket.stage),
-        "priority": ticket.priority.value,
         "deadline": ticket.deadline,
         "project_id": ticket.project_id,
         "project": ticket.project_name,
-        "sprint_id": ticket.sprint_id,
-        "sprint_item_id": ticket.sprint_item_id,
-        "orchestrator": {
-            "kind": ticket.orchestrator_kind,
-            "id": ticket.sprint_item_id if ticket.orchestrator_kind == "sprint_item" else "chief",
+        "manager_id": ticket.manager_id,
+        "manager": {
+            "kind": ticket.manager_kind,
+            "id": ticket.manager_id if ticket.manager_kind == "manager" else "chief",
         },
-        "effective_sprint_id": ticket.effective_sprint_id,
-        "resolved_priority_anchors": {
-            "sprint_item": (
-                {
-                    "id": ticket.resolved_priority_anchors.sprint_item.id,
-                    "title": ticket.resolved_priority_anchors.sprint_item.title,
-                    "priority": ticket.resolved_priority_anchors.sprint_item.priority.value,
-                }
-                if ticket.resolved_priority_anchors.sprint_item is not None
-                else None
-            ),
-            "project": (
-                {
-                    "id": ticket.resolved_priority_anchors.project.id,
-                    "name": ticket.resolved_priority_anchors.project.name,
-                    "priority": (
-                        ticket.resolved_priority_anchors.project.priority.value
-                        if ticket.resolved_priority_anchors.project.priority is not None
-                        else None
-                    ),
-                }
-                if ticket.resolved_priority_anchors.project is not None
-                else None
-            ),
-        },
+        "manager_title": ticket.manager_title,
         "recap": ticket.recap,
-        "guidance": ticket.guidance,
         "ceiling": str(ticket.ceiling),
         "ceiling_holder": {
             "kind": ticket.ceiling_holder.kind.value,
@@ -116,6 +87,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "ticket_status": ticket.ticket_status.value,
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
+        "field_approvals": {key: asdict(value) for key, value in ticket.field_approvals.items()},
         "pending_proposal": (
             {
                 **asdict(ticket.pending_proposal),
@@ -129,6 +101,26 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
     }
 
 
+def ticket_creation_json(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
+    definition = configured_worker_type_registry().require(ticket.worker_type)
+    destination = proposal_routing.parked_destination(
+        proposal_routing.route_to_holder(ticket.ceiling_holder)
+    )
+    recipient = "the owner"
+    if destination is not None and destination.kind is PrincipalKind.chief:
+        recipient = "Chief"
+    elif destination is not None and destination.kind is PrincipalKind.manager:
+        row = conn.execute("SELECT title FROM managers WHERE id = ?", (destination.id,)).fetchone()
+        assert row is not None
+        recipient = f"the manager {row['title']}"
+    return {
+        **ticket_json(ticket, now),
+        **supervision_receipt(
+            ticket, worker_type_definition=definition, review_recipient=recipient
+        ),
+    }
+
+
 # --- ticket reads --------------------------------------------------------------
 
 
@@ -138,9 +130,7 @@ def list_tickets(
     *,
     stage: str | None,
     project_id: str | None,
-    sprint_id: str | None,
-    sprint_item_id: str | None,
-    day_id: str | None = None,
+    manager_id: str | None,
 ) -> list[JsonDict]:
     clauses: list[str] = []
     params: list[str] = []
@@ -149,26 +139,17 @@ def list_tickets(
         params.append(str(stage))
     if project_id is not None:
         clauses.append(
-            "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
+            "CASE WHEN tickets.manager_id IS NOT NULL THEN managers.project_id "
             "ELSE tickets.project_id END = ?"
         )
         params.append(project_id)
-    if sprint_id is not None:
-        if sprint_id == "null":
-            clauses.append("tickets.sprint_id IS NULL")
-        else:
-            clauses.append("tickets.sprint_id = ?")
-            params.append(sprint_id)
-    if sprint_item_id is not None:
-        clauses.append("tickets.sprint_item_id = ?")
-        params.append(sprint_item_id)
-    if day_id is not None:  # scope to one day's board via the day_tickets join
-        clauses.append("tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)")
-        params.append(day_id)
+    if manager_id is not None:
+        clauses.append("tickets.manager_id = ?")
+        params.append(manager_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
         "SELECT tickets.id FROM tickets "
-        "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id"
+        "LEFT JOIN managers ON managers.id = tickets.manager_id"
         + where
         + " ORDER BY tickets.created_at ASC, tickets.id",
         tuple(params),
@@ -185,18 +166,10 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
         (
             str(row["title"]),
             str(row["recap"]),
-            str(row["guidance"]),
             *values.values(),
             proposal.body if proposal is not None else "",
         )
     )
-
-
-def _recap_preview(recap: str) -> str:
-    compact = " ".join(recap.split())
-    if len(compact) <= TICKET_RECAP_PREVIEW_CHARS:
-        return compact
-    return compact[: TICKET_RECAP_PREVIEW_CHARS - 1].rstrip() + "…"
 
 
 def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
@@ -209,24 +182,17 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
         "ticket_status": facts.ticket_status.value,
-        "priority": str(row["priority"]),
         "project_id": (
             str(row["effective_project_id"]) if row["effective_project_id"] is not None else None
         ),
         "project": (str(row["project_name"]) if row["project_name"] is not None else None),
-        "sprint_item_id": (
-            str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
-        ),
-        "orchestrator": {
-            "kind": str(row["orchestrator_kind"]),
-            "id": (str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else "chief"),
+        "manager_id": (str(row["manager_id"]) if row["manager_id"] is not None else None),
+        "manager": {
+            "kind": str(row["manager_kind"]),
+            "id": (str(row["manager_id"]) if row["manager_id"] is not None else "chief"),
         },
-        "sprint_item": (
-            str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
-        ),
-        "sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
-        "effective_sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
-        "recap_preview": _recap_preview(str(row["recap"])),
+        "manager_title": (str(row["manager_title"]) if row["manager_title"] is not None else None),
+        "recap_preview": recap_preview(str(row["recap"])),
     }
 
 
@@ -236,71 +202,46 @@ def list_ticket_summaries(
     page_request: ListPageRequest,
     filters: TicketListFilters,
     project_id: str | None,
-    sprint_id: str | None,
-    sprint_item_id: str | None,
-    day_id: str | None = None,
-    day_order: bool = False,
+    manager_id: str | None,
 ) -> ListPage[JsonDict]:
     clauses: list[str] = []
     params: list[str] = []
-    if filters.orchestrator is not None:
-        clauses.append("tickets.orchestrator_kind = ?")
-        params.append(filters.orchestrator.kind.value)
-        if filters.orchestrator.kind.value == "sprint_item":
-            clauses.append("tickets.sprint_item_id = ?")
-            params.append(filters.orchestrator.id)
+    if filters.manager is not None:
+        clauses.append("tickets.manager_kind = ?")
+        params.append(filters.manager.kind.value)
+        if filters.manager.kind.value == "manager":
+            clauses.append("tickets.manager_id = ?")
+            params.append(filters.manager.id)
     if project_id is not None:
         clauses.append(
-            "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
+            "CASE WHEN tickets.manager_id IS NOT NULL THEN managers.project_id "
             "ELSE tickets.project_id END = ?"
         )
         params.append(project_id)
-    if sprint_id is not None:
-        if sprint_id == "null":
-            clauses.append("tickets.sprint_id IS NULL")
-        else:
-            clauses.append("tickets.sprint_id = ?")
-            params.append(sprint_id)
-    if sprint_item_id is not None:
-        clauses.append("tickets.sprint_item_id = ?")
-        params.append(sprint_item_id)
-    join_day = ""
-    if day_id is not None:
-        join_day = " JOIN day_tickets ON day_tickets.ticket_id = tickets.id"
-        clauses.append("day_tickets.day_id = ?")
-        params.append(day_id)
+    if manager_id is not None:
+        clauses.append("tickets.manager_id = ?")
+        params.append(manager_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    order = (
-        "day_tickets.position ASC, tickets.id"
-        if day_order
-        else "tickets.created_at ASC, tickets.id"
-    )
+    order = "tickets.created_at ASC, tickets.id"
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
-    searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.locale, tickets.worker_type, tickets.stage, "
         "tickets.is_backlogged, "
-        "tickets.worker_step_claim, tickets.priority, tickets.recap, "
+        "tickets.worker_step_claim, tickets.recap, "
         "tickets.pending_proposal, "
-        + searchable_guidance
-        + " AS guidance, "
         + searchable_fields
         + " AS field_values, "
         + searchable_proposal
         + " AS searchable_pending_proposal, "
-        "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
+        "CASE WHEN tickets.manager_id IS NOT NULL THEN managers.project_id "
         "ELSE tickets.project_id END AS effective_project_id, "
-        "projects.name AS project_name, tickets.sprint_item_id, tickets.orchestrator_kind, "
-        "sprint_items.title AS sprint_item_title, tickets.sprint_id "
+        "projects.name AS project_name, tickets.manager_id, tickets.manager_kind, "
+        "managers.title AS manager_title "
         "FROM tickets "
-        "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
-        "THEN sprint_items.project_id ELSE tickets.project_id END"
-        + join_day
-        + where
-        + " ORDER BY "
-        + order,
+        "LEFT JOIN managers ON managers.id = tickets.manager_id "
+        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.manager_id IS NOT NULL "
+        "THEN managers.project_id ELSE tickets.project_id END" + where + " ORDER BY " + order,
         tuple(params),
     ).fetchall()
     registry = configured_worker_type_registry()
@@ -354,9 +295,7 @@ def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
     signal. An existing transaction owner keeps ownership and supplies its own boundary.
 
     This detail is assembled from several queries, so without it a reader could see a
-    Ticket's row from before a move and its Day membership from after. The Outcome-scoped
-    read that used to hold this snapshot is gone; the property belongs to the ordinary
-    read that replaced it, not to the address it was reached through.
+    Ticket's row from before a move and its assignment from after.
     """
     owns_transaction = not conn.in_transaction
     if owns_transaction:
@@ -381,10 +320,6 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
     ticket_id = ticket.id
     detail = ticket_json(ticket, now)
     detail["record_sha256"] = tickets_data.ticket_record_sha256(conn, ticket_id)
-    day_rows = conn.execute(
-        "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",
-        (ticket_id,),
-    ).fetchall()
     blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     conversation_rows = conn.execute(
         "SELECT ticket_conversations.conversation_id, conversations.created_at "
@@ -398,7 +333,6 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
         {
             "artifacts": _ticket_artifacts(conn, ticket_id),
             "blocked": blocker_summary.blocked,
-            "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(ticket),
             "memory_notice_inspection": worker_memory.inspect_memory_notices(
                 conn, ticket_id
@@ -453,7 +387,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     return (
         f"{ticket.title}\n"
         f"stage: {str(ticket.stage)}\n"
-        f"priority: {ticket.priority.value}\n"
         f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
         f"{ownership.value if ownership is not None else '(none)'}\n"
@@ -462,7 +395,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"pending proposal:\n"
         f"{show(ticket.pending_proposal.body if ticket.pending_proposal else None)}\n"
         f"recap:\n{show(ticket.recap)}\n"
-        f"\nguidance:\n{show(ticket.guidance)}\n"
         f"\n"
         f"blocked_by:\n{blocked_by_block}\n"
     )
@@ -471,45 +403,20 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 # --- board (§10.3) -------------------------------------------------------------
 
 
-def ticket_ids_for_conversations(
-    conn: sqlite3.Connection, conversation_ids: Collection[str]
-) -> frozenset[str]:
-    """Which Tickets own these conversations.
-
-    The caller holds conversations, not Tickets, and a conversation can belong to a
-    Sprint Item's supervisor instead. This matches in Python over one unparameterised
-    scan, so the whole conversation record can be asked about without a bound parameter
-    for each conversation in it.
-    """
-    wanted = frozenset(conversation_ids)
-    if not wanted:
-        return frozenset()
-    rows = conn.execute(
-        "SELECT id, conversation_id FROM tickets WHERE conversation_id IS NOT NULL"
-    ).fetchall()
-    return frozenset(str(row["id"]) for row in rows if str(row["conversation_id"]) in wanted)
-
-
-def board_view(
-    conn: sqlite3.Connection,
-    *,
-    ticket_ids_holding_unread_owner_message: Collection[str] = (),
-) -> JsonDict:
+def board_view(conn: sqlite3.Connection) -> JsonDict:
     """All ordinary Workers, with messages discoverable on historical Workers too.
 
-    Orchestrator settlement controls presentation, never approval or message discovery.
-    Every represented orchestrator carries its complete children and conversation.
+    Manager settlement controls presentation, never approval or message discovery.
+    Every represented manager carries its complete children and conversation.
     """
-    named_ticket_ids = tuple(dict.fromkeys(ticket_ids_holding_unread_owner_message))
-    named_placeholders = ",".join("?" for _ in named_ticket_ids)
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
+        "SELECT tickets.id, tickets.title, tickets.recap, tickets.stage, "
+        "tickets.deadline, "
         "tickets.is_backlogged, "
-        "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
-        "tickets.orchestrator_kind, "
-        "sprint_items.project_id AS parent_project_id, "
-        "sprint_items.title AS sprint_item_title, "
-        "sprint_items.priority AS sprint_item_priority, "
+        "tickets.project_id, ticket_projects.name AS project_name, tickets.manager_id, "
+        "tickets.manager_kind, "
+        "managers.project_id AS parent_project_id, "
+        "managers.title AS manager_title, "
         "parent_projects.name AS parent_project_name, "
         "tickets.pending_proposal, tickets.worker_type, "
         "tickets.employee_backend, tickets.locale, "
@@ -517,22 +424,18 @@ def board_view(
         "tickets.worker_step_claim, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
-        "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "WHERE tickets.stage != 'cancelled'"
-        + (f" OR tickets.id IN ({named_placeholders})" if named_ticket_ids else ""),
-        named_ticket_ids,
+        "LEFT JOIN managers ON managers.id = tickets.manager_id "
+        "LEFT JOIN projects AS parent_projects ON parent_projects.id = managers.project_id ",
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
-    by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCardSource]]] = {
+    by_stage: dict[str, list[tuple[tuple[int, str, int], BoardCardSource]]] = {
         sid: [] for sid in column_order
     }
     for row in rows:
         stage = str(row["stage"])
-        priority = str(row["priority"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
         worker_type = str(row["worker_type"])
         worker_type_definition = registry.require(worker_type)
@@ -550,7 +453,7 @@ def board_view(
         )
         ticket_project_id = str(row["project_id"]) if row["project_id"] is not None else None
         ticket_project_name = str(row["project_name"]) if row["project_name"] is not None else None
-        is_parented = row["sprint_item_id"] is not None
+        is_parented = row["manager_id"] is not None
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
         facts = derivation.derive_ticket_facts(
@@ -560,14 +463,13 @@ def board_view(
         )
         card: BoardCardSource = {
             "id": str(row["id"]),
-            "orchestrator": {
-                "kind": str(row["orchestrator_kind"]),
-                "id": (
-                    str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else "chief"
-                ),
+            "manager": {
+                "kind": str(row["manager_kind"]),
+                "id": (str(row["manager_id"]) if row["manager_id"] is not None else "chief"),
             },
             "title": str(row["title"]),
-            "priority": priority,
+            "recap": str(row["recap"]),
+            "recap_preview": recap_preview(str(row["recap"])),
             "deadline": deadline,
             "project_id": group_project_id,
             "project": group_project_name,
@@ -593,20 +495,12 @@ def board_view(
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
             "waiting_to_closeout": facts.waiting_to_closeout,
-            "sprint_item_id": (
-                str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
-            ),
-            "sprint_item_title": (
-                str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
-            ),
-            "sprint_item_priority": (
-                str(row["sprint_item_priority"])
-                if row["sprint_item_priority"] is not None
-                else None
+            "manager_id": (str(row["manager_id"]) if row["manager_id"] is not None else None),
+            "manager_title": (
+                str(row["manager_title"]) if row["manager_title"] is not None else None
             ),
         }
         sort_key = (
-            _prio_rank(priority),
             0 if deadline is not None else 1,
             deadline or "",
             int(row["created_at"]),
@@ -624,21 +518,21 @@ def board_view(
     ]
     return {
         "columns": columns,
-        "sprint_items": _board_sprint_items(
+        "managers": _board_managers(
             conn,
-            item_ids=[str(row["id"]) for row in conn.execute("SELECT id FROM sprint_items")],
+            item_ids=[str(row["id"]) for row in conn.execute("SELECT id FROM managers")],
         ),
     }
 
 
-def _board_sprint_items(
+def _board_managers(
     conn: sqlite3.Connection,
     *,
     item_ids: list[str],
-) -> list[BoardSprintItemSource]:
-    """Each represented Sprint Item's metadata, complete children, and conversation.
+) -> list[BoardManagerSource]:
+    """Each represented Manager's metadata, complete children, and conversation.
 
-    The supervisor is an ordinary non-Ticket agent, so its conversation is the one the
+    The Manager is an ordinary non-Ticket agent, so its conversation is the one the
     ``agents`` roster holds under the key derived from the Item id. An Item nobody
     has spoken to has none, and reads as ``None``.
 
@@ -649,25 +543,28 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        f"SELECT i.id, i.title, i.priority, i.project_id, p.name AS project, "
-        f"i.created_at, i.settled FROM sprint_items i JOIN projects p ON p.id=i.project_id "
+        f"SELECT i.id, i.title, i.recap, i.project_id, p.name AS project, "
+        f"i.created_at, i.settled FROM managers i JOIN projects p ON p.id=i.project_id "
         f"WHERE i.id IN ({placeholders})",
         item_ids,
     ).fetchall()
     conversations = conversation_start.read_agent_conversations(
-        conn, [sprints_data.supervisor_agent_key(str(row["id"])) for row in rows]
+        conn, [managers_data.manager_agent_key(str(row["id"]), conn) for row in rows]
     )
     return [
-        BoardSprintItemSource(
+        BoardManagerSource(
             id=str(row["id"]),
             title=str(row["title"]),
-            priority=str(row["priority"]),
+            recap=str(row["recap"]),
+            recap_preview=recap_preview(str(row["recap"])),
             settled=bool(row["settled"]),
             project_id=str(row["project_id"]),
             project=str(row["project"]),
-            tickets=sprints_views.item_tickets(conn, str(row["id"])),
+            tickets=managers_views.manager_tickets(conn, str(row["id"])),
             created_at=int(row["created_at"]),
-            conversation_id=conversations.get(sprints_data.supervisor_agent_key(str(row["id"]))),
+            conversation_id=conversations.get(
+                managers_data.manager_agent_key(str(row["id"]), conn)
+            ),
         )
         for row in sorted(rows, key=lambda row: str(row["id"]))
     ]
@@ -679,8 +576,8 @@ def _board_sprint_items(
 def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, worker_step_claim, "
-        "pending_proposal, ceiling_holder FROM tickets "
-        "WHERE stage != 'cancelled' ORDER BY id",
+        "pending_proposal, ceiling_holder, is_backlogged FROM tickets "
+        "ORDER BY id",
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
@@ -693,6 +590,8 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
         )
         if facts.ticket_status is not TicketStatus.awaiting_approval:
             continue
+        if bool(row["is_backlogged"]):
+            continue
         holder = json.loads(str(row["ceiling_holder"]))
         if holder != {"kind": "owner", "id": "owner"}:
             continue
@@ -702,8 +601,15 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
         if field is None:
             continue
         proposal = fields_codec.proposal_from_json(row["pending_proposal"])
-        if proposal is None:
+        if not eligible_for_owner_review(
+            ticket_status=facts.ticket_status,
+            is_backlogged=bool(row["is_backlogged"]),
+            holder_is_owner=holder == {"kind": "owner", "id": "owner"},
+            has_gating_field=field is not None,
+            has_proposal=proposal is not None,
+        ):
             continue
+        assert proposal is not None
         items.append(
             {
                 "review_item_type": "proposal",
@@ -713,8 +619,11 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
                 "waiting_since": proposal.created_at,
             }
         )
-    items.sort(key=lambda item: (item["waiting_since"], item["ticket_id"]))
-    return items
+    items.extend(review_message_items(conn))
+    return cast(
+        list[JsonDict],
+        group_review_items(cast(list[ReviewProposalItem | ReviewMessageItem], items)),
+    )
 
 
 def review_view(

@@ -7,6 +7,8 @@ them. Nothing here reconciles two sources, because there is only one.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,12 +23,12 @@ from planner.managed_skills import (
     atomic_replace_text,
     frontmatter_bounds,
     has_skill,
-    managed_skills_home,
     read_all_skill_sources,
     read_skill_source,
     render_new_skill,
     render_skill_from_existing_frontmatter,
     skill_description,
+    skill_publication_lock,
     write_skill_source,
 )
 from planner.skill_versions import capture_skill_version
@@ -35,11 +37,14 @@ from planner.worker_settings.contracts import (
     ManagedSkill,
     ManagedWorkerLaunchDefaults,
     ManagedWorkerSettings,
+    SkillApplication,
+    SkillSaveIncompleteDetail,
     SkillsHome,
     SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
+from planner.worker_settings.logic.skill_edits import normalize_skill_patch
 from planner.worker_types.configuration import load_worker_runtime_definitions
 from planner.worker_types.contracts import WorkerProfile, WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -61,21 +66,43 @@ def _one_writer(conn: sqlite3.Connection) -> Iterator[None]:
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield
+        conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-    conn.execute("COMMIT")
 
 
 def _publish_skill(
-    conn: sqlite3.Connection, database_parent: Path | str, skill_name: str, rendered: str
+    conn: sqlite3.Connection, skills_home: Path, skill_name: str, rendered: str
 ) -> None:
     """Write this skill out where agents read it, and record the exact bytes sent."""
-    atomic_replace_text(
-        managed_skills_home(database_parent) / skill_name / SKILL_FILE_NAME, rendered
-    )
-    capture_skill_version(conn, skill_name, rendered.encode("utf-8"))
+    details: SkillSaveIncompleteDetail = {
+        "skill_name": skill_name,
+        "saved": True,
+        "published": False,
+        "phase": "file",
+    }
+    try:
+        atomic_replace_text(skills_home / skill_name / SKILL_FILE_NAME, rendered)
+    except Exception as exc:
+        raise PlannerError(
+            ErrorCode.skill_save_incomplete,
+            "The skill was saved, but its file was not published. "
+            "Read the canonical skill before retry.",
+            dict(details),
+        ) from exc
+    details["published"] = True
+    details["phase"] = "history"
+    try:
+        capture_skill_version(conn, skill_name, rendered.encode("utf-8"))
+    except Exception as exc:
+        raise PlannerError(
+            ErrorCode.skill_save_incomplete,
+            "The skill was saved and published, but version history was not recorded. "
+            "Read the canonical skill before retry.",
+            dict(details),
+        ) from exc
 
 
 def parse_skill(source_text: str, skill_name: str) -> ManagedSkill:
@@ -157,41 +184,43 @@ def read_skill(conn: sqlite3.Connection, skill_name: str) -> ManagedSkill:
     return parse_skill(read_skill_source(conn, skill_name), skill_name)
 
 
-def _rendered_skill(
+def _save_skill(
     conn: sqlite3.Connection,
     skill_name: str,
     payload: dict[str, Any],
     *,
-    allow_partial: bool,
-    what: str,
-) -> str:
-    allowed = {"name", "description", "markdown_body", "body"}
-    unexpected = sorted(set(payload) - allowed)
-    if unexpected:
-        raise PlannerError(ErrorCode.validation, f"unknown {what} field", {"field": unexpected[0]})
-    if "name" in payload and payload["name"] != skill_name:
-        raise PlannerError(
-            ErrorCode.validation,
-            f"{what} name is immutable",
-            {"skill_name": payload["name"], "expected": skill_name},
-        )
-    current = read_skill(conn, skill_name)
-    description = payload.get("description", current.description if allow_partial else None)
-    markdown_body = payload.get(
-        "markdown_body", payload.get("body", current.markdown_body if allow_partial else None)
-    )
-    if not isinstance(description, str) or not description:
-        raise PlannerError(ErrorCode.validation, f"{what} description is required", {})
-    if not isinstance(markdown_body, str) or not markdown_body.strip():
-        raise PlannerError(ErrorCode.validation, f"{what} body is required", {})
-    rendered = render_skill_from_existing_frontmatter(
-        current.source_text,
-        expected_skill_name=skill_name,
-        description=description,
-        markdown_body=markdown_body,
-    )
-    parse_skill(rendered, skill_name)
-    return rendered
+    now: int,
+    database_parent: Path | str,
+    allow_create: bool,
+) -> ManagedSkill:
+    if conn.in_transaction:
+        raise RuntimeError("save_skill requires a connection with no active transaction")
+    patch = normalize_skill_patch(skill_name, payload)
+    with skill_publication_lock(database_parent) as skills_home:
+        with _one_writer(conn):
+            if allow_create and not has_skill(conn, skill_name):
+                for field in ("description", "markdown_body"):
+                    if field not in patch:
+                        raise PlannerError(
+                            ErrorCode.validation,
+                            f"{field} is required for a new skill",
+                            {"field": field},
+                        )
+                rendered = render_new_skill(
+                    skill_name, patch["description"], patch["markdown_body"]
+                )
+            else:
+                current = read_skill(conn, skill_name)
+                rendered = render_skill_from_existing_frontmatter(
+                    current.source_text,
+                    expected_skill_name=skill_name,
+                    description=patch.get("description", current.description),
+                    markdown_body=patch.get("markdown_body", current.markdown_body),
+                )
+            result = parse_skill(rendered, skill_name)
+            write_skill_source(conn, skill_name, rendered, now=now)
+        _publish_skill(conn, skills_home, skill_name, rendered)
+        return result
 
 
 def save_skill(
@@ -202,11 +231,9 @@ def save_skill(
     now: int,
     database_parent: Path | str,
 ) -> ManagedSkill:
-    with _one_writer(conn):
-        rendered = _rendered_skill(conn, skill_name, payload, allow_partial=True, what="skill")
-        write_skill_source(conn, skill_name, rendered, now=now)
-    _publish_skill(conn, database_parent, skill_name, rendered)
-    return parse_skill(rendered, skill_name)
+    return _save_skill(
+        conn, skill_name, payload, now=now, database_parent=database_parent, allow_create=False
+    )
 
 
 def save_worker_type_skill(
@@ -217,31 +244,10 @@ def save_worker_type_skill(
     now: int,
     database_parent: Path | str,
 ) -> ManagedSkill:
-    """Store a Worker type's skill, whether or not one is there yet.
-
-    A Worker type may only name a skill that exists, so declaring a new Worker and
-    declaring its skill are one act rather than two that can half-happen.
-    """
-    description = payload.get("description")
-    markdown_body = payload.get("markdown_body", payload.get("body"))
-    if not isinstance(description, str) or not description:
-        raise PlannerError(ErrorCode.validation, "specialist skill description is required", {})
-    if not isinstance(markdown_body, str) or not markdown_body.strip():
-        raise PlannerError(ErrorCode.validation, "specialist skill body is required", {})
-    with _one_writer(conn):
-        if has_skill(conn, skill_name):
-            rendered = _rendered_skill(
-                conn,
-                skill_name,
-                {"description": description, "markdown_body": markdown_body},
-                allow_partial=False,
-                what="specialist skill",
-            )
-        else:
-            rendered = render_new_skill(skill_name, description, markdown_body)
-        write_skill_source(conn, skill_name, rendered, now=now)
-    _publish_skill(conn, database_parent, skill_name, rendered)
-    return parse_skill(rendered, skill_name)
+    """Only the embedded Worker declaration can create a new managed skill."""
+    return _save_skill(
+        conn, skill_name, payload, now=now, database_parent=database_parent, allow_create=True
+    )
 
 
 # --- Worker types -------------------------------------------------------------
@@ -346,12 +352,7 @@ def save_specialist_skill(
 ) -> ManagedWorkerSettings:
     definition = registry.require(worker_type)
     skill_name = definition.worker_profile.specialist_skill
-    with _one_writer(conn):
-        rendered = _rendered_skill(
-            conn, skill_name, dict(payload), allow_partial=False, what="specialist skill"
-        )
-        write_skill_source(conn, skill_name, rendered, now=now)
-    _publish_skill(conn, database_parent, skill_name, rendered)
+    save_skill(conn, skill_name, payload, now=now, database_parent=database_parent)
     return read_worker_settings(conn, registry, worker_type)
 
 
@@ -364,29 +365,8 @@ def patch_specialist_skill(
     now: int,
     database_parent: Path | str,
 ) -> ManagedWorkerSettings:
-    field_names = set(patch)
-    if field_names not in ({"description"}, {"markdown_body"}):
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill patch requires exactly one field",
-            {"fields": sorted(field_names)},
-        )
-    value = patch["description"] if "description" in patch else patch["markdown_body"]
-    if not isinstance(value, str):
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill field must be a string",
-            {"field": next(iter(field_names))},
-        )
-    definition = registry.require(worker_type)
-    current = read_skill(conn, definition.worker_profile.specialist_skill)
-    canonical_payload: dict[str, Any] = {
-        "description": current.description,
-        "markdown_body": current.markdown_body,
-    }
-    canonical_payload.update(patch)
     return save_specialist_skill(
-        conn, registry, worker_type, canonical_payload, now=now, database_parent=database_parent
+        conn, registry, worker_type, dict(patch), now=now, database_parent=database_parent
     )
 
 
@@ -396,7 +376,7 @@ def patch_specialist_skill(
 def read_chief_settings(conn: sqlite3.Connection) -> ManagedChiefSettings:
     row = conn.execute(
         "SELECT label, employee_backend, employee_launch_model, "
-        "employee_launch_reasoning_effort FROM chief_settings WHERE employee_id = ?",
+        "employee_launch_reasoning_effort, recap FROM chief_settings WHERE employee_id = ?",
         (CHIEF_SETTINGS_KEY,),
     ).fetchone()
     if row is None:
@@ -404,6 +384,7 @@ def read_chief_settings(conn: sqlite3.Connection) -> ManagedChiefSettings:
     return ManagedChiefSettings(
         employee_id=CHIEF_SETTINGS_KEY,
         label=str(row["label"]),
+        recap=str(row["recap"]),
         skill=read_skill(conn, CHIEF_SKILL_NAME),
         launch_defaults=ManagedWorkerLaunchDefaults(
             employee_backend=str(row["employee_backend"]),
@@ -415,6 +396,18 @@ def read_chief_settings(conn: sqlite3.Connection) -> ManagedChiefSettings:
             ),
         ),
     )
+
+
+def update_chief_recap(conn: sqlite3.Connection, payload: dict[str, Any]) -> ManagedChiefSettings:
+    if set(payload) != {"recap"} or not isinstance(payload["recap"], str):
+        raise PlannerError(
+            ErrorCode.validation, "Chief recap requires exactly one string recap", {}
+        )
+    conn.execute(
+        "UPDATE chief_settings SET recap = ? WHERE employee_id = ?",
+        (payload["recap"], CHIEF_SETTINGS_KEY),
+    )
+    return read_chief_settings(conn)
 
 
 def update_chief_launch_defaults(
@@ -442,12 +435,7 @@ def save_chief_skill(
     now: int,
     database_parent: Path | str,
 ) -> ManagedChiefSettings:
-    with _one_writer(conn):
-        rendered = _rendered_skill(
-            conn, CHIEF_SKILL_NAME, dict(payload), allow_partial=True, what="Chief skill"
-        )
-        write_skill_source(conn, CHIEF_SKILL_NAME, rendered, now=now)
-    _publish_skill(conn, database_parent, CHIEF_SKILL_NAME, rendered)
+    save_skill(conn, CHIEF_SKILL_NAME, payload, now=now, database_parent=database_parent)
     return read_chief_settings(conn)
 
 
@@ -476,3 +464,124 @@ def update_worker_requirements(
             (int(requires_macos), now, worker_type),
         )
     return read_worker_settings(conn, registry, worker_type)
+
+
+def correct_chief_model(
+    conn: sqlite3.Connection,
+    *,
+    backend: str,
+    old_model: str,
+    reasoning_effort: str | None,
+    new_model: str,
+) -> bool:
+    """Correct the authorized Chief request without a message or conversation reset."""
+    updated = conn.execute(
+        "UPDATE chief_settings SET employee_launch_model=? WHERE employee_id=? "
+        "AND employee_backend=? AND employee_launch_model=? "
+        "AND employee_launch_reasoning_effort IS ?",
+        (new_model, CHIEF_SETTINGS_KEY, backend, old_model, reasoning_effort),
+    )
+    return updated.rowcount == 1
+
+
+def correct_worker_default_model(
+    conn: sqlite3.Connection,
+    worker_type: str,
+    *,
+    backend: str,
+    old_model: str,
+    reasoning_effort: str | None,
+    new_model: str,
+    now: int,
+) -> bool:
+    """CAS the whole definition so a simultaneous configuration edit cannot be lost."""
+    import json
+
+    row = conn.execute(
+        "SELECT definition_json FROM worker_types WHERE worker_type=?", (worker_type,)
+    ).fetchone()
+    if row is None:
+        return False
+    previous = str(row["definition_json"])
+    payload = json.loads(previous)
+    profile = payload["profile"]
+    if (
+        profile["default_backend"],
+        profile["default_model"],
+        profile["default_reasoning_effort"],
+    ) != (backend, old_model, reasoning_effort):
+        return False
+    profile["default_model"] = new_model
+    updated = conn.execute(
+        "UPDATE worker_types SET definition_json=?, updated_at=? "
+        "WHERE worker_type=? AND definition_json=?",
+        (json.dumps(payload), now, worker_type, previous),
+    )
+    return updated.rowcount == 1
+
+
+def apply_skills(
+    conn: sqlite3.Connection,
+    raw: dict[str, Any],
+    *,
+    now: int,
+    database_parent: Path | str,
+) -> tuple[ManagedSkill, ...]:
+    """Apply the complete reviewed batch, then publish its exact sources.
+
+    Row writes are atomic. File publication uses the existing incomplete-save contract.
+    An exact retry of the complete batch republishes without another logical edit.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("apply_skills requires no active transaction")
+    if set(raw) != {"skills"} or not isinstance(raw["skills"], list) or not raw["skills"]:
+        raise PlannerError(ErrorCode.validation, "skills must be a nonempty array", {})
+    entries: list[SkillApplication] = []
+    names: set[str] = set()
+    for item in raw["skills"]:
+        if not isinstance(item, dict) or set(item) != {"name", "source_text", "expected_sha256"}:
+            raise PlannerError(
+                ErrorCode.validation, "skill application must be an exact object", {}
+            )
+        name, text, expected = item["name"], item["source_text"], item["expected_sha256"]
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name)
+            or name in names
+        ):
+            raise PlannerError(ErrorCode.validation, "skill name is invalid or duplicated", {})
+        if not isinstance(text, str) or (
+            expected is not None
+            and (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected))
+        ):
+            raise PlannerError(ErrorCode.validation, "source text or expected hash is invalid", {})
+        parse_skill(text, name)
+        names.add(name)
+        entries.append(SkillApplication(name, text, expected))
+    with skill_publication_lock(database_parent) as skills_home:
+        with _one_writer(conn):
+            current = read_all_skill_sources(conn)
+            exact_retry = all(current.get(entry.name) == entry.source_text for entry in entries)
+            if not exact_retry:
+                for entry in entries:
+                    source = current.get(entry.name)
+                    actual = (
+                        None
+                        if source is None
+                        else hashlib.sha256(source.encode("utf-8")).hexdigest()
+                    )
+                    if actual != entry.expected_sha256:
+                        raise PlannerError(
+                            ErrorCode.validation,
+                            "skill source hash changed",
+                            {
+                                "skill_name": entry.name,
+                                "expected_sha256": entry.expected_sha256,
+                                "actual_sha256": actual,
+                            },
+                        )
+                for entry in entries:
+                    write_skill_source(conn, entry.name, entry.source_text, now=now)
+        for entry in entries:
+            _publish_skill(conn, skills_home, entry.name, entry.source_text)
+    return tuple(parse_skill(entry.source_text, entry.name) for entry in entries)

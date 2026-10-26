@@ -14,7 +14,11 @@ from planner.conversation.contracts import ConversationSystem, require_conversat
 from planner.conversation.logic.signals import conversation_signal
 from planner.conversation.signals import read_conversation_signals
 from planner.conversation.storage import ConversationStore
-from planner.core.authctx import RequestContext, request_context
+from planner.core.authctx import (
+    RequestContext,
+    request_context,
+    require_owner_or_chief,
+)
 from planner.core.authority import owner_only, require_above
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
@@ -26,7 +30,7 @@ from planner.tickets.api import (
     ConversationRecord,
     Conversations,
     DbConn,
-    body_str,
+    ModelResolver,
     get_config,
 )
 from planner.worker_settings import service
@@ -36,7 +40,6 @@ from planner.worker_settings.contracts import (
     ManagedWorkerLaunchDefaults,
     ManagedWorkerSettings,
     SkillsHome,
-    SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
@@ -61,6 +64,7 @@ def _skill_json(skill: ManagedSkill) -> JsonDict:
         "name": skill.name,
         "description": skill.description,
         "markdown_body": skill.markdown_body,
+        "source_text": skill.source_text,
     }
 
 
@@ -102,24 +106,26 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     return {
         "employee_id": settings.employee_id,
         "label": settings.label,
+        "recap": settings.recap,
         "skill": _skill_json(settings.skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
 
 
-def _reject_disabled_launch_model(conn: sqlite3.Connection, raw: dict[str, Any]) -> None:
-    if set(raw) != {
-        "employee_backend",
-        "employee_launch_model",
-        "employee_launch_reasoning_effort",
-    }:
-        return
-    backend = raw.get("employee_backend")
-    model = raw.get("employee_launch_model")
-    if not isinstance(backend, str) or not isinstance(model, str):
-        return
-    backend_key = require_conversation_backend_key(backend)
-    require_enabled_model(conn, backend_key, model)
+async def _resolve_launch_defaults(
+    conn: sqlite3.Connection, raw: dict[str, Any], resolver: ModelResolver
+) -> dict[str, Any]:
+    defaults = service.validate_launch_defaults(raw)
+    backend_key = require_conversation_backend_key(defaults.employee_backend)
+    require_enabled_model(conn, backend_key, defaults.employee_launch_model)
+    resolution = await resolver.resolve(
+        backend_key, defaults.employee_launch_model, defaults.employee_launch_reasoning_effort
+    )
+    return {
+        "employee_backend": backend_key.value,
+        "employee_launch_model": resolution.model,
+        "employee_launch_reasoning_effort": resolution.reasoning_effort,
+    }
 
 
 async def add_agent_conversation_signals(
@@ -220,25 +226,20 @@ async def list_skills(conn: DbConn) -> JsonDict:
     return _skills_home_json(service.read_skills_home(conn))
 
 
+@router.post("/skills/apply")
+async def apply_skills(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
+) -> JsonDict:
+    require_above(conn, ctx.principal, owner_only("skills"))
+    applied = service.apply_skills(
+        conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
+    )
+    return {"skills": [_skill_json(skill) for skill in applied]}
+
+
 @router.get("/skills/{skill_name}")
 async def get_skill(skill_name: str, conn: DbConn) -> JsonDict:
     return _skill_json(service.read_skill(conn, skill_name))
-
-
-def _refuse_a_worker_type_skill(skill_name: str) -> None:
-    """Send an edit of a specialist skill to the Worker it belongs to.
-
-    A Worker type owns its skill, and editing it there is what reloads the Worker. Two
-    doors to the same text would let one of them be the stale one.
-    """
-    registry = configured_worker_runtime_definitions().worker_type_registry
-    for worker_type in registry.registered_worker_types():
-        if registry.require(worker_type).worker_profile.specialist_skill == skill_name:
-            raise PlannerError(
-                ErrorCode.validation,
-                "this skill belongs to a Worker type; edit it on that Worker",
-                {"skill_name": skill_name, "worker_type": worker_type},
-            )
 
 
 @router.patch("/skills/{skill_name}")
@@ -246,9 +247,6 @@ async def patch_skill(
     skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("skills"))
-    if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
-        raise PlannerError(ErrorCode.validation, "skill patch requires exactly one field", {})
-    _refuse_a_worker_type_skill(skill_name)
     skill = service.save_skill(
         conn,
         skill_name,
@@ -264,13 +262,19 @@ async def get_chief_settings(conn: DbConn) -> JsonDict:
     return _chief_json(service.read_chief_settings(conn))
 
 
+@router.put("/workers/chief-of-staff/recap")
+async def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
+    require_owner_or_chief(ctx)
+    return _chief_json(service.update_chief_recap(conn, raw))
+
+
 @router.put("/workers/chief-of-staff/launch-defaults")
 async def put_chief_launch_defaults(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, model_resolver: ModelResolver
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
     del config
-    _reject_disabled_launch_model(conn, raw)
+    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
 
 
@@ -290,8 +294,6 @@ async def patch_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
-        raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -305,9 +307,10 @@ async def put_worker_launch_defaults(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    model_resolver: ModelResolver,
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    _reject_disabled_launch_model(conn, raw)
+    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
         conn, registry, worker_type, raw, now=clk.now_unix()
@@ -353,23 +356,12 @@ async def patch_worker_skill(
     clk: Clk,
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    if set(raw) not in ({"description"}, {"markdown_body"}):
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill patch requires exactly one field",
-            {"fields": sorted(raw)},
-        )
-    patch: SpecialistSkillPatch = {}
-    if "description" in raw:
-        patch["description"] = body_str(raw, "description")
-    else:
-        patch["markdown_body"] = body_str(raw, "markdown_body")
     registry = configured_worker_runtime_definitions().worker_type_registry
-    settings = service.patch_specialist_skill(
+    settings = service.save_specialist_skill(
         conn,
         registry,
         worker_type,
-        patch,
+        raw,
         now=clk.now_unix(),
         database_parent=_database_parent(config),
     )

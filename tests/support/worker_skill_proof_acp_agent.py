@@ -43,7 +43,7 @@ ROLE_DIRECTIVE = (
     "then drill through to your identity through the skills layers. "
     "You are a ticket worker."
 )
-WORKTREE_GUIDANCE = "Always do your work on a worktree and a branch."
+WORKTREE_GUIDANCE = "Synthetic managed skill proof: keep the cobalt marker intact."
 WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed worktree and branch guidance."
 
 SESSION_ID = "worker-skill-proof-session"

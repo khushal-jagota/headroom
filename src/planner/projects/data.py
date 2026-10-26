@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-from planner.core.contracts import JsonDict, Priority
+from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.projects.contracts import Project
@@ -42,7 +42,6 @@ def _row_to_project(row: sqlite3.Row) -> Project:
         id=str(row["id"]),
         name=str(row["name"]),
         summary=str(row["summary"]),
-        priority=Priority(str(row["priority"])) if row["priority"] is not None else None,
         folder_path=Path(str(row["folder_path"])) if row["folder_path"] is not None else None,
         created_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]),
@@ -55,7 +54,6 @@ def project_json(project: Project) -> JsonDict:
         "id": project.id,
         "name": project.name,
         "summary": project.summary,
-        "priority": project.priority.value if project.priority is not None else None,
         "requires_macos": project.requires_macos,
         "folder_path": str(project.folder_path) if project.folder_path is not None else None,
         "created_at": project.created_at,
@@ -80,7 +78,7 @@ def seed_default_projects(conn: sqlite3.Connection) -> None:
 
 def list_projects(conn: sqlite3.Connection) -> list[Project]:
     rows = conn.execute(
-        "SELECT id, name, summary, priority, folder_path, created_at, updated_at, requires_macos "
+        "SELECT id, name, summary, folder_path, created_at, updated_at, requires_macos "
         "FROM projects ORDER BY lower(name), id"
     ).fetchall()
     return [_row_to_project(row) for row in rows]
@@ -89,14 +87,11 @@ def list_projects(conn: sqlite3.Connection) -> list[Project]:
 def list_project_summaries(
     conn: sqlite3.Connection, *, page_request: ListPageRequest
 ) -> ListPage[JsonDict]:
-    rows = conn.execute(
-        "SELECT id, name, priority FROM projects ORDER BY lower(name), id"
-    ).fetchall()
+    rows = conn.execute("SELECT id, name FROM projects ORDER BY lower(name), id").fetchall()
     summaries = [
         {
             "id": str(row["id"]),
             "name": str(row["name"]),
-            "priority": str(row["priority"]) if row["priority"] is not None else None,
         }
         for row in rows[page_request.offset : page_request.offset + page_request.limit]
     ]
@@ -110,7 +105,7 @@ def list_project_summaries(
 
 def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, priority, folder_path, created_at, updated_at, requires_macos "
+        "SELECT id, name, summary, folder_path, created_at, updated_at, requires_macos "
         "FROM projects WHERE id = ?",
         (project_id,),
     ).fetchone()
@@ -121,7 +116,7 @@ def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
 
 def read_project_by_name(conn: sqlite3.Connection, name: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, priority, folder_path, created_at, updated_at, requires_macos "
+        "SELECT id, name, summary, folder_path, created_at, updated_at, requires_macos "
         "FROM projects WHERE name = ? COLLATE NOCASE",
         (name.strip(),),
     ).fetchone()
@@ -155,7 +150,6 @@ def create_project(
     conn: sqlite3.Connection,
     *,
     name: str,
-    priority: Priority,
     summary: str = "",
     requires_macos: bool = False,
     folder_path: str | Path | None = None,
@@ -189,13 +183,12 @@ def create_project(
             suffix += 1
         conn.execute(
             "INSERT INTO projects "
-            "(id, name, summary, priority, folder_path, created_at, updated_at, requires_macos) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, name, summary, folder_path, created_at, updated_at, requires_macos) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 project_id,
                 clean_name,
                 clean_summary,
-                priority.value,
                 str(normalized_folder_path) if normalized_folder_path is not None else None,
                 now,
                 now,
@@ -211,7 +204,6 @@ def update_project(
     *,
     name: str | None = None,
     summary: str | None = None,
-    priority: Priority | None = None,
     requires_macos: bool | None = None,
     folder_path: str | Path | None | object = _FOLDER_PATH_UNSET,
     now: int,
@@ -228,8 +220,6 @@ def update_project(
         updates["name"] = clean_name
     if summary is not None:
         updates["summary"] = summary.strip()
-    if priority is not None:
-        updates["priority"] = priority.value
     if folder_path is not _FOLDER_PATH_UNSET:
         normalized_folder_path = _normalize_folder_path(folder_path)
         updates["folder_path"] = (
@@ -270,4 +260,4 @@ def _normalize_folder_path(folder_path: str | Path | None | object) -> Path | No
         ) from None
     if not path.is_absolute():
         raise PlannerError(ErrorCode.validation, "folder_path must be absolute or start with ~", {})
-    return path.resolve(strict=False)
+    return path

@@ -32,9 +32,9 @@ all of these hold right now:
    it.
 3. If the Stage's owner is the user, its one opening turn has not run yet. The opener
    fact belongs to that Stage entry, so a later entry gets its own turn.
-4. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
-   lane is at Consequences and not resting. One poll sends at most one Ticket into
-   each free lane.
+
+Each ready Ticket can start independently, including at Consequences. Git changes land
+through pull requests into `staging`.
 
 The ceiling is not one of these questions. It decides what a finished step does with its
 answer, not whether the step may run.
@@ -55,7 +55,7 @@ All readiness questions run again inside the write, so only one racer wins the c
 
 Today membership is no longer a readiness question. No replacement activation gate
 exists. Existing ceilings, proposals, blockers, ownership, claims, busy checks, and
-context recovery keep their normal meaning. Orchestrator settlement does not gate
+context recovery keep their normal meaning. Manager settlement does not gate
 continuation. One-time obsolete planning cancellation is migration hygiene, not a
 runtime rule for ordinary unfinished work.
 
@@ -72,13 +72,13 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 
 ## Durable manager notices
 
-Proposals routed to a Sprint Item manager and explicit worker-error transitions create
+Proposals routed to a Manager and explicit worker-error transitions create
 durable notices in the same transaction as their source event. Proposal routing remains a
 separate deterministic decision before notice creation. It contains no TypeSafe call.
 
 A failed turn on a Ticket's current conversation creates a notice for the current ceiling
 holder in the same transaction as the ending row. The notice stores the holder principal.
-Chief, Sprint Item, and Ticket holders receive it through their canonical conversation
+Chief, Manager, and Ticket holders receive it through their canonical conversation
 door. Owner-held failures use the ordinary attention flag and push policy instead. A reset
 therefore moves delivery to the recipient's new conversation, while a deleted recipient
 closes the undeliverable notice. Failures in old or unattached conversations create none.
@@ -88,9 +88,45 @@ periodic poll recovers missed signals and restart state. The loop groups open wa
 recipient into an immutable batch. It sends that batch through the recipient's normal
 conversation boundary in queue mode.
 
+Before forming a batch, the loop retires proposal notices whose Ticket has disappeared,
+whose pending revision has changed or resolved, or whose effective reviewer has changed.
+The effective reviewer follows the proposal's routing and parked destination. A ceiling
+change alone does not invalidate a parked proposal.
+
+The same check runs again at actual conversation dispatch, after session preparation and
+before any backend write. One SQLite write transaction orders this decision against
+proposal resolution. If any proposal in a batch is obsolete, the whole immutable batch
+receives an exact discard receipt. Only its obsolete sources close. Valid proposal and
+error sources remain available for a fresh batch, with new message identity, after the
+normal retry interval. Original batch text and membership remain intact.
+
+Suppression is countable from `manager_wake_suppressions`: each retired source records its
+Ticket, original revision and reviewer, reason, current Ticket existence, pending revision
+and reviewer, time, and batch sender identity when there was a batch. A missing Ticket,
+resolved proposal, changed revision, and changed reviewer have distinct reasons. A batch
+containing several obsolete proposals records each obsolete source separately. The
+conversation's discard receipt also records why this particular attempt was suppressed.
+
+Count obsolete sources by reason, then inspect the compared facts:
+
+```sql
+SELECT reason, count(*) AS suppressed_sources
+FROM manager_wake_suppressions GROUP BY reason;
+
+SELECT s.*, w.summary
+FROM manager_wake_suppressions s
+LEFT JOIN manager_wakes w ON w.id = s.wake_id
+ORDER BY s.created_at, s.wake_id;
+```
+
+The first query counts sources, not delivery attempts. A mixed batch can suppress one
+obsolete source and regroup several valid sources. Its discard receipt identifies the
+original attempt. A deleted source Ticket leaves its notice summary and suppression
+facts available.
+
 A queued batch remains open while it waits behind active work. The exact durable prompt
-event closes its member wakes. A definite refusal or discard creates a later attempt with a
-new sender message identity. An uncertain delivery remains unresolved and is not replayed
+event closes its member wakes. A definite refusal or discard permits remaining eligible sources to form a later attempt
+with a new sender message identity. An uncertain delivery remains unresolved and is not replayed
 automatically. Supervisor reset and deletion share a lifecycle lock with delivery.
 
 _Code paths:_ `src/planner/manager_wakes/`, `src/planner/core/loops.py`, and the proposal
@@ -112,7 +148,7 @@ The opening message is composed first as one ordered, inspectable list of Panels
 It carries only what a worker cannot get for itself: a notice when the worker's context
 was compacted, the Stage instruction, and revision feedback for the current Stage when
 there is some. The Stage instruction names the command that reads the Ticket, because
-the Ticket's Brief and guidance are a read the worker makes rather than a payload every
+the Ticket's Brief is a read the worker makes rather than a payload every
 message carries. Worker skills and conversation history stay separate from this list. It
 is composed before anything else so that a failure here cannot leave a conversation
 behind.
@@ -228,8 +264,8 @@ still reads as claimed, and a Ticket with its claim back but still pointing at a
 conversation would talk into it.
 
 Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
-own Sprint Item. Khushal could not before: no ordinary route restarted a Worker, and the
-only door was the Sprint Item's. This is a new capability on his surface, not a rename.
+own Manager. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Manager's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
@@ -251,7 +287,7 @@ One narrow recovery also covers Tickets stranded by an older rejection. It requi
 Worker-owned Stage, Empty status, no claim, an existing conversation, and pending revision
 feedback for that Stage. Restart starts normal readiness without resetting its conversation. It clears stale running and queued traffic
 first, then sends the revision into the same conversation history. Ordinary unfinished
-Tickets follow the same readiness rules regardless of their historical Day membership. This recovery preserves the launch configuration, so it refuses restart
+Tickets follow the ordinary readiness rules without calendar membership. This recovery preserves the launch configuration, so it refuses restart
 options that name a backend, model, or reasoning effort.
 
 ## Sending a proposal back
@@ -262,8 +298,7 @@ to a separate attributed revision-feedback record, and returns the Ticket to its
 status. Its commit wakes normal readiness, which reuses the existing
 conversation. A same-Stage user opener is cleared so the discussion can open again. The
 next normal worker-step prompt carries feedback for that Stage, and only a successful
-send consumes it. Ticket guidance is not sent with it, and the worker reads that off the
-Ticket. Reply bookkeeping credits the source
+send consumes it. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.

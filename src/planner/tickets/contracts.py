@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Final, Literal, Required, TypedDict
 
 from planner.conversation.contracts import ConversationSignal
-from planner.core.contracts import JsonDict, Principal, Priority
+from planner.core.contracts import JsonDict, Principal
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
@@ -44,28 +44,6 @@ class TicketCreationContextRead(TypedDict):
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
-
-
-@dataclass(frozen=True, slots=True)
-class SprintItemPriorityAnchor:
-    id: str
-    title: str
-    priority: Priority
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectPriorityAnchor:
-    id: str
-    name: str
-    priority: Priority | None
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedTicketPriorityAnchors:
-    """The authoritative placement context used when a Ticket is created."""
-
-    sprint_item: SprintItemPriorityAnchor | None
-    project: ProjectPriorityAnchor | None
 
 
 class WorkerStepClaim(StrEnum):
@@ -104,7 +82,8 @@ class BoardCardSource(TypedDict):
 
     id: str
     title: str
-    priority: str
+    recap: str
+    recap_preview: str
     deadline: str | None
     project_id: str | None
     project: str | None
@@ -125,10 +104,9 @@ class BoardCardSource(TypedDict):
     blocked: bool
     conversation_id: str | None
     waiting_to_closeout: bool
-    sprint_item_id: str | None
-    sprint_item_title: str | None
-    sprint_item_priority: str | None
-    orchestrator: JsonDict
+    manager_id: str | None
+    manager_title: str | None
+    manager: JsonDict
 
 
 class BoardCard(BoardCardSource, WorkAttention):
@@ -137,16 +115,17 @@ class BoardCard(BoardCardSource, WorkAttention):
     conversation_signal: ConversationSignal
 
 
-class BoardSprintItemSource(TypedDict):
-    """A represented Sprint Item and its complete children before live attention.
+class BoardManagerSource(TypedDict):
+    """A represented Manager and its complete children before live attention.
 
-    The shared attention projection adds each child's facts, the Item's own supervisor
+    The shared attention projection adds each child's facts, the Item's own Manager
     state, and a separate child rollup after this database read.
     """
 
     id: str
     title: str
-    priority: str
+    recap: str
+    recap_preview: str
     project_id: str
     project: str
     created_at: int
@@ -155,8 +134,8 @@ class BoardSprintItemSource(TypedDict):
     settled: bool
 
 
-class BoardSprintItem(BoardSprintItemSource, WorkAttention):
-    """The complete Sprint Item projection returned to the Workspace rail."""
+class BoardManager(BoardManagerSource, WorkAttention):
+    """The complete Manager projection returned to the Workspace rail."""
 
     conversation_signal: ConversationSignal
     ticket_rollup: WorkAttention
@@ -164,7 +143,7 @@ class BoardSprintItem(BoardSprintItemSource, WorkAttention):
 
 @dataclass(frozen=True, slots=True)
 class TicketListFilters:
-    orchestrator: Principal | None = None
+    manager: Principal | None = None
     stages: tuple[str, ...] = ()
     excluded_stages: tuple[str, ...] = ()
     ticket_statuses: tuple[TicketStatus, ...] = ()
@@ -176,6 +155,24 @@ class TicketListFilters:
 
 
 TicketFieldValues = Mapping[str, str]
+
+
+class TicketApprovalMethod(StrEnum):
+    explicit_accept = "explicit_accept"
+    auto_accept = "auto_accept"
+    unknown = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class TicketFieldApproval:
+    """Approval of the current field text, with a readable identity snapshot."""
+
+    method: TicketApprovalMethod
+    principal: Principal | None
+    display_label: str
+
+
+TicketFieldApprovals = Mapping[str, TicketFieldApproval]
 
 
 @dataclass(frozen=True)
@@ -201,22 +198,24 @@ NextCeiling = str | Literal["none"]
 
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
+    """Accepted create keys. Unknown keys are rejected before creation."""
+
     worker_type: Required[str]  # required registry type id (no ingress default)
     # A backend other than the Worker type's own brings its model with it: the type's
     # launch defaults belong to the type's backend, so there is nothing left for this
     # Ticket to run on unless the creator names one.
     employee_backend: str
     employee_launch_model: str
+    # Null or omission keeps the existing defaults. A nonblank explicit effort must
+    # validate against the resolved model before creation, even for direct callers.
+    employee_launch_reasoning_effort: str | None
     locale: str
     title: str  # default ""
-    kickoff_note: str  # default ""; proposed intake context / user guidance
-    priority: str | None  # Explicit Priority value; omission resolves from placement
+    brief: str  # default ""; intake text for the Brief field
     deadline: str | None  # ISO date
     project: str | None  # legacy project name
     project_id: str | None
-    sprint_id: str | None
-    sprint_item_id: str | None
-    orchestrator: object  # explicit chief or sprint_item Principal reference
+    manager: object  # explicit chief or manager Principal reference
     blocked_by_ticket_ids: list[str]
     # Scope stated at creation by whoever has the authority to grant it. A creator that
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
@@ -228,6 +227,16 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     ceiling_holder: object  # full Principal
 
 
+class TicketCreationReceipt(TypedDict):
+    """Creation-only explanation, added to the ordinary Ticket response fields.
+
+    Normal CLI output and JSON consumers receive the same plain-language receipt.
+    It describes the grant, remaining autonomous work, and first review destination.
+    """
+
+    supervision_receipt: str
+
+
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     """Every field on a Ticket that can be changed, and the only way to change one.
 
@@ -237,15 +246,11 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     """
 
     title: str
-    priority: Priority
     deadline: str | None
     project_id: str | None
-    sprint_id: str | None
-    sprint_item_id: str | None
-    orchestrator: Principal
+    manager_id: str | None
+    manager: Principal
     recap: str
-    guidance: str  # replaces the document
-    guidance_append: str  # adds to it; naming both in one call is refused
     field_values: Mapping[str, str]  # settled values only, by field id
     ceiling: str  # pending same/lower scope is editable; raising past the stage uses accept
     ceiling_holder: Principal  # who is asked; allowed while a proposal is parked
@@ -293,17 +298,13 @@ class Ticket:  # §3.3 — column names match exactly
     employee_launch_model: str | None = field(default=None, kw_only=True)
     employee_launch_reasoning_effort: str | None = field(default=None, kw_only=True)
     stage: str  # directly stored Stage id
-    priority: Priority  # default P3
     deadline: str | None  # ISO date
     project_id: str | None  # effective Project placement, derived from the parent when present
     project_name: str | None
-    sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
-    sprint_item_id: str | None
-    orchestrator_kind: str = field(default="chief", kw_only=True)
-    effective_sprint_id: str | None  # historical Sprint association
-    resolved_priority_anchors: ResolvedTicketPriorityAnchors
+    manager_id: str | None
+    manager_kind: str = field(default="chief", kw_only=True)
+    manager_title: str | None
     recap: str  # writable only past the type's first worker Stage
-    guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     # An address, not an authority. It says which principal a parked proposal is for, so
     # that Review, attention and notifications can put it in front of them. It says
@@ -319,6 +320,7 @@ class Ticket:  # §3.3 — column names match exactly
     worker_step_claim_revision: int
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     field_values: TicketFieldValues
+    field_approvals: TicketFieldApprovals = field(default_factory=dict, kw_only=True)
     pending_proposal: PendingTicketProposal | None
     created_at: int
     updated_at: int
@@ -358,7 +360,18 @@ class TicketDeletion:
 
     ticket_id: str
     title: str
-    day_ids: tuple[str, ...]
-    sprint_item_ids: tuple[str, ...]
-    sprint_ids: tuple[str, ...]
+    manager_ids: tuple[str, ...]
     linked_ticket_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewTransferNotice:
+    """An in-memory courtesy notice, exposed only after its write commits."""
+
+    ticket_id: str
+    ticket_title: str
+    previous_holder: Principal
+    new_holder: Principal
+    new_holder_name: str
+    notify_previous_holder: bool
+    mover_name: str | None

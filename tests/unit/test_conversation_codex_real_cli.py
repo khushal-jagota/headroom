@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-import subprocess
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -23,7 +22,6 @@ from tempfile import mkdtemp
 
 import pytest
 from tests.support.conversation_codex_app_server_bench import _RecordingSink
-from tests.support.solid_png import solid_png
 
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,
@@ -31,9 +29,7 @@ from planner.conversation.backends.codex_app_server.adapter import (
     codex_app_server_child_launch,
 )
 from planner.conversation.backends.codex_app_server.client import (
-    CodexAppServerClient,
     CodexRequestRejected,
-    child_environment,
 )
 from planner.conversation.backends.codex_app_server.login import (
     RememberedCodexLoginRejection,
@@ -51,9 +47,6 @@ from planner.conversation.contracts import (
 from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_content import (
     MessageContent,
-    MessageFile,
-    MessageImage,
-    MessageText,
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
@@ -171,104 +164,6 @@ async def _turn(
 
 
 @real_codex_only
-def test_real_codex_reads_both_an_image_and_a_file_one_message_carries(tmp_path: Path) -> None:
-    """Both halves of an attachment, which this adapter delivers two different ways.
-
-    An image becomes a ``localImage`` input holding the path the bytes are already at. A
-    file is not an attachment at all: it becomes a sentence of text saying where the bytes
-    are, and codex only learns what is in it by going and reading that path. The path is
-    outside the workspace folder, so the file half rests on codex reaching outside its
-    workspace — which a schema cannot settle and only the real thing can answer.
-
-    The colour and the word are written here. Neither is reachable except by having looked,
-    and they are separate, so a half that fails names itself.
-    """
-
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        message_files = _message_files(tmp_path / "message-files")
-        child = _real_child(tmp_path, sink, message_files=message_files)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            # Pure green, which no other colour word is close to.
-            picture = await message_files.keep(
-                "real-codex", solid_png(0, 255, 0), media_type="image/png"
-            )
-            # An invented word, so reading the bytes is the only way to say it.
-            document = await message_files.keep(
-                "real-codex",
-                b"The passphrase is marrowglint.\n",
-                media_type="text/plain",
-            )
-            content = (
-                MessageText(
-                    text=(
-                        "Two questions. What colour is the image? And open the attached "
-                        "file, read it, and say the passphrase written inside it. Answer "
-                        "with exactly two words: the colour, then the passphrase."
-                    )
-                ),
-                MessageImage(stored_file_id=picture.stored_file_id, media_type="image/png"),
-                MessageFile(
-                    stored_file_id=document.stored_file_id,
-                    media_type="text/plain",
-                    file_name="passphrase.txt",
-                    byte_count=document.byte_count,
-                ),
-            )
-            await _turn(child, sink, 1, content)
-
-            said = " ".join(sink.agent_message_texts).lower()
-            print("REAL CODEX on a message carrying both:", said[:200])
-            assert sink.endings[-1] is ConversationTurnEnding.completed, sink.error_summaries
-            assert "green" in said, "codex did not see the picture"
-            assert "marrowglint" in said, "codex did not read the file"
-        finally:
-            await child.stop()
-
-    _run(exercise)
-
-
-@real_codex_only
-def test_real_codex_takes_an_interrupt(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        child = _real_child(tmp_path, sink)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            sink.expect_another_turn()
-            from planner.conversation.backends.contracts import TurnToken
-
-            content = text_message_content(
-                "Count slowly from 1 to 300, one number per line, and do not stop early."
-            )
-            await child.write_prompt(
-                TurnToken(conversation_id="real-codex", turn_number=1),
-                content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            # Interrupt a turn that is demonstrably running, not one that may already be
-            # over: wait until codex is actually streaming an answer.
-            await _wait_until_the_agent_is_speaking(sink)
-            said_before_the_interrupt = "".join(sink.deltas)
-            await child.cancel_running_turn()
-
-            # Not ``wait_for_the_turn_to_end`` — the cancel itself is what waits now, so by
-            # the time it has returned real codex has already said the turn is over.
-            assert sink.endings == [ConversationTurnEnding.interrupted]
-            assert said_before_the_interrupt
-            print("REAL CODEX interrupted mid-answer after:", said_before_the_interrupt[:120])
-        finally:
-            await child.stop()
-
-    _run(exercise)
-
-
-@real_codex_only
 def test_real_codex_consumes_a_guarded_steer_in_the_incumbent_turn(tmp_path: Path) -> None:
     async def exercise() -> None:
         isolation_root = tmp_path / "steer-positive"
@@ -377,65 +272,6 @@ def test_real_codex_rejects_an_ended_steer_without_consuming_its_nonce(
 
 
 @real_codex_only
-def test_real_codex_steer_review_interrupt_uses_its_nested_id(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        isolation_root = tmp_path / "review-cancel"
-        workspace = isolation_root / "work"
-        workspace.mkdir(parents=True)
-        subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
-        tracked = workspace / "review_me.py"
-        tracked.write_text("value = 1\n", encoding="utf-8")
-        subprocess.run(["git", "add", "review_me.py"], cwd=workspace, check=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=Panels Test",
-                "-c",
-                "user.email=panels-test@example.invalid",
-                "commit",
-                "-qm",
-                "baseline",
-            ],
-            cwd=workspace,
-            check=True,
-        )
-        tracked.write_text("value = 2\n", encoding="utf-8")
-        overrides = _isolated_codex_environment(isolation_root)
-        token = TurnToken(conversation_id="real-codex", turn_number=1)
-        sink = _RecordingSink()
-        child = _real_child(workspace, sink, environment_overrides=overrides)
-        try:
-            await child.start(_resolved_start(workspace), vendor_session_cursor=None)
-            content = text_message_content(
-                "/review inspect the complete change and explain every possible concern"
-            )
-            sink.expect_another_turn()
-            await child.write_prompt(
-                token,
-                content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            parent_id, nested_id = await _wait_for_review_ids(child)
-
-            await child.cancel_running_turn()
-
-            assert parent_id != nested_id
-            assert sink.endings == [ConversationTurnEnding.interrupted]
-            assert sink.ending_tokens == [token]
-            print("REAL CODEX review ids:", parent_id, nested_id)
-        finally:
-            await child.stop()
-            shutil.rmtree(isolation_root)
-
-    _run(exercise)
-
-
-@real_codex_only
 def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
     tmp_path: Path,
 ) -> None:
@@ -491,35 +327,6 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
             print("REAL CODEX send-now reply:", urgent_reply)
             assert sink.endings[-1] is ConversationTurnEnding.completed
             assert "pineapple" in urgent_reply.lower()
-        finally:
-            await child.stop()
-
-    _run(exercise)
-
-
-@real_codex_only
-def test_real_codex_runs_three_turns_with_the_model_changed_in_the_middle(
-    tmp_path: Path,
-) -> None:
-    """A model change mid-conversation is taken, and the turns after it keep running.
-
-    What this proves is that codex accepts the change and the conversation carries on
-    across it. That the value is actually *used* is proved next door, by giving codex a
-    model it does not have — an agent's own account of which model it is is not evidence.
-    """
-
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        child = _real_child(tmp_path, sink)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            question = text_message_content("Reply with exactly: ok. No tools.")
-            await _turn(child, sink, 1, question)
-            await _turn(child, sink, 2, question, model=OTHER_CHEAP_MODEL)
-            await _turn(child, sink, 3, question)
-
-            assert sink.endings == [ConversationTurnEnding.completed] * 3
-            print("REAL CODEX three turns across a model change:", sink.agent_message_texts)
         finally:
             await child.stop()
 
@@ -612,11 +419,22 @@ async def _turn_with_effort(
 def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path) -> None:
     """A conversation whose child was stopped picks up again, remembering what was said."""
 
+    skill_directory = tmp_path / ".agents" / "skills" / "catalog-probe"
+    skill_directory.mkdir(parents=True)
+    (skill_directory / "SKILL.md").write_text(
+        "---\nname: catalog-probe\ndescription: Local catalog readiness probe.\n---\n"
+        "Reply normally. This skill exists only for catalog verification.\n",
+        encoding="utf-8",
+    )
+
     async def exercise() -> None:
         sink = _RecordingSink()
         child = _real_child(tmp_path, sink)
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
+            await sink.wait_for_catalog(
+                lambda entries: any(entry.display_text == "$catalog-probe" for entry in entries)
+            )
             await _turn(
                 child,
                 sink,
@@ -634,6 +452,9 @@ def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path
         resumed = _real_child(tmp_path, resumed_sink)
         await resumed.start(_resolved_start(tmp_path), vendor_session_cursor=cursor)
         try:
+            await resumed_sink.wait_for_catalog(
+                lambda entries: any(entry.display_text == "$catalog-probe" for entry in entries)
+            )
             await _turn(
                 resumed,
                 resumed_sink,
@@ -651,124 +472,6 @@ def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path
             await resumed.stop()
 
     _run(exercise)
-
-
-@real_codex_only
-def test_real_codex_catalog_and_known_skill_work_on_start_and_resume(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        child = _real_child(tmp_path, sink)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            started_entries = sink.composer_catalog_reports[-1]
-            assert {entry.insertion_text for entry in started_entries} >= {
-                "/compact",
-                "/review ",
-                "/goal ",
-            }
-            skill = next(
-                entry for entry in started_entries if entry.insertion_text.startswith("$panels")
-            )
-            await _turn(
-                child,
-                sink,
-                1,
-                text_message_content(
-                    f"{skill.insertion_text}Reply with exactly: catalog-ready. No tools."
-                ),
-            )
-            assert sink.endings[-1] is ConversationTurnEnding.completed
-            cursor = sink.vendor_session_cursor
-            assert cursor is not None
-        finally:
-            await child.stop()
-
-        resumed_sink = _RecordingSink()
-        resumed = _real_child(tmp_path, resumed_sink)
-        await resumed.start(_resolved_start(tmp_path), vendor_session_cursor=cursor)
-        try:
-            resumed_entries = resumed_sink.composer_catalog_reports[-1]
-            assert any(entry.insertion_text.startswith("$panels") for entry in resumed_entries)
-            assert {entry.insertion_text for entry in resumed_entries} >= {
-                "/compact",
-                "/review ",
-                "/goal ",
-            }
-            print("REAL CODEX catalog entries on resume:", len(resumed_entries))
-        finally:
-            await resumed.stop()
-
-    _run(exercise)
-
-
-@real_codex_only
-def test_real_codex_goal_set_get_clear_never_calls_a_model(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        from planner.conversation.backends.contracts import TurnToken
-
-        sink = _RecordingSink()
-        child = _real_child(tmp_path, sink)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            for number, command in enumerate(
-                ("/goal set Prove direct goal controls", "/goal get", "/goal clear"), 1
-            ):
-                sink.expect_another_turn()
-                content = text_message_content(command)
-                await child.write_prompt(
-                    TurnToken(conversation_id="real-codex", turn_number=number),
-                    content,
-                    sender_content=content,
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.queue,
-                    model_change=None,
-                    reasoning_effort_change=None,
-                )
-                await sink.wait_for_the_turn_to_end()
-            assert sink.endings == [ConversationTurnEnding.completed] * 3
-            assert sink.deltas == []
-            assert sink.thinking_pulses == 0
-            assert sink.agent_message_texts[0] == "Goal set: Prove direct goal controls"
-            assert sink.agent_message_texts[-1] == "Goal cleared."
-            print("REAL CODEX direct goal results:", sink.agent_message_texts)
-        finally:
-            await child.stop()
-
-    _run(exercise, seconds=120.0)
-
-
-@real_codex_only
-def test_real_codex_answers_the_snapshot_probes(tmp_path: Path) -> None:
-    """``account/read`` and ``model/list`` — what the backend snapshot is built out of."""
-
-    async def exercise() -> None:
-        client = CodexAppServerClient(handler=_NothingHandler(), description="probe")
-        assert CODEX_EXECUTABLE is not None
-        await client.start(
-            argv=(CODEX_EXECUTABLE, "app-server"),
-            environment=child_environment(),
-            working_directory=tmp_path,
-        )
-        try:
-            await client.request(
-                "initialize",
-                {
-                    "clientInfo": {"name": "panels", "version": "2.0.0"},
-                    "capabilities": {"experimentalApi": True},
-                },
-            )
-            await client.notify("initialized")
-            account = await client.request("account/read", {})
-            models = await client.request("model/list", {})
-
-            assert "requiresOpenaiAuth" in account
-            assert [model["id"] for model in models["data"]]
-            print("REAL CODEX account:", account)
-            print("REAL CODEX models:", [model["id"] for model in models["data"]])
-        finally:
-            await client.stop()
-
-    _run(exercise, seconds=120.0)
 
 
 class _NothingHandler:

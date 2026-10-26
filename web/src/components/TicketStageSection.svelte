@@ -1,8 +1,9 @@
 <script lang="ts">
   import Disclosure from "./Disclosure.svelte";
   import StageMark from "./StageMark.svelte";
-  import InlineEdit from "./InlineEdit.svelte";
-  import MarkdownBlock from "./MarkdownBlock.svelte";
+  import TicketFieldBody from "./TicketFieldBody.svelte";
+  import type { InlineEditDraft } from "../lib/inlineEditDraft";
+  import type { TicketFieldApproval } from "../lib/types";
   import { type FieldStageVisualState } from "../lib/ui";
   import {
     fieldIsPassedFor,
@@ -13,8 +14,11 @@
 
   let {
     name,
-    value = "",
+    value,
+    ticketId,
+    draft,
     ticketStage,
+    approval,
     lifecycle = null,
     stageState = "upcoming",
     variant = "ticket",
@@ -30,7 +34,10 @@
   }: {
     name: string;
     value?: string;
+    ticketId?: string;
+    draft?: InlineEditDraft;
     ticketStage: string;
+    approval?: TicketFieldApproval;
     lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
@@ -48,6 +55,9 @@
     onCompleteGate?: (raw: string) => Promise<unknown>;
   } = $props();
 
+  let approvalLabel = $derived(approval?.method === "explicit_accept" && approval.principal?.kind === "manager"
+    ? "Approved by Manager"
+    : approval?.display_label);
   let reviewVariant = $derived(variant === "review");
   let fieldLabel = $derived(fieldLabelFor(lifecycle, name));
   let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
@@ -59,18 +69,9 @@
 </script>
 
 {#snippet stageBody()}
-    {#if canCompleteGate && editableValue && onCompleteGate}
-      <div class="ticket-field-value">
-        <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onCompleteGate} />
-      </div>
-    {:else if canEditValue && editableValue && onSaveValue}
-      <div class="ticket-field-value">
-        <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
-      </div>
-    {:else}
-      <MarkdownBlock text={value} quiet={emptyText} />
-    {/if}
-
+  <TicketFieldBody {ticketId} {name} {value} {draft} {emptyText}
+    editable={editableValue && (canCompleteGate || canEditValue)}
+    onSave={canCompleteGate ? onCompleteGate : onSaveValue} />
 {/snippet}
 
 {#if reviewVariant}
@@ -80,6 +81,7 @@
 {:else}
   <Disclosure
     variant="stage"
+    lazy
     {defaultOpen}
     {onReaderToggle}
     chevron="none"
@@ -89,6 +91,9 @@
     {#snippet summary()}
       <StageMark state={stageState} />
       <span class="disclosure-stage-name">{fieldLabel}</span>
+      {#if approvalLabel}
+        <span class="ticket-field-approval">{approvalLabel}</span>
+      {/if}
       {#if runLabel}
         <span
           class="ticket-stage-run"
@@ -102,3 +107,22 @@
     {@render stageBody()}
   </Disclosure>
 {/if}
+
+<style>
+  .ticket-field-approval {
+    font-family: var(--font-ui);
+    font-size: var(--type-sm);
+    font-weight: 400;
+    color: var(--text-faintest);
+    margin-left: auto;
+    text-align: right;
+  }
+
+  @media (max-width: 420px) {
+    .ticket-field-approval {
+      font-size: var(--type-xs);
+      max-width: 52%;
+      overflow-wrap: anywhere;
+    }
+  }
+</style>

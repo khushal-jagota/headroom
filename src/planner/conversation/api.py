@@ -16,18 +16,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
-from contextlib import suppress
-from dataclasses import dataclass
+from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from planner.conversation.backend_state import (
     BackendStateStore,
@@ -36,12 +36,7 @@ from planner.conversation.backend_state import (
 from planner.conversation.backend_usage import (
     BackendUsageOutcome,
     BackendUsageResult,
-    BackendUsageService,
     BackendUsageWindow,
-    production_backend_usage_service,
-)
-from planner.conversation.backends.codex_app_server.login import (
-    CodexLoginRejectionMemory,
 )
 from planner.conversation.backends.codex_app_server.login_session import (
     CodexSignIn,
@@ -49,7 +44,6 @@ from planner.conversation.backends.codex_app_server.login_session import (
     CodexSignInUnavailable,
     UnknownSignInSession,
 )
-from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationAccess,
     ConversationAlreadyStarted,
@@ -62,6 +56,7 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
     backend_supports_steer,
 )
@@ -85,7 +80,7 @@ from planner.conversation.image_validation import (
     MAX_CONVERSATION_MESSAGE_IMAGE_BYTES,
     validated_image_media_type,
 )
-from planner.conversation.live_tail import ConversationLiveTail, ConversationTailItem
+from planner.conversation.live_tail import ConversationTailItem
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
@@ -98,17 +93,26 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.model_corrections.contracts import (
+    CorrectionBatch,
+    CorrectionPreviewRequest,
+)
+from planner.conversation.model_corrections.service import apply_corrections, preview_corrections
+from planner.conversation.runtime_composition import (
+    ConversationRuntime as ConversationRuntime,
+)
+from planner.conversation.runtime_composition import (
+    build_conversation_runtime as build_conversation_runtime,
+)
 from planner.conversation.snapshot import (
     BackendSnapshot,
-    BackendSnapshotService,
     BackendUpdateResult,
 )
 from planner.conversation.storage import (
     ConversationRecord,
-    ConversationStore,
     StoredConversationEvent,
 )
-from planner.conversation.system import SqliteProcessConversationSystem
+from planner.conversation.tool_detail import readable_tool_call_detail as _readable_tool_call_detail
 from planner.conversation.voice_transcription import (
     VoiceTranscriptionFailed,
     VoiceTranscriptionUnconfigured,
@@ -132,84 +136,6 @@ router = APIRouter()
 
 
 # --- what the routes are given ------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ConversationRuntime:
-    """The conversation system as one running thing, built once for the process."""
-
-    store: ConversationStore
-    system: SqliteProcessConversationSystem
-    live_tail: ConversationLiveTail
-    backend_snapshots: BackendSnapshotService
-    backend_usage: BackendUsageService
-    message_files: ConversationMessageFiles
-    database_path: str
-    sse_heartbeat_ms: int
-    backend_state: BackendStateStore | None = None
-    executor_endpoint: Any = None
-    # Absent when this process has no backend that can start a sign-in. The routes say
-    # so rather than pretending the affordance exists.
-    codex_sign_in: CodexSignInService | None = None
-
-    async def shutdown(self) -> None:
-        """Let the watchers go first, then stop the system's children.
-
-        A tail is idle nearly all the time and only ends when its browser leaves, so a
-        server that waited for them to finish on their own would never finish at all.
-        """
-        self.live_tail.close_all_subscriptions()
-        await self.system.shutdown()
-        if self.codex_sign_in is not None:
-            await self.codex_sign_in.shutdown()
-
-
-def build_conversation_runtime(
-    *,
-    db_path: str,
-    db_busy_timeout_ms: int,
-    sse_heartbeat_ms: int,
-    backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
-    remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
-) -> ConversationRuntime:
-    """Compose the conversation system, its record, the files it keeps, and the tail."""
-    store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
-    live_tail = ConversationLiveTail()
-    message_files = ConversationMessageFiles(db_path)
-    backend_snapshots = BackendSnapshotService(
-        remembered_codex_login_rejection=remembered_codex_login_rejection
-    )
-
-    async def codex_app_server_argv() -> tuple[str, ...] | None:
-        """How to run a codex app-server here, read when a sign-in starts, not at boot.
-
-        A machine can gain or lose codex while the server runs, so the path comes from the
-        current card rather than being captured once.
-        """
-        snapshot = await backend_snapshots.snapshot(ConversationBackendKey.codex)
-        executable = snapshot.executable_path
-        return None if executable is None else (executable, "app-server")
-
-    return ConversationRuntime(
-        store=store,
-        system=SqliteProcessConversationSystem(
-            store=store,
-            backend_child_factories=backend_child_factories,
-            message_files=message_files,
-            live_tail=live_tail,
-        ),
-        live_tail=live_tail,
-        backend_snapshots=backend_snapshots,
-        backend_usage=production_backend_usage_service(),
-        message_files=message_files,
-        database_path=db_path,
-        sse_heartbeat_ms=sse_heartbeat_ms,
-        backend_state=BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
-        codex_sign_in=CodexSignInService(
-            resolve_argv=codex_app_server_argv,
-            remembered_login_rejection=remembered_codex_login_rejection,
-        ),
-    )
 
 
 def _runtime(request: Request) -> ConversationRuntime:
@@ -274,6 +200,7 @@ def _require_unassociated_send_conversation(
     if owned is not None or identity.get("PLAN_ACTOR") in {
         "worker",
         "chief",
+        "manager",
         "sprint_item_supervisor",
     }:
         raise HTTPException(
@@ -372,6 +299,7 @@ class OwnerSendBody(BaseModel):
     """
 
     conversation_id: str | None = None
+    owner_read_through_sequence: int | None = Field(default=None, ge=0)
     backend_key: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -533,6 +461,35 @@ async def advance_owner_read(
 MAXIMUM_EVENT_PAGE = 100
 
 
+@router.get("/conversations/{conversation_id}/composer-catalog")
+async def read_conversation_composer_catalog(
+    conversation_id: str, runtime: Runtime
+) -> dict[str, Any]:
+    """The typeahead menu for this conversation's composer, as its backend reported it.
+
+    This used to ride inside the record, and it was 97.4% of it: 160 entries, about 35 KB
+    of commands and skills, against roughly 950 bytes of conversation. The record is
+    re-read whenever the conversation gains a row, so watching one agent work for seventy
+    seconds sent the same closed menu 68 times.
+
+    It is its own read because it changes on its own occasions - a backend reports its
+    commands a moment into the first turn - and not when a row arrives.
+    """
+    record = await _require_conversation(runtime, conversation_id)
+    return {
+        "composer_catalog": [
+            {
+                "kind": str(entry.kind),
+                "display_text": entry.display_text,
+                "insertion_text": entry.insertion_text,
+                "description": entry.description,
+                "argument_hint": entry.argument_hint,
+            }
+            for entry in record.composer_catalog
+        ]
+    }
+
+
 @router.get("/conversations/{conversation_id}/events")
 async def read_conversation_events(
     conversation_id: str,
@@ -567,10 +524,11 @@ async def read_conversation_events(
     reads_backwards = after is None
     if reads_backwards and limit is not None:
         events = await runtime.store.read_latest_events(
-            conversation_id, before_sequence=before, limit=limit
+            conversation_id, before_sequence=before, limit=limit + 1
         )
         # Reading back from the end, more to come means older rows before this page.
-        has_more = bool(events) and events[0].sequence > 1
+        has_more = len(events) > limit
+        events = events[-limit:]
     else:
         # Reading on from a position, more to come means rows after this page. One row
         # past the limit answers that without a second query, and is not returned.
@@ -581,6 +539,7 @@ async def read_conversation_events(
     return {
         "events": [_public_event_json(event, backend_key=record.backend_key) for event in events],
         "has_more": has_more,
+        "diagnostics_expired": await runtime.store.diagnostics_expired(conversation_id),
     }
 
 
@@ -595,6 +554,8 @@ async def read_conversation_event_detail(
     """
     record = await _require_conversation(runtime, conversation_id)
     event = await runtime.store.read_event(conversation_id, sequence)
+    if event is None and await runtime.store.sequence_expired(conversation_id, sequence):
+        raise PlannerError(ErrorCode.diagnostic_expired, "This diagnostic detail expired.")
     if event is None or not isinstance(event.payload, ToolCallFinishedEventPayload):
         raise HTTPException(
             status_code=404,
@@ -812,8 +773,25 @@ async def answer_user_input(
 
 @router.get("/backends")
 async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, Any]:
-    """What each backend is right now. Probed when asked, then kept until asked again."""
+    """What each backend is right now. Probed when asked, then kept until asked again.
+
+    If this route is slow, the probe is not why, and that was measured rather than
+    reasoned about. The kept probe answers in 0.12 to 0.51 ms after the first call of a
+    process and its staleness check has never once returned true. The 126 ms this route
+    used to take was decorating and serialising the answer: describing one backend asked
+    a per-model question three times over, each on a fresh connection, and the first
+    statement on a fresh connection costs 2.39 ms here against 0.022 ms on a warm one,
+    because the connection loads eighty tables of schema before it can plan anything.
+    That is 78 connections and 492 statements to describe 26 models.
+
+    It now reads sets instead, so the cost no longer follows the model count. Before
+    adding anything here, count the connections: a loop over models is the shape of this
+    bug and it had grown three times without any test noticing, because every assertion
+    about this route passes whether it opens five connections or eighty.
+    """
     snapshots = await runtime.backend_snapshots.snapshots(refresh=refresh)
+    if runtime.model_resolution is not None:
+        snapshots = tuple(runtime.model_resolution.decorate_snapshot(item) for item in snapshots)
     return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
 
 
@@ -828,6 +806,10 @@ async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
         # wait for version, identity, model-catalogue, or update-advisory probes.
         await asyncio.sleep(0)
         snapshots = await runtime.backend_snapshots.snapshots()
+        if runtime.model_resolution is not None:
+            snapshots = tuple(
+                runtime.model_resolution.decorate_snapshot(item) for item in snapshots
+            )
         refreshed = await usage_refresh
     finally:
         if not usage_refresh.done():
@@ -998,25 +980,6 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
         "reasoning_effort": record.reasoning_effort,
         "workspace_folder": str(record.workspace_folder),
         "access": str(record.access),
-        "role_text": record.role_text,
-        # The names only: a surface shows which identity a conversation carries, and the
-        # values are the identity itself and have no business coming back out.
-        "identity_environment_variable_names": [
-            name for name, _value in record.identity_environment_variables
-        ],
-        # The conversation's composer catalog, as its backend last reported it. It comes
-        # off the conversation rather than off a running child, so it is there when a
-        # person opens the conversation to write the first message.
-        "composer_catalog": [
-            {
-                "kind": str(entry.kind),
-                "display_text": entry.display_text,
-                "insertion_text": entry.insertion_text,
-                "description": entry.description,
-                "argument_hint": entry.argument_hint,
-            }
-            for entry in record.composer_catalog
-        ],
         "latest_sequence": record.latest_sequence,
         "owner_read_through_sequence": record.owner_read_through_sequence,
         "is_running": await runtime.system.is_running(conversation_id),
@@ -1146,7 +1109,11 @@ async def _kept_message_content(
 
 
 async def conversation_message_content(
-    message_files: ConversationMessageFiles, conversation_id: str, sent: list[SentPiece]
+    message_files: ConversationMessageFiles,
+    conversation_id: str,
+    sent: list[SentPiece],
+    *,
+    sender_message_id: str | None = None,
 ) -> MessageContent:
     """The message as the record will hold it, with the bytes already kept.
 
@@ -1195,14 +1162,20 @@ async def conversation_message_content(
     pieces: list[MessagePiece] = []
     image_index = 0
     file_index = 0
-    for piece in sent:
+    for piece_index, piece in enumerate(sent):
         match piece:
             case SentTextPiece():
                 pieces.append(MessageText(text=piece.text))
             case SentImagePiece():
                 contents, media_type = validated_images[image_index]
                 image_index += 1
-                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
+                kept = await message_files.keep(
+                    conversation_id,
+                    contents,
+                    media_type=media_type,
+                    sender_message_id=sender_message_id,
+                    piece_index=piece_index,
+                )
                 pieces.append(
                     MessageImage(
                         stored_file_id=kept.stored_file_id,
@@ -1213,7 +1186,13 @@ async def conversation_message_content(
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1
-                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
+                kept = await message_files.keep(
+                    conversation_id,
+                    contents,
+                    media_type=media_type,
+                    sender_message_id=sender_message_id,
+                    piece_index=piece_index,
+                )
                 pieces.append(
                     MessageFile(
                         stored_file_id=kept.stored_file_id,
@@ -1292,59 +1271,6 @@ def _public_event_json(
     }
 
 
-def _readable_tool_call_detail(
-    detail: str | None, *, backend_key: ConversationBackendKey
-) -> str | None:
-    """What a reader may be shown of a finished tool call, before any cap.
-
-    Old Claude rows can hold image blocks with no readable text in them. There is
-    nothing in one to show, so no public read carries it — not the events read, not the
-    tail, and not the route the fold asks on.
-    """
-    if backend_key is ConversationBackendKey.claude and (
-        _is_legacy_claude_image_only_detail(detail)
-    ):
-        return None
-    return detail
-
-
-def _is_legacy_claude_image_only_detail(detail: str | None) -> bool:
-    """Whether old Claude detail is only base64 image blocks and has no readable text."""
-    if detail is None:
-        return False
-    try:
-        blocks = json.loads(detail)
-    except (TypeError, ValueError):
-        return False
-    if not isinstance(blocks, list) or not blocks:
-        return False
-    return all(_is_claude_base64_image_block(block) for block in blocks)
-
-
-def _is_claude_base64_image_block(block: object) -> bool:
-    if (
-        not isinstance(block, dict)
-        or set(block) != {"type", "source"}
-        or block.get("type") != "image"
-    ):
-        return False
-    source = block.get("source")
-    if (
-        not isinstance(source, dict)
-        or set(source) != {"type", "media_type", "data"}
-        or source.get("type") != "base64"
-    ):
-        return False
-    media_type = source.get("media_type")
-    data = source.get("data")
-    return (
-        isinstance(media_type, str)
-        and media_type.startswith("image/")
-        and isinstance(data, str)
-        and bool(data)
-    )
-
-
 def delivery_fate_json(fate: object) -> dict[str, Any]:
     match fate:
         case PromptDeliveryStarted():
@@ -1355,6 +1281,8 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             return {"fate": "injected"}
         case PromptDeliveryRefused(refusal_reason=reason):
             return {"fate": "refused", "refusal_reason": str(reason)}
+        case PromptDeliverySuppressed(reason=reason):
+            return {"fate": "suppressed", "reason": reason}
         case PromptDeliveryUncertain():
             return {"fate": "uncertain"}
         case _:  # pragma: no cover - the fate type is closed
@@ -1367,13 +1295,15 @@ def _snapshot_json(
     identity = snapshot.identity
     advisory = snapshot.update_advisory
     cached_usage = None if backend_state is None else backend_state.read_usage(snapshot.backend_key)
+    # One statement for the whole card. Asking per model opened a connection per model,
+    # and this schema charges 2.39 ms for the first statement on a fresh connection.
+    disabled = (
+        frozenset[str]()
+        if backend_state is None
+        else backend_state.read_disabled_models(snapshot.backend_key)
+    )
     enabled_by_model = {
-        model.model_id: (
-            True
-            if backend_state is None
-            else backend_state.model_is_enabled(snapshot.backend_key, model.model_id)
-        )
-        for model in snapshot.available_models
+        model.model_id: model.model_id not in disabled for model in snapshot.available_models
     }
     default_model_id = snapshot.default_model_id
     if default_model_id is not None and not enabled_by_model.get(default_model_id, True):
@@ -1397,6 +1327,9 @@ def _snapshot_json(
             {
                 "model_id": model.model_id,
                 "display_name": model.display_name,
+                "selected_variant": model.selected_variant,
+                "resolved_model_id": model.resolved_model_id,
+                "catalogue_warning": model.catalogue_warning,
                 "detail": model.detail,
                 "reasoning_effort_options": list(model.reasoning_effort_options),
                 "enabled": enabled_by_model[model.model_id],
@@ -1586,3 +1519,39 @@ __all__ = [
     "build_conversation_runtime",
     "router",
 ]
+
+
+@router.post("/model-corrections/preview")
+async def preview_model_corrections(
+    body: CorrectionPreviewRequest,
+    request: Request,
+    ctx: Ctx,
+) -> dict[str, Any]:
+    runtime = _runtime(request)
+    if runtime.model_resolution is None:
+        raise HTTPException(status_code=503, detail="model resolution is unavailable")
+    with closing(connect(runtime.database_path)) as conn:
+        results = await preview_corrections(
+            conn, ctx.principal, body.targets, runtime.model_resolution
+        )
+    return CorrectionBatch(corrections=results).model_dump(mode="json")
+
+
+@router.post("/model-corrections/apply")
+async def apply_model_corrections(
+    body: CorrectionBatch,
+    request: Request,
+    ctx: Ctx,
+) -> dict[str, Any]:
+    runtime = _runtime(request)
+    if runtime.model_resolution is None:
+        raise HTTPException(status_code=503, detail="model resolution is unavailable")
+    with closing(connect(runtime.database_path)) as conn:
+        results = await apply_corrections(
+            conn, ctx.principal, body.corrections, runtime.model_resolution, now=int(time.time())
+        )
+        if any(item.applied and item.target.kind == "worker-default" for item in results):
+            from planner.worker_types.configuration import load_worker_runtime_definitions
+
+            load_worker_runtime_definitions(conn)
+    return CorrectionBatch(corrections=results).model_dump(mode="json")

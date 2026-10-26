@@ -1,21 +1,26 @@
 <script lang="ts">
+  import { createQuery } from '@tanstack/svelte-query';
+  import { jsonQuery } from '../lib/queryCatalogue';
   import ArtifactStrip from "./ArtifactStrip.svelte";
+  import PagedArtifacts from './PagedArtifacts.svelte';
   import type { ArtifactStripItem } from "../lib/artifactStrip";
-  let { items }: { items: ArtifactStripItem[] } = $props();
+  import type { ArtifactOwnerKind, ArtifactDirectoryPage } from '../lib/catalogs/artifacts';
+  let { items = [], owner }: { items?: ArtifactStripItem[]; owner?: {kind:ArtifactOwnerKind;id:string} } = $props();
+  let open = $state(false);
+  let observedCount = $state<number | null>(null);
+  const summary = createQuery(() => ({...jsonQuery<ArtifactDirectoryPage>(
+    ['artifact-catalog-count',owner?.kind,owner?.id],
+    `/api/artifact-catalog/${owner?.kind}/${encodeURIComponent(owner?.id ?? '')}?limit=1`),enabled:Boolean(owner) && !open}));
+  let count = $derived(owner ? summary.data?.total ?? observedCount : items.length);
 </script>
-<details class="artifacts-band" data-artifacts-band>
-  <summary>Artifacts<span class="count">{items.length}</span></summary>
-  <div class="body">
-    {#if items.length}<ArtifactStrip {items} />{:else}<p class="empty">No artifacts yet.</p>{/if}
-  </div>
+<details class="artifacts-band disclosure-band" data-artifacts-band bind:open>
+  <summary>Artifacts<span class="count disclosure-band-trailing">{count ?? '…'}</span></summary>
+  {#if open}<div class="body disclosure-band-body">
+    {#if owner}<nav class="artifact-strip" aria-label="Artifacts" data-artifact-strip><div class="artifact-strip-items"><PagedArtifacts {owner} onCount={(value)=>observedCount=value} /></div></nav>
+    {:else if items.length}<ArtifactStrip {items} />{:else}<p class="empty">No artifacts yet.</p>{/if}
+  </div>{/if}
 </details>
 <style>
-  .artifacts-band { line-height:1.6; border-top:1px solid var(--border-color); border-bottom:1px solid var(--border-color); }
-  summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
-  summary::-webkit-details-marker { display:none; }
-  summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .count { margin-left:auto; font-weight:400; color:var(--text-faintest); }
-  .body { padding-bottom:var(--space-4); }
   .empty { margin:var(--space-2) 0; font-size:13px; color:var(--text-faintest); }
   .body :global(.artifact-strip) { display:block; padding:0; margin:0; border:0; }
   .body :global(.artifact-strip-label) { display:none; }

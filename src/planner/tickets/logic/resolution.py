@@ -16,6 +16,8 @@ from planner.tickets.contracts import (
     PendingTicketProposal,
     StageOwnershipMode,
     Ticket,
+    TicketApprovalMethod,
+    TicketFieldApproval,
     WorkerStepClaim,
 )
 from planner.tickets.logic import admission, fields_codec, machine
@@ -31,6 +33,7 @@ def _accept_gating_proposal(
     next_holder: Principal | None = None,
     *,
     worker_type_definition: WorkerTypeDefinition,
+    approval: TicketFieldApproval | None = None,
 ) -> Decision:
     target = worker_type_definition.advance_target(ticket.stage)
     if target is None:
@@ -42,6 +45,10 @@ def _accept_gating_proposal(
     return replace(
         Decision.from_ticket(ticket),
         field_values={**ticket.field_values, field: stored_body},
+        field_approvals={
+            **{key: value for key, value in ticket.field_approvals.items() if key != field},
+            **({field: approval} if approval is not None else {}),
+        },
         pending_proposal=None,
         stage=target,
         ceiling=ticket.ceiling if next_ceiling is None else next_ceiling,
@@ -78,25 +85,24 @@ def decide_file_proposal(
     )
     if parked_destination is None:
         return _accept_gating_proposal(
-            ticket, field, body, None, worker_type_definition=worker_type_definition
+            ticket,
+            field,
+            body,
+            None,
+            worker_type_definition=worker_type_definition,
+            approval=TicketFieldApproval(TicketApprovalMethod.auto_accept, None, "Auto-accepted"),
         )
     return replace(
         Decision.from_ticket(ticket),
-        pending_proposal=PendingTicketProposal(
-            field, body, principal_legacy_actor(principal), now
-        ),
+        pending_proposal=PendingTicketProposal(field, body, principal_legacy_actor(principal), now),
         ceiling_holder=parked_destination,
     )
 
 
-def _pending(
-    ticket: Ticket, field: str, definition: WorkerTypeDefinition
-) -> PendingTicketProposal:
+def _pending(ticket: Ticket, field: str, definition: WorkerTypeDefinition) -> PendingTicketProposal:
     proposal = ticket.pending_proposal
     if proposal is None:
-        raise PlannerError(
-            ErrorCode.not_found, "no pending proposal", {"ticket_id": ticket.id}
-        )
+        raise PlannerError(ErrorCode.not_found, "no pending proposal", {"ticket_id": ticket.id})
     if field != proposal.field or field != definition.gating_field(ticket.stage):
         raise PlannerError(
             ErrorCode.validation,
@@ -114,6 +120,7 @@ def decide_accept(
     next_holder: Principal | None,
     *,
     worker_type_definition: WorkerTypeDefinition,
+    approval: TicketFieldApproval,
 ) -> Decision:
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
@@ -137,6 +144,7 @@ def decide_accept(
         resolved_ceiling,
         next_holder,
         worker_type_definition=worker_type_definition,
+        approval=approval,
     )
 
 
@@ -164,9 +172,7 @@ def decide_complete_user_owned_gate(
         ticket.field_values, field, worker_type_definition=worker_type_definition
     )
     if settled_value is not None:
-        raise PlannerError(
-            ErrorCode.validation, "field is already settled", {"field": field}
-        )
+        raise PlannerError(ErrorCode.validation, "field is already settled", {"field": field})
     gating_field = worker_type_definition.gating_field(ticket.stage)
     if field != gating_field:
         raise PlannerError(
@@ -233,12 +239,15 @@ def decide_edit_settled_field(
     if not machine.field_is_passed(
         field, ticket.stage, worker_type_definition=worker_type_definition
     ):
-        raise PlannerError(
-            ErrorCode.validation, "field is not yet passed", {"field": field}
-        )
+        raise PlannerError(ErrorCode.validation, "field is not yet passed", {"field": field})
     return replace(
         Decision.from_ticket(ticket),
         field_values={**ticket.field_values, field: new_body},
+        field_approvals={
+            key: value
+            for key, value in ticket.field_approvals.items()
+            if key != field or ticket.field_values[field] == new_body
+        },
     )
 
 
@@ -262,21 +271,15 @@ def decide_reject(
     if worker_type_definition.is_terminal(ticket.stage):
         raise PlannerError(ErrorCode.validation, "terminal tickets cannot be rejected")
     if has_guidance and ticket.conversation_id is None:
-        raise PlannerError(
-            ErrorCode.validation, "ticket has no existing worker session"
-        )
+        raise PlannerError(ErrorCode.validation, "ticket has no existing worker session")
     field = worker_type_definition.gating_field(ticket.stage)
     if field is None:
-        raise PlannerError(
-            ErrorCode.validation, "ticket has no approval item to reject"
-        )
+        raise PlannerError(ErrorCode.validation, "ticket has no approval item to reject")
     _pending(ticket, field, worker_type_definition)
     return replace(
         Decision.from_ticket(ticket),
         pending_proposal=None,
-        ceiling_holder=(
-            OWNER_PRINCIPAL if principal == OWNER_PRINCIPAL else ticket.ceiling_holder
-        ),
+        ceiling_holder=(OWNER_PRINCIPAL if principal == OWNER_PRINCIPAL else ticket.ceiling_holder),
     )
 
 

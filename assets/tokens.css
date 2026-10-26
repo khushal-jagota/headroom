@@ -1,7 +1,7 @@
 /* The single token file. The app's entire personality is tunable here — no other
  * file hardcodes a colour, radius, duration, spacing step, border width, size, or
  * font. Near black values: restrained neutral-dark surfaces, one deliberate slate-blue
- * brand accent meaning "needs the human", a closed five-size type scale. No new
+ * brand accent meaning "needs the human", a shared sans type scale. No new
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
 :root {
@@ -9,7 +9,7 @@
    * Ink remains for knockout marks and the retired Day card. */
   --surface-1: #151515;
   --surface-2: #1c1c1c;
-  --surface-recessed: #111111;
+  --surface-recessed: #0d0d0d;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
@@ -32,6 +32,7 @@
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
   --accent-surface: #222a38;
+  --error-surface: #382226;
   /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
    * that it barely lifts off the page, which is what makes it right for them. */
   --accent-text: #dce6f8;
@@ -40,20 +41,6 @@
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
    * ask. Nothing else is this bright, so "only you can answer this" reads at a glance. */
   --accent-needs-me: #fff;
-
-  /* Priority is strategic importance, not workflow state. These earthy fills and
-   * their paired light inks stay distinct from the slate-blue human-attention
-   * accent, the white needs-you dot, and the green completion signal. */
-  --priority-p0-fill: #c93b2c;
-  --priority-p0-ink: #fff4f1;
-  --priority-p1-fill: #a03429;
-  --priority-p1-ink: #ffe2dc;
-  --priority-p2-fill: #6d4526;
-  --priority-p2-ink: #f2e0cf;
-  --priority-p3-fill: #534323;
-  --priority-p3-ink: #e9e4c6;
-  --priority-tile-standard-width: 27px;
-  --priority-tile-height: 18px;
 
   /* Radius scale — even 4/8/12 progression */
   --radius-sm: 4px;
@@ -72,6 +59,12 @@
   --motion-enter: 320ms;
   --motion-enter-step: 40ms;
 
+  /* Skeleton fills and the shared swap duration. */
+  --skeleton-line:rgba(255,255,255,.045);
+  --skeleton-block:rgba(255,255,255,.028);
+  --skeleton-fade:300ms;
+  --skeleton-delay:200ms;
+
   /* Spacing scale */
   --space-1: 4px;
   --space-2: 8px;
@@ -88,11 +81,8 @@
   --measure-read: 680px;
   --measure-index: 760px;
   --space-page-tail: 128px;
-  /* The Ticket page's one column. On a wide pane the column is the pane less a gutter
-     each side; on a narrow one it keeps the older fixed measure. The two meet at a
-     1152px pane, so there is no step between them. */
-  --ticket-column-gutter: 192px;
-  --ticket-column-measure: 768px;
+  /* Shared title/text channel; conversation cards start and end on these same edges. */
+  --document-channel-measure: 720px;
   --file-preview-markdown-max-height: 32rem;
   /* The shell's nav bar. A screen that has to be exactly as tall as the space it was
      given works it out from the viewport, so its height has to be a value and not a
@@ -111,13 +101,17 @@
   --border-color: rgba(255, 255, 255, 0.10);
   --shadow-float: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
 
-  /* Type — two font stacks plus the closed sans size scale */
+  /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
+   * preserve the former serif hierarchy under the owner's size-preservation exception. */
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --type-xs: 11px;
   --type-sm: 13px;
   --type-md: 15px;
   --type-lg: 20px;
+  --type-prose-lg: 18px;
+  --type-display: 28px;
+  --type-hero: 30px;
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
    * the ladder because touch screens must raise them: iOS Safari zooms the whole
@@ -125,18 +119,7 @@
   --type-input: var(--type-sm);
   --type-input-compact: var(--type-xs);
 
-  /* Serif voice — the system speaks in Newsreader where content speaks; the
-   * machine's sans controls stay --font-ui. Its own ladder (mockup px). */
-  --font-serif: "Newsreader", Georgia, serif;
-  --type-serif-sm: 15px;
-  --type-serif-md: 16.5px;
-  --type-serif-lg: 18px;
-  --type-serif-xl: 21px;
-  --type-serif-display: 28px;
-  --type-serif-hero: 30px;
-
-  /* Letter-spacing — the three the design uses: tight on serif titles, open on
-   * uppercase sans labels, a hair on mono. */
+  /* Letter-spacing — tight on titles, open on uppercase labels, a hair on mono. */
   --tracking-title: -0.008em;
   --tracking-label: 0.12em;
   --tracking-mono: 0.03em;

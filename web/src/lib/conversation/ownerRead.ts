@@ -36,7 +36,7 @@ export type OwnerReadWindowAttentionTarget = {
 /** Return the transcript position that the owner can truthfully mark as read.
  *
  * A null conversation state is the full-container form of the pane. Layered panes count
- * as open once they are peeked or opened. The snapshot proves that the conversation
+ * as open when opened. The snapshot proves that the conversation
  * exists and supplies the durable read position. Both lenses acknowledge every delivered
  * row because runtime rows can sit between owner-visible messages and system outcomes.
  */

@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import asdict
 from typing import Any, cast
 from uuid import uuid4
@@ -77,12 +77,20 @@ class ExecutorStore:
         self.db_path = db_path
 
     @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
+    def _transaction(
+        self,
+        transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
+        | None = None,
+        before_commit: Callable[[sqlite3.Connection], None] | None = None,
+    ) -> Iterator[sqlite3.Connection]:
         connection = connect(self.db_path)
         try:
-            connection.execute("BEGIN IMMEDIATE")
-            yield connection
-            connection.commit()
+            with nullcontext() if transaction_context is None else transaction_context(connection):
+                connection.execute("BEGIN IMMEDIATE")
+                yield connection
+                if before_commit is not None:
+                    before_commit(connection)
+                connection.commit()
         except BaseException:
             connection.rollback()
             raise
@@ -118,8 +126,17 @@ class ExecutorStore:
         now_ms: int,
         *,
         identity: ExecutorIdentity,
+        transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
+        | None = None,
+        before_commit: Callable[[sqlite3.Connection], None] | None = None,
     ) -> AcceptanceReceipt:
-        with self._transaction() as connection:
+        effect_accepted = False
+
+        def publish_effect(connection: sqlite3.Connection) -> None:
+            if effect_accepted and before_commit is not None:
+                before_commit(connection)
+
+        with self._transaction(transaction_context, publish_effect) as connection:
             previous = self._preflight(connection, envelope, identity)
             if previous is not None:
                 return previous
@@ -130,6 +147,7 @@ class ExecutorStore:
                 if not connection.in_transaction:
                     raise RuntimeError("Executor domain writer committed its transaction")
                 connection.execute("RELEASE SAVEPOINT domain_write")
+                effect_accepted = True
             except PlannerError as error:
                 if error.code == ErrorCode.gateway_offline:
                     raise
@@ -504,7 +522,20 @@ class ExecutorStore:
             )
             if child.conversation_id != conversation_id or turn.conversation_id != conversation_id:
                 return None
-            return ExecutorTurnContext(child, turn, pending, tuple(questions), ended, *flags)
+            permission_ids = TypeAdapter(dict[str, str]).validate_python(
+                runtime.get("permission_provider_ids", {})
+            )
+            input_ids = TypeAdapter(dict[str, str]).validate_python(
+                runtime.get("user_input_provider_ids", {})
+            )
+            return ExecutorTurnContext(
+                child,
+                turn,
+                tuple(permission_ids.get(identity, identity) for identity in pending),
+                tuple(input_ids.get(identity, identity) for identity in questions),
+                ended,
+                *flags,
+            )
         except (ValueError, TypeError, KeyError):
             return None
 

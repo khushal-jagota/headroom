@@ -52,6 +52,11 @@ single document. It is read whole, written whole, and checked whole, because its
 mean nothing apart: stages that gate fields the type does not declare are not a partly
 valid Worker type, they are not one at all.
 
+A historical Ticket can hold text for a field its current Worker type no longer declares.
+Reads omit that text, and later Ticket writes preserve it in storage. This does not add
+a Stage or field to the current definition. Definition edits still refuse to remove a
+field that an unfinished Ticket uses. New values and pending proposals still require declared fields.
+
 Opening a database loads its Worker types into the process, and that is what the rest of
 Panels reads. Declaring or changing one is therefore a write, not a release: the change is
 in force as soon as it is stored.
@@ -87,9 +92,9 @@ the frame and reach the decision together; its other non-terminal Stages use wor
 ownership. `initiative_planning` uses user ownership for Question Answers, where
 consequential cross-Ticket choices are settled with the user; its other non-terminal
 Stages use worker ownership. `product_design` uses user ownership for Wireframe
-and Design, while its Best Guess and Open Options Stage and its handoff are
-worker-owned. Each Worker type chooses ownership for each Stage. It does not inherit
-that choice from registry order or another definition.
+and Design, while its Brief and its handoff are worker-owned. Each Worker type
+chooses ownership for each Stage. It does not inherit that choice from registry
+order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as the worker-step claim
@@ -236,13 +241,13 @@ the supported manifests for automation. The CLI does not maintain its own Worker
 ## Declaring and changing a Worker type
 
 There is one write door, `POST /api/worker-types`, and it takes the whole record. An
-optional `skill` block carries the specialist skill's description and body, so declaring a
-new Worker and declaring the skill it names happen together rather than as two writes that
-can half-happen: a Worker type may only name a skill that already exists.
+optional `skill` block supplies a specialist skill through the common skill writer.
+A new skill requires a description and body. The Worker declaration follows the skill save.
+If that declaration fails, the saved skill remains. A Worker type must name an existing skill.
 
 At the command line, `panels worker-type show <type>` prints the stored record in the
-shape `panels worker-type save` takes back on stdin, and
-`panels worker-type skill <type> --description "..."` replaces just the skill text.
+shape `panels worker-type save` takes back on stdin. Use `panels skill edit <skill-name>`
+for a skill edit. The old `panels worker-type skill` command remains an adapter.
 
 Declaring a Worker type is a direct operation. A worker cannot declare one.
 
@@ -262,6 +267,17 @@ _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 
 ## Skills and the Config page
 
+The owner and Chief can apply a reviewed skill batch with `POST /api/skills/apply`.
+The CLI exposes it as `panels skill apply --input-json MANIFEST.json`.
+Each entry supplies a name, full source text, and the expected current SHA-256 hash.
+An explicit null hash requires an absent row. Every entry passes validation before any row changes.
+All row changes share one transaction and the existing publication lock.
+File publication follows that transaction and reports the existing incomplete-save diagnostic.
+The same complete manifest can retry publication when all rows already match its exact targets.
+This operation preserves existing immutable versions and Worker bindings.
+Worker, manager, and legacy supervisor actors receive a refusal without any row changes.
+
+
 Every managed skill's text is a row in `managed_skills`, and that row is the authority.
 `data/skills/<name>/SKILL.md` is a copy Panels writes from it, because an agent reads a
 file rather than a table, and each agent home links to that file. Opening a database
@@ -277,6 +293,17 @@ check` is what says so. It reads the build itself — the CLI command tree, the 
 Worker types declare, the Stage ladders they spell out, and the retired skill names — and
 lists every stored skill naming something absent. It reports; it never rewrites a row.
 `GET /api/skills/stale` serves the same list.
+
+The check also reports unsupported fields in literal Ticket-create examples. It reads
+only a shell code block with one `panels ticket create --input-json -` command, a quoted
+heredoc delimiter, and a complete JSON object. It checks only the object's top-level
+fields against the accepted create fields. Prose, nested fields, dynamic values,
+malformed examples, and blocks with extra shell commands stay outside this check.
+
+This field check reads both stored skills and packaged seeds. A stored skill can omit
+an example that the seed still teaches to a fresh database. The report identifies
+stored examples as `ticket_create_field` and seed examples as
+`packaged_ticket_create_field`. Other checks read stored skills only.
 
 A Stage is named two ways, and the check reads them differently on purpose. Its id,
 `needs_something`, is unmistakable anywhere. Its label is an ordinary phrase: `approach` is
@@ -298,10 +325,13 @@ does not occur exactly once. Both revisions raise when a correction they declare
 land, and only then: a row that is merely stale is reported by the check rather than
 refusing an upgrade.
 
-A Worker type owns its specialist skill. `PATCH /api/skills/{skill-name}` refuses one and
-points at the Worker, so each skill has exactly one editor. Native homes use symlinks to
-managed skills, never copied overlays. Codex and Claude select all Panels skills, and the
-Hermes home links every skill in the managed home.
+Every skill uses the same editor. `PATCH /api/skills/{skill-name}` accepts the description,
+Markdown body, or both. Omitted fields keep their current values. The skill name stays fixed.
+Worker and Chief edit routes delegate to that writer and retain their response shapes.
+Their PUT routes also preserve omitted fields. All routes retain the same owner authority.
+
+Native homes use symlinks to managed skills. Codex and Claude select all Panels skills.
+The Hermes home links every skill in the managed home.
 
 The Config section lives under **Settings** at `#/settings/config`. It has exactly two
 quiet, whitespace-separated sections. Every destination is a whole-row link showing
@@ -310,7 +340,7 @@ arrow. The index does not show structural ids, skill names, launch settings, Sta
 counts, or configuration labels, and it keeps the same one-column order on narrow
 screens.
 
-- **Config** contains Chief of Staff, the Sprint Item supervisor, and the shared Worker
+- **Config** contains Chief of Staff, the Manager, and the shared Worker
   role skill. Chief
   opens at `#/settings/config/chief-of-staff` with one picker for its launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
@@ -318,9 +348,9 @@ screens.
   role because it guides every Ticket worker, although it is not an independent
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
-  or Stage controls. Sprint Item supervisor opens at
-  `#/settings/config/sprint-item-supervisor`. It uses the same canonical skill editor and has no
-  global launch or Stage controls. Each Sprint Item owns its supervisor launch snapshot.
+  or Stage controls. Manager opens at
+  `#/settings/config/manager`. It uses the same canonical skill editor and has no
+  global launch or Stage controls. Each Manager owns its Manager launch snapshot.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
   `#/settings/config/workers/<worker-type>` with its launch defaults, read-only Stage ownership
@@ -329,23 +359,24 @@ screens.
 Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/settings/config` and
 `#/settings/config/workers/<worker-type>`.
 
-Every edit here reads the current record, changes one part of it and writes the whole
-thing back, so each one holds the write lock across that read and write. Two edits landing
-together would otherwise each write what it read, and the slower one would undo the
-faster one's field.
+Skill edits and startup reconstruction share one lock for the managed skills home.
+The lock covers the current read, row commit, file replacement, and version capture.
+Edits to different fields survive. For the same field, the later serialized edit wins.
+Startup cannot replace a newer file with an older snapshot.
 
-The row commits first and the file copy is written from it afterwards. If recording the
-skill's version history then fails, the owner's edit still stands: the row is the
-authority, and the copy is rewritten from it on every open.
+The row commits before the file changes. A failure after commit does not undo the edit.
+The error states whether the file changed and whether file publication or history capture failed.
+Read the current skill before retry. Startup reconstructs the file from the canonical row.
 
 What a Worker type launches on is part of its record rather than a separate setting, so
 there is no second copy to keep in step and nothing to reconcile. The Chief is not a
 Worker type and keeps its own single row.
 
 Every editable skill name is read-only. Description and Markdown body are ordinary
-direct edits that save, fail, and retry independently. Successful skill edits refresh
-the configured planner Hermes home without changing existing conversations.
-Codex and Claude Code use the same managed home.
+direct edits that save, fail, and retry independently. A save replaces the managed file
+without a conversation reset. Later file reads see that revision. Text already in model
+context remains there. Version history does not prove that a model consumed a revision.
+Codex, Claude Code, and Hermes use the same managed home.
 
 `GET /api/workers` serves the Config-page destinations and Chief settings. The Chief
 entry also carries its current `conversation_id`, whether it is working or needs the
@@ -353,11 +384,9 @@ owner, and the sequence where its latest turn ended. The Workspace Chief row use
 conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for role skills and specialist
-descriptions on the index. Worker and Chief endpoints edit skill description and body
-or launch defaults. The generic
-`PATCH /api/skills/{skill-name}` endpoint edits the Worker and Sprint Item supervisor
-role skills. A saved change announces itself, and any Config screen on display refetches
-what it is showing.
+descriptions on the index. All Config skill editors use the common skill endpoint.
+Worker and Chief endpoints still own launch defaults. A saved change announces itself,
+and each mounted Config screen refetches its data.
 
 Approval derives its initial ceiling from the Worker definition's advance target for the
 new Stage. A valid terminal Stage is the fallback when no further advance exists.
@@ -407,13 +436,20 @@ catalog stays fresh for 24 hours across a server restart. Catalogue refresh belo
 Backends screen with the rest of the machine state. A failed ordinary read keeps the saved
 picker value visible and offers a retry.
 
-The stored backend, model and reasoning are the Ticket's last-chosen values. They start
-as the Worker type's defaults and are kept up to date with what its conversation
-actually runs on, so a fresh conversation starts from where the last one ended.
+The stored backend, model and reasoning preserve the Ticket's selected variant and effort.
+Each turn resolves the current enabled model within that variant. Chief and ordinary
+managers use the same rule, including after a server restart. Catalogue failures use
+the last known-good resolution when one exists. See
+[current models within a variant](conversation-system.md#current-models-within-a-variant).
 
-Chief settings use the same managed authority for Backend, Model, and Reasoning. A new Chief
-conversation is started on the then-current trio. An existing one continues on what it was
-started with, including after a server restart.
+On a fresh installation without model evidence, Ticket creation preserves its requested
+model and reasoning effort and reports unavailable resolution. It writes no invented
+catalogue or resolution. Available model evidence still enforces valid selections.
+The next turn follows the ordinary resolution rules.
+
+Saved choices can also be corrected without a Worker restart, including while the Ticket
+is idle or at a user-owned Stage. A correction changes launch choices only. It does not
+grant approval or advance work. See [model correction commands](cli.md#correct-saved-models).
 
 Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
 under full access inside its workspace folder; how each backend realises that belongs to its
@@ -518,4 +554,4 @@ current user-owned Stage. No definition carries separate reconciliation capabili
 
 ---
 
-_Last verified: 2026-08-16._
+_Last verified: 2026-10-18._

@@ -9,6 +9,7 @@ from sqlite3 import Connection
 from typing import Any
 
 import pytest
+from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import (
@@ -83,7 +84,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
-            kickoff_note="Brief",
+            brief="Brief",
             employee_backend="codex",
             employee_launch_model="scripted",
         )
@@ -103,7 +104,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             )
 
         def factory(**kwargs: Any) -> RemoteBackendChild:
-            return RemoteBackendChild(reference, native)
+            return RemoteBackendChild(reference, native, lambda start: canonical_snapshot())
 
         system = CrashAfterCanonicalOwnerMessage(
             store=ConversationStore(path),
@@ -299,7 +300,7 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             )
 
         def factory(**kwargs: Any) -> RemoteBackendChild:
-            return RemoteBackendChild(reference, native)
+            return RemoteBackendChild(reference, native, lambda start: canonical_snapshot())
 
         system = CrashAfterPrompt(
             store=ConversationStore(path),

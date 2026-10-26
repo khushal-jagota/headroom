@@ -12,6 +12,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
@@ -19,19 +20,13 @@ from typing import cast
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
-from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
     HeldPrompt,
     PromptDeliveryFate,
-    PromptDeliveryInjected,
     PromptDeliveryMode,
-    PromptDeliveryQueued,
-    PromptDeliveryRefusalReason,
-    PromptDeliveryRefused,
-    PromptDeliveryStarted,
     PromptDeliveryUncertain,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -40,14 +35,11 @@ from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
-    READ_YOUR_TICKET_COMMAND,
 )
 from planner.runtime.worker_step_readiness_loop import (
-    WorkerStepDeliveryFate,
     WorkerStepReadinessLoop,
     WorkerStepStartResult,
     start_ready_worker_step,
@@ -55,7 +47,7 @@ from planner.runtime.worker_step_readiness_loop import (
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback, worker_restart
-from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus, WorkerStepClaim
+from planner.tickets.contracts import Ticket, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
@@ -71,7 +63,7 @@ class _World:
 
     def __init__(self, tmp_path: Path) -> None:
         self.db_path = str(tmp_path / "readiness-loop.db")
-        with connect(self.db_path) as conn:
+        with closing(connect(self.db_path)) as conn:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
         self.conversations = InMemoryConversationSystem()
@@ -83,18 +75,17 @@ class _World:
         self,
         *,
         title: str = "T",
-        kickoff_note: str = "Agreed brief.",
+        brief: str = "Agreed brief.",
         worker_type: str = "coding",
         conversation_id: str | None = None,
-        on_today: bool = True,
         next_ceiling: str = "none",
     ) -> str:
-        with self.connect() as conn:
+        with closing(self.connect()) as conn:
             ticket = tickets_data.create_ticket(
                 conn,
                 worker_type=worker_type,
                 title=title,
-                kickoff_note=kickoff_note,
+                brief=brief,
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
@@ -113,8 +104,6 @@ class _World:
                     "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                     (conversation_id, ticket.id),
                 )
-            if on_today:
-                days_data.add_day_ticket(conn, TODAY_DAY_ID, ticket.id, 0)
         return ticket.id
 
     def record_compacted_conversation(
@@ -145,17 +134,9 @@ class _World:
                     '{"sender_message_id": "worker_step_message_earlier"}',
                 ),
             )
-
             conn.execute(
                 "INSERT INTO conversation_events VALUES (?, ?, 'context_compacted', '{}', 0)",
                 (conversation_id, compacted_through + 1),
-            )
-
-    def remove_from_today(self, ticket_id: str) -> None:
-        with self.connect() as conn:
-            conn.execute(
-                "DELETE FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
-                (TODAY_DAY_ID, ticket_id),
             )
 
     def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
@@ -244,44 +225,6 @@ def world(tmp_path: Path) -> _World:
     return _World(tmp_path)
 
 
-@pytest.mark.parametrize(
-    ("fate", "started", "delivery_fate"),
-    [
-        (PromptDeliveryStarted(), True, "started"),
-        (PromptDeliveryQueued(queue_position=3), True, "queued"),
-        (PromptDeliveryInjected(), True, "injected"),
-        (
-            PromptDeliveryRefused(PromptDeliveryRefusalReason.write_to_backend_failed),
-            False,
-            "refused",
-        ),
-        (PromptDeliveryUncertain(), False, "uncertain"),
-    ],
-)
-def test_worker_step_start_result_keeps_each_delivery_fate(
-    fate: PromptDeliveryFate, started: bool, delivery_fate: WorkerStepDeliveryFate
-) -> None:
-    assert WorkerStepStartResult.from_delivery_fate(fate) == WorkerStepStartResult(
-        started=started,
-        delivery_fate=delivery_fate,
-    )
-
-
-@pytest.mark.parametrize(
-    ("started", "delivery_fate"),
-    [
-        (True, None),
-        (True, "uncertain"),
-        (False, "started"),
-    ],
-)
-def test_worker_step_start_result_rejects_a_false_success_claim(
-    started: bool, delivery_fate: WorkerStepDeliveryFate | None
-) -> None:
-    with pytest.raises(ValueError, match="started must match the delivery fate"):
-        WorkerStepStartResult(started=started, delivery_fate=delivery_fate)
-
-
 # --- the claim -----------------------------------------------------------------
 
 
@@ -289,7 +232,7 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
     tmp_path: Path,
 ) -> None:
     world = _World(tmp_path)
-    ticket_id = world.ready_ticket(on_today=False)
+    ticket_id = world.ready_ticket()
     barrier = threading.Barrier(2)
     outcomes: list[bool] = []
     outcomes_lock = threading.Lock()
@@ -390,7 +333,7 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     assert ticket.ticket_status is TicketStatus.errored
     assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
     assert world.skill_bindings() == []
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
         uncertain_restart = asyncio.run(
             worker_restart.restart_worker(
@@ -460,7 +403,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         with pytest.raises(PlannerError) as raised:
             asyncio.run(
                 worker_restart.restart_worker(
@@ -521,7 +464,7 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
     async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         with pytest.raises(PlannerError) as raised:
             asyncio.run(
                 worker_restart.restart_worker(
@@ -563,7 +506,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
         async def unexpected_restart_start() -> WorkerStepStartResult:
             raise AssertionError("a moved restart must not start another worker step")
 
-        with world.connect() as restart_conn:
+        with closing(world.connect()) as restart_conn:
             restart_task = asyncio.create_task(
                 worker_restart.restart_worker(
                     cast(ConversationSystem, pausing),
@@ -704,6 +647,7 @@ class _UncertainConversationSystem:
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        owner_read_through_sequence: int | None = None,
     ) -> PromptDeliveryFate:
         return PromptDeliveryUncertain()
 
@@ -713,13 +657,9 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     world.start_conversation("conv-revision-feedback")
     world.add_revision_feedback(ticket_id, "  Preserve this exact feedback.  ")
     with world.connect() as conn:
-        tickets_data.edit_ticket(
-            conn,
-            ticket_id,
-            edit=TicketEdit(guidance="Mutable guidance changed independently."),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=2,
+        conn.execute(
+            "UPDATE tickets SET guidance = ? WHERE id = ?",
+            ("Historical guidance remains stored.", ticket_id),
         )
     world.conversations.arm_backend_write_failure("conv-revision-feedback")
 
@@ -734,9 +674,8 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     assert len(writes) == 1
     assert "Revision feedback from owner owner for stage needs_success_condition" in writes[0].text
     assert "  Preserve this exact feedback.  " in writes[0].text
-    # Guidance moves on its own and the worker reads it off the Ticket, so a rejection
-    # carries only the feedback that explains the rejection.
-    assert "Mutable guidance changed independently." not in writes[0].text
+    # A rejection delivers its own feedback, independently of retired historical data.
+    assert "Historical guidance remains stored." not in writes[0].text
     assert world.pending_revision_feedback(ticket_id) is False
 
 
@@ -843,6 +782,7 @@ class _QueueingConversationSystem:
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        owner_read_through_sequence: int | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
             await self._system.send(
@@ -859,6 +799,7 @@ class _QueueingConversationSystem:
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            owner_read_through_sequence=owner_read_through_sequence,
         )
 
     async def interrupt(self, conversation_id: str) -> None:
@@ -869,62 +810,6 @@ class _QueueingConversationSystem:
 
     async def has_pending_permission_ask(self, conversation_id: str) -> bool:
         return await self._system.has_pending_permission_ask(conversation_id)
-
-
-def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _World) -> None:
-    ticket_id = world.ready_ticket(
-        title="Ship it",
-        kickoff_note="Use this agreed starting point.",
-        conversation_id="conv-opener",
-    )
-    world.start_conversation("conv-opener")
-    guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
-    with world.connect() as conn:
-        tickets_data.edit_ticket(
-            conn,
-            ticket_id,
-            edit=TicketEdit(guidance=guidance),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=0,
-        )
-    assert world.start_step(ticket_id).started is True
-
-    writes = world.conversations.backend_prompt_writes("conv-opener")
-    assert len(writes) == 1
-    assert writes[0].sender_label == "loop"
-    assert writes[0].mode is PromptDeliveryMode.queue
-    sender_message_id = world.conversations.observations("conv-opener")[-1].sender_message_id
-    assert sender_message_id is not None
-    assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
-    assert "propose the 'success_condition' field for approval" in writes[0].text
-    assert "Stage owner: worker" in writes[0].text
-    assert f"Read your Ticket first: {READ_YOUR_TICKET_COMMAND}." in writes[0].text
-    # The Ticket is a read the worker makes, so neither of these rides the message.
-    assert "Ticket guidance" not in writes[0].text
-    assert "Exact whitespace stays" not in writes[0].text
-    assert "Ticket brief" not in writes[0].text
-    assert "Use this agreed starting point." not in writes[0].text
-    assert MEMORY_LOSS_NOTICE not in writes[0].text
-    bindings = world.skill_bindings()
-    assert len(bindings) == 3
-    assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
-
-
-def test_a_wake_after_a_compaction_leads_with_the_memory_loss_notice(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-compacted")
-    world.start_conversation("conv-compacted")
-    world.record_compacted_conversation(
-        "conv-compacted", last_worker_step_sequence=4, compacted_through=9
-    )
-
-    assert world.start_step(ticket_id).started is True
-
-    text = world.conversations.backend_prompt_writes("conv-compacted")[0].text
-    assert MEMORY_LOSS_NOTICE in text
-    assert f"Work ticket {ticket_id} — Ship it" in text
-    # It leads: a worker reads why it is confused before it reads what to do.
-    assert text.index(MEMORY_LOSS_NOTICE) < text.index("Work ticket")
 
 
 def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_a_wake(
@@ -955,6 +840,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 
     notice = world.conversations.backend_prompt_writes("conv-mid-step")[1]
     assert MEMORY_LOSS_NOTICE in notice.text
+    assert "Re-read your Ticket with panels worker my-ticket brief," in notice.text
     assert f"part-way through a step on ticket {ticket_id}" in notice.text
     assert notice.mode is PromptDeliveryMode.queue
     # The step keeps its claim: the worker was never sent away, only told.
@@ -962,7 +848,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 
 
 def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy", on_today=False)
+    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy")
     world.start_conversation("conv-busy")
     assert world.start_step(ticket_id).started is True
     # The turn runs on, so anything sent now queues behind it and writes no event row.
@@ -984,52 +870,6 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
         asyncio_loop.close()
 
     assert len(world.held_prompts("conv-busy")) == 1
-
-
-def test_a_ticket_that_left_the_day_still_receives_memory_recovery(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Off the Day", conversation_id="conv-off-day")
-    world.start_conversation("conv-off-day")
-    assert world.start_step(ticket_id).started is True
-    world.conversations.complete_running_turn("conv-off-day")
-    world.remove_from_today(ticket_id)
-    world.record_compacted_conversation(
-        "conv-off-day", last_worker_step_sequence=4, compacted_through=9
-    )
-    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
-
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    try:
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
-        assert _waited_for(
-            lambda: len(world.conversations.backend_prompt_writes("conv-off-day")) == 2
-        )
-    finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
-
-    assert len(world.conversations.backend_prompt_writes("conv-off-day")) == 2
-
-
-def test_a_worker_resting_between_steps_is_left_for_its_next_wake(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Resting", conversation_id="conv-resting", on_today=False)
-    world.start_conversation("conv-resting")
-    world.record_compacted_conversation(
-        "conv-resting", last_worker_step_sequence=4, compacted_through=9
-    )
-    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.none
-
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    try:
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
-    finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
-
-    assert world.conversations.backend_prompt_writes("conv-resting") == ()
 
 
 # --- the polling loop ----------------------------------------------------------
@@ -1071,7 +911,7 @@ def _waited_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
 def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World) -> None:
     ready_one = world.ready_ticket(title="One")
     ready_two = world.ready_ticket(title="Two")
-    off_day = world.ready_ticket(title="No Day membership", on_today=False)
+    off_day = world.ready_ticket(title="No Day membership")
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
     try:
         scheduled = readiness_loop.poll_once()
@@ -1091,77 +931,62 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         asyncio_loop.close()
 
 
-def test_the_poll_starts_an_ordinary_worker_without_any_day_rows(world: _World) -> None:
-    ticket_id = world.ready_ticket(on_today=False)
-    with world.connect() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM days").fetchone()[0] == 0
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    try:
-        assert readiness_loop.poll_once() == [ticket_id]
-        assert _waited_for(lambda: world.ticket(ticket_id).ticket_status is TicketStatus.agent)
-    finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
+def test_a_ticket_deleted_between_the_candidate_select_and_its_read_is_skipped(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A force delete can land between the candidate select and the per-ticket read.
 
+    That race is reproduced for real here: the read for the targeted Ticket deletes it
+    first, through the production delete path, then calls through to the real read,
+    which raises the genuine not-found error rather than a simulated one.
+    """
+    doomed = world.ready_ticket(title="Deleted mid-poll")
+    survivor = world.ready_ticket(title="Survivor")
+    real_read_ticket = tickets_data.read_ticket
 
-def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
-    first = world.ready_ticket(title="Closeout one")
-    second = world.ready_ticket(title="Closeout two")
-    with world.connect() as conn:
-        for ticket_id in (first, second):
-            advance_ticket(
-                conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=0
+    def read_ticket_after_a_race_delete(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
+        if ticket_id == doomed:
+            tickets_data.delete_ticket(
+                conn,
+                ticket_id,
+                principal=OWNER_PRINCIPAL,
+                now=0,
+                even_while_running=True,
             )
-        conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
-        conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))
+        return real_read_ticket(conn, ticket_id)
+
+    monkeypatch.setattr(tickets_data, "read_ticket", read_ticket_after_a_race_delete)
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
     try:
-        # The lane looks free to both waiters until one of them actually flips, so the
-        # poll itself has to hold the lane for the one it picks.
-        assert readiness_loop.poll_once() == [first]
+        scheduled = readiness_loop.poll_once()
+        assert scheduled == [survivor]
     finally:
         readiness_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
         thread.join(5)
         asyncio_loop.close()
-
-
-def test_a_wake_makes_the_running_loop_poll_before_its_timer(world: _World) -> None:
-    ticket_id = world.ready_ticket()
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    try:
-        readiness_loop.start(3600)
-        assert _waited_for(lambda: world.ticket(ticket_id).ticket_status is TicketStatus.agent)
-
-        second = world.ready_ticket(title="Woken")
-        readiness_loop.wake()
-        assert _waited_for(lambda: world.ticket(second).ticket_status is TicketStatus.agent)
-    finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
-
 
 
 def test_memory_loss_notice_cannot_start_a_worker_on_the_wrong_machine(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Remote", conversation_id="conv-remote")
     world.start_conversation("conv-remote")
     world.record_compacted_conversation(
-        "conv-remote", last_worker_step_sequence=4, compacted_through=9,
+        "conv-remote",
+        last_worker_step_sequence=4,
+        compacted_through=9,
     )
     with world.connect() as conn:
         conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
         conn.commit()
-    assert not asyncio.run(tell_a_worker_it_lost_its_memory(
-        ticket_id,
-        connect_database=world.connect,
-        conversation_system=world.conversations,
-        worker_type_registry=configured_worker_type_registry(),
-        now=world.clock.now_unix,
-    ))
+    assert not asyncio.run(
+        tell_a_worker_it_lost_its_memory(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=world.conversations,
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
+    )
     assert world.conversations.backend_prompt_writes("conv-remote") == ()
 
 

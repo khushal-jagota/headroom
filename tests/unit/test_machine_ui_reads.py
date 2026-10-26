@@ -12,9 +12,10 @@ from uuid import uuid4
 
 import pytest
 from tests.support.executor_turns import persist_pending_turn
+from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.core.clock import TestClock as ClockForTest
-from planner.core.contracts import OWNER_PRINCIPAL, Priority
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
 from planner.executor import vps
 from planner.executor.codec import encode_value
@@ -33,8 +34,8 @@ from planner.executor.contracts import (
 )
 from planner.executor.remote import RemoteBackendChild
 from planner.executor.wire import encode_frame
+from planner.managers import data as managers
 from planner.projects import data as projects
-from planner.sprints import data as sprints
 from planner.tickets import data, locale_configuration
 from planner.tickets.api import read_ticket_creation_context
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
@@ -169,7 +170,7 @@ def test_durable_context_matches_exact_child_after_restart_and_allows_offline_an
     persist_pending_turn(endpoint.store, ask)
     old = replace(ask, child=replace(actual, child_id="old"))
     endpoint.store.publish_ask(old, ("allow", "deny"), 100)
-    assert endpoint._current_ask_evidence("conversation", "ask") is None
+    assert endpoint._current_ask_evidence("conversation", "1:permission:ask") is None
     endpoint.store.publish_ask(ask, ("allow", "deny"), 101)
     # A new endpoint has no live children, runtime state, connection or inventory.
     restored = _endpoint(tmp_db, fake_clock)
@@ -179,16 +180,16 @@ def test_durable_context_matches_exact_child_after_restart_and_allows_offline_an
         "child": encode_value(actual),
         "turn": encode_value(ask.turn),
     }
-    status = restored.ask_status("conversation", "ask")
+    status = restored.ask_status("conversation", "1:permission:ask")
     assert status["answer_available"] is True
     assert restored.ask_status("conversation", "other")["answer_available"] is False
     answer = restored.store.choose_answer(ask, "allow", 999, 200)
-    assert restored.ask_status("conversation", "ask")["answer_available"] is False
+    assert restored.ask_status("conversation", "1:permission:ask")["answer_available"] is False
     assert restored.conversation_asks("conversation")[-1]["answer"] == encode_value(answer)
     restored.store.close_child(actual, 201)
     final = _endpoint(tmp_db, fake_clock)
-    assert final.ask_status("conversation", "ask")["answer_available"] is False
-    evidence = final._current_ask_evidence("conversation", "ask")
+    assert final.ask_status("conversation", "1:permission:ask")["answer_available"] is False
+    evidence = final._current_ask_evidence("conversation", "1:permission:ask")
     assert evidence is not None and evidence.reachability == AskReachability.child_gone
 
 
@@ -201,15 +202,15 @@ def test_draft_inherits_project_matches_write_and_never_writes(
         locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
     )
     project = projects.create_project(
-        tmp_db, name="Mac", priority=Priority.P2, requires_macos=True, now=1
+        tmp_db, name="Mac", requires_macos=True, now=1
     )
-    item = sprints.create_item(
-        tmp_db, title="Parent", project_id=project.id, priority=Priority.P2, clock=fake_clock
+    item = managers.create_manager(
+        tmp_db, title="Parent", project_id=project.id, clock=fake_clock
     )
     before = tuple(tmp_db.iterdump())
     result = asyncio.run(
         read_ticket_creation_context(
-            {"worker_type": "coding", "orchestrator": {"kind": "sprint_item", "id": item.id}},
+            {"worker_type": "coding", "manager": {"kind": "manager", "id": item.id}},
             tmp_db,
             cast(Any, None),
         )
@@ -225,7 +226,7 @@ def test_draft_inherits_project_matches_write_and_never_writes(
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
-        sprint_item_id=item.id,
+        manager_id=item.id,
     )
     assert created.locale.value == result["resolved_locale"]
     assert created.employee_backend == result["employee_backend"]
@@ -266,8 +267,8 @@ def test_draft_incompatible_choice_explains_canonical_create_refusal(tmp_db: Con
     "fields",
     [
         {"project_id": "missing"},
-        {"orchestrator": {"kind": "sprint_item", "id": "missing"}},
-        {"orchestrator": {"kind": "owner", "id": "owner"}},
+        {"manager": {"kind": "manager", "id": "missing"}},
+        {"manager": {"kind": "owner", "id": "owner"}},
         {"worker_type": "missing"},
         {"employee_backend": "missing"},
         {"employee_launch_model": "disabled-model"},
@@ -309,7 +310,7 @@ def test_preview_receipt_advances_contact_without_per_ask_liveness(
     async def handle(message: WireMessage, identity: ExecutorIdentity, writer: Any) -> None:
         assert endpoint.last_contact_at_ms == 200
         assert endpoint.observed_at_ms == 100
-        assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
+        assert endpoint.ask_status("conversation", "1:permission:ask")["answer_available"] is False
         await original_handle(message, identity, writer)
         received.set()
 
@@ -325,7 +326,9 @@ def test_preview_receipt_advances_contact_without_per_ask_liveness(
         identity = cast(ExecutorIdentity, endpoint.identity)
         child_reference = ChildReference(identity.executor_incarnation, "child", "conversation")
         turn = TurnToken("turn", 1)
-        child = RemoteBackendChild(child_reference, cast(Any, None))
+        child = RemoteBackendChild(
+            child_reference, cast(Any, None), lambda start: canonical_snapshot()
+        )
         state = SimpleNamespace(child=child, running_turn=SimpleNamespace(token=turn))
         endpoint.runtime = SimpleNamespace(
             system=SimpleNamespace(_conversations={"conversation": state})
@@ -347,7 +350,7 @@ def test_preview_receipt_advances_contact_without_per_ask_liveness(
         await asyncio.wait_for(received.wait(), 1)
         assert response.done()
         assert response.result().kind is WireMessageKind.preview_bound
-        assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
+        assert endpoint.ask_status("conversation", "1:permission:ask")["answer_available"] is False
         assert endpoint.health()["last_contact_at_ms"] == 200
         reader.feed_eof()
         await task

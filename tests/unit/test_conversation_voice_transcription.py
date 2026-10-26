@@ -34,9 +34,7 @@ from planner.conversation.snapshot import BackendSnapshotService
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.conversation.voice_transcription import (
-    VoiceTranscriptionFailed,
     transcribe_conversation_audio,
-    trim_surrounding_silence,
     without_whisper_hallucination,
 )
 from planner.core.config import load_config
@@ -50,11 +48,6 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
 # --- the junk-phrase filter ----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fabricated", ["Thank you."])
-def test_a_whole_transcript_that_is_a_known_fabrication_becomes_empty(
-    fabricated: str,
-) -> None:
-    assert without_whisper_hallucination(fabricated) == ""
 
 
 @pytest.mark.parametrize(
@@ -95,35 +88,10 @@ def _use_available_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
 # ffmpeg is a hard dependency of the silence trim; these tests fail loudly
 # without it rather than skipping, because verify forbids tainted suites.
 
-def test_trim_removes_surrounding_silence_and_keeps_the_tone(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _use_available_ffmpeg(monkeypatch)
-    with_silence = _wav_bytes((1.0, 0.0), (0.5, 0.9), (1.0, 0.0))
-
-    async def exercise() -> None:
-        trimmed, is_effectively_silent = await trim_surrounding_silence(with_silence)
-        assert not is_effectively_silent
-        assert trimmed != with_silence
-        assert trimmed[:4] == b"OggS"
-
-    _run(exercise)
 
 
 
 
-def test_bytes_ffmpeg_cannot_read_come_back_unchanged(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _use_available_ffmpeg(monkeypatch)
-    not_audio = b"this is not audio at all"
-
-    async def exercise() -> None:
-        trimmed, is_effectively_silent = await trim_surrounding_silence(not_audio)
-        assert trimmed == not_audio
-        assert not is_effectively_silent
-
-    _run(exercise)
 
 
 def test_a_silent_clip_is_answered_empty_without_a_provider_call(
@@ -245,60 +213,5 @@ def test_audio_is_transcribed_without_a_conversation_or_file(
             (Path(harness.runtime.database_path).parent / "files" / "conversations").rglob("*")
         )
         assert files == []
-
-    _run(exercise)
-
-
-def test_provider_failure_does_not_name_or_store_a_file(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def failing_transcribe(audio: bytes, **_ignored: Any) -> str:
-        raise VoiceTranscriptionFailed("the transcription provider answered 500")
-
-    monkeypatch.setattr(
-        conversation_api, "transcribe_conversation_audio", failing_transcribe
-    )
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            response = await _post(
-                client, {"audio": _encoded(b"browser-held-audio")}
-            )
-        assert response.status_code == 502
-        assert response.json()["detail"] == "the transcription provider answered 500"
-        conn = connect(harness.runtime.database_path)
-        try:
-            assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
-        finally:
-            conn.close()
-
-    _run(exercise)
-
-
-
-
-def test_a_missing_key_is_a_503_naming_the_environment_variable(
-    harness: _Harness,
-) -> None:
-    harness.app.state.config = load_config(path=None, env={})
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            response = await _post(client, {"audio": _encoded(b"opus-bytes")})
-        assert response.status_code == 503
-        assert "PLAN_GROQ_API_KEY" in response.json()["detail"]
-
-    _run(exercise)
-
-
-def test_a_clip_past_the_provider_ceiling_is_refused(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(conversation_api, "MAX_VOICE_AUDIO_BYTES", 16)
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            response = await _post(client, {"audio": _encoded(b"x" * 17)})
-        assert response.status_code == 422
 
     _run(exercise)

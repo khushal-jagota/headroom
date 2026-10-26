@@ -5,7 +5,6 @@ POST   /tickets orchestrator                 allow   allow   allow           ref
 POST   /tickets ceiling                      allow   allow   allow           refuse            refuse       refuse           refuse               refuse
 POST   /tickets ceiling_holder               allow   allow   allow           refuse            refuse       refuse           refuse               refuse
 GET    /tickets (detail=full)                allow   allow   allow           allow             allow        allow            allow                allow
-PATCH  /tickets/{t} priority                 allow   allow   allow           refuse            allow        refuse           refuse               refuse
 PATCH  /tickets/{t} title                    allow   allow   allow           refuse            refuse       refuse           refuse               refuse
 PATCH  /tickets/{t} orchestrator             allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 PATCH  /tickets/{t} project_id               allow   allow   allow           refuse            refuse       refuse           refuse               refuse
@@ -32,17 +31,11 @@ GET    /items/{i}/workspace                  allow   allow   allow           ref
 PATCH  /items/{i}                            allow   allow   allow           refuse            refuse       refuse           refuse               refuse
 DELETE /items/{i}                            allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 PUT    /collections/outcome_tickets          allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
-PUT    /collections/day_tickets              retired  retired  retired         retired           retired      retired          retired              retired
 PUT    /collections/blockers                 allow   allow   allow           refuse            allow        refuse           refuse               refuse
-PUT    /collections/sprint_outcomes          retired  retired  retired         retired           retired      retired          retired              retired
-PATCH  /day/{d} focus                        retired  retired  retired         retired           retired      retired          retired              retired
-PATCH  /day/{d} midday_reconciliation        retired  retired  retired         retired           retired      retired          retired              retired
-PATCH  /day/{d} notes                        retired  retired  retired         retired           retired      retired          retired              retired
-POST   /sprints                              retired  retired  retired         retired           retired      retired          retired              retired
-PATCH  /sprints/{s}                          retired  retired  retired         retired           retired      retired          retired              retired
 POST   /projects                             allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 PATCH  /projects/{p}                         allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 PUT    /workers/{w}/launch-defaults          allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 PATCH  /skills/{n}                           allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 POST   /feedback                             allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 POST   /messages/send                        allow   allow   allow           refuse            refuse       refuse           refuse               refuse
+POST   /recap-requests                       allow   refuse  refuse          refuse            refuse       refuse           refuse               refuse

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -48,9 +49,11 @@ class FakeHealth:
     def __init__(self, events: list[str], healthy: set[str]) -> None:
         self.events = events
         self.healthy = healthy
+        self.deadlines: list[float] = []
 
     def wait_for_sha(self, sha: str, *, deadline: float) -> bool:
         self.events.append(f"health:{sha}")
+        self.deadlines.append(deadline)
         return sha in self.healthy
 
 
@@ -80,6 +83,12 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     lifecycle: list[tuple[str, dict[str, object]]] = []
     snapshot = tmp_path / "snapshot"
 
+    health = FakeHealth(events, {SHA_B})
+
+    def after_restart() -> float:
+        assert events[-1] == "restart"
+        return 10.0
+
     result = deploy_app(
         candidate_app=candidate,
         current_root=current,
@@ -87,12 +96,13 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
         backup=_recording_backup(events, snapshot),
         restore=lambda _: events.append("restore"),
         service=FakeService(events),
-        health=FakeHealth(events, {SHA_B}),
-        now=lambda: 10.0,
+        health=health,
+        now=after_restart,
         lifecycle_transition=lambda phase, **values: lifecycle.append((phase, values)),
     )
 
     assert result == DeploymentResult("succeeded", SHA_B, SHA_A, None)
+    assert health.deadlines == [310.0]
     assert events == ["stop", f"backup:{SHA_A}", "restart", f"health:{SHA_B}"]
     assert lifecycle == [
         ("restarting", {"serving_sha": None, "detail": None, "code": None}),
@@ -119,6 +129,7 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     events: list[str] = []
     snapshot = tmp_path / "snapshot"
     lifecycle: list[tuple[str, dict[str, object]]] = []
+    health = FakeHealth(events, {SHA_A})
     result = deploy_app(
         candidate_app=candidate,
         current_root=current,
@@ -126,15 +137,19 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
         backup=_recording_backup(events, snapshot),
         restore=lambda path: events.append(f"restore:{path.name}"),
         service=FakeService(events),
-        health=FakeHealth(events, {SHA_A}),
+        health=health,
+        now=lambda: 10.0,
+        health_timeout_seconds=17.0,
         lifecycle_transition=lambda phase, **values: lifecycle.append((phase, values)),
     )
     assert result.status == "rolled_back"
+    assert health.deadlines == [27.0, 27.0]
     assert (current / "app" / "old").is_file()
     assert digest_app_artifact(current / "app") == prior_artifact_digest
-    assert json.loads((current / "app" / "manifest.json").read_text(encoding="utf-8"))[
-        "app_sha"
-    ] == SHA_A
+    assert (
+        json.loads((current / "app" / "manifest.json").read_text(encoding="utf-8"))["app_sha"]
+        == SHA_A
+    )
     assert events == [
         "stop",
         f"backup:{SHA_A}",
@@ -185,36 +200,6 @@ def test_recovery_failure_reports_every_existing_continuation_path(tmp_path: Pat
     assert str(retained[0]) in detail
     assert (current / "app" / "old").is_file()
     assert (retained[0] / "new").is_file()
-
-
-def test_fresh_first_install_and_same_sha_are_bounded(tmp_path: Path) -> None:
-    current = tmp_path / "current"
-    candidate = _app(tmp_path / "candidate", SHA_B, "new")
-    events: list[str] = []
-    result = deploy_app(
-        candidate_app=candidate,
-        current_root=current,
-        source_db=current / "data/planning.db",
-        backup=_recording_backup(events, tmp_path / "snapshot"),
-        restore=lambda _: events.append("restore"),
-        service=FakeService(events),
-        health=FakeHealth(events, {SHA_B}),
-    )
-    assert result == DeploymentResult("succeeded", SHA_B, None, None)
-    assert events == ["restart", f"health:{SHA_B}"]
-
-    events.clear()
-    result = deploy_app(
-        candidate_app=candidate,
-        current_root=current,
-        source_db=current / "data/planning.db",
-        backup=_recording_backup(events, tmp_path / "snapshot"),
-        restore=lambda _: events.append("restore"),
-        service=FakeService(events),
-        health=FakeHealth(events, {SHA_B}),
-    )
-    assert result.status == "unchanged"
-    assert events == [f"health:{SHA_B}"]
 
 
 def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> None:
@@ -311,3 +296,138 @@ def _rewrite_artifact_digest(app: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["artifact_digest"] = digest_app_artifact(app)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+@pytest.mark.parametrize("change", ["base", "sha", "digest", "copy", "first-copy", "same-base"])
+def test_gate_refuses_changed_proof_before_service_or_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """Existing recovery spies did not prove pre-mutation release proof binding."""
+    from planner.environments import deployment_gate
+    from planner.environments.deployment_gate_contracts import GateEvidence, ServedObservation
+    from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
+
+    current = tmp_path / "current"
+    if change != "first-copy":
+        _app(current / "app", SHA_B if change == "same-base" else SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    (current / "data").mkdir(parents=True, mode=0o700)
+    database = current / "data" / "planning.db"
+    database.write_text("db")
+    if change == "first-copy":
+        database.unlink()
+        database.parent.rmdir()
+    observation: ServedObservation = {
+        "current_root": str(current.resolve()),
+        "health_url": "http://unused/api/health",
+        "manifest_state": "missing",
+        "manifest": None,
+        "health": {"status": None, "body": None, "error": "ConnectError"},
+        "base_sha": None,
+    }
+    evidence: GateEvidence = {
+        "requested_sha": SHA_A if change == "sha" else SHA_B,
+        "artifact_digest": "0" * 64 if change == "digest" else digest_app_artifact(candidate),
+        "observation": observation,
+    }
+    monkeypatch.setattr(
+        deployment_gate,
+        "observe_served",
+        lambda *_: (
+            dict(observation, manifest="changed")
+            if change in {"base", "same-base"}
+            else observation
+        ),
+    )
+    if change in {"copy", "first-copy"}:
+        copytree = shutil.copytree
+
+        def swapped_copy(source: Path, destination: Path, *, symlinks: bool = False) -> Path:
+            monkeypatch.setattr(shutil, "copytree", copytree)
+            result = copytree(source, destination, symlinks=symlinks)
+            (destination / "web" / "dist" / "index.html").write_text("swapped")
+            _rewrite_artifact_digest(destination)
+            return result
+
+        monkeypatch.setattr(shutil, "copytree", swapped_copy)
+    events: list[str] = []
+    with pytest.raises(DeploymentError, match="(changed|differs|expected SHA)"):
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=database,
+            backup=_recording_backup(events, tmp_path / "snapshot"),
+            restore=lambda _: None,
+            service=FakeService(events),
+            health=FakeHealth(events, {SHA_B}),
+            gate_evidence=evidence,
+            executor_launch_configuration=VpsExecutorLaunchConfiguration(
+                "remote", tmp_path / "executor.sock"
+            ),
+        )
+    assert events == []
+    assert not (current / "data" / "executor-launch.json").exists()
+    assert not list(current.glob(".app-*"))
+
+
+def test_capture_failure_never_vetoes_cutover_or_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.environments import deployment
+
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old", include_cli=False)
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    database = _database(current)
+    events: list[str] = []
+    captured_deployments: list[str] = []
+
+    def failed_capture(source: Path, deployment_id: str) -> None:
+        assert source == database
+        assert events[-1] == "stop"
+        captured_deployments.append(deployment_id)
+        raise OSError("diagnostic volume unavailable")
+
+    monkeypatch.setattr(deployment, "capture_after_stop", failed_capture)
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=database,
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_A}),
+        deployment_id="operator-release",
+    )
+    assert result.status == "rolled_back"
+    assert captured_deployments == ["operator-release", "operator-release"]
+    assert events.count("stop") == 2
+    assert (current / "app" / "old").exists()
+    events.clear()
+    captured_deployments.clear()
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=database,
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_B}),
+        deployment_id="operator-release-two",
+    )
+    assert result.status == "succeeded"
+    assert captured_deployments == ["operator-release-two"]
+    captured_deployments.clear()
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=database,
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_B}),
+        deployment_id="unchanged-release",
+    )
+    assert result.status == "unchanged"
+    assert captured_deployments == []

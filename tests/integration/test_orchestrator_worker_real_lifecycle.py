@@ -58,7 +58,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (workspace / "AGENTS.md").write_text(
         "This workspace belongs only to an isolated Panels lifecycle proof. "
         "Read Panels skills from this workspace's .agents/skills directory. "
-        "Use panels worker my-ticket brief,guidance to inspect the current Ticket. "
+        "Use panels worker my-ticket brief to inspect the current Ticket. "
         "Submit the current field by piping its text into panels worker propose. "
         "The explicit reply requirement uses panels send-message. "
         "Do not inspect or edit other workspaces.\n"
@@ -153,10 +153,13 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             evidence["cli_executable_receipts"] = (
                 cli_receipts.read_text().splitlines() if cli_receipts.exists() else []
             )
-            evidence["day_count"] = snapshot.execute("SELECT COUNT(*) FROM days").fetchone()[0]
-            evidence["day_ticket_count"] = snapshot.execute(
-                "SELECT COUNT(*) FROM day_tickets"
-            ).fetchone()[0]
+            evidence["calendar_tables"] = [
+                str(row[0])
+                for row in snapshot.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name IN ('days','day_tickets','sprints','sprint_outcomes')"
+                )
+            ]
         finally:
             snapshot.close()
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,9 +200,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 assert response.is_success, response.text
                 return cast(dict[str, Any], response.json())
 
-            project = await post(
-                "project", "/api/projects", {"name": "Isolated Luna proof", "priority": "P2"}
-            )
+            project = await post("project", "/api/projects", {"name": "Isolated Luna proof"})
             item = await post(
                 "orchestrator",
                 "/api/items",
@@ -225,7 +226,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                     "worker_type": "general",
                     "employee_backend": "codex",
                     "employee_launch_model": "gpt-6-luna",
-                    "kickoff_note": brief,
+                    "brief": brief,
                     "orchestrator": {"kind": "sprint_item", "id": item["id"]},
                 },
             )
@@ -380,7 +381,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             )
             assert done["stage"] == "done"
             keep()
-            assert evidence["day_count"] == evidence["day_ticket_count"] == 0
+            assert evidence["calendar_tables"] == []
             assert len(evidence["cli_executable_receipts"]) >= 4
             assert set(evidence["cli_executable_receipts"]) == {str(cli_executable)}
             evidence["result"] = "passed"

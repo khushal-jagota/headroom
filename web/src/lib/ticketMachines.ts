@@ -13,9 +13,10 @@ export type TicketCreationDraft = {
   worker_type: string;
   project_id?: string;
   project?: string;
-  orchestrator?: {kind: "chief" | "sprint_item"; id: string};
+  manager?: {kind: "chief" | "manager"; id: string};
   employee_backend?: string;
   employee_launch_model?: string;
+  employee_launch_reasoning_effort?: string;
   locale?: TicketLocale;
 };
 export type DraftCreationContext = {

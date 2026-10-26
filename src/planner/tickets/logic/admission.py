@@ -11,7 +11,7 @@ from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkerTypeDefin
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
 
 # The TicketEdit keys that only somebody standing above the Ticket may set. A Worker
-# drives its own Ticket's priority, deadline, recap and guidance, so those are the
+# drives its own Ticket's deadline and recap, so those are the
 # Ticket's own record and are absent here. These are not: renaming a Ticket, moving it
 # between projects or sprints, rewriting a settled field, re-addressing a parked
 # proposal, and above all raising its own ceiling. A ceiling is a Ticket's leash, and a
@@ -21,9 +21,8 @@ TICKET_FIELDS_ONLY_FROM_ABOVE: Final[frozenset[str]] = frozenset(
     {
         "title",
         "project_id",
-        "sprint_id",
-        "sprint_item_id",
-        "orchestrator",
+        "manager_id",
+        "manager",
         "field_values",
         "ceiling",
         "ceiling_holder",
@@ -31,13 +30,13 @@ TICKET_FIELDS_ONLY_FROM_ABOVE: Final[frozenset[str]] = frozenset(
 )
 
 # The one field nobody may set about a thing they only reach through it.
-# authority.refuse_outcome_re_parenting says why.
-TICKET_FIELD_THAT_MOVES_THE_PARENT: Final = "sprint_item_id"
+# authority.refuse_manager_re_parenting says why.
+TICKET_FIELD_THAT_MOVES_THE_PARENT: Final = "manager_id"
 
 
-def validate_orchestrator(orchestrator: Principal) -> None:
-    if orchestrator.kind not in {PrincipalKind.chief, PrincipalKind.sprint_item}:
-        raise PlannerError(ErrorCode.validation, "orchestrator must name Chief or an orchestrator")
+def validate_manager(manager: Principal) -> None:
+    if manager.kind not in {PrincipalKind.chief, PrincipalKind.manager}:
+        raise PlannerError(ErrorCode.validation, "manager must name Chief or a Manager")
 
 
 def require_creatable_worker_type(worker_type: str) -> None:

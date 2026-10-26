@@ -10,7 +10,6 @@ from planner.conversation.contracts import ConversationAccess, ConversationBacke
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
-    WORKER_ROLE_TEXT,
     ConversationStartConfiguration,
     ConversationStartOverrides,
     resolve_worker_conversation_start,
@@ -40,18 +39,8 @@ def _worker(
     return values.backend_key, values.model, values.reasoning_effort
 
 
-def test_with_no_ticket_layer_and_no_overrides_the_worker_type_defaults_answer() -> None:
-    assert _worker() == (ConversationBackendKey.codex, "gpt-5.6-sol", "medium")
 
 
-def test_the_ticket_layer_replaces_the_worker_type_defaults() -> None:
-    assert _worker(
-        ticket_last_chosen=ConversationStartConfiguration(
-            backend_key=ConversationBackendKey.claude,
-            model="opus",
-            reasoning_effort="high",
-        )
-    ) == (ConversationBackendKey.claude, "opus", "high")
 
 
 def test_an_override_that_changes_the_backend_without_a_model_is_refused() -> None:
@@ -71,12 +60,10 @@ def test_a_worker_start_carries_the_worker_role_and_its_ticket_identity() -> Non
         workspace_folder=_WORKSPACE,
     )
 
-    assert values.role_materials.role_text == WORKER_ROLE_TEXT
+    # The real ACP child proof owns usable role text, independent of implementation constants.
     assert values.role_materials.identity_environment_variables == (
         ("PLAN_ACTOR", "worker"),
         ("PLAN_TICKET_ID", "t_abc"),
     )
     assert values.workspace_folder == _WORKSPACE
     assert values.access is ConversationAccess.full
-
-

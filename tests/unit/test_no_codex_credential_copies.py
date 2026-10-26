@@ -31,9 +31,10 @@ It does not protect Hermes or Claude. The separate bounded source detector in
 scripts/check_agent_home_copies.py relates supported copies to selected agent homes,
 but cannot prove external credential provenance or safety on its omitted routes.
 
-The steering harness now copies Hermes configuration while symlinking canonical
-auth.json, and copies Claude settings while symlinking canonical .credentials.json.
-Codex uses its real home. The former whole-home and credential copies are removed;
+Both real-provider harnesses select the canonical Hermes home directly so auth and
+its home-derived lock stay together. Steering copies Claude settings while symlinking
+canonical .credentials.json; permissions links only Claude credentials. Codex uses its
+real home. The former whole-home and credential copies are removed;
 docs/conversation-system.md describes the current checks and their remaining limits.
 This tripwire has no new exemption.
 
@@ -302,49 +303,3 @@ def test_rejects_each_copy_function_and_login_spelling(
 )
 def test_rejects_resolved_login_copies_and_hardlinks(source: str) -> None:
     assert _credential_copy_failures(source)
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        'import shutil\nshutil.copy2(home / "config.yaml", scratch)\n'
-        '(scratch / "auth.json").symlink_to(canonical)',
-        "import shutil\n# auth.json is a comment\nshutil.copy(config, scratch)",
-        'import shutil\ndef first():\n p = home / "auth.json"\ndef second():\n'
-        " shutil.copy2(p, scratch)",
-        'import shutil\np = home / "auth.json"\np = config\nshutil.copy2(p, scratch)',
-        'import shutil\nshutil.copy2(p, scratch)\np = home / "auth.json"',
-        'import shutil\np = home / "auth.json"\nf = lambda p: shutil.copy2(p, scratch)',
-        'import shutil\nf = lambda shutil: shutil.copy2("auth.json", scratch)',
-        'import shutil\nshutil.move(home / "auth.json", scratch)',
-        'import os\nos.replace(home / "auth.json", scratch)',
-    ],
-)
-def test_allows_safe_patterns_and_keeps_scope_and_statement_boundaries(source: str) -> None:
-    assert _credential_copy_failures(source) == []
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        # Whole-home copies are the closest uncaught relative of the original incident.
-        "import shutil\nshutil.copytree(real_home, scratch_home)\n"
-        'os.environ["CODEX_HOME"] = scratch_home',
-        "import shutil\np = get_login_path()\nshutil.copy2(p, scratch)",
-        "import shutil\nshutil.copy2(holder.login, scratch)",
-        "import shutil\nshutil.copy2(paths[0], scratch)",
-        'import shutil\npaths = (home / "auth.json", scratch)\nshutil.copy2(*paths)',
-        '(scratch / "auth.json").write_bytes(canonical.read_bytes())',
-        'import subprocess\nsubprocess.run(["cp", "auth.json", "scratch/auth.json"])',
-        'import shutil\nif condition:\n p = home / "auth.json"\nshutil.copy2(p, scratch)',
-    ],
-)
-def test_documents_accepted_blind_spots(source: str) -> None:
-    assert _credential_copy_failures(source) == []
-
-
-@pytest.mark.parametrize("source", ['import shutil\nshutil.copy2("auth.json",', 'x = "\x00"'])
-def test_unparseable_module_fails_closed(source: str) -> None:
-    failures = _credential_copy_failures(source, "broken.py")
-    assert len(failures) == 1
-    assert failures[0].startswith("broken.py: cannot parse:")

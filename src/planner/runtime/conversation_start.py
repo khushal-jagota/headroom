@@ -43,6 +43,8 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
+    WorkspacePathPolicy,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -58,12 +60,12 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
     ConversationStartValues,
     resolve_agent_conversation_start,
-    resolve_sprint_item_supervisor_conversation_start,
+    resolve_manager_conversation_start,
     resolve_worker_conversation_start,
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import Ticket, TicketLocale
 from planner.worker_settings.service import (
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
@@ -72,7 +74,7 @@ from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
 if TYPE_CHECKING:
-    from planner.sprints.contracts import SprintItem
+    from planner.managers.contracts import Manager
 
 CONVERSATION_ID_PREFIX: Final = "conv_"
 
@@ -136,6 +138,7 @@ def worker_resolve(
     if registry is None:
         registry = configured_worker_type_registry()
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
+    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
     values = resolve_worker_conversation_start(
         ticket_id=ticket.id,
         worker_type_launch_defaults=ConversationStartConfiguration(
@@ -153,7 +156,8 @@ def worker_resolve(
             )
         ),
         overrides=overrides,
-        workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
+        workspace_folder=selected_workspace,
+        workspace_path_policy=workspace_policy,
     )
     locale_configuration.require_locale_backend_compatibility(
         ticket.locale, values.backend_key.value
@@ -163,16 +167,24 @@ def worker_resolve(
     return values
 
 
-def _worker_workspace_folder(
+def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
-) -> Path:
+) -> tuple[Path, WorkspacePathPolicy]:
+    policy = (
+        WorkspacePathPolicy.native_absolute
+        if ticket.locale == TicketLocale.macos
+        else WorkspacePathPolicy.legacy_home_mapping
+    )
     if explicit is not None:
-        return explicit
+        return explicit, policy
     if ticket.project_id is not None:
         project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
-        if project_folder is not None and project_folder.is_dir():
-            return project_folder.resolve(strict=False)
-    return _default_workspace_folder()
+        if project_folder is not None:
+            if ticket.locale == TicketLocale.macos:
+                return project_folder, policy
+            if project_folder.is_dir():
+                return project_folder.resolve(strict=False), policy
+    return _default_workspace_folder(), WorkspacePathPolicy.legacy_home_mapping
 
 
 def agent_resolve(
@@ -202,15 +214,15 @@ def agent_resolve(
     return values
 
 
-def sprint_item_supervisor_resolve(
-    item: SprintItem,
+def manager_resolve(
+    item: Manager,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     *,
     workspace_folder: Path | None = None,
 ) -> ConversationStartValues:
-    launch = item.supervisor_launch_configuration
-    return resolve_sprint_item_supervisor_conversation_start(
-        sprint_item_id=item.id,
+    launch = item.manager_launch_configuration
+    return resolve_manager_conversation_start(
+        manager_id=item.id,
         launch_configuration=ConversationStartConfiguration(
             backend_key=launch.employee_backend,
             model=launch.employee_launch_model,
@@ -267,6 +279,7 @@ async def start_ticket_conversation(
         reasoning_effort=values.reasoning_effort,
         role_materials=values.role_materials,
         workspace_folder=values.workspace_folder,
+        workspace_path_policy=values.workspace_path_policy,
         access=values.access,
     )
     await system.start_conversation(request)
@@ -274,13 +287,22 @@ async def start_ticket_conversation(
         ensure_started_conversation_record(
             conn, resolve_conversation_start_request(request), created_at=now
         )
+        actual_start = conn.execute(
+            "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
         linked = tickets_data.write_ticket_conversation_start(
             conn,
             ticket.id,
             conversation_id=conversation_id,
+            expected_configuration=tickets_data.employee_launch_configuration(ticket),
             backend=values.backend_key.value,
-            model=values.model,
-            reasoning_effort=values.reasoning_effort,
+            model=values.model if actual_start is None else actual_start["model"],
+            reasoning_effort=(
+                values.reasoning_effort
+                if actual_start is None
+                else actual_start["reasoning_effort"]
+            ),
             now=now,
         )
     except BaseException as start_error:
@@ -320,14 +342,16 @@ async def _send_with_addressed_receipt(
     mode: PromptDeliveryMode,
     model_change: str | None = None,
     reasoning_effort_change: str | None = None,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
     reply_requested: bool,
+    record_refusal: bool = False,
 ) -> AddressedPromptDeliveryReceipt:
-    """Use the internal freshness receipt only for an addressed employee send."""
-    if sender is not None and recipient is not None:
+    """Keep recipient attribution and freshness for caller-authored and system sends."""
+    if recipient is not None:
         return await system.send_with_receipt(
             conversation_id,
             content,
@@ -335,11 +359,13 @@ async def _send_with_addressed_receipt(
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            record_refusal=record_refusal,
         )
     fate = await system.send(
         conversation_id,
@@ -348,12 +374,13 @@ async def _send_with_addressed_receipt(
         mode=mode,
         model_change=model_change,
         reasoning_effort_change=reasoning_effort_change,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
     )
     return AddressedPromptDeliveryReceipt(
         fate=fate,
-        newly_accepted=not isinstance(fate, PromptDeliveryRefused),
+        newly_accepted=not isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)),
     )
 
 
@@ -368,6 +395,7 @@ async def send_to_ticket_conversation(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
     mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
@@ -440,6 +468,7 @@ async def send_to_ticket_conversation(
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
@@ -467,6 +496,7 @@ async def send_to_ticket_conversation(
         runs_under=runs_under,
         sender_label=sender_label,
         mode=mode,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
@@ -486,6 +516,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     runs_under: ConversationStartOverrides,
     sender_label: str,
     mode: PromptDeliveryMode,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
@@ -506,6 +537,8 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
+    captured_ticket = tickets_data.read_ticket(conn, ticket_id)
+    expected_configuration = tickets_data.employee_launch_configuration(captured_ticket)
     receipt = await _send_with_addressed_receipt(
         system,
         sending_into,
@@ -514,6 +547,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
@@ -528,6 +562,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
             conn,
             ticket_id,
             expected_conversation_id=sending_into,
+            expected_configuration=expected_configuration,
             model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
             reasoning_effort=(
                 ticket.employee_launch_reasoning_effort
@@ -553,6 +588,7 @@ async def _make_a_conversation_and_send_into_it(
     runs_under: ConversationStartOverrides,
     sender_label: str,
     mode: PromptDeliveryMode,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
@@ -601,6 +637,7 @@ async def _make_a_conversation_and_send_into_it(
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
@@ -617,6 +654,7 @@ async def _make_a_conversation_and_send_into_it(
             await _message_content_for(content, making),
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
@@ -697,10 +735,10 @@ def read_agent_conversations(
     return {str(row[0]): str(row[1]) for row in rows}
 
 
-def read_sprint_item_supervisor_conversation_history(
-    conn: sqlite3.Connection, sprint_item_id: str
+def read_manager_conversation_history(
+    conn: sqlite3.Connection, manager_id: str
 ) -> list[dict[str, str | int]]:
-    """Find every durable transcript started under one Sprint Item identity."""
+    """Find every durable transcript started under one Manager identity."""
     rows = conn.execute(
         "SELECT conversation_id,identity_environment_variables,created_at "
         "FROM conversations ORDER BY created_at,conversation_id"
@@ -719,8 +757,13 @@ def read_sprint_item_supervisor_conversation_history(
             if isinstance(pair, list) and len(pair) == 2
         }
         if (
-            values.get("PLAN_ACTOR") != "sprint_item_supervisor"
-            or values.get("PLAN_SPRINT_ITEM_ID") != sprint_item_id
+            values.get("PLAN_ACTOR") not in {"manager", "sprint_item_supervisor"}
+            or values.get("PLAN_MANAGER_ID", values.get("PLAN_SPRINT_ITEM_ID")) != manager_id
+            or (
+                "PLAN_MANAGER_ID" in values
+                and "PLAN_SPRINT_ITEM_ID" in values
+                and values["PLAN_MANAGER_ID"] != values["PLAN_SPRINT_ITEM_ID"]
+            )
         ):
             continue
         history.append(
@@ -739,7 +782,7 @@ async def start_agent_conversation(
     values: ConversationStartValues,
     *,
     conversation_id: str,
-    required_sprint_item_id: str | None = None,
+    required_manager_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -757,11 +800,13 @@ async def start_agent_conversation(
             reasoning_effort=values.reasoning_effort,
             role_materials=values.role_materials,
             workspace_folder=values.workspace_folder,
+            workspace_path_policy=values.workspace_path_policy,
             access=values.access,
         )
     )
+    missing_supervisor = False
     with conn:
-        if required_sprint_item_id is None:
+        if required_manager_id is None:
             conn.execute(
                 "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
                 "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
@@ -772,17 +817,21 @@ async def start_agent_conversation(
             linked = conn.execute(
                 "UPDATE agents SET conversation_id=? WHERE agent_key=? "
                 "AND conversation_id IS NULL AND EXISTS ("
-                "SELECT 1 FROM sprint_items WHERE id=? "
-                "AND 'sprint_item_supervisor_' || id=agents.agent_key)",
-                (conversation_id, agent_key, required_sprint_item_id),
+                "SELECT 1 FROM managers WHERE id=? "
+                "AND ('manager_' || id=agents.agent_key "
+                "OR 'sprint_item_supervisor_' || id=agents.agent_key))",
+                (conversation_id, agent_key, required_manager_id),
             )
-            if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:
-                await system.kill(conversation_id)
-                raise PlannerError(
-                    ErrorCode.not_found,
-                    "Sprint Item supervisor no longer exists",
-                    {"sprint_item_id": required_sprint_item_id},
-                )
+            missing_supervisor = (
+                linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
+            )
+    if missing_supervisor:
+        await system.kill(conversation_id)
+        raise PlannerError(
+            ErrorCode.not_found,
+            "Manager no longer exists",
+            {"manager_id": required_manager_id},
+        )
     now_in = read_agent_conversation(conn, agent_key) or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
 
@@ -799,19 +848,22 @@ async def send_to_agent_conversation(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
     mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
     reply_requested: bool = True,
-    required_sprint_item_id: str | None = None,
+    required_manager_id: str | None = None,
+    retain_created_conversation: bool = False,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
     The Ticket door's rules, for an agent that is not a Ticket: the message names the
     conversation it is for and is refused if that is not the one the agent is in, and a
     message sent with no conversation brings one into being on the values it says it runs
-    under. If it does not land, the conversation goes with it.
+    under. If it does not land, the conversation goes with it, unless the caller
+    retains the initial attempt as the saved work's recovery conversation.
 
     ``values`` can be absent only for a registered agent that already has a conversation.
     Such an agent can receive a message, but Panels cannot invent a role or launch
@@ -832,7 +884,7 @@ async def send_to_agent_conversation(
             agent_key,
             values,
             conversation_id=making,
-            required_sprint_item_id=required_sprint_item_id,
+            required_manager_id=required_manager_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has
@@ -844,20 +896,24 @@ async def send_to_agent_conversation(
                     await _message_content_for(content, making),
                     sender_label=sender_label,
                     mode=mode,
+                    owner_read_through_sequence=owner_read_through_sequence,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    record_refusal=retain_created_conversation,
                 )
                 fate = receipt.fate
             except BaseException:
-                await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
+                if not retain_created_conversation:
+                    await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
                 raise
             if isinstance(fate, PromptDeliveryRefused):
-                await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
+                if not retain_created_conversation:
+                    await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
                 return DeliveredMessage(
-                    conversation_id=None,
+                    conversation_id=making if retain_created_conversation else None,
                     fate=fate,
                     newly_accepted=receipt.newly_accepted,
                 )
@@ -886,11 +942,13 @@ async def send_to_agent_conversation(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
         reply_requested=reply_requested,
+        record_refusal=retain_created_conversation,
     )
     return DeliveredMessage(
         conversation_id=sending_into,

@@ -2,7 +2,7 @@
 
 One operation with one address. There was no ordinary route for it: reset and
 re-configure exist separately, and nothing released the claim and started. Only an
-Outcome manager could reach it, through its own wrapper. Khushal can now do it too.
+Manager could reach it, through its own wrapper. Khushal can now do it too.
 """
 
 from __future__ import annotations

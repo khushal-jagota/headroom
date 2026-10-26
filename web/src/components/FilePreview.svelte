@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import SkeletonRegion from "./SkeletonRegion.svelte";
+  import ManagedHtmlDocument from "./ManagedHtmlDocument.svelte";
+  import { observeVisibleContent, resetVisibleContentHeight } from "../lib/visibleContent";
   import type { FilePreviewTarget } from "../lib/filePreview";
   import {
-    MANAGED_HTML_PREVIEW_SANDBOX,
     boundedConversationTextPreview,
     markdownExpansionFor,
-    prepareManagedHtmlPreviewDocument,
     resolvePreview
   } from "../lib/filePreview";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -25,21 +25,25 @@
 
   const MEDIA_FETCH_FAILED = "file fetch failed";
 
+  let visible = $state(false);
+  function visibility(element: HTMLElement, _identity: string) {
+    const stop = observeVisibleContent(element, next => { visible = next; }, { canRetain: () => !error });
+    return { destroy: stop, update() { resetVisibleContentHeight(element); } };
+  }
+
   let text = $state<string | null>(null);
   let error = $state("");
-  let htmlFrame = $state<HTMLIFrameElement | null>(null);
   let resolved = $derived(resolvePreview(target));
   let expansion = $derived(markdownExpansionFor(resolved, depth, visited));
   let shouldFetchText = $derived(
     (resolved.kind === "markdown" && expansion.expandable)
-      || resolved.kind === "html"
       || resolved.kind === "text"
   );
   let showsMedia = $derived(
     (resolved.kind === "image" || resolved.kind === "video" || resolved.kind === "audio") &&
       !error
   );
-  let showsDocument = $derived((shouldFetchText || resolved.kind === "pdf") && !error);
+  let showsDocument = $derived((shouldFetchText || resolved.kind === "pdf" || resolved.kind === "html") && !error);
   let inline = $derived(!showsMedia && !showsDocument);
 
   function onMediaError() {
@@ -50,17 +54,13 @@
     const current = resolved;
     text = null;
     error = "";
-    if (!shouldFetchText) return;
+    if (!visible || !shouldFetchText) return;
     const controller = new AbortController();
     readManagedFile(current.href, controller.signal)
       .then((body) => {
-        // The read is shared, so it finishes even for a preview that has gone. Each
-        // one applies its own transform to the same immutable text, and a preview that
-        // left says nothing.
+        // Shared reads abort when the last visible reader leaves.
         if (controller.signal.aborted) return;
-        text = current.kind === "html"
-          ? prepareManagedHtmlPreviewDocument(body, current.href)
-          : (current.kind === "text" || current.kind === "markdown")
+        text = (current.kind === "text" || current.kind === "markdown")
               && current.target.kind === "conversation-file"
             ? boundedConversationTextPreview(body)
             : body;
@@ -71,15 +71,6 @@
     return () => controller.abort();
   });
 
-  $effect(() => {
-    if (resolved.kind === "html" && htmlFrame) {
-      htmlFrame.srcdoc = text || "";
-    }
-  });
-
-  onDestroy(() => {
-    if (htmlFrame) htmlFrame.srcdoc = "";
-  });
 </script>
 
 {#snippet openLink(href: string | undefined)}
@@ -102,16 +93,29 @@
   class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}${resolved.target.kind !== "external-link" ? " file-preview--managed" : ""}`}
   data-file-preview
   data-file-preview-kind={resolved.kind}
+  use:visibility={resolved.href}
+  data-visible-content-failed={Boolean(error) || undefined}
 >
   {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind !== "external-link" && resolved.previewHref}
     {@render nameLink(resolved.previewHref)}
   {/if}
-  {#if showsMedia && resolved.kind === "image"}
+  {#if resolved.kind === "html" && !error}
+    <!-- Drawn before the preview comes into view, so the box it will occupy is already
+         there at first paint. Nothing is fetched until `visible`. -->
+    <article class="file-preview-document">
+      <div class="file-preview-document-header">
+        {@render openLink(resolved.previewHref ?? resolved.href)}
+      </div>
+      <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={visible} />
+    </article>
+  {:else if !visible && !inline}
+    <span aria-hidden="true"></span>
+  {:else if showsMedia && resolved.kind === "image"}
     <img
       class="file-preview-image"
       src={resolved.href}
       alt={resolved.label}
-      loading="lazy"
+      decoding="async"
       onerror={onMediaError}
     />
   {:else if showsMedia && resolved.kind === "video"}
@@ -139,30 +143,15 @@
       src={resolved.href}
       title={resolved.label}
     ></iframe>
-  {:else if resolved.kind === "html"}
-    <article class="file-preview-document">
-      <div class="file-preview-document-header">
-        {@render openLink(resolved.previewHref ?? resolved.href)}
-      </div>
-      <iframe
-        bind:this={htmlFrame}
-        class="file-preview-frame"
-        data-file-preview-html
-        sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
-        title={resolved.label}
-      ></iframe>
-    </article>
   {:else if resolved.kind === "markdown" && expansion.expandable}
     <article class="file-preview-document">
       <div class="file-preview-document-header">
         {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
       <div class="file-preview-document-body">
-        {#if text === null}
-          <div class="quiet-line">Loading preview...</div>
-        {:else}
-          <MarkdownBlock text={text} depth={expansion.nextDepth} visited={expansion.nextVisited} />
-        {/if}
+        <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
+          {#if text !== null}<MarkdownBlock text={text} depth={expansion.nextDepth} visited={expansion.nextVisited} />{/if}
+        </SkeletonRegion>
       </div>
     </article>
   {:else if resolved.kind === "markdown"}
@@ -172,7 +161,9 @@
       <div class="file-preview-document-header">
         {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
-      <pre class="conversation-text-preview">{text ?? "Loading preview..."}</pre>
+      <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
+        {#if text !== null}<pre class="conversation-text-preview">{text}</pre>{/if}
+      </SkeletonRegion>
     </article>
   {:else if resolved.kind === "download"}
     <a class="file-preview-link" href={resolved.href} download="">Download {resolved.label}</a>

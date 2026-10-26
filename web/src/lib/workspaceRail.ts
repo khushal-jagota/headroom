@@ -1,15 +1,29 @@
 import type { Lifecycle } from "./lifecycle";
 import type {
   BoardCard,
-  BoardSprintItem,
-  Priority,
+  BoardManager,
 } from "./types";
 import {
-  WORK_ITEM_ATTENTION_GROUP_KEYS,
   workItemTicketGroupKey,
   workItemTicketGroups,
+  workItemWorkGroups,
+  type WorkItemAttentionFacts,
   type WorkItemTicketFacts
 } from "./workItemPresentation";
+
+
+/** Only fields the workspace presentation reads, independent of detail/config responses. */
+export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'manager' | 'manager_id' | 'manager_title'>;
+export type WorkspaceManager = Pick<BoardManager,
+  'id' | 'title' | 'created_at' | 'updated_at' | 'settled' | 'project_id' | 'project' | 'recap' | 'recap_preview' | 'conversation_id'>
+  & WorkItemAttentionFacts & {recap_reference?:import("./navigation/contracts").ViewContentReference|null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
+/** Settled-only membership never fabricates full recap or Project facts. */
+export type WorkspaceSettledManager = Pick<WorkspaceManager,
+  'id' | 'title' | 'created_at' | 'updated_at' | 'conversation_id' | 'conversation_signal' | 'tickets'>
+  & WorkItemAttentionFacts & {settled:true};
+export type WorkspaceRailManager = WorkspaceManager | WorkspaceSettledManager;
+export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
+  & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
 
 export type WorkspaceTicketGroup = {
   key: string;
@@ -21,17 +35,18 @@ export type WorkspaceTicketGroup = {
 export type WorkspaceRailItem = {
   id: string;
   title: string;
-  priority: Priority;
   createdAt: number;
-  conversationSignal: BoardSprintItem["conversation_signal"];
+  updatedAt: number;
+  conversationSignal: WorkspaceManager["conversation_signal"];
   conversationId: string | null;
   groups: WorkspaceTicketGroup[];
   rested: boolean;
   settled: boolean;
-  project: string | null;
-  projectId: string | null;
+  project?: string | null;
+  projectId?: string | null;
   tickets: WorkItemTicketFacts[];
-  hoverGroups: WorkspaceTicketGroup[];
+  recap?: string;
+  recap_reference?:import("./navigation/contracts").ViewContentReference|null;
 };
 
 export type WorkspaceRail = {
@@ -39,98 +54,130 @@ export type WorkspaceRail = {
   items: WorkspaceRailItem[];
   settledItems: WorkspaceRailItem[];
   chiefGroups: WorkspaceTicketGroup[];
-  chiefHoverGroups: WorkspaceTicketGroup[];
 };
 
-const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
-
 export const workspaceCardGroupKey = workItemTicketGroupKey;
-function priorityRank(priority: Priority): number {
-  return PRIORITY_ORDER.indexOf(priority);
-}
-
 function railGroups(
   cards: readonly WorkItemTicketFacts[],
-  attentionOnly = false
+  sidebarPresentation = false
 ): WorkspaceTicketGroup[] {
-  const groups = workItemTicketGroups(
-    cards,
-    attentionOnly ? WORK_ITEM_ATTENTION_GROUP_KEYS : undefined
-  );
+  const groups = sidebarPresentation ? workItemWorkGroups(cards) : workItemTicketGroups(cards);
   return groups.map((group) => ({
     key: group.key,
-    label: group.label,
+    label: sidebarPresentation && group.key === "empty" ? "Other" : group.label,
     defaultCollapsed: group.quiet,
     cards: group.tickets
   }));
 }
 
-export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => card.ticket_status !== "cancelled"));
+export function workspaceGroups(cards: readonly WorkspaceTicket[]): WorkspaceTicketGroup[] {
+  return railGroups(cards);
+}
+
+export function railTicketEligible(card: WorkItemTicketFacts): boolean {
+  return !card.is_backlogged && !card.blocked && card.ticket_status !== "blocked"
+    && card.stage !== "done";
+}
+
+/** Keep survivors in their presented order, then append arrivals and re-entries. */
+export function stabilizeRailGroups(next: WorkspaceTicketGroup[], previous: WorkspaceTicketGroup[]): WorkspaceTicketGroup[] {
+  return next.map((group) => {
+    const byId = new Map(group.cards.map((card) => [card.id, card]));
+    const survivors = (previous.find((old) => old.key === group.key)?.cards ?? [])
+      .flatMap((card) => { const fresh = byId.get(card.id); byId.delete(card.id); return fresh ? [fresh] : []; });
+    return {...group, cards: [...survivors, ...byId.values()]};
+  });
+}
+
+export function stabilizeWorkspaceRail(next: WorkspaceRail, previous: WorkspaceRail): WorkspaceRail {
+  const stabilize = (item: WorkspaceRailItem) => ({...item, groups: stabilizeRailGroups(item.groups,
+    [...previous.items, ...previous.settledItems].find((old) => old.id === item.id)?.groups ?? [])});
+  return {...next, chiefGroups: stabilizeRailGroups(next.chiefGroups, previous.chiefGroups),
+    items: next.items.map(stabilize), settledItems: next.settledItems.map(stabilize)};
+}
+
+/** Refresh exact conversation facts without moving the currently presented rows. */
+export function refreshWorkspaceRailSignals(current: WorkspaceRail, next: WorkspaceRail): WorkspaceRail {
+  const items = [...next.items, ...next.settledItems];
+  const tickets = new Map([...next.groups.flatMap((group) => group.cards),
+    ...items.flatMap((item) => item.tickets)].map((ticket) => [ticket.id, ticket]));
+  const heads = new Map(items.map((item) => [item.id, item]));
+  const refreshTicket = (ticket: WorkItemTicketFacts): WorkItemTicketFacts => {
+    const fresh = tickets.get(ticket.id);
+    return fresh ? {...ticket, conversation_signal: fresh.conversation_signal,
+      conversation_id: fresh.conversation_id} : {...ticket,conversation_signal:undefined};
+  };
+  const refreshGroups = (groups: WorkspaceTicketGroup[]) => groups.map((group) =>
+    ({...group, cards: group.cards.map(refreshTicket)}));
+  const refreshItems = (rows: WorkspaceRailItem[]) => rows.map((item) => {
+    const fresh = heads.get(item.id);
+    return {...item, ...(fresh ? {conversationSignal: fresh.conversationSignal,
+      conversationId: fresh.conversationId} : {conversationSignal:undefined}), groups: refreshGroups(item.groups),
+      tickets: item.tickets.map(refreshTicket)};
+  });
+  return {...current, groups: refreshGroups(current.groups), chiefGroups: refreshGroups(current.chiefGroups),
+    items: refreshItems(current.items), settledItems: refreshItems(current.settledItems)};
+}
+
+export function workspaceWorkerStageSentence(ticket: WorkItemTicketFacts, lifecycle: Lifecycle | null): string {
+  const stage = lifecycle?.stageLabel[ticket.stage];
+  if (!stage) return "";
+  if (ticket.blocked || ticket.ticket_status === "blocked") return `Blocked at ${stage}.`;
+  if (ticket.awaiting_approval) return `Awaiting your approval at ${stage}.`;
+  if (ticket.awaiting_answer) return `Awaiting your answer at ${stage}.`;
+  if (ticket.assigned) return `Awaiting you at ${stage}.`;
+  if (ticket.agent_state === "errored") return `The last turn failed at ${stage}.`;
+  if (ticket.awaiting_agent_approval) return `Awaiting an agent's approval at ${stage}.`;
+  if (ticket.conversation_signal?.working) return `Currently doing ${stage}.`;
+  return `At ${stage}.`;
 }
 
 export function workspaceAttentionGroups(
   cards: readonly WorkItemTicketFacts[]
 ): WorkspaceTicketGroup[] {
-  return railGroups(cards, true);
+  return railGroups(cards.filter(railTicketEligible), true);
 }
 
-export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => card.stage !== "done" && card.ticket_status !== "cancelled"));
-}
-
-export type WorkspaceWorkerStage = { id: string; label: string; state: "done" | "now" | "todo" };
-
-export function workspaceWorkerStages(
-  ticket: Pick<WorkItemTicketFacts, "stage">,
-  lifecycle: Lifecycle | null
-): WorkspaceWorkerStage[] {
-  if (!lifecycle) return [];
-  const current = lifecycle.stageOrder.indexOf(ticket.stage);
-  return lifecycle.stageOrder.map((id, index) => ({
-    id,
-    label: lifecycle.stageLabel[id],
-    state: current < 0 ? "todo" : index < current ? "done" : index === current ? "now" : "todo"
-  }));
+/** A popover recap operates like any other recap: the real text, or nothing. */
+export function workspaceListRecap(recap = ""): string {
+  return recap.trim() ? recap : "";
 }
 
 export function buildWorkspaceRail(
-  cards: readonly BoardCard[],
-  sprintItems: readonly BoardSprintItem[] = []
+  cards: readonly WorkspaceTicket[],
+  managers: readonly WorkspaceRailManager[] = []
 ): WorkspaceRail {
-  // Complete children come from each orchestrator, never the currently open pane.
-  const items = sprintItems.map((item) => ({
+  // Complete children come from each manager, never the currently open pane.
+  const items = managers.map((item) => ({
     id: item.id,
     title: item.title,
-    priority: item.priority,
     createdAt: item.created_at,
+    updatedAt: item.updated_at,
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
-    groups: workspaceAttentionGroups(item.tickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
-    hoverGroups: workspaceHoverGroups(item.tickets),
-    tickets: item.tickets,
+    groups: workspaceAttentionGroups(item.tickets),
+    ...("recap" in item ? {recap:item.recap,recap_reference:item.recap_reference,
+      project:item.project ?? null,projectId:item.project_id ?? null} : {}),
+    tickets: [...item.tickets],
     settled: item.settled === true,
-    rested: item.settled === true,
-    project: item.project ?? null,
-    projectId: item.project_id ?? null
+    rested: item.settled === true
   } satisfies WorkspaceRailItem));
 
   items.sort(
     (left, right) =>
-      priorityRank(left.priority) - priorityRank(right.priority) ||
       left.createdAt - right.createdAt ||
       left.id.localeCompare(right.id)
   );
   const chiefTickets = cards.filter((card) =>
-    card.orchestrator?.kind === "chief" ||
-    (card.orchestrator == null && card.sprint_item_id == null)
+    card.manager?.kind === "chief" ||
+    (card.manager == null && card.manager_id == null)
   );
   return {
     // Legacy projection remains available to references outside the new rail.
     groups: workspaceGroups(cards),
     items: items.filter((item) => !item.settled),
-    settledItems: items.filter((item) => item.settled),
-    chiefGroups: workspaceAttentionGroups(chiefTickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
-    chiefHoverGroups: workspaceHoverGroups(chiefTickets)
+    settledItems: items.filter((item) => item.settled).sort((left, right) =>
+      right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)),
+    chiefGroups: workspaceAttentionGroups(chiefTickets)
   };
 }

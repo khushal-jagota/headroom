@@ -19,10 +19,21 @@ commits stay distinct even when one wake-up covers them. Ticket creation capture
 initial flags before commit. Blocker, proposal, assignment, conversation link, and read
 changes capture their flags in the same transaction.
 
+A permission or input request awaits an answer only while its turn remains open.
+A recorded completion, failure, or interruption clears all unanswered requests from
+that turn. The next request can then create a new notification edge. A prompt or steer
+alone does not close a request. Unread messages and failure attention remain separate.
+
 The delivery poll consumes those saved edges. It does not scan conversation history.
 A Ticket without a conversation has no conversation attention. The process that owns
 the polling lock reconciles imported state once before it starts the loops. Repeated
 startup reconciliation creates no duplicate edges. A startup failure releases the lock.
+
+Startup reconciliation also clears stale request attention when the conversation records
+that the turn ended. This correction preserves the generation and past deliveries, and
+creates no edge. A later conversation write can also correct the stale flag.
+Neither path replays missed historical edges. Recovery after a crash without a recorded
+turn ending remains outside this correction.
 
 One policy function is the only door from an edge to a notification. It reads the saved
 choice for that type and either suppresses the edge or creates the privacy-safe title,
@@ -40,17 +51,17 @@ five choices for Tickets:
 - a Ticket stage becomes assigned to Khushal; and
 - a worker turn fails or a Ticket errors.
 
-Chief of Staff and Sprint Item supervisors each offer awaiting reply, needs an answer,
+Chief of Staff and Managers each offer awaiting reply, needs an answer,
 and errored.
 Approval and assignment belong to Tickets only. Each saved choice uses its subject and
 notification type as one key, so a Chief choice never changes the matching Ticket choice.
 
-Sprint Item supervisors share one subject between all of them, because a sprint holds
+Managers share one subject between all of them, because a sprint holds
 twenty or thirty Items and they are replaced each sprint. Upgrades preserve the old
-disabled supervisor-error preference while adding the reply choice.
+disabled Manager-error preference while adding the reply choice.
 
 The notification contains no transcript, prompt, permission detail, or worker output.
-Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A Sprint Item
+Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A Manager
 notification goes to `/#/workspace/item/<item-id>`. A notification sent
 before Tickets moved to the Workspace still carries the old `/#/ticket/<ticket-id>`
 address, which the app redirects. A Chief notification
@@ -59,6 +70,23 @@ uses the retained `/#/agents/chief-of-staff` address, which the app redirects to
 malformed payload or an unsupported link opens the safe Workspace fallback. All
 notifications for one subject use one stable replacement tag, so overlapping
 notifications coalesce at the operating system.
+
+## Review transfer notices
+
+When a parked review changes holder, Panels attempts a courtesy message to the previous
+holder. The message identifies the Ticket and names the new holder. A holder change
+without a parked proposal sends no message. An unchanged final holder sends no message.
+
+The Chief and managers receive the message through their existing conversation
+routes. The user receives it in the Ticket conversation as a Panels message. The notice
+requests no reply and grants no credit for a worker reply. Existing approval attention
+and proposal delivery to the new holder keep their current behavior.
+
+This notice uses one best-effort send after the transfer commits. A failed send does not
+fail or repeat the transfer. A process failure before send or before a queued notice
+reaches the agent can lose it. A recorded conversation event persists through ordinary
+conversation storage. The notice adds no push notification type. An owner-directed
+message uses the existing unread-message attention and notification choice.
 
 ## Durable delivery
 
@@ -99,4 +127,4 @@ Code paths: `src/planner/notifications/`, the notification tables in the baselin
 `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
-_Last verified: 2026-09-20._
+_Last verified: 2026-10-22._

@@ -20,7 +20,11 @@
    */
   import { onMount, tick } from "svelte";
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
-  import ConversationFileCard from "./ConversationFileCard.svelte";
+  import {
+    orderedComposerAttachments, attachmentExtension, attachmentByteLabel,
+    type ComposerAttachmentReference
+  } from "./composer/attachments";
+  import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -32,6 +36,8 @@
     type ComposerDraft,
     type ComposerSendAttempt
   } from "./composer/draftTransaction";
+  import { untrack } from "svelte";
+  import { readComposerDraft, writeComposerDraft } from "../../lib/conversation/composerDraft";
   import {
     applyComposerRunSelectionIntent,
     resolveComposerRunControls
@@ -83,6 +89,7 @@
 
   let {
     conversationId = null,
+    draftKey,
     backendKey = null,
     conversationExists = false,
     running = false,
@@ -118,6 +125,7 @@
   }: {
     /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
+    draftKey: string;
     /** The backend this conversation runs on — or, before there is one, the backend a
      *  message sent from here would create it on. */
     backendKey?: ConversationBackendKey | null;
@@ -183,7 +191,17 @@
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
-  let text = $state("");
+  // Restored before the first paint, so a rebuilt composer comes back with the words
+  // in it rather than empty.
+  let text = $state(untrack(() => readComposerDraft(draftKey)));
+  let draftKeyOnScreen = untrack(() => draftKey);
+  $effect(() => {
+    const key = draftKey;
+    if (key === untrack(() => draftKeyOnScreen)) return;
+    draftKeyOnScreen = key;
+    text = readComposerDraft(key);
+  });
+  $effect(() => { writeComposerDraft(draftKey, text); });
   let deliveryMode = $state<PromptDeliveryMode>("steer");
   let runSelection = $state<ComposerRunSelection>({
     pickedBackend: null,
@@ -207,6 +225,8 @@
   let activeCatalogEntryIndex = $state(0);
   let pendingImages = $state<PendingConversationImage[]>([]);
   let pendingFiles = $state<PendingConversationFile[]>([]);
+  let attachmentOrder = $state<ComposerAttachmentReference[]>([]);
+  let attachments = $derived(orderedComposerAttachments(attachmentOrder, pendingImages, pendingFiles));
   let imageInput = $state<HTMLInputElement | null>(null);
   let fileInput = $state<HTMLInputElement | null>(null);
   let nextImageId = 1;
@@ -405,6 +425,7 @@
       text,
       pendingImages,
       pendingFiles,
+      attachmentOrder,
       pickedModel: runSelection.pickedModel,
       pickedReasoningEffort: runSelection.pickedReasoningEffort,
       compositionRevision
@@ -413,6 +434,7 @@
 
   function applyComposerDraft(draft: ComposerDraft): void {
     text = draft.text;
+    attachmentOrder = [...(draft.attachmentOrder ?? [])];
     pendingImages = [...draft.pendingImages];
     pendingFiles = [...draft.pendingFiles];
     runSelection = {
@@ -521,35 +543,50 @@
   async function intakeChosenFiles(files: readonly File[]): Promise<void> {
     attachmentIntakesInFlight += 1;
     try {
-      const imageFiles = files.filter((file) => file.type.toLowerCase().startsWith("image/"));
-      const documentFiles = files.filter((file) => !file.type.toLowerCase().startsWith("image/"));
-      const intake = await createPendingConversationImages(
-        imageFiles,
-        nextImageId,
-        pendingConversationImageBytes(pendingImages)
-      );
-      const fileIntake = await createPendingConversationFiles(
-        documentFiles,
-        nextFileId,
-        pendingConversationFileBytes(pendingFiles)
-      );
-      if (destroyed) {
-        releasePendingImages(intake.accepted);
-        return;
+      const acceptedImages: PendingConversationImage[] = [];
+      const acceptedFiles: PendingConversationFile[] = [];
+      const acceptedOrder: ComposerAttachmentReference[] = [];
+      let rejected = false;
+      let published = false;
+      // Intake follows the FileList, rather than grouping it by kind. Both adapters still
+      // own their validation and aggregate byte limits.
+      try {
+        for (const file of files) {
+          if (file.type.toLowerCase().startsWith("image/")) {
+            const intake = await createPendingConversationImages(
+              [file], nextImageId, pendingConversationImageBytes([...pendingImages, ...acceptedImages])
+            );
+            nextImageId = intake.nextId;
+            rejected ||= intake.rejected.length > 0;
+            acceptedImages.push(...intake.accepted);
+            acceptedOrder.push(...intake.accepted.map((image) => ({ kind: "image" as const, id: image.id })));
+          } else {
+            const intake = await createPendingConversationFiles(
+              [file], nextFileId, pendingConversationFileBytes([...pendingFiles, ...acceptedFiles])
+            );
+            nextFileId = intake.nextId;
+            rejected ||= intake.rejected.length > 0;
+            acceptedFiles.push(...intake.accepted);
+            acceptedOrder.push(...intake.accepted.map((document) => ({ kind: "file" as const, id: document.id })));
+          }
+        }
+        if (destroyed) return;
+        if (acceptedOrder.length > 0) {
+          recordDraftChange();
+          pendingImages = [...pendingImages, ...acceptedImages];
+          pendingFiles = [...pendingFiles, ...acceptedFiles];
+          attachmentOrder = [...attachmentOrder, ...acceptedOrder];
+        }
+        published = true;
+        intakeError = rejected
+          ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
+          : null;
+      } finally {
+        // Until published these URLs belong to this intake, including a later read failure.
+        if (!published) {
+          releasePendingImages(acceptedImages);
+        }
       }
-      nextImageId = intake.nextId;
-      nextFileId = fileIntake.nextId;
-      if (intake.accepted.length > 0) {
-        recordDraftChange();
-        pendingImages = [...pendingImages, ...intake.accepted];
-      }
-      if (fileIntake.accepted.length > 0) {
-        recordDraftChange();
-        pendingFiles = [...pendingFiles, ...fileIntake.accepted];
-      }
-      intakeError = intake.rejected.length > 0 || fileIntake.rejected.length > 0
-        ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
-        : null;
     } catch (error) {
       if (!destroyed) {
         intakeError = error instanceof Error ? error.message : "The attachment could not be read.";
@@ -569,12 +606,14 @@
   function removeImage(image: PendingConversationImage): void {
     recordDraftChange();
     pendingImages = pendingImages.filter((candidate) => candidate.id !== image.id);
+    attachmentOrder = attachmentOrder.filter((reference) => reference.kind !== "image" || reference.id !== image.id);
     releasePendingImages([image]);
   }
 
   function removeFile(file: PendingConversationFile): void {
     recordDraftChange();
     pendingFiles = pendingFiles.filter((candidate) => candidate.id !== file.id);
+    attachmentOrder = attachmentOrder.filter((reference) => reference.kind !== "file" || reference.id !== file.id);
   }
 
   function hasAttachmentTransfer(event: DragEvent): boolean {
@@ -777,6 +816,61 @@
     if (takenOver && voiceState.phase !== "idle") voice?.cancel();
   });
 
+  let textareaMeasurement: ReturnType<typeof createComposerTextareaMeasurement> | null = null;
+
+  function resizeWritingArea(): void {
+    const input = inputElement;
+    if (input === null || input.hidden || input.getClientRects().length === 0) return;
+    const style = getComputedStyle(input);
+    const lineHeight = Number.parseFloat(style.lineHeight);
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    if (textareaMeasurement?.input !== input) {
+      textareaMeasurement?.dispose();
+      textareaMeasurement = createComposerTextareaMeasurement(input);
+    }
+    const size = textareaMeasurement.measure(style);
+    const height = `${size.height}px`;
+    const host = input.closest<HTMLElement>(".ticket-page, .manager-page") ?? input.closest<HTMLElement>("[data-conversation-pane]");
+    host?.style.setProperty("--composer-growth", `${size.growth}px`);
+    if (input.style.height !== height) input.style.height = height;
+    if (input.style.overflowY !== size.overflowY) input.style.overflowY = size.overflowY;
+  }
+
+  // Effects run after Svelte has written values and hidden-state changes into the DOM.
+  $effect(() => {
+    text;
+    userInput;
+    voiceState.phase;
+    voiceFirstIdle;
+    resizeWritingArea();
+  });
+
+  $effect(() => {
+    const input = inputElement;
+    if (input === null) return;
+    let measuredWidth = -1;
+    let resizeFrame = 0;
+    const observer = new ResizeObserver(() => {
+      const width = input.clientWidth;
+      // The textarea's own height is an output, never another reason to resize it.
+      if (width === measuredWidth) return;
+      measuredWidth = width;
+      // Write on the next frame, outside observer delivery. Even one intentional height
+      // change to an observed input can otherwise report undelivered observations.
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(resizeWritingArea);
+    });
+    observer.observe(input);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(resizeFrame);
+      if (textareaMeasurement?.input === input) {
+        textareaMeasurement.dispose();
+        textareaMeasurement = null;
+      }
+    };
+  });
+
   onMount(() => {
     coarsePointer = window.matchMedia("(pointer: coarse)").matches;
     voiceSupported = voiceCaptureSupported();
@@ -868,47 +962,38 @@
         />
       {/if}
 
-      {#if userInput === null && pendingImages.length > 0}
-        <div class="chat-image-previews" data-chat-image-previews aria-label="Pending images">
-          {#each pendingImages as image, index (image.id)}
+      {#if userInput === null && attachments.length > 0}
+        <div class="chat-attachments" data-conversation-attachments aria-label="Attached and waiting to send">
+          {#each attachments as attachment (`${attachment.kind}-${attachment.value.id}`)}
+            {@const item = attachment.value}
             <div
-              class="chat-image-preview"
-              data-chat-image-preview
-              data-chat-image-name={image.fileName}
+              class="chat-att"
+              class:img={attachment.kind === "image"}
+              class:file={attachment.kind === "file"}
+              data-chat-image-preview={attachment.kind === "image" ? "" : undefined}
+              data-chat-image-name={attachment.kind === "image" ? item.fileName : undefined}
+              data-chat-file-preview={attachment.kind === "file" ? "" : undefined}
+              data-chat-file-name={attachment.kind === "file" ? item.fileName : undefined}
+              title={`${item.fileName || "pasted image"} · ${item.mediaType} · ${attachmentByteLabel(item.byteCount)}`}
             >
-              <img src={image.previewUrl} alt="" />
+              {#if attachment.kind === "image"}
+                <img src={attachment.value.previewUrl} alt="" />
+              {:else}
+                <span class="chat-att-kind" aria-hidden="true">{attachmentExtension(item.fileName)}</span>
+                <span class="chat-att-words">
+                  <span class="chat-att-name">{item.fileName}</span>
+                  <span class="chat-att-meta">{item.mediaType} · {attachmentByteLabel(item.byteCount)}</span>
+                </span>
+              {/if}
               <button
                 type="button"
-                class="chat-image-remove"
-                data-chat-image-remove
-                aria-label={`Remove image ${index + 1}: ${image.fileName || "pasted image"}`}
-                title="Remove image"
+                class="chat-att-x"
+                data-chat-image-remove={attachment.kind === "image" ? "" : undefined}
+                data-chat-file-remove={attachment.kind === "file" ? "" : undefined}
+                aria-label={`Remove ${attachment.kind} ${item.fileName || "pasted image"}`}
+                title="Remove"
                 disabled={inputDisabled}
-                onclick={() => removeImage(image)}
-              >×</button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      {#if userInput === null && pendingFiles.length > 0}
-        <div class="chat-file-previews" data-chat-file-previews aria-label="Pending files">
-          {#each pendingFiles as file, index (file.id)}
-            <div class="chat-file-preview" data-chat-file-preview data-chat-file-name={file.fileName}>
-              <ConversationFileCard
-                href={`data:${file.mediaType};base64,${file.data}`}
-                fileName={file.fileName}
-                mediaType={file.mediaType}
-                byteCount={file.byteCount}
-              />
-              <button
-                type="button"
-                class="chat-file-remove"
-                data-chat-file-remove
-                aria-label={`Remove file ${index + 1}: ${file.fileName}`}
-                title="Remove file"
-                disabled={inputDisabled}
-                onclick={() => removeFile(file)}
+                onclick={() => attachment.kind === "image" ? removeImage(attachment.value) : removeFile(attachment.value)}
               >×</button>
             </div>
           {/each}
@@ -968,7 +1053,7 @@
       ></textarea>
 
       {#if userInput === null}
-      <div class="chat-foot">
+      <div class="chat-foot" class:has-ask={takenOver}>
         {#if takenOver && ask}
           <PermissionAskActions
             ask={ask}
@@ -1182,7 +1267,6 @@
 <style>
   /* One affordance where three used to be, at the size a finger can find. */
   .chat-add { position: relative; display: inline-flex; }
-  .chat-add-btn { min-width: 32px; min-height: 32px; }
   .chat-add-menu {
     position: absolute;
     inset-block-end: calc(100% + var(--space-2));
@@ -1255,20 +1339,5 @@
     color: var(--text-faint);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
-  }
-  .chat-file-previews { display: grid; gap: var(--space-2); padding: var(--space-2); }
-  .chat-file-preview { position: relative; min-width: 0; }
-  .chat-file-remove {
-    position: absolute;
-    inset-block-start: var(--space-3);
-    inset-inline-end: var(--space-3);
-    z-index: 1;
-    width: 1.5rem;
-    height: 1.5rem;
-    border: 0;
-    border-radius: var(--radius-pill);
-    background: var(--surface-2);
-    color: var(--text-muted);
-    cursor: pointer;
   }
 </style>

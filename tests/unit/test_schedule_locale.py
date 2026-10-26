@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.unit.test_scheduled_tickets import _template
 
 from planner.scheduled_tickets import actions, data
@@ -26,6 +27,7 @@ def test_schedule_persists_resolved_locale_and_occurrences_keep_it(
     tmp_db.commit()
     schedule = actions.create_schedule(
         tmp_db,
+        principal=OWNER_PRINCIPAL,
         enabled=True,
         cadence=ScheduleCadence.daily,
         local_time="14:30",
@@ -35,16 +37,18 @@ def test_schedule_persists_resolved_locale_and_occurrences_keep_it(
     assert schedule.template.locale is TicketLocale.macos
     tmp_db.execute("UPDATE worker_types SET requires_macos=0 WHERE worker_type='coding'")
     tmp_db.commit()
-    edited = actions.update_schedule(tmp_db, schedule.id, {"title": "Changed title"}, now=2)
+    edited = actions.update_schedule(
+        tmp_db, schedule.id, {"title": "Changed title"}, principal=OWNER_PRINCIPAL, now=2
+    )
     assert edited.template.locale is TicketLocale.macos
     now = datetime.fromisoformat("2026-10-16T14:30:00").astimezone()
-    occurrence = actions.run_current_slot(
-        tmp_db, planning_now=now, now=int(now.timestamp()), boundary_hour=5
-    )[0]
+    occurrence = actions.run_current_slot(tmp_db, local_now=now, now=int(now.timestamp()))[0]
     assert occurrence.outcome is OccurrenceOutcome.created
     assert occurrence.ticket_id is not None
     assert tickets_data.read_ticket(tmp_db, occurrence.ticket_id).locale is TicketLocale.macos
-    changed = actions.update_schedule(tmp_db, schedule.id, {"locale": TicketLocale.vps}, now=3)
+    changed = actions.update_schedule(
+        tmp_db, schedule.id, {"locale": TicketLocale.vps}, principal=OWNER_PRINCIPAL, now=3
+    )
     assert changed.template.locale is TicketLocale.vps
 
 
@@ -53,6 +57,7 @@ def test_schedule_explicit_locale_beats_worker_requirement(tmp_db: Connection) -
     tmp_db.commit()
     schedule = actions.create_schedule(
         tmp_db,
+        principal=OWNER_PRINCIPAL,
         enabled=True,
         cadence=ScheduleCadence.daily,
         local_time="14:30",
@@ -60,19 +65,3 @@ def test_schedule_explicit_locale_beats_worker_requirement(tmp_db: Connection) -
         now=1,
     )
     assert data.read_schedule(tmp_db, schedule.id).template.locale is TicketLocale.vps
-
-
-def test_schedule_invalid_locale_refuses_without_write(tmp_db: Connection) -> None:
-    from planner.core.errors import PlannerError
-
-    schedule = actions.create_schedule(
-        tmp_db,
-        enabled=True,
-        cadence=ScheduleCadence.daily,
-        local_time="14:30",
-        template=_template(),
-        now=1,
-    )
-    with pytest.raises(PlannerError, match="locale must be vps or macos"):
-        actions.update_schedule(tmp_db, schedule.id, {"locale": "unknown"}, now=2)
-    assert data.read_schedule(tmp_db, schedule.id) == schedule

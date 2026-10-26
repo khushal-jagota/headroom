@@ -8,6 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 
+from tests.unit.test_executor_native_runtime import canonical_snapshot
+
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -53,7 +55,11 @@ def test_committed_reply_credit_survives_stale_metadata_and_turn_end(
 
         state = _ConversationState(
             record=record,
-            child=RemoteBackendChild(ChildReference("process", "child", "c_source"), never_native),
+            child=RemoteBackendChild(
+                ChildReference("process", "child", "c_source"),
+                never_native,
+                lambda start: canonical_snapshot(),
+            ),
         )
         running = _RunningTurn(TurnToken("c_source", 1), prompt_senders={CHIEF_PRINCIPAL: None})
         stale = SqliteProcessConversationSystem._executor_turn_metadata(state, running)
