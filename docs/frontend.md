@@ -593,18 +593,29 @@ or locale produces identical arbitrary-text ordering.
   Conversation images and files use conversation-owned managed bytes. Images render
   inline. Supported documents and data files render as named cards with preview and
   download actions. PDF uses a document frame. Text and data use a bounded text preview.
-- **On a Ticket or Manager screen, that link opens the file in place.** A managed
-  file clicked inside either reading area does not go to the preview address. The screen catches the click
-  and draws the file over its own reading area, with a strip carrying the file's name and
-  a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
-  back the page the reader left. The conversation dock reserves space below the artifact.
-  Full conversation conceals the same mounted artifact and preserves its viewport size and state.
-  An opened conversation is the whole page, so a file link returns to the dock.
-  Escape closes the file. This is the same on every screen width. A click asking for a
-  new tab or window is left alone. On the Workspace the open file rides in the address
-  beside the Ticket, so a reload, Back, and a shared link all show it. The
-  `#/preview` address remains the way in from anywhere else — a shared link, a
-  notification, or another screen — and it draws the same document.
+- **Wherever a conversation is shown, that link opens the file in place.** A Ticket
+  screen, a Manager's pane and the Chief's pane each catch the click across the whole
+  pane, the conversation included. A managed file clicked in any of them does not go to
+  the preview address. The pane draws the file over its own reading area, with a strip
+  carrying the file's name and a way out. The pane keeps its layout and its scroll place
+  underneath, so closing gives back the page the reader left, and the conversation the
+  file was named in stays on the screen beside it — which is the point, because a file
+  named in a conversation is usually some other Ticket's. The conversation dock reserves
+  space below the artifact. Full conversation conceals the same mounted artifact and
+  preserves its viewport size and state. An opened conversation is the whole page, so a
+  file link returns to the dock. Escape closes the file, unless the conversation is open
+  over it: then Escape is the conversation's, because one press belongs to one thing and
+  the thing on top answers for it. The keyboard follows the reading: the file takes it
+  once the pane will let it, which is after a full conversation has returned to its bar,
+  and closing gives it back to the link it was opened from. A link read in the
+  conversation leaves the screen with the transcript, so the conversation's own bar takes
+  the keyboard instead and the reader is one press from the words the file was named in. This is the same on every screen width. A click asking
+  for a new tab or window is left alone, and so is a link marked as a download or one
+  whose format has nothing to show. On the Workspace the open file rides in the address
+  beside the Ticket and beside the Chief, so a reload, Back, and a shared link all show
+  it; a Manager's pane keeps its own. The `#/preview` address remains the way in from
+  anywhere else — a shared link, a notification, or another screen — and it draws the
+  same document.
 - **Artifact strips use one component.** Managers list their files newest first.
   Tickets list only managed files linked from their lifecycle fields and pending proposal.
   A chip shows the file name without its extension and then the file type. Matching names
