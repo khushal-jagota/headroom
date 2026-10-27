@@ -138,16 +138,27 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
                 assert any(f.provider_identity == ask.ask_id for f in candidate.facts)
                 raise RuntimeError("mixed participant refused")
 
+            class BrokenObserver:
+                def __getattr__(self, name: str) -> Any:
+                    raise RuntimeError("private observation failure")
+
+            observer = BrokenObserver()
             harness.store._transaction_participant = fail
             with pytest.raises(RuntimeError, match="mixed participant refused"):
-                await harness.system.receive_remote_backend_event(event, envelope, accept)
+                await harness.system.receive_remote_backend_event(
+                    event, envelope, accept, observer=observer
+                )
             assert store.lookup_receipt("native", "native-1") is None
             assert not await harness.system.has_pending_permission_ask("c")
             assert not await harness.system.has_pending_user_input("c")
             harness.store._transaction_participant = None
-            receipt = await harness.system.receive_remote_backend_event(event, envelope, accept)
+            receipt = await harness.system.receive_remote_backend_event(
+                event, envelope, accept, observer=observer
+            )
             assert (
-                await harness.system.receive_remote_backend_event(event, envelope, accept)
+                await harness.system.receive_remote_backend_event(
+                    event, envelope, accept, observer=observer
+                )
                 == receipt
             )
             public_id = f"{token.turn_number}:{kind.value}:{ask.ask_id}"

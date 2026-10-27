@@ -175,7 +175,7 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         self.input_cut_count = 0
 
     async def _accept_envelope(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, observer: Any = None
     ) -> AcceptanceReceipt:
         if self.cut_user_input_application:
             application: JsonValue = None
@@ -190,7 +190,9 @@ class CutReceiptEndpoint(ExecutorEndpoint):
                 if isinstance(ask, dict) and ask.get("kind") == "user_input":
                     self.cut_user_input_application = False
                     self.cut_submission = envelope.submission_id
-        return await super()._accept_envelope(envelope, identity)
+        return await super()._accept_envelope(
+            envelope, identity, **({"observer": observer} if observer is not None else {})
+        )
 
     async def _send(self, message: WireMessage) -> None:
         if message.kind is WireMessageKind.file_slot and self.cut_input:
@@ -1453,9 +1455,17 @@ def test_concurrent_identical_inputs_keep_distinct_publications(
 def test_real_server_lifespan_restart_reaccepts_same_mac_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import json
+    import time
+
+    from planner.conversation.model_resolution.contracts import CachedModelResolution, ModelVariant
+    from planner.conversation.model_resolution.data import ModelResolutionStore
     from planner.core.config import load_config
     from planner.core.server import create_app
     from planner.executor import mac as mac_module
+    from planner.executor.contracts import ChildOperation
+    from planner.tickets import data as tickets_data
+    from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
     async def run() -> None:
         monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
@@ -1465,6 +1475,22 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
         Path(db_path).parent.mkdir()
         connection = connect(db_path)
         create_schema(connection)
+        # A fresh cached model keeps this scripted-child fixture provider-free.
+        ModelResolutionStore(db_path).keep(
+            ModelVariant(ConversationBackendKey.codex, "sol"),
+            CachedModelResolution("gpt-6-sol", (), int(time.time())),
+        )
+        ticket = tickets_data.create_ticket(
+            connection,
+            title="Retained active stop",
+            worker_type="coding",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            locale=TicketLocale.macos,
+            employee_backend="codex",
+            employee_launch_model="gpt-6-sol",
+        )
         connection.close()
         config = load_config(
             path=None,
@@ -1493,6 +1519,35 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 panels_server_url=proxy.origin,
                 session_factory=proxy.session_factory,
             )
+            native = ScriptedNativeChild()
+            stop_entered, release_stop = asyncio.Event(), asyncio.Event()
+            native_stop = native.stop
+
+            async def blocked_stop() -> None:
+                await native_stop()
+                stop_entered.set()
+                await release_stop.wait()
+
+            monkeypatch.setattr(native, "stop", blocked_stop)
+
+            def factory(
+                resolved: ResolvedConversationStart, capability: str, child: ChildReference
+            ) -> BackendChildFactory:
+                del resolved, capability, child
+
+                def create(**arguments: object) -> BackendChild:
+                    native.sink = cast(BackendEventSink, arguments["event_sink"])
+                    return cast(BackendChild, native)
+
+                return cast(BackendChildFactory, create)
+
+            mac.registry = NativeChildRegistry(
+                paths=mac.paths,
+                incarnation=mac.identity.executor_incarnation,
+                spool=mac.spool,
+                factory=factory,
+                message_files=ConversationMessageFiles(tmp_path / "mac/unused"),
+            )
             task = asyncio.create_task(mac.run())
             try:
                 first_app = target[0]
@@ -1502,6 +1557,61 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                         "first server did not reconcile",
                     )
                     identity = mac.identity
+                    first_endpoint = first_app.state.executor_endpoint
+                    first_system = first_app.state.conversation_system
+                    await first_system.start_conversation(
+                        ConversationStartRequest(
+                            conversation_id="c_scripted",
+                            model="gpt-6-sol",
+                            workspace_folder=tmp_path,
+                            role_materials=ConversationRoleMaterials(
+                                "A scripted test worker.",
+                                (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket.id)),
+                            ),
+                        )
+                    )
+                    await asyncio.wait_for(
+                        first_system.send(
+                            "c_scripted",
+                            text_message_content("Start"),
+                            sender_label="Test",
+                            sender=CHIEF_PRINCIPAL,
+                            recipient=Principal(PrincipalKind.ticket, ticket.id),
+                        ),
+                        5,
+                    )
+                    await eventually(
+                        lambda: not mac.spool.pending(), "initial receipts did not drain"
+                    )
+                    reference = next(iter(mac.registry.children.values())).reference
+                    first_state = first_system._conversations["c_scripted"]
+                    # Enter the same retirement owner used by kill and idle cleanup.
+                    async with first_state.lock:
+                        assert first_state.child is not None
+                        waiter = first_system._schedule_remote_retirement(
+                            first_state, first_state.child
+                        )
+                    await asyncio.wait_for(stop_entered.wait(), 5)
+                    assert waiter is not None and not waiter.done()
+                    assert first_state.child_is_quarantined
+                    stop_command, stop_future = next(
+                        pair
+                        for pair in first_endpoint.pending_commands.values()
+                        if pair[0].operation is ChildOperation.stop
+                    )
+                    assert stop_command.child == reference and not stop_future.done()
+                    retained = await first_system._store.read_executor_turn("c_scripted")
+                    assert retained is not None
+                    retained_runtime = json.loads(retained[2])
+                    assert retained_runtime["source_retired"] is False
+                    assert retained_runtime["ended"] is True
+                    assert any(
+                        command["command_id"] == stop_command.command_id
+                        for command in retained_runtime["initial_commands"]
+                    )
+                assert waiter.cancelled()
+                assert reference.child_id in mac.registry.children
+                assert native.stop_count == 1
                 second_app = create_app(config, RealClock(), lambda: connect(db_path))
                 target[0] = second_app
                 async with second_app.router.lifespan_context(second_app):
@@ -1511,11 +1621,37 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                     )
                     assert mac.identity.executor_incarnation == identity.executor_incarnation
                     assert mac.identity.connection_generation > identity.connection_generation
+                    second_endpoint = second_app.state.executor_endpoint
+                    second_system = second_app.state.conversation_system
+                    restored = await second_system._conversation_state("c_scripted")
+                    assert restored is not None and restored.child_is_quarantined
+                    assert restored.initial_shutdown_task is None
+                    assert restored.executor_child_reference == reference
+                    assert any(
+                        command == stop_command for command in restored.executor_initial_commands
+                    )
+                    assert await second_system._store.read_executor_turn("c_scripted") == retained
+                    assert not second_endpoint.pending_commands
+                    assert second_endpoint.store.child_assignment(reference) is not None
+                    assert reference.child_id in mac.registry.children
+                    assert not mac.registry._tasks[stop_command.command_id].done()
+                    await second_system._sweep_idle_children()
+                    assert restored.initial_shutdown_task is None
+                    assert native.stop_count == 1
+                    assert native.start_count == native.prompt_count == 1
+                    # Release the original Mac-owned operation only for fixture cleanup.
+                    release_stop.set()
+                    await eventually(
+                        lambda: reference.child_id not in mac.registry.children,
+                        "original native stop did not complete",
+                    )
+                    await eventually(lambda: not mac.spool.pending(), "stop receipt did not drain")
                     mac._stop.set()
                     if second_app.state.executor_endpoint.writer is not None:
                         second_app.state.executor_endpoint.writer.close()
                     await asyncio.wait_for(task, 3)
             finally:
+                release_stop.set()
                 if not task.done():
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)

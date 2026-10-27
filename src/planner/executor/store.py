@@ -18,6 +18,7 @@ from planner.conversation.events import UserInputAnswer, UserInputQuestion
 from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
+from planner.executor.capture import observe
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AcceptanceReceipt,
@@ -86,20 +87,31 @@ class ExecutorStore:
         transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
         | None = None,
         before_commit: Callable[[sqlite3.Connection], None] | None = None,
+        observer: Any = None,
+        role: str | None = None,
     ) -> Iterator[sqlite3.Connection]:
         connection = connect(self.db_path)
         try:
             with nullcontext() if transaction_context is None else transaction_context(connection):
-                connection.execute("BEGIN IMMEDIATE")
+                with observe(observer, "transaction_begin", role=role):
+                    connection.execute("BEGIN IMMEDIATE")
                 yield connection
-                if before_commit is not None:
-                    before_commit(connection)
-                connection.commit()
+                with observe(observer, "before_commit", role=role):
+                    if before_commit is not None:
+                        before_commit(connection)
+                with observe(observer, "commit_enter", role=role):
+                    connection.commit()
+                with observe(observer, "commit_call_returned", role=role):
+                    pass
         except BaseException:
-            connection.rollback()
+            with observe(observer, "rollback_enter", role=role):
+                connection.rollback()
+            with observe(observer, "rollback_call_returned", role=role):
+                pass
             raise
         finally:
-            connection.close()
+            with observe(observer, "transaction_exit", role=role):
+                connection.close()
 
     def lookup_receipt(self, sender_id: str, submission_id: str) -> AcceptanceReceipt | None:
         connection = connect(self.db_path)
@@ -133,6 +145,7 @@ class ExecutorStore:
         transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
         | None = None,
         before_commit: Callable[[sqlite3.Connection], None] | None = None,
+        observer: Any = None,
     ) -> AcceptanceReceipt:
         effect_accepted = False
 
@@ -140,14 +153,17 @@ class ExecutorStore:
             if effect_accepted and before_commit is not None:
                 before_commit(connection)
 
-        with self._transaction(transaction_context, publish_effect) as connection:
+        with self._transaction(
+            transaction_context, publish_effect, observer, "acceptance"
+        ) as connection:
             previous = self._preflight(connection, envelope, identity)
             if previous is not None:
                 return previous
             disposition = ReceiptDisposition.accepted
             connection.execute("SAVEPOINT domain_write")
             try:
-                result = writer(connection, envelope)
+                with observe(observer, "domain_effect", role="acceptance"):
+                    result = writer(connection, envelope)
                 if not connection.in_transaction:
                     raise RuntimeError("Executor domain writer committed its transaction")
                 connection.execute("RELEASE SAVEPOINT domain_write")
@@ -160,19 +176,20 @@ class ExecutorStore:
                 disposition = ReceiptDisposition.refused
                 result = cast(JsonObject, error.to_payload())
                 self._mark_refused_cleanup_evidence(connection, envelope, identity)
-            connection.execute(
-                "INSERT INTO executor_receipts VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    envelope.sender_id,
-                    envelope.submission_id,
-                    envelope.conversation_id,
-                    envelope.sequence,
-                    envelope.payload_sha256,
-                    disposition.value,
-                    _json(result),
-                    now_ms,
-                ),
-            )
+            with observe(observer, "receipt_insert", role="acceptance"):
+                connection.execute(
+                    "INSERT INTO executor_receipts VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        envelope.sender_id,
+                        envelope.submission_id,
+                        envelope.conversation_id,
+                        envelope.sequence,
+                        envelope.payload_sha256,
+                        disposition.value,
+                        _json(result),
+                        now_ms,
+                    ),
+                )
             return AcceptanceReceipt(
                 envelope.sender_id,
                 envelope.submission_id,
@@ -1185,14 +1202,14 @@ class ExecutorStore:
             self._connected(connection, identity)
 
     def preflight(
-        self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity
+        self, envelope: QueuedEnvelope, *, identity: ExecutorIdentity, observer: Any = None
     ) -> AcceptanceReceipt | None:
         """Validate prior result/order/files before a separately serialized native act.
 
         This grants no accepted receipt. The endpoint retains the per-conversation
         lock through native outcome recording and must preserve sender dedup IDs.
         """
-        with self._transaction() as connection:
+        with self._transaction(observer=observer, role="preflight") as connection:
             return self._preflight(connection, envelope, identity)
 
     def _preflight(

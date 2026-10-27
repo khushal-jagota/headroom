@@ -5476,23 +5476,31 @@ class SqliteProcessConversationSystem:
                 self._take_in_written_rows(state, written)
             return receipt
 
-    async def receive_remote_backend_event(self, event: Any, envelope: Any, acceptor: Any) -> Any:
+    async def receive_remote_backend_event(
+        self, event: Any, envelope: Any, acceptor: Any, observer: Any = None
+    ) -> Any:
         """Apply native events through lifecycle publication and executor acceptance."""
+        from planner.executor.capture import observe, safe_call
         from planner.executor.codec import decode_event_arguments
         from planner.executor.contracts import BackendEventMethod, ReceiptDisposition
 
-        state = await self._conversation_state(event.child.conversation_id)
+        with observe(observer, "state_lookup"):
+            state = await self._conversation_state(event.child.conversation_id)
         if state is None:
             raise ValueError("remote event names an unknown conversation")
         reservation = state.reserved_turn
         if reservation is not None and event.turn == reservation.token:
-            await reservation.resolved.wait()
-        args = decode_event_arguments(event)
+            with observe(observer, "reservation_wait"):
+                await reservation.resolved.wait()
+        with observe(observer, "event_decode"):
+            args = decode_event_arguments(event)
         written: tuple[StoredConversationEvent, ...] = ()
         fresh = False
         method, token = event.method, event.turn
         should_drain = False
+        safe_call(observer, "enter", "state_lock_wait")
         async with state.lock:
+            safe_call(observer, "complete", "state_lock_wait")
             running = state.running_turn
             live = token is None or (
                 running is not None
@@ -5655,25 +5663,26 @@ class SqliteProcessConversationSystem:
             def write(conn: Any, accepted: Any) -> Any:
                 nonlocal written, fresh
                 del accepted
-                written = self._store.append_in_transaction(
-                    conn,
-                    state.record.conversation_id,
-                    payloads,
-                    lifecycle=lifecycle,
-                    agent_activity=bool(payloads)
-                    and not compacted
-                    and running is not None
-                    and not running.automatic_compaction,
-                    automatic_compaction_confirmed=compacted
-                    or (
-                        live
-                        and method is BackendEventMethod.turn_ended
+                with observe(observer, "conversation_append"):
+                    written = self._store.append_in_transaction(
+                        conn,
+                        state.record.conversation_id,
+                        payloads,
+                        lifecycle=lifecycle,
+                        agent_activity=bool(payloads)
+                        and not compacted
                         and running is not None
-                        and running.compaction_confirmed
-                    ),
-                    automatic_compaction_result=compaction_result,
-                    create_failure_notice=failure_notice,
-                )
+                        and not running.automatic_compaction,
+                        automatic_compaction_confirmed=compacted
+                        or (
+                            live
+                            and method is BackendEventMethod.turn_ended
+                            and running is not None
+                            and running.compaction_confirmed
+                        ),
+                        automatic_compaction_result=compaction_result,
+                        create_failure_notice=failure_notice,
+                    )
                 if method is BackendEventMethod.vendor_session_cursor_rebound:
                     self._store.update_remote_identity_in_transaction(
                         conn,
@@ -5695,53 +5704,62 @@ class SqliteProcessConversationSystem:
                 fresh = True
                 return {"applied": live}
 
-            receipt = self._store.accept_executor_effect(envelope, acceptor, write, mutation)
-            if fresh and receipt.disposition is ReceiptDisposition.accepted:
-                if self._signal is None:
-                    for operation in operations:
-                        setattr(operation.target, operation.attribute, operation.value)
-                self._take_in_written_rows(state, written)
-                if (
-                    written
-                    and running is not None
-                    and not running.automatic_compaction
-                    and not compacted
-                ):
-                    last = written[-1]
-                    state.record = replace(
-                        state.record,
-                        latest_agent_activity_at=last.created_at,
-                        latest_agent_activity_sequence=last.sequence,
-                    )
-                if compacted:
-                    state.record = replace(
-                        state.record,
-                        automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
-                        automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
-                    )
-                elif compaction_result is AutomaticCompactionResult.not_compacted:
-                    state.record = replace(
-                        state.record,
-                        automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
-                    )
-                if method is BackendEventMethod.vendor_session_cursor_rebound:
-                    state.record = replace(
-                        state.record, vendor_session_cursor=args["vendor_session_cursor"]
-                    )
-                elif method is BackendEventMethod.composer_catalog_reported:
-                    state.record = replace(state.record, composer_catalog=args["composer_catalog"])
-                if predicted is not None and predicted.ended:
-                    self._settle_phase(state)
-                    should_drain = True
-                if live and token is not None:
-                    if method is BackendEventMethod.agent_message_delta:
-                        self._publish_live_tail_frame(state, token, AgentMessageDeltaFrame(**args))
-                    elif method is BackendEventMethod.tool_call_progress:
-                        self._publish_live_tail_frame(state, token, ToolCallProgressFrame(**args))
-                    elif method is BackendEventMethod.model_thinking_happened:
-                        self._publish_model_thinking(state, token)
-                    elif method is BackendEventMethod.agent_message_completed:
-                        completed_backend_text_event(args["content"])
+            with observe(observer, "acceptor"):
+                receipt = self._store.accept_executor_effect(envelope, acceptor, write, mutation)
+            safe_call(observer, "receipt", receipt)
+            with observe(observer, "publication_finalize"):
+                if fresh and receipt.disposition is ReceiptDisposition.accepted:
+                    if self._signal is None:
+                        for operation in operations:
+                            setattr(operation.target, operation.attribute, operation.value)
+                    self._take_in_written_rows(state, written)
+                    if (
+                        written
+                        and running is not None
+                        and not running.automatic_compaction
+                        and not compacted
+                    ):
+                        last = written[-1]
+                        state.record = replace(
+                            state.record,
+                            latest_agent_activity_at=last.created_at,
+                            latest_agent_activity_sequence=last.sequence,
+                        )
+                    if compacted:
+                        state.record = replace(
+                            state.record,
+                            automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
+                            automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+                        )
+                    elif compaction_result is AutomaticCompactionResult.not_compacted:
+                        state.record = replace(
+                            state.record,
+                            automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+                        )
+                    if method is BackendEventMethod.vendor_session_cursor_rebound:
+                        state.record = replace(
+                            state.record, vendor_session_cursor=args["vendor_session_cursor"]
+                        )
+                    elif method is BackendEventMethod.composer_catalog_reported:
+                        state.record = replace(
+                            state.record, composer_catalog=args["composer_catalog"]
+                        )
+                    if predicted is not None and predicted.ended:
+                        self._settle_phase(state)
+                        should_drain = True
+                    if live and token is not None:
+                        if method is BackendEventMethod.agent_message_delta:
+                            self._publish_live_tail_frame(
+                                state, token, AgentMessageDeltaFrame(**args)
+                            )
+                        elif method is BackendEventMethod.tool_call_progress:
+                            self._publish_live_tail_frame(
+                                state, token, ToolCallProgressFrame(**args)
+                            )
+                        elif method is BackendEventMethod.model_thinking_happened:
+                            self._publish_model_thinking(state, token)
+                        elif method is BackendEventMethod.agent_message_completed:
+                            completed_backend_text_event(args["content"])
         if should_drain:
             asyncio.create_task(self._drain_held_prompts(state))
         return receipt
