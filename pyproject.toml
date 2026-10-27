@@ -13,6 +13,7 @@ dependencies = [
   "fastapi",
   "uvicorn",
   "click",
+  "cryptography==49.0.0",
   "httpx",
   "pydantic",
   "PyYAML",

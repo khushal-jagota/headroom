@@ -15,6 +15,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "review_messages",
         "review_work_cards",
         "owner_message_preview",
+        "automatic_project_measures",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

@@ -1,0 +1,77 @@
+"""Synthetic admitted scripts and named credential fixtures."""
+
+from __future__ import annotations
+
+import hashlib
+import time
+
+from planner.credentials.contracts import (
+    CredentialReference,
+    CredentialScope,
+    ResolvedCredential,
+)
+from planner.measure_sources.configuration import DEFAULT_LIMITS
+from planner.measure_sources.contracts import (
+    RunAdmission,
+    RunMode,
+    RunStatus,
+    RuntimeLimits,
+    RunTrigger,
+    SourceRun,
+)
+from planner.measures.contracts import MeasureKind, OutputMeasure
+
+
+def admission(
+    script: str,
+    *,
+    outputs: tuple[str, ...] = ("m",),
+    limits: RuntimeLimits = DEFAULT_LIMITS,
+    run_id: str = "synthetic-run",
+) -> RunAdmission:
+    run = SourceRun(
+        id=run_id,
+        source_id="synthetic-source",
+        mode=RunMode.test,
+        trigger=RunTrigger.test,
+        status=RunStatus.running,
+        source_revision=1,
+        script_revision=1,
+        script_sha256=hashlib.sha256(script.encode()).hexdigest(),
+        frozen_at=1793059200,
+        required_outputs=tuple(
+            OutputMeasure(value, 1, MeasureKind.reading, "Europe/Berlin", None, "2026-10-27", None)
+            for value in outputs
+        ),
+        history=None,
+        schedule_date=None,
+        schedule_time=None,
+        created_at=1793059200,
+        started_at=1793059200,
+        finished_at=None,
+        failure=None,
+        metrics=None,
+        observation_count=0,
+    )
+    return RunAdmission(
+        run,
+        script,
+        CredentialScope("synthetic-project", "synthetic-account"),
+        (),
+        limits,
+        time.monotonic() + limits.wall_seconds,
+    )
+
+
+class MemoryCredentials:
+    def __init__(self, *credentials: ResolvedCredential) -> None:
+        self.credentials = credentials
+        self.calls: list[tuple[CredentialScope, CredentialReference]] = []
+
+    def resolve(self, scope: CredentialScope, reference: CredentialReference) -> ResolvedCredential:
+        self.calls.append((scope, reference))
+        return next(
+            item
+            for item in self.credentials
+            if item.metadata.scope == scope and item.metadata.reference == reference
+        )

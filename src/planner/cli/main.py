@@ -33,9 +33,12 @@ from planner.cli.record_projection import (
     render_text,
 )
 from planner.core.authctx import normalize_manager_identity
+from planner.credentials.cli import credential as credential_group
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.maintenance.cli import maintenance as maintenance_group
+from planner.measure_sources.cli import measure_source as measure_source_group
+from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.contracts import SkillPatch
@@ -442,6 +445,9 @@ def main() -> None:
 
 main.add_command(environment_group)
 main.add_command(maintenance_group)
+main.add_command(credential_group)
+main.add_command(measure_group)
+main.add_command(measure_source_group)
 environment_group.hidden = True
 
 

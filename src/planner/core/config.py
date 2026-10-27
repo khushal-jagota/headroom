@@ -53,6 +53,8 @@ class Config:
     test_mode: bool
     fake_now: str | None
     app_sha: str | None = None
+    credential_key_path: str = "data/credential-secrets/key"
+    measure_source_timeout_seconds: int = 30
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -243,8 +245,20 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         except AppValidationError as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
 
+    db_path = _str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db")
+    credential_key_path = _str_value(
+        cfg,
+        env,
+        "credential_key_path",
+        "PLAN_CREDENTIAL_KEY_PATH",
+        str(Path(db_path).parent / "credential-secrets" / "key"),
+    )
     return Config(
-        db_path=_str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db"),
+        db_path=db_path,
+        credential_key_path=credential_key_path,
+        measure_source_timeout_seconds=_positive_int_value(
+            cfg, env, "measure_source_timeout_seconds", "PLAN_MEASURE_SOURCE_TIMEOUT_SECONDS", 30
+        ),
         port=_int_value(cfg, env, "port", "PLAN_PORT", 8767),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
