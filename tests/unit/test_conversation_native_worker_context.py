@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from pydantic import TypeAdapter
 from tests.support.conversation_claude_agent_sdk_bench import (
     SESSION_ID,
     _ScriptedClaudeSdkClient,
@@ -26,7 +27,10 @@ from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkChildLaunch,
 )
 from planner.conversation.backends.contracts import BackendChildFactory
-from planner.conversation.backends.hermes_acp import HermesAcpBackendChildFactory
+from planner.conversation.backends.hermes_acp import (
+    HermesAcpBackendChild,
+    HermesAcpBackendChildFactory,
+)
 from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
@@ -39,7 +43,11 @@ from planner.conversation.contracts import (
     WorkspacePathPolicy,
 )
 from planner.conversation.events import PromptEventPayload
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import (
+    MessageContent,
+    message_content_text,
+    text_message_content,
+)
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
@@ -254,6 +262,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                     }
                 )
                 native = registry.children[reference.child_id].native
+                assert isinstance(native, HermesAcpBackendChild)
                 async with asyncio.timeout(2):
                     while not native._is_catalog_command(text_message_content("/inspect")):
                         await asyncio.sleep(0.001)
@@ -381,7 +390,10 @@ def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
             assert written[0].arguments["content"] == written[1].arguments["content"]
             for command in written:
                 assert command.arguments["sender_content"] == encode_value(content)
-                text = "\n\n".join(piece["text"] for piece in command.arguments["content"])
+                decoded_content: MessageContent = TypeAdapter(MessageContent).validate_python(
+                    command.arguments["content"]
+                )
+                text = message_content_text(decoded_content)
                 assert text.startswith("[Authenticated Panels reply requirement]\n")
                 assert text.count(NATIVE_WORKER_CONTEXT) == int(expected_context)
             assert len({command.child.child_id for command in written}) == 2
