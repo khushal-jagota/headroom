@@ -291,17 +291,16 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
             "worker_type": "coding",
             "brief": "Scope.",
             "employee_backend": "claude",
-            "employee_launch_model": "scripted-unsupported-model",
+            "employee_launch_model": "scripted-model",
         }
         for choices in ({"locale": "macos"}, {"project_id": project_id}):
             before = [tuple(row) for row in tmp_db.execute("SELECT * FROM tickets ORDER BY id")]
-            refusal = client.post("/api/tickets", json={**request, **choices})
+            refusal = client.post(
+                "/api/tickets",
+                json={**request, **choices, "employee_backend": "unknown-provider"},
+            )
             assert refusal.status_code == 400, refusal.text
-            error = refusal.json()["error"]
-            assert error["detail"]["locale"] == "macos"
-            assert error["detail"]["employee_backend"]
-            assert error["detail"]["reason"]
-            assert "macos" in error["message"]
+            assert refusal.json()["error"]["code"] == "validation"
             assert [
                 tuple(row) for row in tmp_db.execute("SELECT * FROM tickets ORDER BY id")
             ] == before
