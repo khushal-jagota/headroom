@@ -53,6 +53,18 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
+  measureSources: (projectId: string, offset: number, limit = 20) =>
+    versionedJsonQuery<import("./measureSources/responses").SourceListResponse>(
+      ["measure-sources", { projectId, offset, limit }],
+      `/api/measure-sources?limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}`),
+  measureSource: (id: string) =>
+    versionedJsonQuery<import("./measureSources/wire").MeasureSource>(["measure-source", id], `/api/measure-sources/${encodeURIComponent(id)}`),
+  measureSourceRuns: (id: string, offset: number, limit = 10) =>
+    versionedJsonQuery<import("./measureSources/responses").SourceRunsResponse>(["measure-source-runs", id, { offset, limit }], `/api/measure-sources/${encodeURIComponent(id)}/runs?limit=${limit}&offset=${offset}`),
+  measureSourceRun: (id: string) =>
+    versionedJsonQuery<import("./measureSources/wire").SourceRunDetail>(["measure-source-run", id], `/api/measure-source-runs/${encodeURIComponent(id)}`),
+  sourceCredentials: (projectId: string, account: string, offset: number, limit = 20) =>
+    versionedJsonQuery<import("./measureSources/responses").CredentialListResponse>(["source-credentials", { projectId, account, offset, limit }], `/api/credentials?project_id=${encodeURIComponent(projectId)}&account=${encodeURIComponent(account)}&limit=${limit}&offset=${offset}`),
   recordedUsage: (days: UsageDays, timezone: string) =>
     jsonQuery<UsageSummary>(
       ["recorded-usage", { days, timezone }],

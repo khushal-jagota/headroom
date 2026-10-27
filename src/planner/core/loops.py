@@ -15,6 +15,7 @@ from planner.manager_wakes.runtime import ManagerWakeLoop
 from planner.notifications.runtime import NotificationLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
+from planner.scheduled_tickets.registry import build_participants
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 
 _LOGGER = logging.getLogger(__name__)
@@ -153,6 +154,7 @@ def prepare_background_loops(
                 config.db_path,
                 clock,
                 busy_timeout_ms=config.db_busy_timeout_ms,
+                participants=build_participants(config, clock),
             )
             candidate_loop = WorkerStepReadinessLoop(
                 config.db_path,

@@ -17,27 +17,37 @@ from planner.manager_wakes.contracts import (
     WakeSourceKind,
 )
 from planner.manager_wakes.logic.proposal_notices import suppression_reason
+from planner.measure_sources.contracts import FailureNoticeIdentity
+from planner.measure_sources.notices import notice_is_current
 from planner.tickets.logic.proposal_routing import parked_destination, route_to_holder
 
 
 def create_wake(
     conn: sqlite3.Connection,
     *,
-    manager_id: str,
-    ticket_id: str,
+    manager_id: str | None,
+    ticket_id: str | None,
     source_kind: WakeSourceKind,
     source_revision: int,
     summary: str,
     now: int,
     target: Principal | None = None,
     source_conversation_id: str | None = None,
+    source_identity: FailureNoticeIdentity | None = None,
 ) -> bool:
     """Insert one wake for one persisted source identity. The caller owns the transaction."""
-    resolved_target = target or Principal(PrincipalKind.manager, manager_id)
+    if target is None and manager_id is None:
+        raise ValueError("a notice requires an explicit recipient")
+    resolved_target = target or Principal(PrincipalKind.manager, str(manager_id))
+    if (source_kind is WakeSourceKind.source_failure) != (source_identity is not None):
+        raise ValueError("source failure notice requires its typed identity")
+    if source_identity is not None and source_identity.recipient != resolved_target:
+        raise ValueError("source notice identity must match the recipient")
     inserted = conn.execute(
         "INSERT OR IGNORE INTO manager_wakes("
         "manager_id,ticket_id,source_kind,source_revision,summary,created_at,"
-        "target_kind,target_id,source_conversation_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        "target_kind,target_id,source_conversation_id,measure_source_id,source_episode,"
+        "source_responsibility_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             manager_id,
             ticket_id,
@@ -48,6 +58,9 @@ def create_wake(
             resolved_target.kind.value,
             resolved_target.id,
             source_conversation_id,
+            None if source_identity is None else source_identity.source_id,
+            None if source_identity is None else source_identity.episode,
+            None if source_identity is None else source_identity.responsibility_revision,
         ),
     )
     return inserted.rowcount == 1
@@ -70,9 +83,7 @@ def create_proposal_wake(
         ticket_id=ticket_id,
         source_kind=WakeSourceKind.proposal,
         source_revision=proposal_revision,
-        summary=(
-            f"Ticket `{ticket_id}` ({ticket_title}) filed a proposal for `{proposal_field}`."
-        ),
+        summary=(f"Ticket `{ticket_id}` ({ticket_title}) filed a proposal for `{proposal_field}`."),
         now=now,
         target=target,
     )
@@ -135,9 +146,7 @@ def _batch_from_row(row: sqlite3.Row) -> WakeBatch:
         conversation_id=(
             str(row["conversation_id"]) if row["conversation_id"] is not None else None
         ),
-        process_token=(
-            str(row["process_token"]) if row["process_token"] is not None else None
-        ),
+        process_token=(str(row["process_token"]) if row["process_token"] is not None else None),
     )
 
 
@@ -165,15 +174,12 @@ def recover_accepted_batches_from_other_processes(
     return updated.rowcount
 
 
-def release_pending_batch(
-    conn: sqlite3.Connection, batch_id: int, *, process_token: str
-) -> bool:
+def release_pending_batch(conn: sqlite3.Connection, batch_id: int, *, process_token: str) -> bool:
     """Return a not-yet-sent batch to its source wakes so later events can join it."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         deleted = conn.execute(
-            "DELETE FROM manager_wake_batches WHERE id=? AND status='pending' "
-            "AND process_token=?",
+            "DELETE FROM manager_wake_batches WHERE id=? AND status='pending' AND process_token=?",
             (batch_id, process_token),
         )
         commit_without_change_signal(conn)
@@ -203,7 +209,7 @@ def _compose_message(rows: Iterable[sqlite3.Row]) -> str:
     return (
         "Review these new events that need your attention:\n\n"
         f"{lines}\n\n"
-        "Read the canonical Ticket state before you act. These events can share one turn."
+        "Read the canonical source or Ticket state before you act. These events can share one turn."
     )
 
 
@@ -292,14 +298,28 @@ def admit_notice_batch(
         return True, "notice_batch_discarded"
     rows = conn.execute(
         "SELECT w.* FROM manager_wakes w JOIN manager_wake_batch_members m ON m.wake_id=w.id "
-        "WHERE m.batch_id=? AND w.source_kind='proposal'",
+        "WHERE m.batch_id=? AND w.source_kind IN ('proposal','source_failure')",
         (batch["id"],),
     ).fetchall()
-    obsolete = tuple(value for row in rows if (value := _obsolete_proposal(conn, row)) is not None)
-    if obsolete:
+    stale_sources = tuple(
+        row
+        for row in rows
+        if row["source_kind"] == "source_failure" and not notice_is_current(conn, row)
+    )
+    obsolete = tuple(
+        value
+        for row in rows
+        if row["source_kind"] == "proposal" and (value := _obsolete_proposal(conn, row)) is not None
+    )
+    if obsolete or stale_sources:
+        for row in stale_sources:
+            conn.execute("UPDATE manager_wakes SET closed_at=? WHERE id=?", (now, row["id"]))
         for value in obsolete:
             _retire_proposal(conn, value, sender_message_id=sender_message_id, now=now)
-        reason = ",".join(sorted({value.reason.value for value in obsolete}))
+        reasons = {value.reason.value for value in obsolete}
+        if stale_sources:
+            reasons.add("source_failure_changed")
+        reason = ",".join(sorted(reasons))
         conn.execute(
             "UPDATE manager_wake_batches SET status='discarded',updated_at=? WHERE id=?",
             (now, batch["id"]),
@@ -326,11 +346,24 @@ def _retire_obsolete_unsent_proposals(conn: sqlite3.Connection, *, now: int) -> 
             _retire_proposal(conn, obsolete, sender_message_id=None, now=now)
 
 
+def _retire_obsolete_source_notices(conn: sqlite3.Connection, *, now: int) -> None:
+    rows = conn.execute(
+        "SELECT w.* FROM manager_wakes w WHERE w.source_kind='source_failure' "
+        "AND w.closed_at IS NULL AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members m "
+        "JOIN manager_wake_batches b ON b.id=m.batch_id WHERE m.wake_id=w.id "
+        "AND b.status IN ('dispatching','accepted','uncertain'))"
+    ).fetchall()
+    for row in rows:
+        if not notice_is_current(conn, row):
+            conn.execute("UPDATE manager_wakes SET closed_at=? WHERE id=?", (now, row["id"]))
+
+
 def claim_next_batch(conn: sqlite3.Connection, *, process_token: str, now: int) -> WakeBatch | None:
     """Group every currently available wake for the oldest waiting manager."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         _retire_obsolete_unsent_proposals(conn, now=now)
+        _retire_obsolete_source_notices(conn, now=now)
         target = conn.execute(
             "SELECT w.target_kind,w.target_id FROM manager_wakes w "
             "WHERE w.closed_at IS NULL AND NOT EXISTS ("

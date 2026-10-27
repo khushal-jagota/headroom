@@ -57,6 +57,8 @@ path. The Manager reads canonical Item and Ticket state before it acts on a noti
 
 **The core of the work**
 
+- **Automatic project measures** (`measures.md`) — dated provider values, derived measures,
+  source setup, daily collection, credentials, and repair.
 - **Who may act** (`authority.md`) — one address per operation, and the one sentence
   that decides every call: you may act on anything strictly below you.
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages

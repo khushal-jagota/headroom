@@ -1,6 +1,7 @@
 <script lang="ts">
   import ConfigRoute from "./ConfigRoute.svelte";
   import NotificationsRoute from "./NotificationsRoute.svelte";
+  import MeasureSourcesRoute from "./MeasureSourcesRoute.svelte";
   import ScheduledTasksRoute from "./ScheduledTasksRoute.svelte";
   import { nestedHref, prefixHref, type UtilityHref } from "../lib/utilityAddress";
   let { section = "config", roleKind = "index", roleId, href = prefixHref("#/settings") }: {
@@ -17,11 +18,13 @@
     <nav class="settings-sections" aria-label="Settings">
       <a href={href(["config"])} aria-current={section === "config" ? "page" : undefined}>Config</a>
       <a href={href(["scheduled-tasks"])} aria-current={section === "scheduled-tasks" ? "page" : undefined}>Scheduled tasks</a>
+      <a href={href(["measure-sources"])} aria-current={section === "measure-sources" ? "page" : undefined}>Measure sources</a>
       <a href={href(["notifications"])} aria-current={section === "notifications" ? "page" : undefined}>Notifications</a>
     </nav>
   </div>
   {#if section === "config"}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />
   {:else if section === "scheduled-tasks"}<ScheduledTasksRoute />
+  {:else if section === "measure-sources"}<MeasureSourcesRoute />
   {:else if section === "notifications"}<NotificationsRoute />{/if}
 </section>
 

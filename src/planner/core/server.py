@@ -43,6 +43,7 @@ from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.web_assets import WebAssets
+from planner.credentials.api import router as credentials_router
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
@@ -60,6 +61,9 @@ from planner.files.catalog.api import router as artifact_catalog_router
 from planner.ideas.api import router as ideas_router
 from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
+from planner.measure_sources.api import router as measure_sources_router
+from planner.measure_sources.contracts import SourceRuntime
+from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
@@ -151,6 +155,7 @@ def create_app(
     conn_factory: Callable[[], sqlite3.Connection],
     *,
     conversation_system_for_test: ConversationSystem | None = None,
+    source_runtime_for_test: SourceRuntime | None = None,
     backend_child_factories_for_test: Mapping[ConversationBackendKey, BackendChildFactory]
     | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
@@ -158,6 +163,8 @@ def create_app(
         Callable[[Config, str | None, str | None], VpsStatusSummary] | None
     ) = None,
 ) -> FastAPI:
+    if source_runtime_for_test is not None and not config.test_mode:
+        raise ValueError("source_runtime_for_test is accepted only in test mode")
     if conversation_system_for_test is not None and not config.test_mode:
         raise ValueError("conversation_system_for_test is accepted only in test mode")
     if backend_child_factories_for_test is not None and not config.test_mode:
@@ -255,6 +262,25 @@ def create_app(
                     asyncio_loop=asyncio.get_running_loop(),
                 )
 
+            elif source_runtime_for_test is not None:
+                # Explicit test-code composition exercises the real source clock,
+                # admission, and dispatcher without starting employee/model loops.
+                from planner.core.loops import BackgroundLoops
+                from planner.measure_sources.scheduling import SourceScheduleParticipant
+                from planner.scheduled_tickets.runtime import ScheduledTicketLoop
+
+                loops = BackgroundLoops(
+                    shutdown_grace_seconds=float(config.shutdown_grace_seconds),
+                    scheduled_ticket_loop=ScheduledTicketLoop(
+                        config.db_path,
+                        clock,
+                        busy_timeout_ms=config.db_busy_timeout_ms,
+                        participants=(
+                            SourceScheduleParticipant(config, clock, source_runtime_for_test),
+                        ),
+                    ),
+                )
+
             from planner.environments.vps_metrics.collectors import LinuxCollector
             from planner.environments.vps_metrics.data import Store
 
@@ -340,6 +366,9 @@ def create_app(
         legacy_managers_router,
         ideas_router,
         scheduled_tickets_router,
+        measure_sources_router,
+        measures_router,
+        credentials_router,
         notifications_router,
         feedback_router,
         worker_settings_router,
