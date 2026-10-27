@@ -1,5 +1,7 @@
 # Automatic project measures
 
+This build provides backend APIs and CLI commands only. It adds no screens or secret-entry form.
+
 Measures store dated numbers for Projects. A source runs a saved Python script. An assembled measure calculates arithmetic from retained observations. Another source needs a script and configuration, not a deployment.
 
 The owner chose trusted scripts and simple, replaceable secret storage. Scripts run as ordinary child processes with the application's Python environment. They can use installed packages, files, subprocesses, and network access. This feature does not contain hostile code.
@@ -8,7 +10,7 @@ The owner chose trusted scripts and simple, replaceable secret storage. Scripts 
 
 Create a source with a name, Project, account, and responsible Manager or Chief. The existing assignment chain controls source work. The responsible agent and its assigned Workers can save scripts, configure schedules, test, and collect. There is no repair designation or publication step. Taken measures use that same source authority. Assembled definitions use the existing owner/Chief authority for Project definitions.
 
-Use Settings → Measure sources to enter a named credential directly. Choose its authentication kind: bearer token, named header, or Basic authentication. Agents discover descriptive names and metadata. They do not receive the entered value in a metadata response. Secret values belong in this form, not script text or conversation messages.
+The backend supports future owner secret submission through `POST /api/credentials` and replacement through `PUT /api/credentials/{id}/secret`. Supported authentication kinds are bearer token, named header, and Basic authentication. This build includes no UI for these operations. The credential CLI lists descriptive names and metadata only. Metadata responses omit secret values. Scripts reference named keys rather than embed secret literals.
 
 Credentials use a separate replaceable cipher/resolver interface. The current implementation stores encrypted values in SQLite and a separate local encryption key. `credential_key_path` or `PLAN_CREDENTIAL_KEY_PATH` selects that key. New key files use private permissions. Back up the database and its key together. A missing or incorrect key causes a real credential failure; the system does not silently reset existing encrypted records.
 
@@ -62,13 +64,13 @@ There is no fixed history-window, day-offset, collection-row, source-output, exp
 
 ## Automatic collection and repair
 
-Enable a daily server-local `HH:MM` schedule through the source controls or `set-schedule`. The existing daily scheduler creates one receipt per source/date/time. Manual `request-run` works even when the daily schedule is disabled. Both tests and collections use the same saved script and require its current revision.
+Enable a daily server-local `HH:MM` schedule through `panels measure-source set-schedule`. The existing daily scheduler creates one receipt per source/date/time. Manual `request-run` works even when the daily schedule is disabled. Both tests and collections use the same saved script and require its current revision.
 
 Runs execute outside the request and polling threads. At most two run concurrently, with one per source. This worker count is an operational setting in `measure_sources/settings.py`. Existing receipts preserve pending work; an interrupted run reports interruption. There is no catch-up across missed days, automatic request retry choreography, or durable provider-job continuation. A script can submit and poll an asynchronous provider job during its run.
 
 `measure_source_timeout_seconds` in configuration, or `PLAN_MEASURE_SOURCE_TIMEOUT_SECONDS`, sets an ordinary execution timeout. Its default is 30 seconds and it has no compiled maximum. Process cleanup terminates the owned process group and reaps its direct child. Shared shutdown retains ownership while work remains live and reports cleanup failures after independent loop drains.
 
-An actual collection failure preserves prior values and notifies the responsible agent through the existing notice system. Repeated failures update the same open failure episode. The agent can save a corrected script and rerun it directly, or ask the user for missing information or a replacement key. A successful collection clears the failure. A test does not clear a failed collection. The interface shows actual run status and the latest retained values; it does not infer overdue failures from a clock threshold.
+An actual collection failure preserves prior values and notifies the responsible agent through the existing notice system. Repeated failures update the same open failure episode. The agent can save a corrected script and rerun it directly, or ask the user for missing information or a replacement key. A successful collection clears the failure. A test does not clear a failed collection. The API and CLI expose actual run status and retained values. They do not infer overdue failures from a clock threshold.
 
 Failure records contain structured categories, HTTP status where applicable, and a known exception type and script line when available. They do not copy raw exceptions, provider responses, or stdout/stderr into records. Output streams are drained and discarded.
 

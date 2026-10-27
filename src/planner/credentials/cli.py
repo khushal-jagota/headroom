@@ -10,7 +10,7 @@ from planner.cli.measure_io import emit, json_option, page_options
 
 @click.group("credential")
 def credential() -> None:
-    """Discover credential references. Secrets use the owner form."""
+    """Discover credential references. Secret writes use the owner API."""
 
 
 @credential.command("list")

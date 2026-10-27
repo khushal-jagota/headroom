@@ -59,7 +59,7 @@ export function parseUtilityPath(
   if (utility === "settings") {
     const section = path[0] || "config";
     if (section !== "config") {
-      if (!["notifications", "scheduled-tasks", "measure-sources"].includes(section) || path.length > 1) return null;
+      if (!["notifications", "scheduled-tasks"].includes(section) || path.length > 1) return null;
       return { utility, settings: { section, roleKind: "index" } };
     }
     const config = parseConfigSelection(path.slice(1));

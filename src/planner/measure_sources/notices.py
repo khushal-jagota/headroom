@@ -65,7 +65,7 @@ def notify_episode(conn: sqlite3.Connection, source: MeasureSource, *, now: int)
         f"Suggested collection dates: {affected}. "
         f"Inspect source {source.id} and run {run.id}. "
         "Repair the source script with measure-source submit-script, then request-run to collect. "
-        "Credential replacement uses the owner form. "
+        "Credential replacement requires owner API submission. "
         "If you cannot repair it, message the user through the existing conversation route. "
         "Only a successful collection restores source health."
     )
