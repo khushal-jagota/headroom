@@ -1053,7 +1053,20 @@
       if (!moved) return;
       // Changing height is not a reason to move the thread. Only coming back from
       // rest is, because the thread was not there to be read a moment ago.
-      if (previous === "rest" && wanted !== "rest") pendingOpen = true;
+      if (previous === "rest" && wanted !== "rest") {
+        pendingOpen = true;
+        // A plain reopen owns a fresh destination. Saved-address restoration keeps
+        // its distinct manual ownership, including a reader replacement in flight.
+        if (textRestoration === null && (viewAnchor === null || viewAnchor.following)) {
+          manualReader = false;
+          retirementOwner = null;
+          navigationPending = false;
+          if (answerRoomMessageId === null && heldSent === null && heldUnreadKey === null) {
+            reservedSpacePixels = 0;
+            retainedTopInset = null;
+          }
+        }
+      }
       requestReconciliation();
     });
   });
