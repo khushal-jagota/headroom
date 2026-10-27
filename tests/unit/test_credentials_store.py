@@ -30,6 +30,8 @@ from planner.credentials.contracts import (
 )
 from planner.credentials.logic.validation import associated_data, validate_secret
 from planner.credentials.store import DatabaseCredentialResolver, FileCredentialCipher
+from planner.measure_sources import actions as source_actions
+from planner.measure_sources.contracts import SourceCreate
 
 SECRET = "synthetic-credential-do-not-expose-94"
 REPLACEMENT = "synthetic-replacement-75"
@@ -48,9 +50,17 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
     tmp_db: Connection, tmp_path: Path
 ) -> None:
     key = tmp_path / "private" / "key"
+    requested = replace(write(), scope=CredentialScope("project_vylo", " fixture-account "))
     metadata = actions.create_credential(
-        tmp_db, write(), principal=OWNER_PRINCIPAL, now=1, key_path=key
+        tmp_db, requested, principal=OWNER_PRINCIPAL, now=1, key_path=key
     )
+    source = source_actions.create_source(
+        tmp_db,
+        SourceCreate("Named-key source", requested.scope, CHIEF_PRINCIPAL),
+        principal=OWNER_PRINCIPAL,
+        now=1,
+    )
+    assert source.scope == metadata.scope
     encrypted = data.read_encrypted(tmp_db, metadata.id)
     assert SECRET.encode() not in encrypted.ciphertext
     assert SECRET not in json.dumps(data.metadata_json(metadata))
@@ -59,7 +69,7 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
     assert SECRET not in public and "ciphertext" not in public and "nonce" not in public
     cipher = FileCredentialCipher(key, has_records=True)
     resolver = DatabaseCredentialResolver(tmp_db, cipher)
-    assert resolver.resolve(metadata.scope, metadata.reference).secret == BearerSecret(SECRET)
+    assert resolver.resolve(source.scope, metadata.reference).secret == BearerSecret(SECRET)
     with pytest.raises(PlannerError, match="scope"):
         resolver.resolve(replace(metadata.scope, account="other-account"), metadata.reference)
     with pytest.raises(PlannerError, match="decrypted"):

@@ -71,7 +71,7 @@ def create_source(
                 source_id,
                 request.name.strip(),
                 request.scope.project_id,
-                request.scope.account.strip(),
+                request.scope.account,
                 request.responsible.kind.value,
                 request.responsible.id
                 if request.responsible.kind is PrincipalKind.manager

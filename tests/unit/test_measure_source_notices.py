@@ -57,7 +57,7 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
             assert "Synthetic source" in actual_prompt and "fixture" in actual_prompt
             assert (
                 "HTTP status: 401" in actual_prompt
-                and "Affected dates: 2026-10-27" in actual_prompt
+                and "Suggested collection dates: 2026-10-27" in actual_prompt
             )
             assert "Last successful collection" in actual_prompt
             assert (
