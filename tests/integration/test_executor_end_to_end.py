@@ -2875,3 +2875,157 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
             await harness.close()
 
     asyncio.run(run())
+
+
+def test_historical_inventory_confirmation_unblocks_real_mac_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Old evidence confirms without settling callers; FIFO replay publishes exactly once."""
+    import hashlib
+    import json
+
+    from tests.support.executor_historical_replay import (
+        isolate_replay_paths,
+        prove_historical_replay,
+    )
+
+    from planner.conversation.contracts import ConversationAccess
+    from planner.executor.contracts import ChildCommand, ChildOperation, CommandOutcome
+    from planner.executor.journal import envelope_payload_digest
+    from planner.executor.mac import as_object
+
+    isolate_replay_paths(tmp_path, monkeypatch)
+
+    async def run() -> None:
+        db_path = str(tmp_path / "vps.sqlite3")
+        connection = connect(db_path)
+        try:
+            create_schema(connection)
+        finally:
+            connection.close()
+        endpoint = ExecutorEndpoint(db_path, RealClock())
+        current = ExecutorIdentity(8, "a" * 40, 2, "current", 2)
+        old = ChildReference("historical", "old-child", "old-conversation")
+        command = ChildCommand("old-stop", old, ChildOperation.stop, None, {})
+        outcome = CommandOutcome(
+            command.command_id, old, CommandDisposition.refused, {"reason": "incarnation_gone"}
+        )
+        current_child = ChildReference("current", "current-child", "replay-conversation")
+        turn = TurnToken(current_child.conversation_id, 1)
+        await ConversationStore(db_path).create_conversation(
+            ResolvedConversationStart(
+                current_child.conversation_id,
+                ConversationBackendKey.codex,
+                "offline",
+                None,
+                None,
+                tmp_path,
+                ConversationAccess.full,
+            )
+        )
+        endpoint.store.register_child(old, "ticket", "old-ticket", 1)
+        endpoint.store.register_child(current_child, "ticket", "current-ticket", 1)
+        connection = connect(db_path)
+        try:
+            for child, token, runtime in (
+                (
+                    old,
+                    TurnToken(old.conversation_id, 1),
+                    {
+                        "ended": True,
+                        "callbacks_revoked": True,
+                        "source_retired": False,
+                        "initial_commands": [as_object(command)],
+                    },
+                ),
+                (
+                    current_child,
+                    turn,
+                    {
+                        "ended": False,
+                        "pending_permission_ask_ids": [],
+                        "pending_user_input_questions": {},
+                    },
+                ),
+            ):
+                connection.execute(
+                    "INSERT INTO executor_core_turns VALUES (?,?,?,?)",
+                    (
+                        child.conversation_id,
+                        json.dumps(as_object(child)),
+                        json.dumps(as_object(token)),
+                        json.dumps(runtime),
+                    ),
+                )
+        finally:
+            connection.close()
+        from dataclasses import replace
+
+        endpoint.store.begin_connection(replace(current, connection_generation=1), 1)
+        payload = as_object(outcome)
+        submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+        digest = envelope_payload_digest(
+            payload,
+            (),
+            sender_id="historical-sender",
+            conversation_id=old.conversation_id,
+            sequence=1,
+            submission_id=submission,
+            kind=EnvelopeKind.command_outcome,
+        )
+        evidence = QueuedEnvelope(
+            "historical-sender",
+            old.conversation_id,
+            1,
+            submission,
+            EnvelopeKind.command_outcome,
+            payload,
+            digest,
+        )
+        endpoint.store.accept(
+            evidence,
+            lambda conn, row: (
+                endpoint.store.record_command_outcome_in_transaction(conn, outcome) or {}
+            ),
+            2,
+            identity=replace(current, connection_generation=1),
+        )
+        from planner.executor.contracts import BackendEvent, BackendEventMethod
+
+        event = BackendEvent(
+            current_child,
+            BackendEventMethod.tool_call_started,
+            turn,
+            {
+                "tool_call_id": "offline-tool",
+                "title": "Offline proof",
+                "tool_kind": "shell",
+                "detail": "No native execution",
+            },
+        )
+        payload = as_object(event)
+        digest = envelope_payload_digest(
+            payload,
+            (),
+            sender_id="12345678123456781234567812345678",
+            conversation_id=current_child.conversation_id,
+            sequence=1,
+            submission_id="replay-tool",
+            kind=EnvelopeKind.backend_event,
+        )
+        envelope = QueuedEnvelope(
+            "12345678123456781234567812345678",
+            current_child.conversation_id,
+            1,
+            "replay-tool",
+            EnvelopeKind.backend_event,
+            payload,
+            digest,
+        )
+        result = await prove_historical_replay(
+            tmp_path, db_path, current, outcome, command, envelope
+        )
+        assert result["new_publications"] == 1
+
+    asyncio.run(run())

@@ -184,7 +184,15 @@ turn ending.
 After reconnect, the VPS acknowledges accepted retained command outcomes through
 the existing command acknowledgment path. Later registry inventories omit those
 outcomes. Journal receipt cleanup and registry confirmation remain separate.
-Neither acknowledgment repeats the native operation.
+Neither acknowledgment repeats the native operation. An outcome from an older
+executor incarnation must match the exact retained command, its first result, and
+an accepted canonical envelope receipt. A refused native operation can still have
+an accepted evidence receipt. Confirmation removes registry evidence; it grants
+no child, callback, or waiting caller authority and does not close assignments.
+The retained command metadata covers only the current turn. Missing metadata or
+a missing matching receipt keeps the evidence unconfirmed and its uncertainty
+intact. Journal cleanup remains separate; ordinary replay follows successful
+inventory reconciliation.
 
 Conversation shutdown fences its initial command before it waits for input cleanup or a native result.
 Immediate dispatch and reconnect replay check the same fence, including after awaited input preparation.

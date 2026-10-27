@@ -370,6 +370,26 @@ class ExecutorEndpoint:
                 raise ConnectionError("executor link unavailable")
             await write_frame(writer, message)
 
+    def _reconciliation_current(self, identity: ExecutorIdentity, writer: FrameWriter) -> bool:
+        if self.writer is not writer or self.identity != identity:
+            return False
+        try:
+            self.store.verify_connection(identity)
+        except PlannerError:
+            return False
+        return True
+
+    async def _send_reconciliation(
+        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
+    ) -> bool:
+        # This handler owns a particular connection, including while waiting for
+        # another sender or draining an already written frame.
+        async with self._send_lock:
+            if not self._reconciliation_current(identity, writer):
+                return False
+            await write_frame(writer, message)
+            return self._reconciliation_current(identity, writer)
+
     async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
         request_id = str(uuid4())
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
@@ -1350,16 +1370,39 @@ class ExecutorEndpoint:
                         self.children[item.child.child_id] = proxy
                     with observe(observer, "inventory_adopt"):
                         await self.runtime.system.adopt_remote_child(item, proxy)
+                    if not self._reconciliation_current(identity, writer):
+                        return
                     # Adoption can wait behind shutdown. Its earlier assignment
                     # precheck grants no authority after that await.
                     if self._closed_reconciliation_child(item.child, identity):
                         self.retire_child(item.child)
                 for outcome in inventory.retained_command_outcomes:
-                    self._closed_reconciliation_child(outcome.child, identity)
+                    previous_outcome = self._retained_inventory.get(outcome.command_id)
+                    if previous_outcome is not None and previous_outcome != outcome:
+                        raise ValueError(
+                            "conflicting retained command outcome across inventory chunks"
+                        )
+                    historical = outcome.child.executor_incarnation != identity.executor_incarnation
+                    if historical:
+                        if not self.store.has_retained_command(outcome):
+                            raise ValueError(
+                                "historical outcome lacks exact retained command metadata"
+                            )
+                        if not self.store.has_accepted_command_outcome(outcome):
+                            raise ValueError(
+                                "historical outcome lacks matching accepted canonical receipt"
+                            )
+                    else:
+                        self._closed_reconciliation_child(outcome.child, identity)
+                    if not self._reconciliation_current(identity, writer):
+                        return
                     self._retained_inventory[outcome.command_id] = outcome
                     safe_call(observer, "command_outcome", outcome)
-                    self._resolve_command(outcome)
+                    if not historical:
+                        self._resolve_command(outcome)
                 if not inventory.children and not inventory.retained_command_outcomes:
+                    if not self._reconciliation_current(identity, writer):
+                        return
                     merged = replace(
                         inventory,
                         children=tuple(
@@ -1371,24 +1414,30 @@ class ExecutorEndpoint:
                     )
                     with observe(observer, "inventory_finalize"):
                         reconciliation = self.store.reconcile(merged, now_ms())
+                    # Detach synchronously: a replacement handler may populate
+                    # its own aggregates while any of the ACK writes awaits.
+                    retained_outcomes = self._retained_inventory
+                    self._inventory = {}
+                    self._retained_inventory = {}
                     for command_id in reconciliation.acknowledged_command_ids:
-                        retained_outcome = self._retained_inventory.get(command_id)
+                        retained_outcome = retained_outcomes.get(command_id)
                         if retained_outcome is not None and not self._outcome_hint_acknowledged(
                             retained_outcome
                         ):
                             continue
-                        await self._send(
+                        if not await self._send_reconciliation(
                             WireMessage(
                                 WireMessageKind.command_outcome_ack,
                                 command_id,
                                 {"command_id": command_id},
-                            )
-                        )
+                            ),
+                            identity,
+                            writer,
+                        ):
+                            return
                     result = _object(
                         ReconciliationResult(identity, reconciliation.receipts, (), (), ())
                     )
-                    self._inventory = {}
-                    self._retained_inventory = {}
                 else:
                     result = _object(ReconciliationResult(identity, (), (), (), ()))
                 response_kind = WireMessageKind.reconcile_result
@@ -1469,7 +1518,12 @@ class ExecutorEndpoint:
             if self.writer is writer and self.identity == identity:
                 safe_call(observer, "enter", "response_send_enter")
                 try:
-                    await self._send(WireMessage(response_kind, message.request_id, result))
+                    response = WireMessage(response_kind, message.request_id, result)
+                    if message.kind is WireMessageKind.reconcile_inventory:
+                        if not await self._send_reconciliation(response, identity, writer):
+                            return
+                    else:
+                        await self._send(response)
                 except BaseException as error:
                     safe_call(observer, "fail", "response_send_failed", error)
                     raise
@@ -1482,15 +1536,17 @@ class ExecutorEndpoint:
             safe_call(observer, "fail", "validation_response", error)
             if self.writer is writer:
                 with observe(observer, "validation_response"):
-                    await self._send(
-                        WireMessage(
-                            WireMessageKind.error,
-                            message.request_id,
-                            error.to_payload()
-                            if isinstance(error, PlannerError)
-                            else {"error": {"code": "validation", "message": str(error)}},
-                        )
+                    response = WireMessage(
+                        WireMessageKind.error,
+                        message.request_id,
+                        error.to_payload()
+                        if isinstance(error, PlannerError)
+                        else {"error": {"code": "validation", "message": str(error)}},
                     )
+                    if message.kind is WireMessageKind.reconcile_inventory:
+                        await self._send_reconciliation(response, identity, writer)
+                    else:
+                        await self._send(response)
 
     async def _read(self, read: LiveReadRequest) -> JsonObject:
         self._assignment(read.child)

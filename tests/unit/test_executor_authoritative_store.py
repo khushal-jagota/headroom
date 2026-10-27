@@ -9,6 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from planner.executor.vps import ExecutorEndpoint
 
 import pytest
 from tests.support.executor_turns import persist_pending_turn
@@ -25,9 +29,13 @@ from planner.executor.contracts import (
     AskReachability,
     AskReference,
     AuthorizedAction,
+    ChildCommand,
     ChildInventory,
+    ChildOperation,
     ChildReference,
     ClockSample,
+    CommandDisposition,
+    CommandOutcome,
     EnvelopeKind,
     ExecutorIdentity,
     FileManifest,
@@ -36,6 +44,8 @@ from planner.executor.contracts import (
     QueuedEnvelope,
     ReceiptDisposition,
     ReconciliationInventory,
+    WireMessage,
+    WireMessageKind,
 )
 from planner.executor.journal import envelope_payload_digest
 from planner.executor.publication import PublicationReceiver
@@ -734,6 +744,7 @@ def test_closed_original_child_reconciles_outcomes_without_restoring_authority(
         endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=adopt))
         send = AsyncMock()
         monkeypatch.setattr(endpoint, "_send", send)
+        monkeypatch.setattr(endpoint, "_send_reconciliation", send)
         original_reconcile = store.reconcile
         observed: list[ReconciliationInventory] = []
 
@@ -814,6 +825,7 @@ def test_reconciliation_closed_child_exception_requires_exact_original_identity(
         endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=adopt))
         send = AsyncMock()
         monkeypatch.setattr(endpoint, "_send", send)
+        monkeypatch.setattr(endpoint, "_send_reconciliation", send)
         value = ReconciliationInventory(
             IDENTITY,
             (ChildInventory(changed_child, None, (), ()),) if location == "child" else (),
@@ -867,9 +879,8 @@ def test_closed_child_reconciliation_cannot_use_stale_authenticated_generation(
             IDENTITY,
             writer,
         )
-        assert send.await_count == 1
-        assert send.await_args is not None
-        assert send.await_args.args[0].kind is WireMessageKind.error
+        # The durable fence also suppresses a stale validation response.
+        assert send.await_count == 0
         assert not endpoint._inventory
 
     asyncio.run(run())
@@ -910,6 +921,7 @@ def test_stop_hints_wait_for_exact_original_canonical_receipt(
         endpoint.pending_commands[command.command_id] = command, future
         send = AsyncMock()
         monkeypatch.setattr(endpoint, "_send", send)
+        monkeypatch.setattr(endpoint, "_send_reconciliation", send)
         connection = connect(store.db_path)
         try:
             store.record_command_outcome_in_transaction(connection, outcome)
@@ -1170,7 +1182,6 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
     from planner.conversation.system import SqliteProcessConversationSystem
     from planner.core.clock import RealClock
     from planner.executor.contracts import (
-        ChildCommand,
         ChildOperation,
         CommandOutcome,
         WireMessage,
@@ -1187,6 +1198,7 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
         identity = replace(IDENTITY, executor_incarnation=registry.incarnation)
         endpoint.identity = identity
         endpoint.writer = Mock()
+        endpoint.writer.drain = AsyncMock()
         endpoint.store.begin_connection(identity, 1)
         monkeypatch.setattr(endpoint, "_send", AsyncMock())
         commands: list[ChildCommand] = []
@@ -1355,7 +1367,6 @@ def test_diagnostic_postcommit_error_stays_unknown_until_readonly_receipt_resolu
     store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An outer commit error can follow a durable commit; rollback cannot undo it."""
-    from typing import Any
 
     from tests.unit.test_executor_capture import TARGET, identity, make_capture, records
 
@@ -1427,7 +1438,6 @@ def test_diagnostic_postcommit_error_stays_unknown_until_readonly_receipt_resolu
 def test_preflight_probe_never_establishes_acceptance_and_observer_errors_preserve_receipt(
     store: ExecutorStore,
 ) -> None:
-    from typing import Any
 
     class Probe:
         def __init__(self) -> None:
@@ -1459,7 +1469,7 @@ def test_interleaved_target_and_control_requests_keep_phases_and_domain_bytes_se
     """A ready frame finishing during head acceptance cannot steal its observation."""
     import asyncio
     from types import SimpleNamespace
-    from typing import Any, cast
+    from typing import cast
     from unittest.mock import AsyncMock, Mock
 
     from tests.unit.test_executor_capture import TARGET, make_capture, records
@@ -1579,7 +1589,6 @@ def test_decoded_request_observation_precedes_generation_fence(
 ) -> None:
     """Superseded ingress remains observed even when no domain handler can run."""
     import asyncio
-    from typing import Any
     from unittest.mock import AsyncMock, Mock
 
     from tests.unit.test_executor_request_deadlines import peer
@@ -1621,3 +1630,352 @@ def test_decoded_request_observation_precedes_generation_fence(
         await asyncio.gather(*endpoint._tasks)
 
     asyncio.run(exercise())
+
+
+def historical_inventory_case(
+    store: ExecutorStore,
+    tmp_path: Path,
+    *,
+    operation: str = "stop",
+    receipt: str = "accepted",
+    historical: bool = True,
+) -> tuple[ExecutorEndpoint, Any, ExecutorIdentity, ChildCommand, CommandOutcome]:
+    """Exact stored command/result and canonical receipt with a real framed writer."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tests.unit.test_executor_request_deadlines import peer
+
+    from planner.core.clock import RealClock
+    from planner.executor.codec import encode_value
+    from planner.executor.mac import as_object
+    from planner.executor.vps import ExecutorEndpoint
+
+    command = ChildCommand("historical-command", CHILD, ChildOperation(operation), ASK.turn, {})
+    outcome = CommandOutcome(
+        command.command_id, CHILD, CommandDisposition.refused, {"reason": "incarnation_gone"}
+    )
+    persist_pending_turn(
+        store, ASK, runtime_overrides={"initial_commands": [encode_value(command)]}
+    )
+    connection = connect(store.db_path)
+    try:
+        store.record_command_outcome_in_transaction(connection, outcome)
+    finally:
+        connection.close()
+    payload = as_object(outcome)
+    if receipt == "digest":
+        payload = as_object(replace(outcome, result={"different": True}))
+    submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+    canonical = QueuedEnvelope(
+        "canonical-sender",
+        CHILD.conversation_id,
+        1,
+        submission,
+        EnvelopeKind.command_outcome,
+        payload,
+        envelope_payload_digest(
+            payload,
+            (),
+            sender_id="canonical-sender",
+            conversation_id=CHILD.conversation_id,
+            sequence=1,
+            submission_id=submission,
+            kind=EnvelopeKind.command_outcome,
+        ),
+    )
+
+    def publish(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+        if receipt == "refused":
+            raise PlannerError(ErrorCode.stale_claim, "refused evidence")
+        return {}
+
+    if receipt != "missing":
+        store.accept(canonical, publish, 1100, identity=IDENTITY)
+    identity = replace(
+        IDENTITY,
+        executor_incarnation="replacement" if historical else IDENTITY.executor_incarnation,
+        connection_generation=2,
+    )
+    store.begin_connection(identity, 1200)
+    endpoint = ExecutorEndpoint(store.db_path, RealClock())
+    endpoint.store = store
+    endpoint.identity = identity
+    writer = peer()
+    endpoint.writer = writer
+    endpoint.runtime = SimpleNamespace(system=SimpleNamespace(adopt_remote_child=AsyncMock()))
+    return endpoint, writer, identity, command, outcome
+
+
+def captured_inventory_frames(writer: Any) -> list[WireMessage]:
+    from pydantic import TypeAdapter
+
+    return [
+        TypeAdapter(WireMessage).validate_json(call.args[0][4:], strict=True)
+        for call in writer.write.call_args_list
+    ]
+
+
+async def submit_inventory(
+    endpoint: ExecutorEndpoint,
+    writer: Any,
+    identity: ExecutorIdentity,
+    *outcomes: CommandOutcome,
+    children: tuple[ChildInventory, ...] = (),
+) -> None:
+    from planner.executor.mac import as_object
+
+    await endpoint._handle_message(
+        WireMessage(
+            WireMessageKind.reconcile_inventory,
+            "inventory",
+            as_object(ReconciliationInventory(identity, children, (), outcomes)),
+        ),
+        identity,
+        writer,
+    )
+
+
+def historical_authority_rows(store: ExecutorStore) -> tuple[list[Any], ...]:
+    connection = connect(store.db_path)
+    try:
+        return tuple(
+            [tuple(row) for row in connection.execute(f"SELECT * FROM {table}")]
+            for table in (
+                "executor_core_turns",
+                "executor_child_assignments",
+                "executor_command_outcomes",
+            )
+        )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "operation,closed", [("start", False), ("write_prompt", False), ("stop", False), ("stop", True)]
+)
+def test_historical_inventory_confirms_evidence_without_settling_callers(
+    store: ExecutorStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    closed: bool,
+) -> None:
+    import asyncio
+    from unittest.mock import Mock
+
+    async def run() -> None:
+        endpoint, writer, identity, command, outcome = historical_inventory_case(
+            store, tmp_path, operation=operation
+        )
+        if closed:
+            store.close_child(CHILD, 1300)
+        baseline = historical_authority_rows(store)
+        future: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
+        endpoint.pending_commands[command.command_id] = command, future
+        resolve = Mock(wraps=endpoint._resolve_command)
+        monkeypatch.setattr(endpoint, "_resolve_command", resolve)
+        await submit_inventory(endpoint, writer, identity, outcome)
+        assert endpoint._retained_inventory == {outcome.command_id: outcome}
+        await submit_inventory(endpoint, writer, identity)
+        frames = captured_inventory_frames(writer)
+        assert [frame.kind for frame in frames] == [
+            WireMessageKind.reconcile_result,
+            WireMessageKind.command_outcome_ack,
+            WireMessageKind.reconcile_result,
+        ]
+        assert frames[1].payload == {"command_id": command.command_id}
+        assert not endpoint._inventory and not endpoint._retained_inventory
+        assert not future.done()
+        resolve.assert_not_called()
+        endpoint.runtime.system.adopt_remote_child.assert_not_awaited()
+        assert not endpoint.children and not endpoint.sinks
+        assert historical_authority_rows(store) == baseline
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        "metadata",
+        "command",
+        "child",
+        "conversation",
+        "incarnation",
+        "result",
+        "missing",
+        "refused",
+        "digest",
+    ],
+)
+def test_historical_inventory_requires_exact_command_result_and_accepted_receipt(
+    store: ExecutorStore,
+    tmp_path: Path,
+    changed: str,
+) -> None:
+    import asyncio
+
+    async def run() -> None:
+        endpoint, writer, identity, command, outcome = historical_inventory_case(
+            store,
+            tmp_path,
+            receipt=changed if changed in ("missing", "refused", "digest") else "accepted",
+        )
+        if changed == "metadata":
+            connection = connect(store.db_path)
+            try:
+                connection.execute("UPDATE executor_core_turns SET runtime_json='{}'")
+            finally:
+                connection.close()
+        elif changed == "command":
+            outcome = replace(outcome, command_id="unknown")
+        elif changed == "child":
+            outcome = replace(outcome, child=replace(CHILD, child_id="unknown"))
+        elif changed == "conversation":
+            outcome = replace(outcome, child=replace(CHILD, conversation_id="unknown"))
+        elif changed == "incarnation":
+            outcome = replace(outcome, child=replace(CHILD, executor_incarnation="unknown"))
+        elif changed == "result":
+            outcome = replace(outcome, result={"different": True})
+        baseline = historical_authority_rows(store)
+        future: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
+        endpoint.pending_commands[command.command_id] = command, future
+        await submit_inventory(endpoint, writer, identity, outcome)
+        frames = captured_inventory_frames(writer)
+        assert len(frames) == 1 and frames[0].kind is WireMessageKind.error
+        reason = str(frames[0].payload)
+        assert (
+            "retained command metadata"
+            if changed in ("metadata", "command", "child", "conversation", "incarnation")
+            else "accepted canonical receipt"
+        ) in reason
+        assert not endpoint._retained_inventory and not endpoint._inventory
+        assert not future.done() and not endpoint.children
+        endpoint.runtime.system.adopt_remote_child.assert_not_awaited()
+        assert historical_authority_rows(store) == baseline
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("historical", [False, True])
+@pytest.mark.parametrize("conflict", ["result", "child"])
+def test_inventory_chunks_preserve_first_outcome_before_rejecting_conflicts(
+    store: ExecutorStore,
+    tmp_path: Path,
+    historical: bool,
+    conflict: str,
+) -> None:
+    import asyncio
+
+    async def run() -> None:
+        endpoint, writer, identity, _, outcome = historical_inventory_case(
+            store, tmp_path, historical=historical
+        )
+        baseline = historical_authority_rows(store)
+        await submit_inventory(endpoint, writer, identity, outcome)
+        await submit_inventory(endpoint, writer, identity, outcome)
+        assert endpoint._retained_inventory == {outcome.command_id: outcome}
+        # Conflict wins even if the changed child would independently fail admission.
+        conflicting = (
+            replace(outcome, child=replace(CHILD, conversation_id="untrusted"))
+            if conflict == "child"
+            else replace(outcome, result={"different": True})
+        )
+        await submit_inventory(endpoint, writer, identity, conflicting)
+        assert captured_inventory_frames(writer)[-1].kind is WireMessageKind.error
+        assert "conflicting retained" in str(captured_inventory_frames(writer)[-1].payload)
+        assert endpoint._retained_inventory == {outcome.command_id: outcome}
+        await submit_inventory(endpoint, writer, identity)
+        assert (
+            sum(
+                frame.kind is WireMessageKind.command_outcome_ack
+                for frame in captured_inventory_frames(writer)
+            )
+            == 1
+        )
+        assert historical_authority_rows(store) == baseline
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("phase", ["adopt", "lock", "drain", "response"])
+@pytest.mark.parametrize("replacement", ["writer", "durable"])
+def test_historical_inventory_stops_stale_handlers_without_touching_replacement_aggregate(
+    store: ExecutorStore,
+    tmp_path: Path,
+    phase: str,
+    replacement: str,
+) -> None:
+    import asyncio
+
+    from tests.unit.test_executor_request_deadlines import peer
+
+    async def run() -> None:
+        endpoint, writer, identity, _, outcome = historical_inventory_case(store, tmp_path)
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def pause(*args: Any) -> None:
+            entered.set()
+            await release.wait()
+
+        if phase == "adopt":
+            current = replace(
+                CHILD, executor_incarnation=identity.executor_incarnation, child_id="live"
+            )
+            store.register_child(current, "ticket", "test-ticket", 1300)
+            endpoint.runtime.system.adopt_remote_child.side_effect = pause
+            task = asyncio.create_task(
+                submit_inventory(
+                    endpoint,
+                    writer,
+                    identity,
+                    outcome,
+                    children=(ChildInventory(current, None, (), ()),),
+                )
+            )
+            await entered.wait()
+        else:
+            if phase != "response":
+                await submit_inventory(endpoint, writer, identity, outcome)
+                writer.write.reset_mock()
+            if phase in ("lock", "response"):
+                await endpoint._send_lock.acquire()
+            else:
+                writer.drain.side_effect = pause
+            task = asyncio.create_task(
+                submit_inventory(
+                    endpoint, writer, identity, *((outcome,) if phase == "response" else ())
+                )
+            )
+            if phase in ("lock", "response"):
+                await asyncio.sleep(0)
+                assert not task.done()
+                if phase == "lock":
+                    # Finalizer detached before waiting for its ACK lock.
+                    assert not endpoint._retained_inventory and not endpoint._inventory
+            else:
+                await entered.wait()
+        next_identity = replace(identity, connection_generation=identity.connection_generation + 1)
+        store.begin_connection(next_identity, 1400)
+        next_writer = peer()
+        if replacement == "writer":
+            endpoint.writer, endpoint.identity = next_writer, next_identity
+        marker = replace(outcome, command_id="replacement-evidence")
+        endpoint._retained_inventory = {marker.command_id: marker}
+        marker_child = ChildInventory(CHILD, ASK.turn, (), ())
+        endpoint._inventory = {CHILD.child_id: marker_child}
+        if phase in ("lock", "response"):
+            endpoint._send_lock.release()
+        else:
+            release.set()
+        await task
+        assert endpoint._retained_inventory == {marker.command_id: marker}
+        assert endpoint._inventory == {CHILD.child_id: marker_child}
+        next_writer.write.assert_not_called()
+        frames = captured_inventory_frames(writer)
+        assert len(frames) == (1 if phase == "drain" else 0)
+        if frames:
+            assert frames[0].kind is WireMessageKind.command_outcome_ack
+
+    asyncio.run(run())
