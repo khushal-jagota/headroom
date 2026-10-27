@@ -182,7 +182,7 @@ void start();
   );
   await writeFile(
     indexPath,
-    `<!doctype html><html><body><div id="app"></div><script type="module" src="./${mainPath
+    `<!doctype html><html style="height:100%;overflow:hidden"><body style="height:100%;overflow:hidden"><div id="app"></div><script type="module" src="./${mainPath
       .split("/")
       .at(-1)}"></script></body></html>`,
     "utf8"

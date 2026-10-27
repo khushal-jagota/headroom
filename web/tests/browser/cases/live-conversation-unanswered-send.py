@@ -32,6 +32,35 @@ def run_retirement(browser, urls):
       const sent=[...t.querySelectorAll('[data-conversation-outgoing]')].at(-1);
       const css=getComputedStyle(t),height=room?.getBoundingClientRect().height??0;
       const gap=room?parseFloat(css.rowGap)+parseFloat(getComputedStyle(room).marginTop)+parseFloat(getComputedStyle(room).marginBottom):0;
+      // Geometry alone remains valid when scroll chaining moves the entire host
+      // offscreen. Record actual visibility through every ancestor and a text hit.
+      const chain=[];
+      const clip={left:Math.max(0,bounds.left),top:Math.max(0,bounds.top+24),right:Math.min(innerWidth,bounds.right),bottom:Math.min(innerHeight,bounds.bottom-12)};
+      for(let node=t;node;node=node.parentElement){
+        const style=getComputedStyle(node),rect=node.getBoundingClientRect();
+        chain.push({tag:node.tagName,id:node.id,classes:node.className,opacity:Number(style.opacity),visibility:style.visibility,display:style.display,contentVisibility:style.contentVisibility,hidden:node.hidden,overflowX:style.overflowX,overflowY:style.overflowY,rect:{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom}});
+        if(['hidden','clip','auto','scroll'].includes(style.overflowX)){clip.left=Math.max(clip.left,rect.left);clip.right=Math.min(clip.right,rect.right);}
+        if(['hidden','clip','auto','scroll'].includes(style.overflowY)){clip.top=Math.max(clip.top,rect.top);clip.bottom=Math.min(clip.bottom,rect.bottom);}
+      }
+      let textHit=null;
+      if(clip.right>clip.left&&clip.bottom>clip.top){
+        const walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT);
+        let node;
+        while((node=walker.nextNode())&&!textHit){
+          if(!node.textContent.trim()||!node.parentElement.checkVisibility({checkOpacity:true,checkVisibilityCSS:true,contentVisibilityAuto:true}))continue;
+          const range=document.createRange();range.selectNodeContents(node);
+          for(const rect of range.getClientRects()){
+            const left=Math.max(clip.left,rect.left),right=Math.min(clip.right,rect.right),top=Math.max(clip.top,rect.top),bottom=Math.min(clip.bottom,rect.bottom);
+            if(right-left<2||bottom-top<2)continue;
+            const x=(left+right)/2,y=(top+bottom)/2,hit=document.elementFromPoint(x,y);
+            if(hit&&(hit===node.parentElement||node.parentElement.contains(hit))){textHit={text:node.textContent.trim().slice(0,100),x,y,tag:hit.tagName,rect:{left,right,top,bottom}};break;}
+          }
+        }
+      }
+      const paint={chain,clip,textHit,scrollX:window.scrollX,scrollY:window.scrollY,placementReady:t.dataset.conversationPlacementReady==='true',
+        insideViewport:bounds.left>=0&&bounds.top>=0&&bounds.right<=innerWidth&&bounds.bottom<=innerHeight,
+        stylesVisible:chain.every(item=>item.opacity>=.999&&item.visibility==='visible'&&item.display!=='none'&&item.contentVisibility!=='hidden'&&!item.hidden)};
+      paint.ok=paint.placementReady&&paint.insideViewport&&paint.stylesVisible&&textHit!==null;
       return {ms:performance.now(),phase:window.__retirementPhase,top:t.scrollTop,
         scrollHeight:t.scrollHeight,clientHeight:t.clientHeight,viewportHeight:bounds.height,
         contentHeight:content.getBoundingClientRect().height,
@@ -40,7 +69,7 @@ def run_retirement(browser, urls):
         sentTop:sent?sent.getBoundingClientRect().top-bounds.top:null,
         anchor:anchor?.isConnected?{key:anchor.getAttribute('data-conversation-view-key')??anchor.getAttribute('data-conversation-row'),offset:anchor.getBoundingClientRect().top-bounds.top}:null,
         latest:!!document.querySelector('[aria-label="Jump to latest message"]'),
-        placementReady:t.dataset.conversationPlacementReady,owner:t.dataset.conversationPositionOwner??null};
+        placementReady:t.dataset.conversationPlacementReady,owner:t.dataset.conversationPositionOwner??null,paint};
     }"""
 
     def frames_between(before, after):
@@ -129,6 +158,10 @@ def run_retirement(browser, urls):
             page.screenshot(path=str(output / f'retirement-excursion-{excursion}.png'))
         zero = sample('after-two-excursions')
         checks.append(("obsolete tail fully retires after upward navigation", zero['totalTail'] == 0, zero))
+        # All primary rAF frames must contain a painted, hittable text line. This
+        # rejects an offscreen app host even when its internal geometry is correct.
+        primary_frames = [initial, *frames_between(initial, zero), zero]
+        checks.append(('both primary excursions stay visibly painted through every ancestor and text hit', all(frame['paint']['ok'] for frame in primary_frames), [{'ms':frame['ms'],'phase':frame['phase'],'paint':frame['paint']} for frame in primary_frames if not frame['paint']['ok']][:2]))
         # Evaluate the reported behavior before any candidate-specific tiny-tail work.
         for check in checks:
             assert check[1], check
