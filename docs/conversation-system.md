@@ -762,6 +762,19 @@ person — a wheel, a finger, a hand on the scrollbar — so nothing the thread 
 to itself is mistaken for them; while they are reading elsewhere nothing moves
 them, and the jump button is the way back.
 
+Manual navigation also ends the accepted send’s right to reserve answer space.
+The viewport keeps only the tail that supports the current visible line. Upward
+navigation and reply growth reduce that tail. They cannot restore retired space.
+The tail includes its gap and disappears completely at zero. The viewport retains
+the send’s top inset until an anchor-preserving change fits the available range.
+
+A visible newest line does not grant automatic follow after manual navigation.
+Latest remains available while residual support exists. It admits actual newest
+history, moves once, and drains support as each planned position fits. Arrival
+restores ordinary follow. A fresh gesture or accepted send cancels the old move.
+Genuine navigation to actual newest also restores follow after the tail reaches zero.
+Layout notifications and native anchor corrections cannot grant follow.
+
 Returning to a browser tab restores the line the person left and its offset in the
 view, even if they were at the newest message. The existing logical anchor carries
 that position. Content that arrived while the tab was hidden stays below it and
