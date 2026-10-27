@@ -8,8 +8,14 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from tests.integration.test_executor_end_to_end import boot, eventually, public_ask_id
 
+from planner.core.db import connect
+from planner.core.errors import PlannerError
+from planner.core.server import http_status_for
+from planner.previews.api import build_preview_router
 from planner.previews.configuration import MAX_PREVIEW_STREAMS
 
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
@@ -262,6 +268,71 @@ def test_link_drop_after_partial_close_delimited_http_body_fails_lease(
         finally:
             for peer in peers:
                 peer.transport.abort()
+            server.close()
+            await server.wait_closed()
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_ready_preview_succeeds_while_held_prompt_resumption_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        entered, release = asyncio.Event(), asyncio.Event()
+        resume = harness.system.resume_executor_held_prompts
+
+        async def paused_resume(*, remote_ready: bool = False) -> None:
+            entered.set()
+            await release.wait()
+            await resume(remote_ready=remote_ready)
+
+        monkeypatch.setattr(harness.system, "resume_executor_held_prompts", paused_resume)
+
+        async def http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                await reader.readuntil(b"\r\n\r\n")
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nConnection: close\r\n"
+                    b"Content-Length: 7\r\n\r\npreview"
+                )
+                await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(http, "127.0.0.1", 0)
+        port = int(server.sockets[0].getsockname()[1])
+        app = FastAPI()
+        app.state.executor_endpoint = harness.endpoint
+        app.state.conn_factory = lambda: connect(harness.endpoint.db_path)
+        app.include_router(build_preview_router())
+
+        @app.exception_handler(PlannerError)
+        async def failure(request: Request, error: PlannerError) -> JSONResponse:
+            return JSONResponse(status_code=http_status_for(error.code), content=error.to_payload())
+
+        ticket_id = next(iter(harness.mac.registry.children.values())).ticket_id
+        assert ticket_id is not None
+        try:
+            assert harness.endpoint.writer is not None
+            harness.endpoint.writer.close()
+            # Hold the production await after VPS admission. No timing window or
+            # retry determines whether a request crosses the ready ACK.
+            await asyncio.wait_for(entered.wait(), 5)
+            assert harness.endpoint.ready
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://localhost"
+            ) as client:
+                response = await client.get(
+                    f"/dev/tickets/{ticket_id}/{port}/",
+                    headers={"tailscale-user-login": "owner@example.com"},
+                )
+            assert response.status_code == 200, response.text
+            assert response.content == b"preview"
+        finally:
+            release.set()
             server.close()
             await server.wait_closed()
             await harness.close()

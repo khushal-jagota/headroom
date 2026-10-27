@@ -1234,13 +1234,29 @@ class ExecutorEndpoint:
                     result = _object(ReconciliationResult(identity, (), (), (), ()))
                 response_kind = WireMessageKind.reconcile_result
             elif message.kind is WireMessageKind.reconciliation_ready:
-                self.ready = True
+                # FIFO puts the ready ACK before any newly admitted preview or
+                # command. The Mac rejects previews until it receives this ACK.
+                async with self._send_lock:
+                    if self.writer is not writer or self.identity != identity:
+                        return
+                    await write_frame(
+                        writer,
+                        WireMessage(
+                            WireMessageKind.reconciliation_ready,
+                            message.request_id,
+                            {"ready": True},
+                        ),
+                    )
+                    if self.writer is not writer or self.identity != identity:
+                        return
+                    self.ready = True
                 if hasattr(self.store, "mark_ready"):
                     self.store.mark_ready(identity, now_ms())
                 await self.runtime.system.resume_executor_held_prompts(remote_ready=True)
+                if self.writer is not writer or self.identity != identity:
+                    return
                 for answer in self.store.unapplied_answers():
                     self._dispatch_answer(answer)
-                result, response_kind = {"ready": True}, WireMessageKind.reconciliation_ready
                 # Resending a stable command to the same live registry is safe:
                 # the registry retains its pending task and first outcome.
                 for command, future in tuple(self.pending_commands.values()):
@@ -1251,6 +1267,7 @@ class ExecutorEndpoint:
                         await self._transfer_command_inputs(command)
                         if not await self._emit_command(command):
                             self._release_closed_answer(command, future)
+                return
             elif message.kind is WireMessageKind.envelope:
                 envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
                 result, response_kind = (
