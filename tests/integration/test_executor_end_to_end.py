@@ -2195,6 +2195,7 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
             generation = harness.mac.identity.connection_generation
             dropped: set[str] = set()
             send = harness.endpoint._send
+            send_reconciliation = harness.endpoint._send_reconciliation
 
             async def lose_old_generation_ack(message: WireMessage) -> None:
                 if (
@@ -2205,7 +2206,22 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
                     return
                 await send(message)
 
+            async def lose_old_generation_reconciliation_ack(
+                message: WireMessage, identity: ExecutorIdentity, writer: Any
+            ) -> bool:
+                if (
+                    message.kind is WireMessageKind.command_outcome_ack
+                    and identity.connection_generation == generation
+                ):
+                    return True
+                return await send_reconciliation(message, identity, writer)
+
             monkeypatch.setattr(harness.endpoint, "_send", lose_old_generation_ack)
+            monkeypatch.setattr(
+                harness.endpoint,
+                "_send_reconciliation",
+                lose_old_generation_reconciliation_ack,
+            )
             if operation == "prompt":
                 await harness.endpoint.send_command(
                     ChildCommand(
@@ -2232,8 +2248,8 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
             await eventually(
                 lambda: not harness.mac.spool.pending(), "Filesystem outcome spool did not drain"
             )
-            # A durable receipt removes the filesystem entry, but cannot confirm
-            # the live registry's retained result: these are separate inventories.
+            # Drop both direct and periodic inventory ACKs for this generation.
+            # Durable receipts still drain the separate filesystem inventory.
             retained = harness.mac.registry.inventory(
                 harness.mac.identity
             ).retained_command_outcomes
