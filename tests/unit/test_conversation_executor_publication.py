@@ -403,6 +403,8 @@ def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_availab
             assert native.cleanup_evidence_uncertain(reference)
             assert harness.store.recording_failures("c") == ()
             await asyncio.wait_for(harness.system.kill("c"), 2)
+            assert state.initial_shutdown_task is not None
+            await asyncio.wait_for(asyncio.shield(state.initial_shutdown_task), 2)
             assert len(stops) == 2 and len(set(stops)) == 2
             assert state.child_is_quarantined and native.child_assignment(reference) is not None
             assert ExecutorStore(str(path)).cleanup_evidence_uncertain(reference)

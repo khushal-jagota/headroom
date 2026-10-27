@@ -323,7 +323,11 @@ def test_ipc_waiter_cleanup_preserves_durable_publication(
                 if outcome == "cancel_publication":
                     assert not task.done()
                     assert mac._receipts[request.request_id] is owned
-                    assert mac.registry._source_work == {"c_one": 1}
+                    assert mac.registry._source_work == {
+                        ChildReference(
+                            mac.identity.executor_incarnation, str(request.child_id), "c_one"
+                        ): 1
+                    }
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await task

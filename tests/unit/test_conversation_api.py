@@ -1144,7 +1144,27 @@ def test_remote_answer_requires_original_reference_and_accepts_first_choice_offl
             evidence = endpoint.store.ask_evidence(ask)
             assert evidence is not None and evidence.applied_at_mac_ms is None
             endpoint.store.close_child(ask.child, 102)
+            metadata = await harness.store.read_executor_turn("c")
+            assert metadata is not None
+            await harness.store.save_executor_turn("c", metadata)
+            assert not endpoint.owns_conversation("c")
             assert (await client.post(path, json=exact)).json() == {"landed": True}
+            changed = (
+                {**exact, "option_id": "deny"}
+                if kind == "permission"
+                else {**exact, "answers": {"q": {"answers": ["different"]}}}
+            )
+            assert (await client.post(path, json=changed)).json() == {"landed": False}
+            assert (
+                await client.post(
+                    path,
+                    json={
+                        **exact,
+                        "executor_ask": encode_value(replace(ask, ask_id="new-closed-ask")),
+                    },
+                )
+            ).json() == {"landed": False}
+            assert not endpoint.pending_commands
             assert endpoint.store.recorded_answer(ask) == answer
 
     _run(exercise)

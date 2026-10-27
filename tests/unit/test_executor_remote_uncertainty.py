@@ -275,6 +275,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
     references: list[ChildReference] = []
     sequence = 0
     stops = 0
+    cancel_states: list[Any] = []
 
     def assign(start: Any, sink: Any) -> ChildReference:
         del sink
@@ -286,6 +287,11 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
     async def native(command: ChildCommand) -> CommandOutcome:
         nonlocal sequence, stops
         commands.append(command)
+        if command.operation is ChildOperation.cancel_running_turn and cancel_states:
+            # A preceding native publication needs the core lock before the cancel
+            # outcome can settle. Remote kill must leave that lock available.
+            async with cancel_states[-1].lock:
+                assert cancel_states[-1].running_turn.ending_is_the_cores
         if command.operation is ChildOperation.stop:
             stops += 1
         disposition = (
@@ -404,6 +410,7 @@ def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_r
         assert state.running_turn is not None
         assert state.executor_child_reference == references[1]
         assert all(c.child == references[1] for c in state.executor_initial_commands)
+        cancel_states.append(state)
         await healthy.kill("c_retry")
         assert not state.child_is_quarantined and state.child is None
 

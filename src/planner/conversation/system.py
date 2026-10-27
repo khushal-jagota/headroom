@@ -1113,9 +1113,10 @@ class SqliteProcessConversationSystem:
         running makes no difference to that.
 
         Queue disposition and local ending hold the conversation lock. The ending
-        phase owns cancellation while the lock is free, so final native events can
-        commit before cancellation settles. Remote retirement has its own task and
-        quarantine fence, and its caller joins after it releases the lock.
+        phase owns remote cancellation while the lock is free, so final native events
+        can commit before cancellation settles. Local cancellation retains the lock.
+        Remote retirement has its own task and quarantine fence, and its caller joins
+        after it releases the lock.
         """
         state = await self._conversation_state(conversation_id)
         if state is None:
@@ -1147,14 +1148,19 @@ class SqliteProcessConversationSystem:
                         if child is not None:
                             state.child = child
                 if child is not None:
+                    from planner.executor.remote import RemoteBackendChild
+
                     if running is not None:
-                        self._set_phase(state, _ConversationPhase.ending)
-                        running.ending_is_the_cores = True
-                        state.lock.release()
-                        try:
+                        if isinstance(child, RemoteBackendChild):
+                            self._set_phase(state, _ConversationPhase.ending)
+                            running.ending_is_the_cores = True
+                            state.lock.release()
+                            try:
+                                cancel_fact = await self._cancel_child_turn(state, child)
+                            finally:
+                                await state.lock.acquire()
+                        else:
                             cancel_fact = await self._cancel_child_turn(state, child)
-                        finally:
-                            await state.lock.acquire()
                     if state.child is child:
                         await self._discard_child(state, child)
                 if running is not None:

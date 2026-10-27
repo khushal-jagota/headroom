@@ -729,9 +729,12 @@ async def answer_permission_ask(
     """Return durable VPS acceptance for remote answers, native delivery for local ones."""
     require_owner(ctx)
     _require_mutable_conversation(runtime, conversation_id)
-    if runtime.executor_endpoint is not None and runtime.executor_endpoint.owns_conversation(
-        conversation_id
+    if runtime.executor_endpoint is not None and (
+        body.executor_ask is not None
+        or runtime.executor_endpoint.owns_conversation(conversation_id)
     ):
+        # Exact historical choices retain their first receipt after retirement.
+        # The endpoint still validates identity and refuses new closed targets.
         landed = await runtime.executor_endpoint.answer_permission(
             conversation_id, body.ask_id, body.option_id, body.executor_ask
         )
@@ -755,9 +758,12 @@ async def answer_user_input(
         UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
         for question_id, answer in body.answers.items()
     )
-    if runtime.executor_endpoint is not None and runtime.executor_endpoint.owns_conversation(
-        conversation_id
+    if runtime.executor_endpoint is not None and (
+        body.executor_ask is not None
+        or runtime.executor_endpoint.owns_conversation(conversation_id)
     ):
+        # Exact historical choices retain their first receipt after retirement.
+        # The endpoint still validates identity and refuses new closed targets.
         landed = await runtime.executor_endpoint.answer_user_input(
             conversation_id, body.request_id, answers, body.executor_ask
         )
