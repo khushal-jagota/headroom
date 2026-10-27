@@ -417,6 +417,29 @@ Connection diagnostics omit credentials, addresses, paths, exception messages, a
 Active transfers prevent quiescence. The Manager coordinates compatible peers through the existing identity-bound application procedure.
 A coding candidate grants no permission for a live route or peer change.
 
+The private VPS capture remains disabled without its retained-case configuration.
+Its local observation ID differs from the wire request ID. Valid UUIDs normalize
+to one representation for correlation. Wire kinds and exception classes use fixed
+allowlists. The capture excludes payloads, exception messages, and partial read bytes.
+
+A VPS request timeout records whether its deadline expired or an inner call raised
+TimeoutError. The record retains the original writer's generation after replacement
+and session cleanup. A local close record describes an attempt at the existing close
+boundary. It does not prove that the close succeeded. Each generation retains separate
+tokens for its first observed failure and its first local close attempt. Wrapper
+reports preserve the original failure token and phase.
+
+An EOF records observed transport termination. A preceding local close token links
+that termination to local evidence. Without that token, its physical cause stays
+unknown. A timeout or lost response never establishes operation refusal. Durable
+acceptance remains separate from response delivery.
+
+Capture limits remain 256 records, 256 KiB, 2048 bytes per record, and 180 seconds.
+Receipt settlement retains its 15-second limit. Private metadata has explicit bounds
+and clears at capture termination. Saturation produces honest truncation. Existing
+finalization can precede a later timeout callback. Missing later evidence does not
+prove that no failure occurred. Observer failure never controls executor behavior.
+
 ## Evidence boundaries
 
 Scripted process tests cover link loss, replay, VPS restart, permission callbacks,

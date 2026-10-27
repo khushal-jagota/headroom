@@ -234,6 +234,7 @@ class ExecutorEndpoint:
         self.ready = False
         writer, self.writer = self.writer, None
         if writer is not None:
+            safe_call(getattr(self, "_capture", None), "close_attempt", writer, "endpoint_shutdown")
             writer.close()
         for future in self._responses.values():
             if not future.done():
@@ -395,16 +396,37 @@ class ExecutorEndpoint:
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         self._responses[request_id] = future
         writer = self.writer
+        observer = safe_call(
+            getattr(self, "_capture", None),
+            "outgoing",
+            getattr(self, "identity", None),
+            writer,
+            request_id,
+            kind,
+        )
+        deadline: asyncio.Timeout | None = None
         try:
-            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+            deadline = asyncio.timeout(REQUEST_TIMEOUT_SECONDS)
+            async with deadline:
                 await self._send(WireMessage(kind, request_id, payload))
                 return await future
-        except TimeoutError:
+        except TimeoutError as error:
+            safe_call(
+                observer, "request_timeout", error, deadline is not None and deadline.expired()
+            )
             if writer is not None:
+                safe_call(
+                    getattr(self, "_capture", None),
+                    "close_attempt",
+                    writer,
+                    "request_timeout",
+                    observer,
+                )
                 writer.close()
             raise
         finally:
             self._responses.pop(request_id, None)
+            safe_call(observer, "request_done")
 
     async def _transfer_command_inputs(self, command: ChildCommand) -> None:
         if self._initial_command_cancelled(command):
@@ -614,6 +636,12 @@ class ExecutorEndpoint:
                         # Keep the original waiting caller and stable command. A
                         # new connection retries its inputs before native dispatch.
                         if self.writer is not None:
+                            safe_call(
+                                getattr(self, "_capture", None),
+                                "close_attempt",
+                                self.writer,
+                                "command_input_failure",
+                            )
                             self.writer.close()
                     else:
                         if not await self._emit_command(command):
@@ -1128,6 +1156,7 @@ class ExecutorEndpoint:
             # must not revoke resources from the already accepted connection.
             identity = health.identity
             safe_call(observer, "hello_admitted", identity)
+            safe_call(self._capture, "session_writer", writer, observer)
             self.process_id = health.process_id
             self.observed_at_ms = now_ms()
             self.lost_at_ms = None
@@ -1137,6 +1166,7 @@ class ExecutorEndpoint:
 
             self._preview_forwards = None
             if old_writer is not None and old_writer is not writer:
+                safe_call(self._capture, "close_attempt", old_writer, "session_replaced")
                 old_writer.close()
             try:
                 if old_previews is not None:
@@ -1222,7 +1252,10 @@ class ExecutorEndpoint:
                 for response_future in self._responses.values():
                     if not response_future.done():
                         response_future.set_exception(ConnectionError("executor link lost"))
+            safe_call(self._capture, "close_attempt", writer, "session_cleanup", observer)
             writer.close()
+            safe_call(self._capture, "session_done", writer)
+            safe_call(observer, "request_done")
             current_forwards = self._preview_forwards if self.identity == identity else None
             try:
                 if forwards is not None:
@@ -1266,6 +1299,13 @@ class ExecutorEndpoint:
             safe_call(observer, "fail", "handler_failed", error)
             # An unanswered operation may already have committed. Close only
             # its original generation and recover through ordinary replay.
+            safe_call(
+                getattr(self, "_capture", None),
+                "close_attempt",
+                writer,
+                "handler_failure",
+                observer,
+            )
             writer.close()
         finally:
             if observer is not None:
@@ -1531,6 +1571,13 @@ class ExecutorEndpoint:
                     safe_call(observer, "complete", "response_send_done")
         except (sqlite3.OperationalError, OSError) as error:
             safe_call(observer, "fail", "handler_failed", error)
+            safe_call(
+                getattr(self, "_capture", None),
+                "close_attempt",
+                writer,
+                "handler_io_failure",
+                observer,
+            )
             writer.close()
         except (ValueError, PlannerError, KeyError, TypeError) as error:
             safe_call(observer, "fail", "validation_response", error)

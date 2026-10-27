@@ -21,13 +21,28 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 MAX_RECORDS = 256
 MAX_BYTES = 256 * 1024
 MAX_RECORD_BYTES = 2048
 WINDOW_NS = 180 * 1_000_000_000
 FINALIZE_NS = 15 * 1_000_000_000
+MAX_REQUEST_METADATA = MAX_RECORDS
+OUTGOING_WIRE_KINDS = frozenset(
+    "health file_slot source_retire preview_bind preview_open preview_release".split()
+)
+WIRE_KINDS = frozenset(
+    "hello hello_accepted transport_open transport_opened preview_open preview_bind "
+    "preview_bound preview_release file_slot protocol_refused reconcile_inventory "
+    "reconcile_result reconciliation_ready source_retire source_retired envelope receipt "
+    "file_manifest file_complete file_accepted command command_outcome command_outcome_ack "
+    "read_request read_response health quiesce quiescence error".split()
+)
+CLOSE_CAUSES = frozenset(
+    "request_timeout handler_failure handler_io_failure session_replaced session_cleanup "
+    "endpoint_shutdown command_input_failure".split()
+)
 PHASES = frozenset(
     (
         "hello_decode frame_decode acceptor hello_admitted frame_decoded "
@@ -40,7 +55,8 @@ PHASES = frozenset(
         "domain_effect receipt_insert before_commit commit_enter commit_call_returned "
         "rollback_enter rollback_call_returned transaction_exit response_send_enter "
         "response_send_done response_send_failed original_command_emit "
-        "command_outcome_seen receipt_lookup capture_start capture_final"
+        "command_outcome_seen receipt_lookup capture_start capture_final "
+        "request_timeout close_attempt"
     ).split()
 )
 EXCEPTIONS: dict[type[BaseException], str] = {
@@ -57,16 +73,36 @@ EXCEPTIONS: dict[type[BaseException], str] = {
         sqlite3.IntegrityError,
         sqlite3.DatabaseError,
         asyncio.CancelledError,
+        asyncio.IncompleteReadError,
     )
 }
 FRAME_FUNCTIONS = frozenset(
     (
-        "_session _handle _handle_message accept_envelope _accept_envelope "
+        "_session _handle _handle_message _request accept_envelope _accept_envelope "
         "receive_remote_backend_event preflight accept _transaction _commit commit "
         "publish_effect append _append_record _finalize_publication "
         "_publish_remote_backend_event"
     ).split()
 )
+
+
+def _wire_uuid(value: Any) -> str | None:
+    if type(value) is not str or len(value) > 36:
+        return None
+    try:
+        return str(UUID(value))
+    except ValueError:
+        return None
+
+
+@dataclass
+class GenerationEvidence:
+    identity: Any
+    writer_token: int
+    first_failure_token: int | None = None
+    first_close_token: int | None = None
+
+
 SQLITE_CODES = {
     sqlite3.SQLITE_BUSY,
     sqlite3.SQLITE_LOCKED,
@@ -196,6 +232,11 @@ class Capture:
         self.pending_terminal_ns: int | None = None
         self.last_completed_phase: str | None = None
         self.active: dict[str, Observation] = {}
+        self.writer_owners: dict[int, tuple[object, GenerationEvidence]] = {}
+        self.generation_evidence: dict[int, GenerationEvidence] = {}
+        self.outgoing_requests: dict[str, Observation] = {}
+        self.failure_observations: dict[str, Observation] = {}
+        self.observation_token = 0
         # Exclusive creation avoids appending to a previous capture or following a symlink.
         try:
             fd = os.open(config.sink, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -208,6 +249,7 @@ class Capture:
             threading.Thread(target=self._watch, daemon=True, name="executor-capture").start()
 
     def _status_failure(self) -> None:
+        self._clear_metadata()
         try:
             fd = os.open(
                 self.config.status, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
@@ -217,6 +259,116 @@ class Capture:
                 stream.write(b'{"capture_status":"sink_failure"}\n')
         except BaseException:
             pass
+
+    def _clear_metadata(self) -> None:
+        self.writer_owners.clear()
+        self.generation_evidence.clear()
+        for observation in self.outgoing_requests.values():
+            observation.failures.clear()
+            observation.saved_writer = None
+            observation.owner = None
+        self.outgoing_requests.clear()
+        for observation in self.failure_observations.values():
+            observation.failures.clear()
+            observation.saved_writer = None
+            observation.owner = None
+        self.failure_observations.clear()
+        for observation in self.active.values():
+            observation.failures.clear()
+            observation.saved_writer = None
+            observation.owner = None
+        self.active.clear()
+        self.target_requests.clear()
+
+    def _token(self) -> int:
+        self.observation_token += 1
+        return self.observation_token
+
+    def session_writer(self, writer: object, observation: Observation | None) -> None:
+        with self.lock:
+            if self.closed or observation is None:
+                return
+            identity = observation.identity
+            generation = identity.connection_generation
+            if generation not in {self.setup_generation, self.natural_generation}:
+                return
+            if generation not in self.generation_evidence:
+                if len(self.generation_evidence) >= 2:
+                    return
+                self.generation_evidence[generation] = GenerationEvidence(identity, self._token())
+            owner = self.generation_evidence[generation]
+            if id(writer) not in self.writer_owners and len(self.writer_owners) >= 2:
+                self.truncated = True
+                self.finish("truncated")
+                return
+            observation.owner = owner
+            self.writer_owners[id(writer)] = (writer, owner)
+
+    def session_done(self, writer: object) -> None:
+        with self.lock:
+            self.writer_owners.pop(id(writer), None)
+
+    def outgoing(
+        self, identity: Any, writer: object, wire_request_id: str, kind: Any
+    ) -> Observation | None:
+        with self.lock:
+            self.tick()
+            if self.closed:
+                return None
+            entry = self.writer_owners.get(id(writer))
+            if entry is None or entry[0] is not writer:
+                return None
+            if len(self.outgoing_requests) + len(self.failure_observations) >= MAX_REQUEST_METADATA:
+                self.truncated = True
+                self.finish("truncated")
+                return None
+            # Ownership comes from admission, never from the endpoint's current identity.
+            observation = Observation(self, entry[1].identity, False)
+            observation.owner = entry[1]
+            observation.saved_writer = writer
+            observation.bind_wire(wire_request_id, kind, "outbound")
+            self.outgoing_requests[observation.request_id] = observation
+            return observation
+
+    def close_attempt(
+        self, writer: object, cause: str, observation: Observation | None = None
+    ) -> None:
+        with self.lock:
+            if self.closed or cause not in CLOSE_CAUSES:
+                return
+            owner = observation.owner if observation is not None else None
+            entry = self.writer_owners.get(id(writer))
+            if owner is not None and not (
+                observation is not None and observation.saved_writer is writer
+                or entry is not None and entry[0] is writer and entry[1] is owner
+            ):
+                return
+            if owner is None:
+                if entry is None or entry[0] is not writer:
+                    return
+                owner = entry[1]
+            token = self._token()
+            if owner.first_close_token is None:
+                owner.first_close_token = token
+            fields: dict[str, Any] = {
+                "phase": "close_attempt",
+                "close_token": token,
+                "close_cause": cause,
+                **self._owner_fields(owner),
+            }
+            if observation is not None:
+                fields.update(observation.wire_fields())
+                fields["request_id"] = observation.request_id
+            self._record(fields)
+
+    @staticmethod
+    def _owner_fields(owner: GenerationEvidence) -> dict[str, Any]:
+        return {
+            "generation": owner.identity.connection_generation,
+            "writer_token": owner.writer_token,
+            "first_failure_token": owner.first_failure_token,
+            "first_close_token": owner.first_close_token,
+        }
 
     def _record(self, fields: dict[str, Any], *, final: bool = False) -> None:
         with self.lock:
@@ -351,6 +503,11 @@ class Capture:
             ):
                 return None
             observation = Observation(self, identity, False)
+            observation.bind_wire(
+                getattr(message, "request_id", None), getattr(message, "kind", None), "inbound"
+            )
+            owner = self.generation_evidence.get(identity.connection_generation)
+            observation.owner = owner
             observation.connection = str(getattr(message, "kind", "")) in {
                 "reconcile_inventory",
                 "reconciliation_ready",
@@ -404,10 +561,15 @@ class Capture:
                     "open_phases": [o.phase for o in list(self.active.values())[:8]],
                     "completion": "unknown" if self.active else "settled",
                     "last_completed_phase": self.last_completed_phase,
+                    "later_failures": "unknown_after_capture_end",
+                    "generation_evidence": [
+                        self._owner_fields(owner) for owner in self.generation_evidence.values()
+                    ],
                 },
                 final=True,
             )
             self.closed = True
+            self._clear_metadata()
             try:
                 self.sink.close()
             except BaseException:
@@ -427,6 +589,46 @@ class Observation:
         self.send_status = "unknown"
         self.failed = False
         self.connection = True
+        self.owner: GenerationEvidence | None = None
+        self.saved_writer: object | None = None
+        self.wire_request_id: str | None = None
+        self.direction: str | None = None
+        self.wire_kind = "unknown"
+        self.failures: list[tuple[BaseException, int, str]] = []
+        self.timeout_source: str | None = None
+
+    def bind_wire(self, request_id: Any, kind: Any, direction: str) -> None:
+        if self.capture.closed:
+            return
+        self.wire_request_id = _wire_uuid(request_id)
+        self.direction = direction if direction in {"inbound", "outbound"} else None
+        allowed = OUTGOING_WIRE_KINDS if direction == "outbound" else WIRE_KINDS
+        self.wire_kind = kind if type(kind) is str and kind in allowed else "unknown"
+        # StrEnum members are trusted only after their value passes the same fixed set.
+        if isinstance(kind, str) and str(kind) in allowed:
+            self.wire_kind = str(kind)
+
+    def wire_fields(self) -> dict[str, Any]:
+        if self.direction is None:
+            return {}
+        return {
+            "wire_request_id": self.wire_request_id,
+            "direction": self.direction,
+            "wire_kind": self.wire_kind,
+        }
+
+    def request_timeout(self, error: BaseException, deadline_expired: bool) -> None:
+        if self.capture.closed:
+            return
+        self.timeout_source = "request_deadline" if deadline_expired else "inner_timeout"
+        self.fail("request_timeout", error)
+
+    def request_done(self) -> None:
+        with self.capture.lock:
+            self.capture.outgoing_requests.pop(self.request_id, None)
+            self.capture.failure_observations.pop(self.request_id, None)
+            self.failures.clear()
+            self.saved_writer = None
 
     def hello_admitted(self, identity: Any) -> None:
         admitted = self.capture.hello(identity)
@@ -503,7 +705,7 @@ class Observation:
                 "rollback_call_returned",
                 "transaction_exit",
             }
-            if not detailed or not (self.target or self.connection):
+            if not detailed or not (self.target or self.connection or event == "failure"):
                 return
             self.phase = phase
             capture.last_phase = phase
@@ -530,6 +732,17 @@ class Observation:
             }
             if self.identity.connection_generation is not None:
                 fields["executor_incarnation"] = capture.config.target["executor_incarnation"]
+            fields.update(self.wire_fields())
+            if self.owner is not None:
+                fields.update(capture._owner_fields(self.owner))
+            if phase == "request_timeout":
+                fields["timeout_source"] = self.timeout_source
+            if phase == "generation_close":
+                fields["transport_cause"] = (
+                    "preceding_local_close"
+                    if self.owner is not None and self.owner.first_close_token is not None
+                    else "unknown"
+                )
             if role in {"preflight", "acceptance"}:
                 fields["transaction_role"] = role
             if self.target:
@@ -562,6 +775,30 @@ class Observation:
                 if not self.started:
                     capture.active.pop(self.request_id, None)
             if error is not None:
+                prior = next((entry for entry in self.failures if entry[0] is error), None)
+                if prior is None:
+                    if self.request_id not in capture.failure_observations:
+                        if (
+                            len(capture.outgoing_requests) + len(capture.failure_observations)
+                            >= MAX_REQUEST_METADATA
+                        ):
+                            capture.truncated = True
+                            capture.finish("truncated")
+                            return
+                        capture.failure_observations[self.request_id] = self
+                    token = capture._token()
+                    if len(self.failures) >= 8:
+                        capture.truncated = True
+                        capture.finish("truncated")
+                        return
+                    prior = (error, token, phase)
+                    self.failures.append(prior)
+                fields["failure_token"] = prior[1]
+                fields["originating_phase"] = prior[2]
+                if self.owner is not None:
+                    if self.owner.first_failure_token is None:
+                        self.owner.first_failure_token = prior[1]
+                    fields.update(capture._owner_fields(self.owner))
                 fields["exception_class"] = EXCEPTIONS.get(type(error), "other")
                 frames = traceback.extract_tb(error.__traceback__)
                 fields["source_frames"] = [
@@ -764,3 +1001,4 @@ class Observation:
             and self.send_status != "unknown"
         ):
             capture.finish("terminal_failure" if self.failed else "target_settled")
+        self.request_done()
