@@ -19,6 +19,7 @@ from planner.credentials.contracts import (
     ResolvedCredential,
 )
 from planner.measure_sources.contracts import (
+    AuthenticatedHttpRequest,
     BrokerConfiguration,
     DestinationGrant,
     FailureCode,
@@ -28,7 +29,8 @@ from planner.measure_sources.contracts import (
 )
 from planner.measure_sources.logic.protocol import Refusal, decode
 from planner.measure_sources.logic.transport import authenticate, normalize_url
-from planner.measure_sources.transport import _PinnedHTTPS, public_addresses
+from planner.measure_sources.notices import failure_message
+from planner.measure_sources.transport import PublicHttpsTransport, _PinnedHTTPS, public_addresses
 
 
 def configuration() -> BrokerConfiguration:
@@ -116,6 +118,11 @@ def test_url_authorization_rejects_ambiguous_paths_and_has_no_unauthenticated_fa
 def test_public_dns_rejects_mixed_answers_and_every_nonpublic_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def no_socket(*args: object, **kwargs: object) -> None:
+        pytest.fail("A rejected DNS answer set reached socket creation")
+
+    monkeypatch.setattr(socket, "socket", no_socket)
+    request = AuthenticatedHttpRequest("https://api.example.com/api", HttpMethod.GET, (), None)
     for address in (
         "127.0.0.1",
         "10.0.0.1",
@@ -136,8 +143,13 @@ def test_public_dns_rejects_mixed_answers_and_every_nonpublic_family(
             ],
         )
         with pytest.raises(Refusal) as denied:
-            public_addresses("api.example.com", 443)
-        assert denied.value.failure.code == FailureCode.unauthorized_request
+            PublicHttpsTransport().send(
+                request, deadline_monotonic=time.monotonic() + 1, max_response_bytes=4096
+            )
+        assert denied.value.failure.code == FailureCode.dns_policy_refused
+        assert failure_message(denied.value.failure) == (
+            "The provider hostname resolved to an address blocked by the network policy."
+        )
     monkeypatch.setattr(
         socket,
         "getaddrinfo",
@@ -181,6 +193,48 @@ def test_connection_uses_pinned_address_and_original_tls_name_without_second_dns
     connection.connect()
     connection.close()
     assert calls == [("8.8.8.8", 443), "api.example.com"]
+
+
+def test_post_attempts_only_first_validated_address_without_replay_or_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443)),
+        ],
+    )
+
+    class FailingConnection:
+        def __init__(self, host: str, port: int, address: tuple[int, str], deadline: float) -> None:
+            calls.append((host, port, address))
+
+        def request(
+            self, method: str, target: str, body: bytes | None, headers: dict[str, str]
+        ) -> None:
+            calls.append((method, target, body))
+            # Delivery can be uncertain. Repeating this POST is not safe to infer.
+            raise ConnectionResetError("synthetic uncertain delivery")
+
+        def close(self) -> None:
+            calls.append("closed")
+
+    monkeypatch.setattr("planner.measure_sources.transport._PinnedHTTPS", FailingConnection)
+    request = AuthenticatedHttpRequest(
+        "https://api.example.com/api/query", HttpMethod.POST, (), b'{"query":"count"}'
+    )
+    with pytest.raises(ConnectionResetError):
+        PublicHttpsTransport().send(
+            request, deadline_monotonic=time.monotonic() + 1, max_response_bytes=4096
+        )
+    assert calls == [
+        ("api.example.com", 443, (socket.AF_INET, "8.8.8.8")),
+        ("POST", "/api/query", b'{"query":"count"}'),
+        "closed",
+    ]
 
 
 def test_json_rejects_duplicate_keys_nonfinite_numbers_and_excess_depth() -> None:

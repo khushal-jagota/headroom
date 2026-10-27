@@ -37,28 +37,64 @@ async def application_runtime(
     No producer gate spans an await. Cleanup preserves the exact borrowed handle
     and immediate successful-constructor cleanup, including partial entry failures.
     """
-    async with AsyncExitStack() as cleanup:
-        composition = SignalRuntimeComposition(db_path, db_busy_timeout_ms)
-        cleanup.callback(composition.close)
-        composition.bootstrap()
-        binding = SignalNavigationBinding(composition.coordinator, navigation_delivery)
-        cleanup.callback(binding.close)
-        conversation = build_conversation_runtime(
-            db_path=db_path,
-            db_busy_timeout_ms=db_busy_timeout_ms,
-            sse_heartbeat_ms=sse_heartbeat_ms,
-            backend_child_factories=backend_child_factories,
-            remembered_codex_login_rejection=remembered_codex_login_rejection,
-            cleanup=cleanup,
-            signal_composition=composition,
-        )
-        try:
-            composition.initialize()
-            binding.attach()
-            conversation.system.require_runtime_ownership()
-            composition.coordinator.admit_runtime()
-            yield conversation
-        finally:
-            composition.coordinator.invalidate("shutdown")
-            # A callback error must still enter every cleanup in the outer stack.
-            await shutdown_dependents()
+    failure: BaseException | None = None
+    try:
+        async with AsyncExitStack() as cleanup:
+            try:
+                composition = SignalRuntimeComposition(db_path, db_busy_timeout_ms)
+                cleanup.callback(composition.close)
+                composition.bootstrap()
+                binding = SignalNavigationBinding(composition.coordinator, navigation_delivery)
+                cleanup.callback(binding.close)
+                conversation = build_conversation_runtime(
+                    db_path=db_path,
+                    db_busy_timeout_ms=db_busy_timeout_ms,
+                    sse_heartbeat_ms=sse_heartbeat_ms,
+                    backend_child_factories=backend_child_factories,
+                    remembered_codex_login_rejection=remembered_codex_login_rejection,
+                    cleanup=cleanup,
+                    signal_composition=composition,
+                )
+                try:
+                    composition.initialize()
+                    binding.attach()
+                    conversation.system.require_runtime_ownership()
+                    composition.coordinator.admit_runtime()
+                    yield conversation
+                except BaseException as error:
+                    failure = error
+                    raise
+                finally:
+                    shutdown_failures: list[BaseException] = []
+                    try:
+                        composition.coordinator.invalidate("shutdown")
+                    except BaseException as error:
+                        shutdown_failures.append(error)
+                    try:
+                        await shutdown_dependents()
+                    except BaseException as error:
+                        shutdown_failures.append(error)
+                    for shutdown_error in shutdown_failures:
+                        if failure is None:
+                            failure = shutdown_error
+                        else:
+                            failure.add_note(
+                                f"application shutdown also failed: {shutdown_error!r}"
+                            )
+                            for note in getattr(shutdown_error, "__notes__", ()):
+                                failure.add_note(note)
+                    if failure is not None:
+                        raise failure
+            except BaseException as error:
+                if failure is None:
+                    failure = error
+                raise
+    except BaseException as error:
+        # AsyncExitStack still runs every registered cleanup. Its last error must
+        # not replace the original startup, body, or dependent-shutdown failure.
+        if failure is not None and error is not failure:
+            failure.add_note(f"runtime cleanup also failed: {error!r}")
+            for note in getattr(error, "__notes__", ()):
+                failure.add_note(note)
+            raise failure from None
+        raise

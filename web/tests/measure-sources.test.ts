@@ -26,6 +26,9 @@ describe('measure source settings', () => {
     const value=status();
     expect(failureLabel(value.collection_failure)).toContain('rejected the credential');
     expect(failureLabel(value.latest_run?.failure ?? null)).toBe('');
+    const dnsFailure = {code:'dns_policy_refused' as const,http_status:null,budget:null,measure_id:null,date:null};
+    expect(failureLabel(dnsFailure)).toBe('The provider hostname resolved to an address blocked by the network policy.');
+    expect(failureLabel(dnsFailure)).not.toBe(failureLabel({...dnsFailure,code:'unauthorized_request'}));
     expect(runRevision(value,'collection')).toBe(1); expect(runRevision(value,'test')).toBe(2);
     value.running_run_id='r'; expect(runRevision(value,'collection')).toBeNull();
     value.running_run_id=null; value.latest_run!.status='pending'; expect(runRevision(value,'test')).toBeNull();

@@ -23,12 +23,12 @@ def public_addresses(host: str, port: int) -> tuple[tuple[int, str], ...]:
     result: list[tuple[int, str]] = []
     for family, _, _, _, address in answers:
         if family not in (socket.AF_INET, socket.AF_INET6):
-            raise refuse(FailureCode.unauthorized_request)
+            raise refuse(FailureCode.dns_policy_refused)
         ip = ipaddress.ip_address(address[0])
         if not ip.is_global or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
-            raise refuse(FailureCode.unauthorized_request)
+            raise refuse(FailureCode.dns_policy_refused)
         if isinstance(ip, ipaddress.IPv6Address) and (ip.ipv4_mapped or ip.sixtofour or ip.teredo):
-            raise refuse(FailureCode.unauthorized_request)
+            raise refuse(FailureCode.dns_policy_refused)
         pair = (family, str(ip))
         if pair not in result:
             result.append(pair)
@@ -77,6 +77,8 @@ class PublicHttpsTransport:
             raise refuse(FailureCode.unauthorized_request)
         port = url.port if url.port is not None else 443
         addresses = public_addresses(url.hostname, port)
+        # One attempt, in resolver order. Never replay a request or try another
+        # address after a failure, including an uncertain POST delivery.
         connection = _PinnedHTTPS(url.hostname, port, addresses[0], deadline_monotonic)
         try:
             target = url.path or "/"

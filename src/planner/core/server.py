@@ -7,7 +7,7 @@ import html
 import os
 import re
 import sqlite3
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
@@ -183,34 +183,37 @@ def create_app(
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
-            if recovery_task is not None:
-                recovery_task.cancel()
+            deadline = _monotonic() + float(config.shutdown_grace_seconds)
+            failures: list[BaseException] = []
+
+            async def attempt(operation: Awaitable[None]) -> None:
                 try:
-                    await recovery_task
+                    await operation
+                except BaseException as error:
+                    failures.append(error)
+
+            async def cancel_task(task: asyncio.Task[None]) -> None:
+                task.cancel()
+                try:
+                    await task
                 except asyncio.CancelledError:
                     pass
-            deadline = _monotonic() + float(config.shutdown_grace_seconds)
-            try:
-                try:
-                    try:
-                        await scoped_navigation.close()
-                    finally:
-                        await navigation_delivery.close()
-                finally:
-                    try:
-                        if metrics is not None:
-                            await metrics.stop(deadline=deadline)
-                    finally:
-                        app.state.vps_metrics = None
-                        if loops is not None:
-                            await _stop_runtime_with_deadline(loops, deadline)
-            finally:
-                if lifecycle_observer is not None:
-                    lifecycle_observer.cancel()
-                    try:
-                        await lifecycle_observer
-                    except asyncio.CancelledError:
-                        pass
+
+            if recovery_task is not None:
+                await attempt(cancel_task(recovery_task))
+            await attempt(scoped_navigation.close())
+            await attempt(navigation_delivery.close())
+            if metrics is not None:
+                await attempt(metrics.stop(deadline=deadline))
+            app.state.vps_metrics = None
+            if loops is not None:
+                await attempt(_stop_runtime_with_deadline(loops, deadline))
+            if lifecycle_observer is not None:
+                await attempt(cancel_task(lifecycle_observer))
+            if failures:
+                for later in failures[1:]:
+                    failures[0].add_note(f"dependent shutdown also failed: {later!r}")
+                raise failures[0]
 
         remembered_codex_login_rejection = DurableCodexLoginRejection(
             config.db_path, busy_timeout_ms=config.db_busy_timeout_ms

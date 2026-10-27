@@ -128,6 +128,7 @@ class FailureCode(StrEnum):
     runtime_failure = "runtime_failure"
     malformed_protocol = "malformed_protocol"
     unauthorized_request = "unauthorized_request"
+    dns_policy_refused = "dns_policy_refused"
     credential_unavailable = "credential_unavailable"
     transport_failure = "transport_failure"
     http_error = "http_error"

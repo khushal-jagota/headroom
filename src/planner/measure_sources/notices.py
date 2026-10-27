@@ -18,6 +18,9 @@ FAILURE_MESSAGES = {
     FailureCode.runtime_failure: "The source script failed.",
     FailureCode.malformed_protocol: "The source sent an invalid host message.",
     FailureCode.unauthorized_request: "A request exceeded the source's granted destinations.",
+    FailureCode.dns_policy_refused: (
+        "The provider hostname resolved to an address blocked by the network policy."
+    ),
     FailureCode.credential_unavailable: "A required credential is unavailable.",
     FailureCode.transport_failure: "The provider request failed.",
     FailureCode.http_error: "The provider returned an HTTP error.",

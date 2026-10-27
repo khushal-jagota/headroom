@@ -6,6 +6,7 @@ const failureLabels: Record<FailureCode, string> = {
   runtime_failure: 'The source could not complete.',
   malformed_protocol: 'The source returned an invalid message.',
   unauthorized_request: 'The source requested an unauthorized destination.',
+  dns_policy_refused: 'The provider hostname resolved to an address blocked by the network policy.',
   credential_unavailable: 'A required credential is not configured or permitted.',
   transport_failure: 'The provider could not be reached.',
   http_error: 'The provider refused the request.',

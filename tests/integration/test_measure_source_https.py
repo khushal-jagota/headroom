@@ -197,7 +197,7 @@ def test_production_entry_rejects_loopback_even_with_environment_override(
     result = Runtime().execute(
         admission(f"request('public-only',{origin + '/api/value'!r})", grants=(grant,)), ()
     )
-    assert result.failure is not None and result.failure.code == FailureCode.unauthorized_request
+    assert result.failure is not None and result.failure.code == FailureCode.dns_policy_refused
     assert not captured
 
 

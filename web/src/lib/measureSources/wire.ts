@@ -74,7 +74,7 @@ export type RunFailure = {
   date: string | null;
 };
 
-export type FailureCode = "sandbox_unavailable" | "runtime_failure" | "malformed_protocol" | "unauthorized_request" | "credential_unavailable" | "transport_failure" | "http_error" | "invalid_json" | "invalid_output" | "missing_output" | "stale_definition" | "budget_exhausted" | "interrupted";
+export type FailureCode = "sandbox_unavailable" | "runtime_failure" | "malformed_protocol" | "unauthorized_request" | "dns_policy_refused" | "credential_unavailable" | "transport_failure" | "http_error" | "invalid_json" | "invalid_output" | "missing_output" | "stale_definition" | "budget_exhausted" | "interrupted";
 
 export type RuntimeBudget = "wall_seconds" | "script_cpu_seconds" | "script_memory_bytes" | "broker_cpu_seconds" | "broker_memory_bytes" | "request_count" | "request_frame_bytes" | "response_bytes" | "total_response_bytes" | "child_output_bytes" | "result_bytes" | "observation_count" | "file_descriptors";
 

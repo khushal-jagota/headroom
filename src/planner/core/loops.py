@@ -42,11 +42,12 @@ class BackgroundLoops:
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._stopped = False
+        self._stop_requested = False
         self._started = False
 
     def start(self, tick_seconds: int) -> None:
         """Admit polling only after publication startup has committed its epoch."""
-        if self._started or self._stopped:
+        if self._started or self._stop_requested:
             raise RuntimeError("background loops cannot start twice or after stop")
         self._started = True
         for loop in (
@@ -76,37 +77,44 @@ class BackgroundLoops:
         The loop is stopped on a worker thread because its own drain waits on tasks that
         run on this event loop: stopping it inline would be the loop waiting for itself.
         """
+        await asyncio.to_thread(self._stop_owned, deadline=deadline)
+
+    def _stop_owned(self, *, deadline: float | None = None) -> None:
+        """Drain every owner, retaining the lock and retry handles after any failure."""
         global _active
         if self._stopped:
             return
-        self._stopped = True
-        if self._stop_waking_on_change is not None:
-            self._stop_waking_on_change()
-            self._stop_waking_on_change = None
+        self._stop_requested = True
         if deadline is None:
             deadline = _monotonic() + self._shutdown_grace_seconds
-        if self.scheduled_ticket_loop is not None:
-            await asyncio.to_thread(
-                self.scheduled_ticket_loop.stop,
-                deadline=deadline,
-            )
-        if self.notification_loop is not None:
-            await asyncio.to_thread(
-                self.notification_loop.stop,
-                deadline=deadline,
-            )
-        if self.manager_wake_loop is not None:
-            await asyncio.to_thread(
-                self.manager_wake_loop.stop,
-                deadline=deadline,
-            )
-        if self.worker_step_readiness_loop is not None:
-            await asyncio.to_thread(
-                self.worker_step_readiness_loop.stop,
-                deadline=deadline,
-            )
+        failures: list[BaseException] = []
+        if self._stop_waking_on_change is not None:
+            try:
+                self._stop_waking_on_change()
+                self._stop_waking_on_change = None
+            except BaseException as error:
+                failures.append(error)
+        for loop in (
+            self.scheduled_ticket_loop,
+            self.notification_loop,
+            self.manager_wake_loop,
+            self.worker_step_readiness_loop,
+        ):
+            if loop is not None:
+                try:
+                    loop.stop(deadline=deadline)
+                except BaseException as error:
+                    failures.append(error)
+        if failures:
+            for later in failures[1:]:
+                failures[0].add_note(f"background cleanup also failed: {later!r}")
+            raise failures[0]
+        # A failed stop can still own a live scheduler or source runtime. Only
+        # successful drains permit another owner to take the polling lock.
         if self._lock_path is not None:
             release_machine_lock(self._lock_path)
+            self._lock_path = None
+        self._stopped = True
         if _active is self:
             _active = None
 
@@ -177,31 +185,27 @@ def prepare_background_loops(
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
             candidate_notification_loop.reconcile_imported_state()
-        except Exception:
+        except BaseException as startup_error:
             _LOGGER.exception("Background loops failed to start")
-            if candidate_unsubscribe is not None:
-                candidate_unsubscribe()
-            if candidate_loop is not None:
-                try:
-                    candidate_loop.stop()
-                except Exception:
-                    _LOGGER.exception("partially started worker-step readiness loop failed to stop")
-            if candidate_schedule_loop is not None:
-                try:
-                    candidate_schedule_loop.stop()
-                except Exception:
-                    _LOGGER.exception("partially started scheduled Ticket loop failed to stop")
-            if candidate_notification_loop is not None:
-                try:
-                    candidate_notification_loop.stop()
-                except Exception:
-                    _LOGGER.exception("partially started notification loop failed to stop")
-            if candidate_manager_wake_loop is not None:
-                try:
-                    candidate_manager_wake_loop.stop()
-                except Exception:
-                    _LOGGER.exception("partially started manager wake loop failed to stop")
-            release_machine_lock(config.dispatcher_lock_path)
+            # Keep the actual owner reachable if any partial cleanup fails. An
+            # inert replacement would forget live work while retaining its fd.
+            partial = BackgroundLoops(
+                candidate_loop,
+                config.dispatcher_lock_path,
+                candidate_unsubscribe,
+                shutdown_grace_seconds=float(config.shutdown_grace_seconds),
+                scheduled_ticket_loop=candidate_schedule_loop,
+                notification_loop=candidate_notification_loop,
+                manager_wake_loop=candidate_manager_wake_loop,
+            )
+            _active = partial
+            try:
+                partial._stop_owned()
+            except BaseException as cleanup_error:
+                startup_error.add_note(f"background rollback also failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    startup_error.add_note(note)
+                _LOGGER.exception("Partially prepared background loops failed to stop")
             raise
         else:
             worker_step_readiness_loop = candidate_loop
@@ -248,26 +252,27 @@ def start_background_loops(
             asyncio_loop=asyncio_loop,
         )
         loops.start(config.tick_seconds)
-    except Exception:
+    except BaseException as startup_error:
         _LOGGER.exception("Background loops failed to start")
         if loops is not None:
             # Preparation cleans up its own failure. Once it returned, partial
             # admission belongs to this legacy synchronous caller instead.
-            for candidate in (
-                loops.worker_step_readiness_loop,
-                loops.scheduled_ticket_loop,
-                loops.notification_loop,
-                loops.manager_wake_loop,
-            ):
-                if candidate is not None:
-                    try:
-                        candidate.stop()
-                    except Exception:
-                        _LOGGER.exception("partially started background loop failed to stop")
-            if loops._stop_waking_on_change is not None:
-                loops._stop_waking_on_change()
-            if loops._lock_path is not None:
-                release_machine_lock(loops._lock_path)
+            rollback_failed = False
+            try:
+                loops._stop_owned()
+            except BaseException as cleanup_error:
+                startup_error.add_note(f"background rollback also failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    startup_error.add_note(note)
+                _LOGGER.exception("Partially started background loops failed to stop")
+                rollback_failed = True
+            if rollback_failed:
+                raise
+        elif _active is not None:
+            # Preparation failed to drain its retained partial owner.
+            raise
+        if not isinstance(startup_error, Exception):
+            raise
         loops = BackgroundLoops(shutdown_grace_seconds=float(config.shutdown_grace_seconds))
         _active = loops
     return loops

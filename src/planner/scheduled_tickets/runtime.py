@@ -60,16 +60,27 @@ class ScheduledTicketLoop:
 
     def stop(self, *, deadline: float | None = None) -> None:
         self._stop.set()
+        failures: list[BaseException] = []
         for participant in self._participants:
-            participant.stop(deadline=deadline)
+            try:
+                participant.stop(deadline=deadline)
+            except BaseException as error:
+                failures.append(error)
         thread = self._thread
         if thread is not None:
             # Occurrence work is synchronous and bounded by SQLite's busy timeout.
             timeout = 10.0 if deadline is None else max(0.0, deadline - monotonic())
-            thread.join(timeout=timeout)
-            if thread.is_alive():
-                raise RuntimeError("schedule clock remains active; polling lock is retained")
-            self._thread = None
+            try:
+                thread.join(timeout=timeout)
+                if thread.is_alive():
+                    raise RuntimeError("schedule clock remains active; polling lock is retained")
+                self._thread = None
+            except BaseException as error:
+                failures.append(error)
+        if failures:
+            for later in failures[1:]:
+                failures[0].add_note(f"schedule cleanup also failed: {later!r}")
+            raise failures[0]
 
     def _run_loop(self, interval: int) -> None:
         while not self._stop.is_set():

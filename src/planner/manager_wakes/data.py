@@ -41,6 +41,8 @@ def create_wake(
     resolved_target = target or Principal(PrincipalKind.manager, str(manager_id))
     if (source_kind is WakeSourceKind.source_failure) != (source_identity is not None):
         raise ValueError("source failure notice requires its typed identity")
+    if source_kind is not WakeSourceKind.source_failure and ticket_id is None:
+        raise ValueError("ticket notice requires a Ticket")
     if source_identity is not None and source_identity.recipient != resolved_target:
         raise ValueError("source notice identity must match the recipient")
     inserted = conn.execute(
