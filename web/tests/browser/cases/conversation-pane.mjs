@@ -48,6 +48,141 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   import FilePreview from "../src/components/FilePreview.svelte";
   import FileDocument from "../src/components/FileDocument.svelte";
   import VisibleMessageImage from "../src/components/conversation/VisibleMessageImage.svelte";
+  import { observeVisibleContent } from "../src/lib/visibleContent";
+  // Queue delivery is controlled only for this marked leaf. Every other native
+  // observer target on the existing preview page keeps its ordinary deliveries.
+  (window as any).__visibilityQueueProof = async () => {
+    const NativeObserver = window.IntersectionObserver;
+    const rows: any[] = [];
+    const started = performance.now();
+    const text = "Exact queued visibility text — preserved.";
+    let target: HTMLElement | null = null;
+    let callback: IntersectionObserverCallback | null = null;
+    let observer: IntersectionObserver | null = null;
+    let cleanup: (() => void) | null = null;
+    let stateObserver: MutationObserver | null = null;
+    let updates: boolean[] = [];
+    let states: (string | null)[] = [];
+    let mounts = 0;
+    let originalNode: Node | null = null;
+    let scheduled = 0;
+    const drain = (records: MutationRecord[]) => {
+      for (const record of records) states.push(record.oldValue);
+    };
+    const snapshot = () => {
+      if (stateObserver) drain(stateObserver.takeRecords());
+      return {state:target?.getAttribute("data-visible-content-state") ?? null,
+        text:target?.textContent ?? "", updates:[...updates], mounts,
+        states:[...states], sameNode:originalNode !== null && target?.firstChild === originalNode};
+    };
+    const dispose = () => {
+      cleanup?.(); cleanup = null;
+      stateObserver?.disconnect(); stateObserver = null;
+      target?.remove(); target = null;
+    };
+    const fresh = () => {
+      dispose();
+      target = document.createElement("div");
+      target.dataset.visibilityQueueProof = "";
+      target.style.cssText = "position:fixed;left:0;top:0;width:220px;height:32px;pointer-events:none";
+      document.body.append(target);
+      updates = []; states = []; mounts = 0; originalNode = null;
+      cleanup = observeVisibleContent(target, visible => {
+        updates.push(visible);
+        if (visible && !target!.firstChild) {
+          originalNode = document.createTextNode(text); target!.append(originalNode); mounts++;
+        } else if (!visible) target!.replaceChildren();
+      });
+      stateObserver = new MutationObserver(drain);
+      stateObserver.observe(target, {attributes:true, attributeOldValue:true,
+        attributeFilter:["data-visible-content-state"]});
+    };
+    const foreign = document.createElement("div");
+    const entry = (inside:boolean, time:number, element:Element = target!) =>
+      ({target:element, isIntersecting:inside, time} as IntersectionObserverEntry);
+    const deliver = (entries:IntersectionObserverEntry[]) => callback!(entries, observer!);
+    const record = (name:string, expected:string, pass:boolean, details:any) =>
+      rows.push({name, expected, pass, ...details});
+    window.IntersectionObserver = class extends NativeObserver {
+      constructor(receive:IntersectionObserverCallback, options?:IntersectionObserverInit) {
+        super((entries, instance) => {
+          const native = entries.filter(value => !value.target.hasAttribute("data-visibility-queue-proof"));
+          if (native.length) receive(native, instance);
+        }, options);
+        const nativeObserve = this.observe.bind(this);
+        this.observe = (element:Element) => {
+          if (element.hasAttribute("data-visibility-queue-proof")) { callback = receive; observer = this; }
+          nativeObserve(element);
+        };
+      }
+    };
+    try {
+      for (const equalTimes of [false, true]) {
+        const lastTime = equalTimes ? 10 : 20;
+        fresh();
+        deliver([entry(false,10), entry(true,lastTime)]);
+        const admission = snapshot();
+        record("outside-to-inside"+(equalTimes?"-equal-time":""), "active with exact native text",
+          admission.state === "active" && admission.text === text && admission.mounts === 1,
+          {equalTimes, actual:admission});
+        // Independent admission makes the reverse failure observable even when
+        // the old consumer failed the preceding direction in this same run.
+        fresh(); deliver([entry(true,1)]);
+        const admitted = snapshot();
+        deliver([entry(true,10), entry(false,lastTime)]);
+        const retained = snapshot();
+        record("inside-to-outside"+(equalTimes?"-equal-time":""), "retained with identical native text node",
+          admitted.state === "active" && retained.state === "retained" && retained.sameNode && retained.text === text && retained.updates.length === 1,
+          {equalTimes, actual:retained});
+      }
+      fresh();
+      deliver([entry(true,1), entry(false,2)]);
+      const transient = snapshot();
+      record("released-final-outside", "released without transient admission or mount",
+        transient.state === "released" && transient.updates.length === 0 && transient.mounts === 0 && !transient.states.includes("active"), {actual:transient});
+      fresh();
+      deliver([entry(false,0,foreign), entry(false,1), entry(true,2), entry(false,3,foreign)]);
+      const matched = snapshot();
+      record("target-identity", "active using the final matching target",
+        matched.state === "active" && matched.text === text && matched.mounts === 1, {actual:matched});
+      fresh(); deliver([entry(true,1)]);
+      for (const state of ["active", "retained"]) {
+        if (state === "retained") deliver([entry(false,2)]);
+        for (const [name, batch] of [["empty", []], ["foreign-only", [entry(true,3,foreign),entry(false,4,foreign)]]] as const) {
+          const before = snapshot();
+          deliver([...batch]);
+          const after = snapshot();
+          record(state+"-"+name, "no publication, updates, or node replacement",
+            before.state === state && after.state === state && after.sameNode && after.text === text &&
+            after.updates.length === before.updates.length && after.states.length === before.states.length,
+            {before, actual:after});
+        }
+      }
+      const saved = callback!;
+      cleanup!(); cleanup = null;
+      target!.replaceChildren();
+      const beforeCleanupDelivery = snapshot();
+      const nativeFrame = window.requestAnimationFrame;
+      const nativeTimeout = window.setTimeout;
+      try {
+        window.requestAnimationFrame = (action:FrameRequestCallback) => { scheduled++; return nativeFrame.call(window,action); };
+        window.setTimeout = ((...args:any[]) => { scheduled++; return (nativeTimeout as any).apply(window,args); }) as typeof window.setTimeout;
+        saved([entry(true,5)],observer!);
+      } finally { window.requestAnimationFrame = nativeFrame; window.setTimeout = nativeTimeout; }
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const destroyed = snapshot();
+      record("destroyed-queued-callback", "no state, mount, update, or scheduled work after cleanup",
+        destroyed.state === null && destroyed.text === "" && destroyed.updates.length === beforeCleanupDelivery.updates.length &&
+        destroyed.mounts === beforeCleanupDelivery.mounts && destroyed.states.length === beforeCleanupDelivery.states.length && scheduled === 0,
+        {before:beforeCleanupDelivery, actual:destroyed, scheduled});
+    } finally {
+      try { dispose(); } finally { window.IntersectionObserver = NativeObserver; }
+    }
+    return {rows, seconds:(performance.now()-started)/1000, newHosts:0, newNavigations:0,
+      nativeObserverRestored:window.IntersectionObserver === NativeObserver};
+  };
   import { VISIBLE_CONTENT_INACTIVE_LIMIT } from "../src/lib/visibleContent/config";
   (window as any).__inactiveLimit=VISIBLE_CONTENT_INACTIVE_LIMIT;
   let retainedKind=$state('preview');
