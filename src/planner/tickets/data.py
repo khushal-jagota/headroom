@@ -174,6 +174,21 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("COMMIT")
 
 
+@contextmanager
+def _txn_without_nested_savepoint(conn: sqlite3.Connection) -> Iterator[None]:
+    """Join the caller's transaction whole, or own one when there is none.
+
+    Worker-step claim writes also run inside Signal-guarded conversation writes, and
+    those forbid a nested savepoint once a runtime candidate is applied. A failure here
+    propagates, so the caller rolls its transaction back as one unit.
+    """
+    if conn.in_transaction:
+        yield
+        return
+    with _txn(conn):
+        yield
+
+
 def _validate_ticket_creation_placement(
     conn: sqlite3.Connection,
     *,
@@ -1280,7 +1295,7 @@ def release_worker_step_claim(
 
     Reports whether the release actually fired.
     """
-    with _txn(conn):
+    with _txn_without_nested_savepoint(conn):
         row = conn.execute(
             "SELECT worker_step_claim, worker_step_claim_revision FROM tickets WHERE id = ?",
             (ticket_id,),
@@ -1311,7 +1326,7 @@ def mark_worker_step_claim_errored(
     the existing Manager restart route.  The exact claim identity prevents an old
     delivery result from overwriting a newer worker-step transition.
     """
-    with _txn(conn):
+    with _txn_without_nested_savepoint(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
         if ticket.worker_step_claim is not expected_claim:
             return False
@@ -1332,7 +1347,7 @@ def restore_interrupted_worker_step_claim(
     now: int,
 ) -> int | None:
     """Rearm only the exact errored claim reconciled from an interrupted occurrence."""
-    with _txn(conn):
+    with _txn_without_nested_savepoint(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
         if (
             ticket.conversation_id != conversation_id

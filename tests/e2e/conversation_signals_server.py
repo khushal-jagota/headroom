@@ -183,7 +183,7 @@ def build_app(config: Config) -> FastAPI:
     async def message(conversation_id: str, body: dict[str, str]) -> dict[str, bool]:
         await app.state.conversation.system.record_message_to_owner(
             conversation_id,
-            text_message_content("Explicit message to owner"),
+            text_message_content(body.get("text", "Explicit message to owner")),
             sender_label=body["label"],
             sender=Principal(PrincipalKind(body["kind"]), body["id"]),
             recipient=OWNER_PRINCIPAL,

@@ -707,10 +707,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     </section>
     </div>
   {:else}
-    <ManagerFrame bind:conversationState>
+    <ManagerFrame bind:conversationState
+      openedFile={cardArtifact ? {kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"} : null}
+      onOpenFile={() => artifactClicks += 1}>
       <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
-      {#snippet readingAside(registerArtifactFrame)}{#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"}}
-        {registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}{/snippet}
       {#snippet conversation()}{@render conversationPane()}{/snippet}
     </ManagerFrame>
   {/if}

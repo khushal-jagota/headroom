@@ -38,4 +38,5 @@ it('copies an anchor from reactive proxies without retaining mutable address fie
   expect(saved.content?.text.textLeafPath).toEqual([0,2]);
   expect(saved.content?.text.contentIdentity.digest).toBe('exact');
   expect(Object.isFrozen(saved.content?.text)).toBe(true);
+
 });
