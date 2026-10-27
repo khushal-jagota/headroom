@@ -822,11 +822,27 @@ class NativeChildRegistry:
         callbacks = sum(
             len(child.asks) + len(child.user_inputs) for child in self.children.values()
         )
+        stopped_references = {
+            command.child
+            for command_id, command in self._commands.items()
+            if command.operation == ChildOperation.stop
+            and (outcome := self.outcomes.get(command_id)) is not None
+            and outcome.disposition == CommandDisposition.succeeded
+            and outcome.child == command.child
+        }
+        live_references = {child.reference for child in self.children.values()}
+        # Acknowledged uncertainty stays historical only after its exact child stopped.
+        # This permits maintenance exit without resolving unknown native effects.
         # Native calls with no confirmed result also prevent replacement. This includes
         # start before its child has a turn, and outcome publication still in progress.
         unresolved = sum(not task.done() for task in self._tasks.values()) + sum(
             outcome.disposition == CommandDisposition.uncertain
-            for outcome in self.outcomes.values()
+            and not (
+                command_id in self._confirmed_command_ids
+                and outcome.child in stopped_references
+                and outcome.child not in live_references
+            )
+            for command_id, outcome in self.outcomes.items()
         )
         unresolved += sum(
             command_id not in self._outcomes_published for command_id in self.outcomes

@@ -240,8 +240,16 @@ receipts, and duplicate protection. Unaccepted entries still prevent exit.
 
 A missing child or an unknown native effect remains uncertain. Confirmation of
 an outcome and receipt of its journal entry do not resolve that uncertainty.
+For maintenance exit, an acknowledged uncertain outcome stops blocking only after
+a successful stop command for its exact executor incarnation, child, and conversation.
+That exact child must also be absent from the live registry. A failed stop, a missing
+child alone, or a stop for another reference does not qualify. All other work and
+journal entries must still settle before exit.
+
 Error text alone cannot prove that dispatch never occurred. Historical uncertain
-outcomes retain their original meaning; this correction does not rewrite them.
+outcomes retain their original bytes and unknown effects. Duplicate commands retain
+their first result without another native call. An executor restart preserves the
+journal and its receipts but creates a fresh identity without old child authority.
 
 A committed controlled exit returns zero. The LaunchAgent keeps successful intentional exits stopped. The operator must
 check process evidence before service removal. An old receipt cannot authorize

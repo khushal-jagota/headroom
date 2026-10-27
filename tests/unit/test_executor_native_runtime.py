@@ -325,6 +325,261 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
     asyncio.run(run())
 
 
+async def uncertain_automatic_compaction(
+    registry: NativeChildRegistry,
+    native: ScriptedChild,
+    start: ChildCommand,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[ChildCommand, CommandOutcome]:
+    assert (await registry.execute_command(start)).disposition == CommandDisposition.succeeded
+
+    async def compacting_prompt(
+        turn: TurnToken, content: MessageContent, **kwargs: object
+    ) -> BackendPromptAccepted:
+        assert kwargs["automatic_compaction"] is True
+        native.prompts += 1
+        raise RuntimeError("response lost after automatic compaction")
+
+    monkeypatch.setattr(native, "write_prompt", compacting_prompt)
+    command = ChildCommand(
+        "compaction",
+        start.child,
+        ChildOperation.write_prompt,
+        TurnToken(start.child.conversation_id, 1),
+        {
+            "content": encode_value(text_message_content("continue")),
+            "sender_content": encode_value(text_message_content("continue")),
+            "sender_label": "Owner",
+            "mode": PromptDeliveryMode.queue.value,
+            "automatic_compaction": True,
+        },
+    )
+    outcome = await registry.execute_command(command)
+    assert outcome.disposition == CommandDisposition.uncertain
+    return command, outcome
+
+
+def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
+        entry = spool.pending()[-1]
+        original_bytes = spool._db.execute(
+            "SELECT envelope_json FROM envelopes WHERE submission_id=?", (entry.submission_id,)
+        ).fetchone()[0]
+        stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+        assert (await registry.execute_command(stop)).disposition == CommandDisposition.succeeded
+        assert start.child.child_id not in registry.children
+        registry.confirm_command(command.command_id)
+        blocked = await registry.quiesce()
+        assert blocked.uncertain_operation_count == 0
+        assert blocked.unsent_entry_count > 0
+        assert not blocked.ready
+        acknowledge_pending(spool)
+        assert (await registry.quiesce()).ready
+        assert registry.outcomes[command.command_id] == first
+        assert await registry.execute_command(command) == first
+        with pytest.raises(ValueError, match="different content"):
+            await registry.execute_command(replace(command, arguments={}))
+        assert (native.starts, native.prompts) == (1, 1)
+        assert spool.pending_count() == 0
+        assert spool._db.execute(
+            "SELECT envelope_json,pending FROM envelopes WHERE submission_id=?",
+            (entry.submission_id,),
+        ).fetchone() == (original_bytes, 0)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "missing_evidence",
+    [
+        "no_stop", "absent_child", "failed_stop", "unacknowledged", "live_child",
+        "other_incarnation", "other_child", "other_conversation", "outcome_mismatch",
+        "not_stop",
+    ],
+)
+def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_child(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+    missing_evidence: str,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
+        child = registry.children[start.child.child_id]
+        if missing_evidence == "absent_child":
+            registry.children.pop(start.child.child_id)
+        elif missing_evidence == "failed_stop":
+            async def failed_stop() -> None:
+                raise RuntimeError("termination not confirmed")
+
+            monkeypatch.setattr(native, "stop", failed_stop)
+            failed = await registry.execute_command(
+                ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+            )
+            assert failed.disposition == CommandDisposition.uncertain
+            registry.confirm_command("stop")
+        elif missing_evidence != "no_stop":
+            stop = ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+            stopped = await registry.execute_command(stop)
+            assert stopped.disposition == CommandDisposition.succeeded
+            if missing_evidence == "live_child":
+                registry.children[start.child.child_id] = child
+            elif missing_evidence.startswith("other_"):
+                changed = {
+                    "other_incarnation": replace(start.child, executor_incarnation=str(uuid4())),
+                    "other_child": replace(start.child, child_id=str(uuid4())),
+                    "other_conversation": replace(start.child, conversation_id="c_other"),
+                }[missing_evidence]
+                # Retained successful termination of a different full reference is insufficient.
+                registry._commands["stop"] = replace(stop, child=changed)
+                registry.outcomes["stop"] = replace(stopped, child=changed)
+            elif missing_evidence == "outcome_mismatch":
+                registry.outcomes["stop"] = replace(
+                    stopped, child=replace(start.child, conversation_id="c_other")
+                )
+            elif missing_evidence == "not_stop":
+                registry._commands["stop"] = replace(stop, operation=ChildOperation.start)
+        if missing_evidence != "unacknowledged":
+            registry.confirm_command(command.command_id)
+        acknowledge_pending(spool)
+        blocked = await registry.quiesce()
+        assert blocked.uncertain_operation_count == (2 if missing_evidence == "failed_stop" else 1)
+        assert blocked.unsent_entry_count == 0
+        assert not blocked.ready
+        assert registry.outcomes[command.command_id] == first
+        assert (native.starts, native.prompts) == (1, 1)
+
+    asyncio.run(run())
+
+
+def test_historical_uncertainty_does_not_clear_another_child_active_turn(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        command, _ = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
+        await registry.execute_command(
+            ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+        )
+        registry.confirm_command(command.command_id)
+        other = replace(
+            start, command_id="other_start", child=replace(start.child, child_id=str(uuid4()))
+        )
+        assert (await registry.execute_command(other)).disposition == CommandDisposition.succeeded
+        registry.children[other.child.child_id].active_turn = TurnToken("c_one", 2)
+        acknowledge_pending(spool)
+        blocked = await registry.quiesce()
+        assert blocked.uncertain_operation_count == 0
+        assert blocked.active_turn_count == 1
+        assert not blocked.ready
+        assert other.child.child_id in registry.children
+
+    asyncio.run(run())
+
+
+def test_late_outcome_after_ready_requires_publication_acknowledgment_and_receipt(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
+        await registry.execute_command(
+            ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+        )
+        registry.confirm_command(command.command_id)
+        acknowledge_pending(spool)
+        assert (await registry.quiesce()).ready
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        publish = registry._publish_outcome
+
+        async def paused_publish(outcome: CommandOutcome) -> None:
+            entered.set()
+            await release.wait()
+            await publish(outcome)
+
+        monkeypatch.setattr(registry, "_publish_outcome", paused_publish)
+        late = replace(command, command_id="late_compaction")
+        task = asyncio.create_task(registry.execute_command(late))
+        await entered.wait()
+        assert not task.done()
+        assert spool.pending_count() == 0
+        assert not (await registry.quiesce()).ready
+        release.set()
+        late_outcome = await task
+        assert late_outcome.disposition == CommandDisposition.uncertain
+        assert spool.pending_count() == 1
+        # Receipt alone leaves the new command's uncertainty unresolved.
+        acknowledge_pending(spool)
+        assert not (await registry.quiesce()).ready
+        registry.confirm_command(late.command_id)
+        assert (await registry.quiesce()).ready
+        assert await registry.execute_command(late) == late_outcome
+        assert registry.outcomes[command.command_id] == first
+        assert (native.starts, native.prompts) == (1, 1)
+
+    asyncio.run(run())
+
+
+def test_restart_preserves_uncertain_outcome_bytes_and_receipts_without_old_child_authority(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        command, first = await uncertain_automatic_compaction(registry, native, start, monkeypatch)
+        capability = registry.children[start.child.child_id].capability
+        await registry.execute_command(
+            ChildCommand("stop", start.child, ChildOperation.stop, None, {})
+        )
+        registry.confirm_command(command.command_id)
+        acknowledge_pending(spool)
+        assert (await registry.quiesce()).ready
+        before = spool._db.execute(
+            "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
+        ).fetchall()
+        assert before and all(row[2] == 0 for row in before)
+        assert any(
+            TypeAdapter(QueuedEnvelope).validate_json(row[1]).payload == encode_value(first)
+            for row in before
+        )
+        paths = ExecutorPaths(spool.root.parent)
+        sender_id = spool.sender_id
+        spool.close()
+        executor = MacExecutor(
+            paths=paths, revision="a" * 40, executor_id="owner-mac",
+            panels_server_url="https://unused",
+        )
+        try:
+            assert executor.spool.sender_id == sender_id
+            assert executor.spool._db.execute(
+                "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
+            ).fetchall() == before
+            assert executor.spool.pending_count() == 0
+            assert executor.identity.executor_incarnation != start.child.executor_incarnation
+            assert executor.registry.children == {}
+            assert executor.registry.outcomes == {}
+            with pytest.raises(PermissionError, match="unknown executor child capability"):
+                executor.registry.authenticate(start.child.child_id, capability)
+            refused = await executor.registry.execute_command(
+                replace(command, command_id="stale_compaction")
+            )
+            assert refused.disposition == CommandDisposition.refused
+            assert refused.result == {"reason": "incarnation_gone"}
+            assert (native.starts, native.prompts) == (1, 1)
+        finally:
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
 def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_path: Path) -> None:
     async def run() -> None:
         spool = FilesystemSpool(tmp_path / "spool")
