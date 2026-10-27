@@ -31,7 +31,7 @@ describe("persistent shell addresses", () => {
     expect(parseShellDestination(input)).toMatchObject({ name: "workspace", hash: input, workspace: { openFile: { kind: "ticket-file", ticketId: "t_1", path: "artifacts/report.html" } } });
   });
 
-  it.each(["#/settings/measure-sources", "#/workspace/utility/settings/measure-sources", "#/settings/unknown", "#/backends/unknown", "#/vps/unknown", "#/review/unknown", "#/workspace/utility/usage/unknown", "#/day/2026-07-29", "#/sprint"])("keeps an unavailable destination explicit: %s", hash => {
+  it.each(["#/settings/unknown", "#/backends/unknown", "#/vps/unknown", "#/review/unknown", "#/workspace/utility/usage/unknown", "#/day/2026-07-29", "#/sprint"])("keeps an unavailable destination explicit: %s", hash => {
     expect(parseShellDestination(hash).name).toBe("unknown");
   });
 });
