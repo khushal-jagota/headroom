@@ -143,6 +143,25 @@ def _catalogs(browser, url):
         page.close()
 
 
+def _visibility_queue_proof(page):
+    import json
+    import os
+    from pathlib import Path
+
+    page.wait_for_function("typeof window.__visibilityQueueProof === 'function'")
+    proof = page.evaluate("window.__visibilityQueueProof()")
+    output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "visibility-queue-proof.json").write_text(json.dumps(proof, indent=2))
+    print("VISIBILITY_QUEUE_PROOF " + json.dumps(proof), flush=True)
+    failures = [f"{row['name']}: expected {row['expected']}; observed {row.get('actual')}"
+                for row in proof["rows"] if not row["pass"]]
+    assert proof["nativeObserverRestored"], proof
+    # Collect both directions before raising: one unchanged old-source run must
+    # establish both stale-first failures, rather than stopping at admission.
+    assert not failures, "Queued visibility failures:\n" + "\n".join(failures)
+
+
 def _preview_lifecycle(browser, url):
     import base64
     import time
@@ -193,6 +212,7 @@ def _preview_lifecycle(browser, url):
         page.route("**/files/tickets/t_preview/*.md", markdown_preview)
         page.route("**/files/tickets/t_preview/*.png",lambda route: route.fulfill(content_type="image/png",body=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")))
         page.goto(url+"?previews=1", wait_until="domcontentloaded")
+        _visibility_queue_proof(page)
         page.wait_for_function("document.querySelectorAll('[data-file-preview-html]').length > 0")
         assert 0 < len(reads) < 8, reads
         page.wait_for_function("document.querySelectorAll('[data-preview-fixture] img').length > 0")
@@ -3869,6 +3889,9 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'visibility':
+            _preview_lifecycle(browser, urls[0])
+            return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'repairs':
             _conversation_repairs(browser, urls[0])
             return
