@@ -548,8 +548,12 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
                 produced[pass_number].append(harness.mac.spool.pending()[-1])
 
             async def observe_request(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                nonlocal pass_number
+                nonlocal pass_number, producing
                 response = await request(kind, payload)
+                if kind is WireMessageKind.reconciliation_ready:
+                    # Observe the actual ACK before this session starts steady replay.
+                    retained_at_ready.extend(harness.mac.spool.pending())
+                    producing = False
                 if (
                     harness.mac.identity.connection_generation > generation
                     and kind is WireMessageKind.reconcile_inventory
@@ -573,14 +577,9 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
                 return receipt
 
             async def producing_send(message: WireMessage) -> None:
-                nonlocal producing
                 if message.kind is WireMessageKind.receipt and producing:
                     await catalog()
-                if message.kind is WireMessageKind.reconciliation_ready:
-                    retained_at_ready.extend(harness.mac.spool.pending())
                 await send(message)
-                if message.kind is WireMessageKind.reconciliation_ready:
-                    producing = False
 
             monkeypatch.setattr(harness.mac, "_request", observe_request)
             monkeypatch.setattr(harness.endpoint, "_accept_envelope", observe_accept)
@@ -627,7 +626,7 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
                 entry.submission_id for entry in pre_ready[2]
             }
             # First-pass additions join pass two; second-pass additions survive
-            # both passes and are still pending when the ready response is sent.
+            # both passes and are still pending when the ready response arrives.
             assert {entry.submission_id for entry in produced[2]} <= {
                 entry.submission_id for entry in retained_at_ready
             }
@@ -734,6 +733,10 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                 ) -> WireMessage:
                     nonlocal pass_number
                     response = await request(kind, payload)
+                    if kind is WireMessageKind.reconciliation_ready:
+                        # The session cannot drain its retained suffix before this returns.
+                        assert pass_number == 2
+                        retained_at_ready.extend(harness.mac.spool.pending())
                     if (
                         harness.mac.identity.connection_generation > generation
                         and kind is WireMessageKind.reconcile_inventory
@@ -761,9 +764,6 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                         and not produced[pass_number]
                     ):
                         await publish_change(f"/changed_in_pass_{pass_number}")
-                    if message.kind is WireMessageKind.reconciliation_ready:
-                        assert pass_number == 2
-                        retained_at_ready.extend(harness.mac.spool.pending())
                     await send(message)
 
                 monkeypatch.setattr(harness.mac, "_request", observe_request)
