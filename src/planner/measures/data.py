@@ -24,10 +24,7 @@ from planner.measures.contracts import (
 )
 from planner.measures.logic.dates import (
     calendar_date,
-    complete_interval,
-    date_range,
     invalid,
-    latest_complete_date,
     local_date,
 )
 from planner.measures.logic.formulas import dependencies, number, parse_formula
@@ -125,12 +122,10 @@ def read_source_outputs(conn: sqlite3.Connection, source_id: str) -> tuple[Measu
     rows = tuple(
         _measure(row)
         for row in conn.execute(
-            "SELECT * FROM measures WHERE source_id=? ORDER BY id LIMIT ?",
-            (source_id, limits.MAX_SOURCE_OUTPUTS + 1),
+            "SELECT * FROM measures WHERE source_id=? ORDER BY id",
+            (source_id,),
         )
     )
-    if len(rows) > limits.MAX_SOURCE_OUTPUTS:
-        raise invalid("source output limit exceeded")
     return rows
 
 
@@ -154,8 +149,6 @@ def _observation(row: sqlite3.Row) -> Observation:
 def latest_observations(
     conn: sqlite3.Connection, measure_ids: tuple[str, ...]
 ) -> tuple[Observation, ...]:
-    if len(measure_ids) > limits.MAX_SOURCE_OUTPUTS:
-        raise invalid("source output limit exceeded")
     result = []
     for identifier in measure_ids:
         row = conn.execute(
@@ -170,7 +163,8 @@ def latest_observations(
 def read_observations(
     conn: sqlite3.Connection, measure_id: str, first_date: str, last_date: str
 ) -> tuple[Observation, ...]:
-    date_range(first_date, last_date, maximum=limits.MAX_HISTORY_DATES)
+    if calendar_date(first_date) > calendar_date(last_date):
+        raise invalid("measure date range is reversed")
     rows = conn.execute(
         "SELECT * FROM measure_observations WHERE measure_id=? AND date>=? AND "
         "date<=? ORDER BY date",
@@ -209,8 +203,6 @@ def read_definitions(
         identifier = pending.pop()
         if identifier in result:
             continue
-        if len(result) >= limits.MAX_REACHABLE_MEASURES:
-            raise invalid("measure dependency graph exceeds its limit")
         current = (
             proposed
             if proposed is not None and identifier == proposed.id
@@ -228,12 +220,7 @@ def prepare_outputs(
     outputs = []
     for measure in read_source_outputs(conn, source_id):
         period = measure.period
-        day = (
-            latest_complete_date(frozen_at, measure.timezone, period)
-            if period is not None
-            else local_date(frozen_at, measure.timezone).isoformat()
-        )
-        interval = complete_interval(day, period, measure.timezone, frozen_at) if period else None
+        day = local_date(frozen_at, measure.timezone).isoformat()
         outputs.append(
             OutputMeasure(
                 measure.id,
@@ -242,7 +229,7 @@ def prepare_outputs(
                 measure.timezone,
                 period,
                 day,
-                interval,
+                None,
             )
         )
     return tuple(outputs)
@@ -257,69 +244,26 @@ def validate_batch(
     candidates: tuple[CandidateObservation, ...],
     history: HistoryWindow | None,
 ) -> None:
-    if not outputs or len(candidates) > limits.MAX_BATCH_ROWS:
-        raise invalid("invalid source output batch")
-    expected = prepare_outputs(conn, source_id, frozen_at=frozen_at)
-    if {out.measure_id: out for out in outputs} != {out.measure_id: out for out in expected} or len(
-        outputs
-    ) != len(expected):
-        raise invalid("stale measure definition")
     by_id = {out.measure_id: out for out in outputs}
-    allowed_history = (
-        set(date_range(history.first_date, history.last_date, maximum=limits.MAX_HISTORY_DATES))
-        if history
-        else set()
-    )
+    current_ids = {measure.id for measure in read_source_outputs(conn, source_id)}
     seen: set[MeasureDate] = set()
-    real: set[MeasureDate] = set()
-    totals: dict[str, dict[str, float]] = {}
     for candidate in candidates:
         pair = MeasureDate(candidate.measure_id, candidate.date)
-        if pair in seen or candidate.measure_id not in by_id:
+        if (
+            pair in seen
+            or candidate.measure_id not in by_id
+            or candidate.measure_id not in current_ids
+        ):
             raise invalid("duplicate or foreign source output")
         seen.add(pair)
-        output = by_id[candidate.measure_id]
         calendar_date(candidate.date)
-        if candidate.date != output.required_date and candidate.date not in allowed_history:
-            raise invalid("output date is outside admitted history")
-        if candidate.date > local_date(frozen_at, output.timezone).isoformat():
-            raise invalid("output date is in the future")
-        if output.period:
-            complete_interval(candidate.date, output.period, output.timezone, frozen_at)
         if candidate.value is None:
-            if (
-                candidate.date == output.required_date
-                or candidate.date not in allowed_history
-                or not isinstance(candidate.unavailable_reason, HistoricalUnavailableReason)
-            ):
-                raise invalid("required output cannot be unavailable")
-            continue
-        if candidate.unavailable_reason is not None:
-            raise invalid("value cannot carry an unavailable reason")
-        value = number(
-            candidate.value,
-            count=output.kind is MeasureKind.period_count,
-            nonnegative=output.kind is not MeasureKind.reading,
-        )
-        real.add(pair)
-        if output.kind is MeasureKind.running_total:
-            totals.setdefault(output.measure_id, {})[candidate.date] = value
-    if any(MeasureDate(out.measure_id, out.required_date) not in real for out in outputs):
-        raise invalid("missing required source output")
-    for identifier, changes in totals.items():
-        merged = dict(changes)
-        for day in changes:
-            for comparison, order in (("<", "DESC"), (">", "ASC")):
-                row = conn.execute(
-                    f"SELECT date,value FROM measure_observations WHERE measure_id=? AND date "
-                    f"{comparison} ? ORDER BY date {order} LIMIT 1",
-                    (identifier, day),
-                ).fetchone()
-                if row is not None and row["date"] not in changes:
-                    merged[row["date"]] = float(row["value"])
-        values = [merged[day] for day in sorted(merged)]
-        if any(left > right for left, right in zip(values, values[1:], strict=False)):
-            raise invalid("running total cannot decrease")
+            if not isinstance(candidate.unavailable_reason, HistoricalUnavailableReason):
+                raise invalid("missing output requires a reason")
+        else:
+            if candidate.unavailable_reason is not None:
+                raise invalid("value cannot carry an unavailable reason")
+            number(candidate.value)
 
 
 def commit_observations(
@@ -347,26 +291,22 @@ def commit_observations(
     for candidate in candidates:
         if candidate.value is None:
             conn.execute(
-                "INSERT INTO measure_history_gaps(measure_id,date,run_id,reason) SELECT ?,?,?,"
-                "? WHERE NOT EXISTS (SELECT 1 FROM measure_observations WHERE measure_id=? "
-                "AND date=?) ON CONFLICT(measure_id,date) DO UPDATE SET "
+                "DELETE FROM measure_observations WHERE measure_id=? AND date=?",
+                (candidate.measure_id, candidate.date),
+            )
+            conn.execute(
+                "INSERT INTO measure_history_gaps(measure_id,date,run_id,reason) VALUES(?,?,?,?) "
+                "ON CONFLICT(measure_id,date) DO UPDATE SET "
                 "run_id=excluded.run_id,reason=excluded.reason",
                 (
                     candidate.measure_id,
                     candidate.date,
                     run_id,
                     candidate.unavailable_reason,
-                    candidate.measure_id,
-                    candidate.date,
                 ),
             )
             continue
         output = by_id[candidate.measure_id]
-        interval = (
-            complete_interval(candidate.date, output.period, output.timezone, frozen_at)
-            if output.period
-            else None
-        )
         conn.execute(
             "INSERT INTO measure_observations(measure_id,date,value,run_id,observed_at,"
             "definition_revision,period_start_date,period_end_date_exclusive) VALUES(?,?,"
@@ -382,8 +322,8 @@ def commit_observations(
                 run_id,
                 frozen_at,
                 output.definition_revision,
-                interval.start_date if interval else None,
-                interval.end_date_exclusive if interval else None,
+                None,
+                None,
             ),
         )
         conn.execute(

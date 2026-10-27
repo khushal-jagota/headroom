@@ -24,7 +24,6 @@ export type SourceStatus = {
   failure_episode: FailureEpisode | null;
   collection_failure: RunFailure | null;
   running_run_id: string | null;
-  next_status_change_at: number | null;
 };
 
 export type SourceSummary = {
@@ -36,8 +35,6 @@ export type SourceSummary = {
   enabled: boolean;
   local_time: string | null;
   active_script_revision: number | null;
-  pending_script_revision: number | null;
-  repair_ticket_id: string | null;
 };
 
 export type CredentialScope = {
@@ -52,7 +49,7 @@ export type Principal = {
 
 export type PrincipalKind = "owner" | "chief" | "manager" | "ticket";
 
-export type SourceHealth = "disabled" | "never_collected" | "healthy" | "stale" | "failed";
+export type SourceHealth = "disabled" | "never_collected" | "healthy" | "failed";
 
 export type SourceRunSummary = {
   id: string;
@@ -72,11 +69,13 @@ export type RunFailure = {
   http_status: number | null;
   measure_id: string | null;
   date: string | null;
+  exception_type: string | null;
+  source_line: number | null;
 };
 
-export type FailureCode = "sandbox_unavailable" | "runtime_failure" | "malformed_protocol" | "unauthorized_request" | "dns_policy_refused" | "credential_unavailable" | "transport_failure" | "http_error" | "invalid_json" | "invalid_output" | "missing_output" | "stale_definition" | "budget_exhausted" | "interrupted";
+export type FailureCode = "runtime_failure" | "malformed_protocol" | "credential_unavailable" | "transport_failure" | "http_error" | "invalid_json" | "invalid_output" | "stale_definition" | "budget_exhausted" | "interrupted";
 
-export type RuntimeBudget = "wall_seconds" | "script_cpu_seconds" | "script_memory_bytes" | "broker_cpu_seconds" | "broker_memory_bytes" | "request_count" | "request_frame_bytes" | "response_bytes" | "total_response_bytes" | "child_output_bytes" | "result_bytes" | "observation_count" | "file_descriptors";
+export type RuntimeBudget = "wall_seconds";
 
 export type LatestMeasureObservation = {
   measure_id: string;
@@ -117,13 +116,10 @@ export type MeasureSource = {
   scope: CredentialScope;
   responsible: Principal;
   responsibility_revision: number;
-  repair_ticket_id: string | null;
   enabled: boolean;
   local_time: string | null;
   source_revision: number;
   active_script: ScriptRevision | null;
-  pending_script: ScriptRevision | null;
-  destinations: Array<DestinationGrant>;
   created_at: number;
   updated_at: number;
 };
@@ -135,26 +131,6 @@ export type ScriptRevision = {
   authored_by: Principal;
   created_at: number;
 };
-
-export type DestinationGrant = {
-  id: string;
-  origin: string;
-  method: HttpMethod;
-  path: string;
-  path_match: PathMatch;
-  credential: CredentialReference | null;
-};
-
-export type HttpMethod = "GET" | "POST";
-
-export type PathMatch = "exact" | "prefix";
-
-export type CredentialReference = {
-  scheme: CredentialScheme;
-  name: string;
-};
-
-export type CredentialScheme = "local";
 
 export type SourceRunDetail = {
   run: SourceRun;
@@ -203,7 +179,6 @@ export type RunMetrics = {
   child_output_bytes: number;
   elapsed_milliseconds: number;
   script_cpu_milliseconds: number;
-  broker_cpu_milliseconds: number;
 };
 
 export type CandidateObservation = {
@@ -226,11 +201,17 @@ export type CredentialMetadata = {
   scope: CredentialScope;
   reference: CredentialReference;
   auth_kind: CredentialAuthKind;
-  allowed_origins: Array<string>;
   revision: number;
   created_at: number;
   updated_at: number;
 };
+
+export type CredentialReference = {
+  scheme: CredentialScheme;
+  name: string;
+};
+
+export type CredentialScheme = "local";
 
 export type CredentialAuthKind = "bearer" | "header" | "basic";
 
@@ -240,7 +221,6 @@ export type CreateCredentialRequest = {
   scheme: CredentialScheme;
   name: string;
   auth_kind: CredentialAuthKind;
-  allowed_origins: Array<string>;
   secret: SecretBody;
 };
 

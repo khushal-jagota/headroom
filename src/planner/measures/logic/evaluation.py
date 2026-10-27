@@ -1,18 +1,15 @@
-"""Pure bounded evaluation over supplied definitions and observations."""
+"""Pure arithmetic over supplied definitions and retained observations."""
 
 from collections.abc import Mapping
 from datetime import timedelta
 from typing import cast
 
 from planner.core.contracts import PlannerError
-from planner.measures import configuration as limits
 from planner.measures.contracts import (
-    CountPeriod,
     FormulaExpression,
     InputObservation,
     Measure,
     MeasureDate,
-    MeasureKind,
     MeasureOrigin,
     MeasureValue,
     Observation,
@@ -22,10 +19,9 @@ from planner.measures.contracts import (
 )
 from planner.measures.logic.dates import (
     calendar_date,
-    complete_interval,
     date_range,
-    invalid,
     offset_date,
+    period_interval,
 )
 from planner.measures.logic.formulas import number
 
@@ -38,11 +34,11 @@ def expression_references(
     if expression["op"] == "reference":
         return (MeasureDate(expression["measure_id"], offset_date(day, expression["day_offset"])),)
     if expression["op"] == "sum_daily":
-        interval = complete_interval(day, expression["period"], zone, now)
+        interval = period_interval(day, expression["period"])
         last = (calendar_date(interval.end_date_exclusive) - timedelta(days=1)).isoformat()
         return tuple(
             MeasureDate(expression["measure_id"], value)
-            for value in date_range(interval.start_date, last, maximum=31)
+            for value in date_range(interval.start_date, last)
         )
     binary = expression
     return expression_references(binary["left"], day, zone, now) + expression_references(
@@ -59,8 +55,6 @@ def demanded_pairs(
         if pair in demanded:
             return
         demanded.add(pair)
-        if len(demanded) > limits.MAX_EVALUATED_PAIRS:
-            raise invalid("measure evaluation exceeds its limit")
         measure = definitions[pair.measure_id]
         if measure.formula is None:
             return
@@ -84,16 +78,10 @@ def evaluate(
     now: int,
 ) -> tuple[MeasureValue, ...]:
     cache: dict[MeasureDate, MeasureValue] = {}
-    working_references = 0
-    evaluated: set[MeasureDate] = set()
 
     def value_for(pair: MeasureDate) -> MeasureValue:
-        nonlocal working_references
         if pair in cache:
             return cache[pair]
-        evaluated.add(pair)
-        if len(evaluated) > limits.MAX_EVALUATED_PAIRS:
-            raise invalid("measure evaluation exceeds its limit")
         measure = definitions[pair.measure_id]
         status, result = Status.value, None
         inputs: dict[MeasureDate, InputObservation] = {}
@@ -111,8 +99,6 @@ def evaluate(
                 stored.run_id if stored else None,
             )
             missing.update(resolved.missing_inputs)
-            if len(missing) + len(inputs) > limits.MAX_WORKING_REFERENCES:
-                raise invalid("measure working reference limit exceeded")
             if resolved.status is not Status.value and status is Status.value:
                 status = resolved.status
             return resolved.value
@@ -147,13 +133,6 @@ def evaluate(
                 return number(left * right)
             return number(left / right)
 
-        try:
-            if measure.kind is MeasureKind.period_count:
-                complete_interval(
-                    pair.date, cast(CountPeriod, measure.period), measure.timezone, now
-                )
-        except PlannerError:
-            status = Status.invalid_period
         if status is Status.value:
             if measure.origin is MeasureOrigin.taken:
                 observed = observations.get(pair)
@@ -166,14 +145,8 @@ def evaluate(
                 try:
                     result = expression(cast(FormulaExpression, measure.formula))
                     if result is not None:
-                        result = number(
-                            result,
-                            count=measure.kind is MeasureKind.period_count,
-                            nonnegative=measure.kind is not MeasureKind.reading,
-                        )
+                        result = number(result)
                 except PlannerError as error:
-                    if "limit" in error.message:
-                        raise
                     status = (
                         Status.invalid_period
                         if "period" in error.message or "date" in error.message
@@ -191,9 +164,6 @@ def evaluate(
             tuple(inputs.values()),
             tuple(sorted(missing, key=lambda item: (item.measure_id, item.date))),
         )
-        working_references += len(answer.inputs) + len(answer.missing_inputs)
-        if working_references > limits.MAX_WORKING_REFERENCES:
-            raise invalid("measure working reference limit exceeded")
         cache[pair] = answer
         return answer
 
@@ -212,9 +182,4 @@ def evaluate(
             )
             for pair in roots
         )
-    if (
-        sum(len(value.inputs) + len(value.missing_inputs) for value in results)
-        > limits.MAX_PROVENANCE_REFERENCES
-    ):
-        raise invalid("measure provenance exceeds its limit")
     return results

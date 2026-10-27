@@ -14,11 +14,13 @@ from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.measure_sources.admission import prepare_admission
+from planner.measure_sources.configuration import DEFAULT_LIMITS
 from planner.measure_sources.contracts import (
     FailureCode,
     RunFailure,
     RunMetrics,
     RunResult,
+    RuntimeLimits,
     SourceRun,
     SourceRuntime,
 )
@@ -37,12 +39,14 @@ class SourceDispatcher:
         *,
         key_path: Path,
         busy_timeout_ms: int = 5000,
+        runtime_limits: RuntimeLimits = DEFAULT_LIMITS,
     ) -> None:
         self._db_path = db_path
         self._clock = clock
         self._runtime = runtime
         self._key_path = key_path
         self._busy_timeout_ms = busy_timeout_ms
+        self._runtime_limits = runtime_limits
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -72,14 +76,16 @@ class SourceDispatcher:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             try:
-                admission, credentials = prepare_admission(conn, run, key_path=self._key_path)
+                admission, credentials = prepare_admission(
+                    conn, run, key_path=self._key_path, limits=self._runtime_limits
+                )
             except PlannerError as error:
                 code = (
                     FailureCode.stale_definition
                     if error.code is ErrorCode.stale_claim
                     else FailureCode.credential_unavailable
                 )
-                result = RunResult((), RunFailure(code), RunMetrics(0, 0, 0, 0, 0, 0))
+                result = RunResult((), RunFailure(code), RunMetrics(0, 0, 0, 0, 0))
             else:
                 if self._stop.is_set():
                     self._runtime.cancel(run.id)
@@ -87,7 +93,7 @@ class SourceDispatcher:
         except Exception:
             # Raw runtime exceptions are neither persisted nor logged.
             result = RunResult(
-                (), RunFailure(FailureCode.runtime_failure), RunMetrics(0, 0, 0, 0, 0, 0)
+                (), RunFailure(FailureCode.runtime_failure), RunMetrics(0, 0, 0, 0, 0)
             )
         finally:
             conn.close()

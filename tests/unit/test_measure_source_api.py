@@ -1,4 +1,4 @@
-"""HTTP/status resource parity, compact projections, and idle clock invalidation."""
+"""HTTP/status resource parity, compact projections, and actual-outcome status."""
 
 from datetime import UTC, datetime
 from sqlite3 import Connection
@@ -14,7 +14,7 @@ from planner.measure_sources import actions
 from planner.measure_sources.contracts import SourceScriptBody
 
 
-def test_source_http_resources_and_clock_revision(
+def test_source_http_resources_and_actual_outcome_status(
     tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TZ", "UTC")
@@ -43,12 +43,11 @@ def test_source_http_resources_and_clock_revision(
         assert body["sources"][0]["latest_values"][0]["name"] == measure.name
         key = f"/api/measure-sources/{source.id}/status"
         before = client.get("/api/resource-body", params={"key": key}).json()
-        boundary = before["body"]["next_status_change_at"]
-        assert boundary is not None
-        clock.set(datetime.fromtimestamp(boundary, UTC))
+        assert "next_status_change_at" not in before["body"]
+        clock.set(datetime.fromtimestamp(now + 86400, UTC))
         after = client.get("/api/resource-body", params={"key": key}).json()
-        assert after["revision"] != before["revision"]
-        assert after["body"]["health"] == "stale"
+        assert after["revision"] == before["revision"]
+        assert after["body"]["health"] == "never_collected"
         assert after["body"]["latest_values"][0]["observation"] is None
         assert client.get("/api/measure-sources", params={"limit": 101}).status_code == 400
         pending = actions.submit_script(
@@ -56,18 +55,17 @@ def test_source_http_resources_and_clock_revision(
             source.id,
             SourceScriptBody(
                 expected_revision=source.source_revision,
-                expected_pending_revision=None,
-                text="pass # draft",
+                text="pass # saved",
             ),
             principal=OWNER_PRINCIPAL,
             now=now,
         )
-        assert pending.pending_script is not None
+        assert pending.active_script is not None
         response = client.post(
             f"/api/measure-sources/{source.id}/runs",
             json={
                 "mode": "test",
-                "expected_script_revision": pending.pending_script.revision,
+                "expected_script_revision": pending.active_script.revision,
                 "history": None,
             },
         )
@@ -84,7 +82,7 @@ def test_explicit_runtime_constructor_executes_source_only_lifespan(tmp_db: Conn
     from planner.core.config import load_config
     from planner.core.db import connect
     from planner.core.server import create_app
-    from planner.credentials.contracts import ResolvedCredential
+    from planner.credentials.contracts import CredentialResolver
     from planner.measure_sources.contracts import RunAdmission, RunMetrics, RunResult
     from planner.measures.contracts import CandidateObservation
 
@@ -95,9 +93,7 @@ def test_explicit_runtime_constructor_executes_source_only_lifespan(tmp_db: Conn
         def cancel(self, run_id: str) -> None:
             pass
 
-        def execute(
-            self, admission: RunAdmission, credentials: tuple[ResolvedCredential, ...]
-        ) -> RunResult:
+        def execute(self, admission: RunAdmission, credentials: CredentialResolver) -> RunResult:
             self.completed.set()
             return RunResult(
                 tuple(
@@ -105,7 +101,7 @@ def test_explicit_runtime_constructor_executes_source_only_lifespan(tmp_db: Conn
                     for output in admission.run.required_outputs
                 ),
                 None,
-                RunMetrics(0, 0, 0, 1, 0, 0),
+                RunMetrics(0, 0, 0, 1, 0),
             )
 
     database = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])

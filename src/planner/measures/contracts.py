@@ -46,7 +46,7 @@ class BinaryExpression(TypedDict):
 
 
 class SumDailyExpression(TypedDict):
-    """Sum daily counts over the complete period ending at the requested date."""
+    """Sum dated numeric inputs in the explicit day, ISO week or calendar month."""
 
     op: Literal["sum_daily"]
     measure_id: str
@@ -127,7 +127,7 @@ class HistoricalUnavailableReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CandidateObservation:
-    """Null is permitted only for an explicit historical gap, never required output."""
+    """A value or an explicit unavailable result supplied by the source."""
 
     measure_id: str
     date: str
@@ -143,7 +143,7 @@ class HistoryWindow:
 
 @dataclass(frozen=True, slots=True)
 class OutputMeasure:
-    """Frozen taken definition and required current date for one admitted run."""
+    """Frozen definition with a suggested date; records need not use that date."""
 
     measure_id: str
     definition_revision: int
@@ -158,7 +158,6 @@ class SourceHealth(StrEnum):
     disabled = "disabled"
     never_collected = "never_collected"
     healthy = "healthy"
-    stale = "stale"
     failed = "failed"
 
 
@@ -169,7 +168,6 @@ class SourceHealthSummary:
     health: SourceHealth
     latest_success_at: int | None
     latest_failure_run_id: str | None
-    next_status_change_at: int | None
 
 
 @dataclass(frozen=True, slots=True)

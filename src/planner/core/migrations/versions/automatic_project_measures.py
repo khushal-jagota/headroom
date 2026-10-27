@@ -16,7 +16,6 @@ _TABLES = (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
       account TEXT NOT NULL, scheme TEXT NOT NULL CHECK(scheme='local'), name TEXT NOT NULL,
       auth_kind TEXT NOT NULL CHECK(auth_kind IN ('bearer','header','basic')),
-      allowed_origins TEXT NOT NULL CHECK(json_valid(allowed_origins)),
       nonce BLOB NOT NULL, ciphertext BLOB NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
       UNIQUE(project_id,account,scheme,name))""",
@@ -26,14 +25,11 @@ _TABLES = (
       responsible_kind TEXT NOT NULL CHECK(responsible_kind IN ('chief','manager')),
       responsible_manager_id TEXT REFERENCES managers(id) ON DELETE RESTRICT,
       responsibility_revision INTEGER NOT NULL CHECK(responsibility_revision>0),
-      repair_ticket_id TEXT REFERENCES tickets(id) ON DELETE SET NULL,
       enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)), local_time TEXT,
       source_revision INTEGER NOT NULL CHECK(source_revision>0),
       script_revision_counter INTEGER NOT NULL DEFAULT 0 CHECK(script_revision_counter>=0),
       active_script TEXT, active_script_revision INTEGER, active_script_sha256 TEXT,
       active_script_author_kind TEXT, active_script_author_id TEXT, active_script_created_at INTEGER,
-      pending_script TEXT, pending_script_revision INTEGER, pending_script_sha256 TEXT,
-      pending_script_author_kind TEXT, pending_script_author_id TEXT, pending_script_created_at INTEGER,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
       CHECK((responsible_kind='chief' AND responsible_manager_id IS NULL) OR
             (responsible_kind='manager' AND responsible_manager_id IS NOT NULL)),
@@ -41,18 +37,7 @@ _TABLES = (
              AND active_script_author_kind IS NULL AND active_script_author_id IS NULL AND active_script_created_at IS NULL) OR
             (active_script IS NOT NULL AND active_script_revision IS NOT NULL AND active_script_sha256 IS NOT NULL
              AND active_script_author_kind IS NOT NULL AND active_script_author_id IS NOT NULL AND active_script_created_at IS NOT NULL)),
-      CHECK((pending_script IS NULL AND pending_script_revision IS NULL AND pending_script_sha256 IS NULL
-             AND pending_script_author_kind IS NULL AND pending_script_author_id IS NULL AND pending_script_created_at IS NULL) OR
-            (pending_script IS NOT NULL AND pending_script_revision IS NOT NULL AND pending_script_sha256 IS NOT NULL
-             AND pending_script_author_kind IS NOT NULL AND pending_script_author_id IS NOT NULL AND pending_script_created_at IS NOT NULL)),
       CHECK(enabled=0 OR (active_script IS NOT NULL AND local_time IS NOT NULL)))""",
-    """CREATE TABLE measure_source_destinations (
-      source_id TEXT NOT NULL REFERENCES measure_sources(id) ON DELETE CASCADE,
-      grant_name TEXT NOT NULL, origin TEXT NOT NULL,
-      method TEXT NOT NULL CHECK(method IN ('GET','POST')), path TEXT NOT NULL,
-      path_match TEXT NOT NULL CHECK(path_match IN ('exact','prefix')),
-      credential_id TEXT REFERENCES credentials(id) ON DELETE RESTRICT,
-      PRIMARY KEY(source_id,grant_name))""",
     """CREATE TABLE measures (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL,
       unit TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin IN ('taken','assembled')),
@@ -63,9 +48,7 @@ _TABLES = (
       definition_revision INTEGER NOT NULL CHECK(definition_revision>0),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
       CHECK((origin='taken' AND source_id IS NOT NULL AND formula IS NULL) OR
-            (origin='assembled' AND source_id IS NULL AND formula IS NOT NULL)),
-      CHECK((kind='period_count' AND period IS NOT NULL) OR
-            (kind!='period_count' AND period IS NULL)))""",
+            (origin='assembled' AND source_id IS NULL AND formula IS NOT NULL)))""",
     """CREATE TABLE measure_dependencies (
       measure_id TEXT NOT NULL REFERENCES measures(id) ON DELETE CASCADE,
       input_measure_id TEXT NOT NULL REFERENCES measures(id) ON DELETE RESTRICT,
@@ -178,7 +161,6 @@ def upgrade() -> None:
     for table in (
         "credentials",
         "measure_sources",
-        "measure_source_destinations",
         "measures",
         "measure_dependencies",
         "measure_source_runs",

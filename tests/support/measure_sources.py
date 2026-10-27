@@ -24,14 +24,13 @@ def configured_source(
     responsible: Principal = CHIEF_PRINCIPAL,
     now: int = NOW,
     local_time: str = "12:00",
-    publish: bool = True,
+    enabled: bool = True,
+    principal: Principal = OWNER_PRINCIPAL,
 ) -> tuple[MeasureSource, Measure]:
     source = actions.create_source(
         conn,
-        SourceCreate(
-            "Synthetic source", CredentialScope("project_vylo", "fixture"), responsible, ()
-        ),
-        principal=OWNER_PRINCIPAL,
+        SourceCreate("Synthetic source", CredentialScope("project_vylo", "fixture"), responsible),
+        principal=principal,
         now=now,
     )
     measure = measures.create_measure(
@@ -47,29 +46,18 @@ def configured_source(
             source_id=source.id,
             formula=None,
         ),
-        principal=OWNER_PRINCIPAL,
+        principal=principal,
         now=now,
     )
     source = data.read_source(conn, source.id)
     source = actions.submit_script(
         conn,
         source.id,
-        SourceScriptBody(
-            expected_revision=source.source_revision, expected_pending_revision=None, text="pass"
-        ),
+        SourceScriptBody(expected_revision=source.source_revision, text="pass"),
         principal=responsible,
         now=now,
     )
-    if publish:
-        assert source.pending_script is not None
-        source = actions.publish_script(
-            conn,
-            source.id,
-            source.pending_script.revision,
-            expected_revision=source.source_revision,
-            principal=responsible,
-            now=now,
-        )
+    if enabled:
         source = actions.set_schedule(
             conn,
             source.id,

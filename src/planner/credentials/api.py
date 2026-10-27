@@ -1,6 +1,5 @@
 """Private secret entry and public names-only credential routes."""
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +26,8 @@ router = APIRouter()
 
 
 async def _private_body(request: Request) -> dict[str, Any]:
-    raw = bytearray()
-    async for chunk in request.stream():
-        if len(raw) + len(chunk) > limits.MAX_REQUEST_BYTES:
-            raise invalid("credential input exceeds its limit")
-        raw.extend(chunk)
     try:
-        body = json.loads(raw)
+        body = await request.json()
     except (ValueError, UnicodeError, RecursionError):
         raise invalid() from None
     if not isinstance(body, dict):
@@ -45,24 +39,18 @@ def _secret(value: object, kind: CredentialAuthKind) -> CredentialSecret:
     if not isinstance(value, dict):
         raise invalid()
     if kind is CredentialAuthKind.bearer and set(value) == {"token"}:
-        return BearerSecret(text(value["token"], maximum=limits.MAX_SECRET_LENGTH))
+        return BearerSecret(text(value["token"]))
     if kind is CredentialAuthKind.header and set(value) == {"header_name", "value"}:
         return HeaderSecret(
-            text(value["header_name"], maximum=limits.MAX_HEADER_NAME_LENGTH),
-            text(value["value"], maximum=limits.MAX_SECRET_LENGTH),
+            text(value["header_name"]),
+            text(value["value"]),
         )
     if kind is CredentialAuthKind.basic and set(value) == {"username", "password"}:
         return BasicSecret(
-            text(value["username"], maximum=limits.MAX_SECRET_LENGTH),
-            text(value["password"], maximum=limits.MAX_SECRET_LENGTH, allow_empty=True),
+            text(value["username"], allow_empty=True),
+            text(value["password"], allow_empty=True),
         )
     raise invalid()
-
-
-def _origins(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise invalid()
-    return tuple(value)
 
 
 def _revision(value: object) -> int:
@@ -100,7 +88,6 @@ async def create_credential(
         "scheme",
         "name",
         "auth_kind",
-        "allowed_origins",
         "secret",
     }:
         raise invalid()
@@ -115,7 +102,6 @@ async def create_credential(
         ),
         CredentialReference(scheme, text(body["name"], maximum=limits.MAX_NAME_LENGTH)),
         kind,
-        _origins(body["allowed_origins"]),
         _secret(body["secret"], kind),
     )
     result = actions.create_credential(
@@ -141,25 +127,6 @@ async def replace_credential(
         conn,
         credential_id,
         _secret(body["secret"], metadata.auth_kind),
-        expected_revision=_revision(body["expected_revision"]),
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        key_path=Path(cfg.credential_key_path),
-    )
-    return data.metadata_json(result)
-
-
-@router.patch("/credentials/{credential_id}")
-async def update_credential(
-    credential_id: str, request: Request, conn: DbConn, ctx: Ctx, clk: Clk, cfg: Cfg
-) -> JsonDict:
-    body = await _private_body(request)
-    if set(body) != {"expected_revision", "allowed_origins"}:
-        raise invalid()
-    result = actions.update_origins(
-        conn,
-        credential_id,
-        _origins(body["allowed_origins"]),
         expected_revision=_revision(body["expected_revision"]),
         principal=ctx.principal,
         now=clk.now_unix(),

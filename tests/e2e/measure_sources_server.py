@@ -1,26 +1,23 @@
-"""Real source app with one test-owned local TLS provider and no agent execution."""
+"""Real source app with one test-owned HTTP provider and no agent execution."""
 
 from __future__ import annotations
 
 import http.server
 import json
-import ssl
 import threading
-from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import uvicorn
 from fastapi import FastAPI
 from tests.e2e.conversation_signals_server import NoInstalledBackends, ScriptedChild
-from tests.support.measure_runtime import fixture_broker_command, fixture_certificate
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
 from planner.core.db import connect
 from planner.core.server import create_app
-from planner.measure_sources.runtime import Runtime, supervisor
+from planner.measure_sources.runtime import Runtime
 from planner.server_lifecycle.application import ChangeStreamClosingServer
 
 FIRST_TOKEN = "fixture-first-key"
@@ -28,15 +25,13 @@ SECOND_TOKEN = "fixture-replacement-key"
 
 
 class Provider:
-    def __init__(self, root: Path) -> None:
+    def __init__(self) -> None:
         self.token = FIRST_TOKEN
         self.value = 42
         self.accepted = 0
         self.refused = 0
         self.post_queries = 0
         owner = self
-        certificate, key = fixture_certificate(root)
-        self.certificate = certificate
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, format: str, *args: object) -> None:
@@ -65,12 +60,9 @@ class Provider:
                 self.wfile.write(raw)
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(certificate, key)
-        self.server.socket = tls.wrap_socket(self.server.socket, server_side=True)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        self.origin = f"https://localhost:{self.server.server_port}"
+        self.origin = f"http://127.0.0.1:{self.server.server_port}"
 
     def stop(self) -> None:
         self.server.shutdown()
@@ -80,12 +72,6 @@ class Provider:
 
 def build_app(config: Config, provider: Provider) -> FastAPI:
     assert config.test_mode
-    original = supervisor._broker_command
-    patch.object(
-        supervisor,
-        "_broker_command",
-        lambda limits: fixture_broker_command(original(limits), provider.certificate),
-    ).start()
     patch(
         "planner.conversation.snapshot.SubprocessBackendProbeEnvironment",
         NoInstalledBackends,
@@ -123,7 +109,7 @@ def build_app(config: Config, provider: Provider) -> FastAPI:
 def main() -> None:
     config = load_config("config.yaml")
     assert config.test_mode
-    provider = Provider(Path(config.db_path).parent)
+    provider = Provider()
     try:
         app = build_app(config, provider)
         ChangeStreamClosingServer(uvicorn.Config(app, host="127.0.0.1", port=config.port)).run()

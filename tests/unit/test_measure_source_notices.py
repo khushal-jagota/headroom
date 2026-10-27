@@ -60,6 +60,13 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
                 and "Affected dates: 2026-10-27" in actual_prompt
             )
             assert "Last successful collection" in actual_prompt
+            assert (
+                "measure-source submit-script" in actual_prompt and "request-run" in actual_prompt
+            )
+            assert (
+                "assign-repair-ticket" not in actual_prompt
+                and "publish-script" not in actual_prompt
+            )
             actions.set_responsible(
                 tmp_db,
                 source.id,

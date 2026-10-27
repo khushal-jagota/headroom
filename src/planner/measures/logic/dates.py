@@ -1,4 +1,4 @@
-"""Calendar dates and complete periods, independent of persistence."""
+"""Date identity and explicit arithmetic windows, independent of measure kinds."""
 
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -35,48 +35,28 @@ def local_date(now: int, zone: str) -> date:
         raise invalid("invalid measure instant") from None
 
 
-def period_interval(end: str, period: CountPeriod) -> PeriodInterval:
-    last = calendar_date(end)
+def period_interval(day: str, period: CountPeriod) -> PeriodInterval:
+    """The explicit day, ISO week or calendar month containing this date."""
+    current = calendar_date(day)
     try:
-        following = last + timedelta(days=1)
-    except OverflowError:
+        if period is CountPeriod.day:
+            first, following = current, current + timedelta(days=1)
+        elif period is CountPeriod.week:
+            first = current - timedelta(days=current.weekday())
+            following = first + timedelta(days=7)
+        else:
+            first = current.replace(day=1)
+            following = (first + timedelta(days=31)).replace(day=1)
+    except (OverflowError, ValueError):
         raise invalid("invalid period boundary") from None
-    if period is CountPeriod.day:
-        first = last
-    elif period is CountPeriod.week:
-        if last.weekday() != 6:
-            raise invalid("date is not an ISO week end")
-        first = last - timedelta(days=6)
-    else:
-        if following.day != 1:
-            raise invalid("date is not a calendar month end")
-        first = last.replace(day=1)
     return PeriodInterval(first.isoformat(), following.isoformat())
 
 
-def complete_interval(end: str, period: CountPeriod, zone: str, now: int) -> PeriodInterval:
-    interval = period_interval(end, period)
-    if calendar_date(interval.end_date_exclusive) > local_date(now, zone):
-        raise invalid("period is not complete")
-    return interval
-
-
-def latest_complete_date(now: int, zone: str, period: CountPeriod) -> str:
-    today = local_date(now, zone)
-    if period is CountPeriod.day:
-        end = today - timedelta(days=1)
-    elif period is CountPeriod.week:
-        end = today - timedelta(days=today.weekday() + 1)
-    else:
-        end = today.replace(day=1) - timedelta(days=1)
-    return end.isoformat()
-
-
-def date_range(first: str, last: str, *, maximum: int) -> tuple[str, ...]:
+def date_range(first: str, last: str) -> tuple[str, ...]:
     start, end = calendar_date(first), calendar_date(last)
     length = (end - start).days + 1
-    if length < 1 or length > maximum:
-        raise invalid("measure date range exceeds its limit")
+    if length < 1:
+        raise invalid("measure date range is reversed")
     return tuple((start + timedelta(days=i)).isoformat() for i in range(length))
 
 

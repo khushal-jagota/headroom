@@ -2,7 +2,6 @@
 
 import json
 import re
-from urllib.parse import urlsplit
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.credentials import configuration as limits
@@ -22,51 +21,14 @@ def invalid(message: str = "invalid credential input") -> PlannerError:
     return PlannerError(ErrorCode.validation, message)
 
 
-def text(value: object, *, maximum: int, allow_empty: bool = False) -> str:
+def text(value: object, *, maximum: int | None = None, allow_empty: bool = False) -> str:
     if (
         not isinstance(value, str)
-        or len(value) > maximum
+        or (maximum is not None and len(value) > maximum)
         or (not allow_empty and not value.strip())
     ):
         raise invalid()
     return value
-
-
-def origins(values: tuple[str, ...]) -> tuple[str, ...]:
-    if not values or len(values) > limits.MAX_ORIGINS:
-        raise invalid("credential requires bounded allowed origins")
-    normalized: set[str] = set()
-    for raw in values:
-        if (
-            not isinstance(raw, str)
-            or len(raw) > limits.MAX_ORIGIN_LENGTH
-            or any(ord(char) <= 32 or ord(char) >= 127 for char in raw)
-        ):
-            raise invalid("invalid credential origin")
-        try:
-            parsed = urlsplit(raw)
-            port = parsed.port
-            host = parsed.hostname
-        except ValueError:
-            raise invalid("invalid credential origin") from None
-        if (
-            parsed.scheme != "https"
-            or not host
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.path not in ("", "/")
-            or parsed.query
-            or parsed.fragment
-            or "\\" in raw
-        ):
-            raise invalid("credential origin must be exact HTTPS origin")
-        if port is not None and not 1 <= port <= 65535:
-            raise invalid("invalid credential origin")
-        if host.endswith(".") or "%" in host:
-            raise invalid("invalid credential origin")
-        hostname = f"[{host.lower()}]" if ":" in host else host.lower()
-        normalized.add(f"https://{hostname}" + (f":{port}" if port not in (None, 443) else ""))
-    return tuple(sorted(normalized))
 
 
 def auth_kind(secret: CredentialSecret) -> CredentialAuthKind:
@@ -83,20 +45,18 @@ def validate_secret(secret: CredentialSecret, kind: CredentialAuthKind) -> None:
     if auth_kind(secret) != kind:
         raise invalid("credential authentication type differs")
     if isinstance(secret, BasicSecret):
-        text(secret.username, maximum=limits.MAX_SECRET_LENGTH)
-        text(secret.password, maximum=limits.MAX_SECRET_LENGTH, allow_empty=True)
+        text(secret.username, allow_empty=True)
+        text(secret.password, allow_empty=True)
         if ":" in secret.username:
             raise invalid()
     else:
         value = secret.token if isinstance(secret, BearerSecret) else secret.value
-        text(value, maximum=limits.MAX_SECRET_LENGTH)
+        text(value)
         if any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise invalid()
         if isinstance(secret, HeaderSecret):
-            if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", secret.header_name):
+            if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", secret.header_name):
                 raise invalid()
-            if secret.header_name.lower() in limits.RESERVED_AUTH_HEADER_NAMES:
-                raise invalid("credential header is reserved")
 
 
 def validate_write(write: CredentialWrite) -> CredentialWrite:
@@ -106,9 +66,7 @@ def validate_write(write: CredentialWrite) -> CredentialWrite:
     if write.reference.scheme is not CredentialScheme.local:
         raise invalid("unsupported credential resolver")
     validate_secret(write.secret, write.auth_kind)
-    return CredentialWrite(
-        write.scope, write.reference, write.auth_kind, origins(write.allowed_origins), write.secret
-    )
+    return CredentialWrite(write.scope, write.reference, write.auth_kind, write.secret)
 
 
 def associated_data(metadata: CredentialMetadata) -> bytes:
@@ -119,7 +77,6 @@ def associated_data(metadata: CredentialMetadata) -> bytes:
             "scheme": metadata.reference.scheme,
             "name": metadata.reference.name,
             "auth_kind": metadata.auth_kind,
-            "allowed_origins": list(metadata.allowed_origins),
         },
         sort_keys=True,
         separators=(",", ":"),

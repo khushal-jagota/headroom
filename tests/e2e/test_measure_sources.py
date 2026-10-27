@@ -1,7 +1,7 @@
-"""One browser → credential → real sandbox/TLS → stored value → SSE proof.
+"""One browser → credential → stored script/HTTP → stored value → SSE proof.
 
 The UI password lifecycle and mounted completion cannot be proven by API or
-component tests alone. All security matrices remain in lower-layer tests.
+component tests alone. Collection and repair use the production runtime.
 """
 
 from __future__ import annotations
@@ -50,7 +50,6 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
             "project_id": project["id"],
             "account": "Fixture account",
             "responsible": {"kind": "chief", "id": "chief"},
-            "destinations": [],
         },
     )
     identifier = source["id"]
@@ -71,7 +70,6 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
         controls.get_by_role("button", name="Add credential", exact=True).click()
         form = page.get_by_role("form", name="Add credential", exact=True)
         form.get_by_label("Credential name", exact=True).fill("provider-production")
-        form.get_by_label("Allowed HTTPS origins").fill(origin)
         token = form.get_by_label("Token", exact=True)
         expect(token).to_have_attribute("type", "password")
         token.fill("discard-this-secret")
@@ -79,7 +77,6 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
         controls.get_by_role("button", name="Add credential", exact=True).click()
         expect(page.get_by_label("Token", exact=True)).to_have_value("")
         form.get_by_label("Credential name", exact=True).fill("provider-production")
-        form.get_by_label("Allowed HTTPS origins").fill(origin)
         form.get_by_label("Token", exact=True).fill("discard-on-navigation")
         page.get_by_role("navigation", name="Settings", exact=True).get_by_role(
             "link", name="Notifications", exact=True
@@ -92,7 +89,6 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
         controls.get_by_role("button", name="Add credential", exact=True).click()
         expect(form.get_by_label("Token", exact=True)).to_have_value("")
         form.get_by_label("Credential name", exact=True).fill("provider-production")
-        form.get_by_label("Allowed HTTPS origins").fill(origin)
         form.get_by_label("Token", exact=True).fill(FIRST_TOKEN)
         form.get_by_role("button", name="Save credential", exact=True).click()
         expect(form).to_have_count(0, timeout=WAIT)
@@ -104,25 +100,7 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
             current: dict[str, Any], *, second: bool = False
         ) -> tuple[dict[str, Any], str]:
             source_id = current["id"]
-            grant_id = "posthog-count" if second else "provider-production"
             route = "/api/projects/fixture/query" if second else "/api/subscriptions"
-            current = request(
-                "PUT",
-                f"/api/measure-sources/{source_id}/destinations",
-                {
-                    "expected_revision": current["source_revision"],
-                    "destinations": [
-                        {
-                            "id": grant_id,
-                            "origin": origin,
-                            "method": "POST" if second else "GET",
-                            "path": route,
-                            "path_match": "exact",
-                            "credential": {"scheme": "local", "name": "provider-production"},
-                        }
-                    ],
-                },
-            )
             measure = request(
                 "POST",
                 "/api/measures",
@@ -146,9 +124,11 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
             )
             field = "['results'][0][0]" if second else "['value']"
             script = (
-                f"response=request({grant_id!r},{origin + route!r}{extra})\n"
+                f"response=request({origin + route!r},"
+                f"credential_ref='provider-production'{extra})\n"
+                "response.raise_for_status()\n"
                 "output=context['required_outputs'][0]\n"
-                f"record(output['measure_id'],output['required_date'],response['json_body']{field})"
+                f"record(output['measure_id'],output['required_date'],response.json(){field})"
             )
             current = request("GET", f"/api/measure-sources/{source_id}")
             current = request(
@@ -156,30 +136,21 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
                 f"/api/measure-sources/{source_id}/script",
                 {
                     "expected_revision": current["source_revision"],
-                    "expected_pending_revision": None,
                     "text": script,
-                },
-            )
-            current = request(
-                "POST",
-                f"/api/measure-sources/{source_id}/publish",
-                {
-                    "expected_revision": current["source_revision"],
-                    "pending_revision": current["pending_script"]["revision"],
                 },
             )
             return current, str(measure["id"])
 
         source, measure_id = configure(source)
-        expect(controls.get_by_role("button", name="Collect now", exact=True)).to_be_disabled(
+        expect(controls.get_by_role("button", name="Collect now", exact=True)).to_be_enabled(
             timeout=WAIT
         )
         expect(
             controls.get_by_text(
-                "No published script. Publish through the API or CLI before collection.", exact=True
+                "No saved script. Add one through the API or CLI.", exact=True
             )
         ).to_have_count(0, timeout=WAIT)
-        controls.get_by_label("Active", exact=True).check()
+        controls.get_by_label("Daily schedule enabled", exact=True).check()
         controls.get_by_label("Daily time (server local time)").fill("09:00")
         controls.get_by_role("button", name="Save schedule", exact=True).click()
         expect(controls.get_by_text("Schedule saved.", exact=True)).to_be_visible(timeout=WAIT)
@@ -247,19 +218,9 @@ def test_source_credentials_collection_recovery_and_second_stored_source(
                 "project_id": project["id"],
                 "account": "Fixture account",
                 "responsible": {"kind": "chief", "id": "chief"},
-                "destinations": [],
             },
         )
         second, second_measure_id = configure(second, second=True)
-        second = request(
-            "PUT",
-            f"/api/measure-sources/{second['id']}/schedule",
-            {
-                "expected_revision": second["source_revision"],
-                "enabled": True,
-                "local_time": "09:00",
-            },
-        )
         second_run = request(
             "POST",
             f"/api/measure-sources/{second['id']}/runs",

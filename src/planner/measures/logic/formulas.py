@@ -1,17 +1,15 @@
-"""Bounded expression parsing and semantic definition checks."""
+"""Numeric representation, expression parsing and dependency integrity."""
 
 import math
 from collections.abc import Mapping
 from typing import cast
 
-from planner.measures import configuration as limits
 from planner.measures.contracts import (
     BinaryExpression,
     ConstantExpression,
     CountPeriod,
     FormulaExpression,
     Measure,
-    MeasureKind,
     MeasureOrigin,
     ReferenceExpression,
     SumDailyExpression,
@@ -19,28 +17,20 @@ from planner.measures.contracts import (
 from planner.measures.logic.dates import invalid, timezone
 
 
-def number(value: object, *, count: bool = False, nonnegative: bool = False) -> float:
+def number(value: object) -> float:
     if type(value) not in (int, float):
         raise invalid("measure value must be a finite number")
     try:
         result = float(cast(int | float, value))
     except (OverflowError, ValueError):
         raise invalid("measure value must be a finite number") from None
-    if not math.isfinite(result) or (nonnegative and result < 0):
-        raise invalid("measure value violates its kind")
-    if count and (not result.is_integer() or abs(result) > limits.MAX_SAFE_INTEGER):
-        raise invalid("count must be an exact JSON-safe integer")
+    if not math.isfinite(result):
+        raise invalid("measure value must be a finite number")
     return result
 
 
 def parse_formula(raw: object) -> FormulaExpression:
-    count = 0
-
-    def parse(value: object, depth: int) -> FormulaExpression:
-        nonlocal count
-        count += 1
-        if count > limits.MAX_EXPRESSION_NODES or depth > limits.MAX_EXPRESSION_DEPTH:
-            raise invalid("measure expression exceeds its limit")
+    def parse(value: object) -> FormulaExpression:
         if not isinstance(value, dict):
             raise invalid("invalid measure expression")
         op = value.get("op")
@@ -48,8 +38,8 @@ def parse_formula(raw: object) -> FormulaExpression:
             return ConstantExpression(op="constant", value=number(value["value"]))
         if op == "reference" and set(value) == {"op", "measure_id", "day_offset"}:
             offset = value["day_offset"]
-            if type(offset) is not int or not -limits.MAX_DAY_OFFSET <= offset <= 0:
-                raise invalid("measure offset exceeds its limit")
+            if type(offset) is not int:
+                raise invalid("measure offset must be an integer")
             if not isinstance(value["measure_id"], str) or not value["measure_id"]:
                 raise invalid("invalid input measure")
             return ReferenceExpression(
@@ -68,27 +58,30 @@ def parse_formula(raw: object) -> FormulaExpression:
             "left",
             "right",
         }:
-            return BinaryExpression(
-                op=op, left=parse(value["left"], depth + 1), right=parse(value["right"], depth + 1)
-            )
+            return BinaryExpression(op=op, left=parse(value["left"]), right=parse(value["right"]))
         raise invalid("invalid measure expression")
 
-    return parse(raw, 1)
+    try:
+        return parse(raw)
+    except RecursionError:
+        raise invalid("measure expression exceeds interpreter nesting limit") from None
 
 
 def dependencies(formula: FormulaExpression) -> set[str]:
-    if formula["op"] == "constant":
-        return set()
-    if formula["op"] in ("reference", "sum_daily"):
-        return {formula["measure_id"]}
-    binary = cast(BinaryExpression, formula)
-    return dependencies(binary["left"]) | dependencies(binary["right"])
+    found: set[str] = set()
+    pending = [formula]
+    while pending:
+        node = pending.pop()
+        if node["op"] in ("reference", "sum_daily"):
+            found.add(node["measure_id"])
+        elif node["op"] != "constant":
+            binary = cast(BinaryExpression, node)
+            pending.extend((binary["left"], binary["right"]))
+    return found
 
 
 def validate_definition(measure: Measure, definitions: Mapping[str, Measure]) -> None:
     timezone(measure.timezone)
-    if (measure.kind is MeasureKind.period_count) != (measure.period is not None):
-        raise invalid("only period counts require a period")
     if measure.origin is MeasureOrigin.taken:
         if measure.source_id is None or measure.formula is not None:
             raise invalid("taken measure requires a source and no formula")
@@ -99,56 +92,6 @@ def validate_definition(measure: Measure, definitions: Mapping[str, Measure]) ->
     for input_id in dependencies(formula):
         if input_id not in definitions:
             raise invalid("input measure does not exist")
-        if definitions[input_id].timezone != measure.timezone:
-            raise invalid("input measure timezone differs")
-
-    def check(node: FormulaExpression) -> None:
-        op = node["op"]
-        if node["op"] == "constant":
-            number(
-                node["value"],
-                count=measure.kind is MeasureKind.period_count,
-                nonnegative=measure.kind is not MeasureKind.reading,
-            )
-        elif node["op"] == "reference":
-            target = definitions[node["measure_id"]]
-            if (
-                measure.kind is MeasureKind.running_total
-                and target.kind is not MeasureKind.running_total
-            ):
-                raise invalid("assembled totals require cumulative inputs")
-            if measure.kind is MeasureKind.period_count and (
-                target.kind is not MeasureKind.period_count
-                or target.period != measure.period
-                or target.unit != measure.unit
-                or node["day_offset"] != 0
-            ):
-                raise invalid("count inputs must share the aligned period")
-        elif node["op"] == "sum_daily":
-            target = definitions[node["measure_id"]]
-            if target.kind is not MeasureKind.period_count or target.period is not CountPeriod.day:
-                raise invalid("daily sums require daily counts")
-            if measure.kind is MeasureKind.running_total:
-                raise invalid("daily sums are not cumulative totals")
-            if measure.kind is MeasureKind.period_count and (
-                node["period"] != measure.period or target.unit != measure.unit
-            ):
-                raise invalid("daily sum period differs from output")
-        else:
-            binary = node
-            if measure.kind is not MeasureKind.reading:
-                if op == "divide" or (
-                    measure.kind is MeasureKind.running_total and op == "subtract"
-                ):
-                    raise invalid("arithmetic does not preserve measure kind")
-                if op == "multiply" and not any(
-                    part["op"] == "constant" for part in (binary["left"], binary["right"])
-                ):
-                    raise invalid("this measure kind permits constant scaling only")
-            check(binary["left"])
-            check(binary["right"])
-
-    check(formula)
 
 
 def validate_graph(root: str, definitions: Mapping[str, Measure]) -> None:
@@ -163,8 +106,6 @@ def validate_graph(root: str, definitions: Mapping[str, Measure]) -> None:
         if identifier not in definitions:
             raise invalid("input measure does not exist")
         visited.add(identifier)
-        if len(visited) > limits.MAX_REACHABLE_MEASURES:
-            raise invalid("measure dependency graph exceeds its limit")
         active.add(identifier)
         current = definitions[identifier]
         validate_definition(current, definitions)
@@ -173,4 +114,7 @@ def validate_graph(root: str, definitions: Mapping[str, Measure]) -> None:
                 visit(child)
         active.remove(identifier)
 
-    visit(root)
+    try:
+        visit(root)
+    except RecursionError:
+        raise invalid("measure dependency graph exceeds interpreter nesting limit") from None

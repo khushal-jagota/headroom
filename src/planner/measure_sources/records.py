@@ -53,6 +53,8 @@ def decode_failure(raw: str | None) -> RunFailure | None:
         http_status=value["http_status"],
         measure_id=value["measure_id"],
         date=value["date"],
+        exception_type=value.get("exception_type"),
+        source_line=value.get("source_line"),
     )
 
 

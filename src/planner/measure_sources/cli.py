@@ -11,7 +11,7 @@ from planner.cli.measure_io import emit, json_option, page_options, stdin_object
 
 @click.group("measure-source")
 def measure_source() -> None:
-    """Configure collection sources, submit scripts, and inspect asynchronous runs."""
+    """Configure collection sources, save scripts, and inspect asynchronous runs."""
 
 
 @measure_source.command("list")
@@ -53,7 +53,7 @@ def source_status(source_id: str, as_json: bool) -> None:
 @measure_source.command("create")
 @json_option
 def create_source(as_json: bool) -> None:
-    """Read {name, project_id, account, responsible, destinations?} JSON from stdin."""
+    """Read {name, project_id, account, responsible} JSON from stdin."""
     emit(
         http.send("POST", "/api/measure-sources", json_body=stdin_object(as_json), as_json=as_json),
         as_json,
@@ -67,22 +67,6 @@ def delete_source(source_id: str, as_json: bool) -> None:
     """Delete a source when canonical dependency checks permit it."""
     emit(
         http.send("DELETE", f"/api/measure-sources/{quote(source_id, safe='')}", as_json=as_json),
-        as_json,
-    )
-
-
-@measure_source.command("set-destinations")
-@click.argument("source_id")
-@json_option
-def set_destinations(source_id: str, as_json: bool) -> None:
-    """Read {expected_revision, destinations} JSON from stdin."""
-    emit(
-        http.send(
-            "PUT",
-            f"/api/measure-sources/{quote(source_id, safe='')}/destinations",
-            json_body=stdin_object(as_json),
-            as_json=as_json,
-        ),
         as_json,
     )
 
@@ -119,47 +103,15 @@ def set_responsible(source_id: str, as_json: bool) -> None:
     )
 
 
-@measure_source.command("assign-repair-ticket")
-@click.argument("source_id")
-@json_option
-def assign_repair_ticket(source_id: str, as_json: bool) -> None:
-    """Read {ticket_id} JSON from stdin; null clears the designation."""
-    emit(
-        http.send(
-            "PUT",
-            f"/api/measure-sources/{quote(source_id, safe='')}/repair-ticket",
-            json_body=stdin_object(as_json),
-            as_json=as_json,
-        ),
-        as_json,
-    )
-
-
 @measure_source.command("submit-script")
 @click.argument("source_id")
 @json_option
 def submit_script(source_id: str, as_json: bool) -> None:
-    """Read {expected_revision, expected_pending_revision, text} JSON from stdin."""
+    """Save current script immediately from {expected_revision, text} JSON on stdin."""
     emit(
         http.send(
             "PUT",
             f"/api/measure-sources/{quote(source_id, safe='')}/script",
-            json_body=stdin_object(as_json),
-            as_json=as_json,
-        ),
-        as_json,
-    )
-
-
-@measure_source.command("publish-script")
-@click.argument("source_id")
-@json_option
-def publish_script(source_id: str, as_json: bool) -> None:
-    """Read {expected_revision, pending_revision} JSON from stdin."""
-    emit(
-        http.send(
-            "POST",
-            f"/api/measure-sources/{quote(source_id, safe='')}/publish",
             json_body=stdin_object(as_json),
             as_json=as_json,
         ),

@@ -10,7 +10,7 @@ from pathlib import Path
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.errors import PlannerError
-from planner.measure_sources.contracts import SourceRuntime
+from planner.measure_sources.contracts import RuntimeLimits, SourceRuntime
 from planner.measure_sources.dispatcher import SourceDispatcher
 from planner.measure_sources.run_actions import admit_scheduled_run
 from planner.scheduled_tickets.contracts import ScheduledTicketOccurrence
@@ -27,6 +27,7 @@ class SourceScheduleParticipant:
             runtime,
             key_path=Path(config.credential_key_path),
             busy_timeout_ms=config.db_busy_timeout_ms,
+            runtime_limits=RuntimeLimits(config.measure_source_timeout_seconds),
         )
 
     def start(self) -> None:

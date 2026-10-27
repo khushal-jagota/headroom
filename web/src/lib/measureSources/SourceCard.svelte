@@ -8,10 +8,10 @@
 <article class="source-card" data-source-name={status.source.name}>
   <header><div><h2>{status.source.name}</h2><p>{projectName} · {status.source.scope.account}</p></div>
     <strong data-source-health={status.health}>{healthLabels[status.health]}</strong></header>
-  <p>{status.source.enabled ? 'Active' : 'Disabled'} · {status.source.local_time ? `Daily at ${status.source.local_time} (server local time)` : 'No daily schedule'}</p>
+  <p>{status.source.enabled ? 'Daily schedule enabled' : 'Daily schedule disabled'} · {status.source.local_time ? `Daily at ${status.source.local_time} (server local time)` : 'No daily schedule'}</p>
   <p>Last collection success: <span>{timestamp(status.latest_success_at)}</span></p>
   {#if status.collection_failure}<p class="failure" data-collection-failure>{failureLabel(status.collection_failure)}</p>{/if}
-  {#if status.latest_run}<p data-latest-run>Latest {status.latest_run.mode === 'test' ? 'draft test' : 'collection'}: {status.latest_run.status}{status.latest_run.failure ? ` — ${failureLabel(status.latest_run.failure)}` : ''}</p>{/if}
+  {#if status.latest_run}<p data-latest-run>Latest {status.latest_run.mode === 'test' ? 'script test' : 'collection'}: {status.latest_run.status}{status.latest_run.failure ? ` — ${failureLabel(status.latest_run.failure)}` : ''}</p>{/if}
   <dl>
     {#each status.latest_values as item (item.measure_id)}
       <div><dt>{item.name}</dt><dd>{#if item.observation}<strong>{item.observation.value.toLocaleString()} {item.unit}</strong><time>{item.observation.date}</time>{:else}<span>No observation yet</span>{/if}</dd></div>

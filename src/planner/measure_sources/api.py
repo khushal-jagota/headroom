@@ -9,12 +9,9 @@ from fastapi import APIRouter
 
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.credentials.contracts import CredentialReference, CredentialScheme, CredentialScope
+from planner.credentials.contracts import CredentialScope
 from planner.measure_sources import actions, data, run_actions, views
 from planner.measure_sources.contracts import (
-    DestinationGrant,
-    HttpMethod,
-    PathMatch,
     RunMode,
     SourceCreate,
     SourceScheduleBody,
@@ -65,45 +62,6 @@ def principal(value: object) -> Principal:
     return result
 
 
-def destinations(value: object) -> tuple[DestinationGrant, ...]:
-    if not isinstance(value, list):
-        raise invalid()
-    result = []
-    for item in value:
-        if not isinstance(item, dict) or set(item) != {
-            "id",
-            "origin",
-            "method",
-            "path",
-            "path_match",
-            "credential",
-        }:
-            raise invalid()
-        reference = item["credential"]
-        try:
-            credential = None
-            if reference is not None:
-                if not isinstance(reference, dict) or set(reference) != {"scheme", "name"}:
-                    raise invalid()
-                credential = CredentialReference(
-                    CredentialScheme(text(reference, "scheme")),
-                    text(reference, "name"),
-                )
-            result.append(
-                DestinationGrant(
-                    text(item, "id"),
-                    text(item, "origin"),
-                    HttpMethod(text(item, "method")),
-                    text(item, "path"),
-                    PathMatch(text(item, "path_match")),
-                    credential,
-                )
-            )
-        except ValueError:
-            raise invalid() from None
-    return tuple(result)
-
-
 @router.get("/measure-sources")
 async def list_sources(
     conn: DbConn,
@@ -120,12 +78,11 @@ async def list_sources(
 
 @router.post("/measure-sources")
 async def create_source(body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    keys(body, {"name", "project_id", "account", "responsible", "destinations"})
+    keys(body, {"name", "project_id", "account", "responsible"})
     request = SourceCreate(
         text(body, "name"),
         CredentialScope(text(body, "project_id"), text(body, "account")),
         principal(body.get("responsible")),
-        destinations(body.get("destinations", [])),
     )
     return asdict(actions.create_source(conn, request, principal=ctx.principal, now=clk.now_unix()))
 
@@ -146,27 +103,6 @@ async def get_status(source_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 async def delete_source(source_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     actions.delete_source(conn, source_id, principal=ctx.principal)
     return {"deleted": True}
-
-
-@router.put("/measure-sources/{source_id}/destinations")
-async def set_destinations(
-    source_id: str,
-    body: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    keys(body, {"expected_revision", "destinations"})
-    return asdict(
-        actions.set_destinations(
-            conn,
-            source_id,
-            destinations(body.get("destinations")),
-            expected_revision=integer(body, "expected_revision"),
-            principal=ctx.principal,
-            now=clk.now_unix(),
-        )
-    )
 
 
 @router.put("/measure-sources/{source_id}/schedule")
@@ -213,29 +149,6 @@ async def set_responsible(
     )
 
 
-@router.put("/measure-sources/{source_id}/repair-ticket")
-async def assign_repair_ticket(
-    source_id: str,
-    body: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    keys(body, {"ticket_id"})
-    ticket_id = body.get("ticket_id")
-    if not isinstance(ticket_id, (str, type(None))):
-        raise invalid()
-    return asdict(
-        actions.assign_repair_ticket(
-            conn,
-            source_id,
-            ticket_id,
-            principal=ctx.principal,
-            now=clk.now_unix(),
-        )
-    )
-
-
 @router.put("/measure-sources/{source_id}/script")
 async def submit_script(
     source_id: str,
@@ -244,38 +157,13 @@ async def submit_script(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    keys(body, {"expected_revision", "expected_pending_revision", "text"})
-    pending = body.get("expected_pending_revision")
-    if pending is not None and type(pending) is not int:
-        raise invalid()
+    keys(body, {"expected_revision", "text"})
     parsed = SourceScriptBody(
         expected_revision=integer(body, "expected_revision"),
-        expected_pending_revision=pending,
         text=text(body, "text"),
     )
     return asdict(
         actions.submit_script(conn, source_id, parsed, principal=ctx.principal, now=clk.now_unix())
-    )
-
-
-@router.post("/measure-sources/{source_id}/publish")
-async def publish_script(
-    source_id: str,
-    body: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    keys(body, {"expected_revision", "pending_revision"})
-    return asdict(
-        actions.publish_script(
-            conn,
-            source_id,
-            integer(body, "pending_revision"),
-            expected_revision=integer(body, "expected_revision"),
-            principal=ctx.principal,
-            now=clk.now_unix(),
-        )
     )
 
 

@@ -14,21 +14,15 @@ from planner.measure_sources.contracts import (
 )
 
 FAILURE_MESSAGES = {
-    FailureCode.sandbox_unavailable: "The isolated runtime is unavailable.",
     FailureCode.runtime_failure: "The source script failed.",
     FailureCode.malformed_protocol: "The source sent an invalid host message.",
-    FailureCode.unauthorized_request: "A request exceeded the source's granted destinations.",
-    FailureCode.dns_policy_refused: (
-        "The provider hostname resolved to an address blocked by the network policy."
-    ),
     FailureCode.credential_unavailable: "A required credential is unavailable.",
     FailureCode.transport_failure: "The provider request failed.",
     FailureCode.http_error: "The provider returned an HTTP error.",
     FailureCode.invalid_json: "The provider returned invalid JSON.",
     FailureCode.invalid_output: "The source returned invalid observations.",
-    FailureCode.missing_output: "The source omitted required current observations.",
-    FailureCode.stale_definition: "The source or an output definition changed during the run.",
-    FailureCode.budget_exhausted: "The run exceeded a resource limit.",
+    FailureCode.stale_definition: "The saved source script changed during the run.",
+    FailureCode.budget_exhausted: "The run exceeded its execution timeout.",
     FailureCode.interrupted: "The collection stopped before completion.",
 }
 
@@ -41,6 +35,10 @@ def failure_message(failure: RunFailure | None) -> str | None:
         message += f" Limit: {failure.budget.value}."
     if failure.http_status is not None:
         message += f" HTTP status: {failure.http_status}."
+    if failure.exception_type is not None:
+        message += f" {failure.exception_type}."
+    if failure.source_line is not None:
+        message += f" Source line: {failure.source_line}."
     return message
 
 
@@ -63,12 +61,13 @@ def notify_episode(conn: sqlite3.Connection, source: MeasureSource, *, now: int)
     summary = (
         f"Measure source {source.name!r} in {project_name} / {source.scope.account} failed. "
         f"{failure_message(run.failure)} "
-        f"Last successful collection timestamp: {last_success_text}. Affected dates: {affected}. "
+        f"Last successful collection timestamp: {last_success_text}. "
+        f"Suggested collection dates: {affected}. "
         f"Inspect source {source.id} and run {run.id}. "
-        "Assign a repair Ticket if script work is needed. Credential "
-        "replacement uses the owner form. "
-        "Escalate unresolved problems through existing messaging or the repair Ticket help route. "
-        "Only a successful collection of the published revision restores source health."
+        "Repair the source script with measure-source submit-script, then request-run to collect. "
+        "Credential replacement uses the owner form. "
+        "If you cannot repair it, message the user through the existing conversation route. "
+        "Only a successful collection restores source health."
     )
     from planner.manager_wakes import data as wake_data
     from planner.manager_wakes.contracts import WakeSourceKind

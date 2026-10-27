@@ -2,7 +2,6 @@
 
 import os
 import sqlite3
-import stat
 from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
@@ -25,92 +24,27 @@ from planner.credentials.logic.validation import (
     invalid,
     validate_secret,
 )
-from planner.measure_sources.configuration import SANDBOX_RUNTIME_ROOTS
-
-
-def validate_key_path(path: Path) -> Path:
-    absolute = path.absolute()
-    if ".." in absolute.parts:
-        raise invalid("unsafe credential key path")
-    for part in (absolute, *absolute.parents):
-        if part.is_symlink():
-            raise invalid("credential key path cannot contain symlinks")
-    resolved = absolute.resolve(strict=False)
-    for resource in SANDBOX_RUNTIME_ROOTS:
-        for root in (Path(resource).absolute(), Path(resource).resolve(strict=False)):
-            if resolved == root or root in resolved.parents:
-                raise invalid("credential key path is exposed to source runtime")
-    return absolute
 
 
 def _load_key(path: Path, *, has_records: bool) -> bytes:
-    path = validate_key_path(path)
-    directory = path.parent
-    if not directory.exists():
+    if not path.exists():
         if has_records:
             raise invalid("credential encryption key is unavailable")
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    validate_key_path(path)
-    info = directory.stat()
-    if (
-        not stat.S_ISDIR(info.st_mode)
-        or stat.S_IMODE(info.st_mode) != 0o700
-        or info.st_uid != os.getuid()
-    ):
-        raise invalid("credential key directory must be private")
-    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
-            descriptor = os.open(
-                path.name,
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-                dir_fd=directory_fd,
-            )
-        except FileNotFoundError:
-            if has_records:
-                raise invalid("credential encryption key is unavailable") from None
-            try:
-                writer = os.open(
-                    path.name,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-                    0o600,
-                    dir_fd=directory_fd,
-                )
-            except FileExistsError:
-                pass
-            else:
-                try:
-                    os.fchmod(writer, 0o600)
-                    generated = os.urandom(limits.KEY_BYTES)
-                    written = os.write(writer, generated)
-                    if written != len(generated):
-                        raise invalid("credential key creation failed")
-                    os.fsync(writer)
-                finally:
-                    os.close(writer)
-                os.fsync(directory_fd)
-            descriptor = os.open(
-                path.name,
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-                dir_fd=directory_fd,
-            )
-        try:
-            info = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or stat.S_IMODE(info.st_mode) != 0o600
-                or info.st_uid != os.getuid()
-                or info.st_nlink != 1
-            ):
-                raise invalid("credential key file must be private")
-            key = os.read(descriptor, limits.KEY_BYTES + 1)
-            if len(key) != limits.KEY_BYTES:
-                raise invalid("credential encryption key is unusable")
-            return key
-        finally:
-            os.close(descriptor)
-    finally:
-        os.close(directory_fd)
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(os.urandom(limits.KEY_BYTES))
+                output.flush()
+                os.fsync(output.fileno())
+    with path.open("rb") as source:
+        key = source.read(limits.KEY_BYTES + 1)
+    if len(key) != limits.KEY_BYTES:
+        raise invalid("credential encryption key is unusable")
+    return key
 
 
 class FileCredentialCipher:

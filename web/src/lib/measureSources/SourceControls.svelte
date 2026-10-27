@@ -11,7 +11,6 @@
   import type { CredentialMetadata, RunMode, RunRequestBody, SourceScheduleBody, SourceStatus } from './wire';
 
   let { status }: { status: SourceStatus } = $props();
-  const source = createQuery(() => queries.measureSource(status.source.id));
   let runOffset = $state(0);
   let credentialOffset = $state(0);
   const runs = createQuery(() => queries.measureSourceRuns(status.source.id, runOffset));
@@ -40,13 +39,13 @@
     finally { busy = false; }
   }
   async function requestRun(mode: RunMode) {
-    const revision = runRevision(status, mode);
+    const revision = runRevision(status);
     if (revision === null) return;
     busy = true; error = ''; notice = '';
     const body: RunRequestBody = { mode, expected_script_revision: revision, history: null };
     try {
       await mutateJson(`/api/measure-sources/${encodeURIComponent(status.source.id)}/runs`, { method: 'POST', body });
-      notice = mode === 'test' ? 'Draft test requested. Test values are not saved as observations.' : 'Collection requested.';
+      notice = mode === 'test' ? 'Test requested. Test values are not saved as observations.' : 'Collection requested.';
     } catch (failure) { error = fixedWriteError(failure); }
     finally { busy = false; }
   }
@@ -54,13 +53,13 @@
 <section class="source-controls" aria-label={`Controls for ${status.source.name}`}>
   <h3>Schedule and runs</h3>
   <form onsubmit={schedule} class="schedule">
-    <label><input type="checkbox" bind:checked={enabled} disabled={busy} onchange={() => dirty = true} /> Active</label>
+    <label><input type="checkbox" bind:checked={enabled} disabled={busy} onchange={() => dirty = true} /> Daily schedule enabled</label>
     <label>Daily time (server local time) <input type="time" bind:value={localTime} disabled={busy} onchange={() => dirty = true} /></label>
     <button disabled={busy} type="submit">Save schedule</button>
   </form>
-  <div class="actions"><button disabled={busy || runRevision(status, 'collection') === null} onclick={() => requestRun('collection')}>Collect now</button>
-    <button disabled={busy || runRevision(status, 'test') === null} onclick={() => requestRun('test')}>Test draft</button></div>
-  {#if status.source.active_script_revision === null}<p>No published script. Publish through the API or CLI before collection.</p>{/if}
+  <div class="actions"><button disabled={busy || runRevision(status) === null} onclick={() => requestRun('collection')}>Collect now</button>
+    <button disabled={busy || runRevision(status) === null} onclick={() => requestRun('test')}>Test script</button></div>
+  {#if status.source.active_script_revision === null}<p>No saved script. Add one through the API or CLI.</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
   {#if error}<p role="alert">{error} <button onclick={() => { dirty = false; void queryClient.invalidateQueries(); }}>Discard edits and refresh</button></p>{/if}
 
@@ -78,8 +77,6 @@
   {#if credentialForm}
     {#key credentialForm}
       <CredentialForm scope={status.source.scope} existing={credentialForm.existing}
-        suggestedName={source.data?.destinations.find(item => item.credential)?.credential?.name ?? ''}
-        suggestedOrigins={[...new Set(source.data?.destinations.map(item => item.origin) ?? [])]}
         onclose={() => credentialForm = null} />
     {/key}
   {/if}
@@ -87,7 +84,7 @@
   <h3>Run history</h3>
   <ResourceState shape="block" {...resourceStateForQueries(runs)} loadingText="Loading runs…">
     {#each runs.data?.runs ?? [] as item (item.id)}
-      <div class="run-row"><span>{item.mode === 'test' ? 'Draft test' : 'Collection'} · {item.status} · {timestamp(item.created_at)}</span><button onclick={() => selectedRun = selectedRun === item.id ? '' : item.id}>Run details</button></div>
+      <div class="run-row"><span>{item.mode === 'test' ? 'Script test' : 'Collection'} · {item.status} · {timestamp(item.created_at)}</span><button onclick={() => selectedRun = selectedRun === item.id ? '' : item.id}>Run details</button></div>
     {/each}
     {#if !runs.data?.runs.length}<p>No runs yet.</p>{/if}
     <div class="actions">{#if runOffset > 0}<button onclick={() => runOffset = Math.max(0, runOffset - 10)}>Newer runs</button>{/if}
@@ -96,7 +93,7 @@
   {#if selectedRun}
     <ResourceState shape="block" {...resourceStateForQueries(run)} loadingText="Loading run details…">
       {#if run.data}
-        <div class="run-detail"><p>{run.data.run.mode === 'test' ? 'Draft test — candidate values are not committed.' : 'Collection'} · {run.data.run.status}</p>
+        <div class="run-detail"><p>{run.data.run.mode === 'test' ? 'Script test — candidate values are not committed.' : 'Collection'} · {run.data.run.status}</p>
           {#if run.data.run.failure}<p>{failureLabel(run.data.run.failure)}</p>{/if}
           <p>{run.data.run.observation_count} observations · script revision {run.data.run.script_revision}</p>
           {#if run.data.run.metrics}<p>{run.data.run.metrics.elapsed_milliseconds} ms · {run.data.run.metrics.request_count} requests · {run.data.run.metrics.response_bytes.toLocaleString()} response bytes</p>{/if}

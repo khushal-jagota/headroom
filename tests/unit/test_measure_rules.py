@@ -1,4 +1,4 @@
-"""Distinct calendar, formula, graph, and bounded-computation risks."""
+"""Retained-input arithmetic, descriptive metadata, graph and work-budget risks."""
 
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -19,7 +19,6 @@ from planner.measures.contracts import (
     ReferenceExpression,
     SumDailyExpression,
 )
-from planner.measures.logic.dates import complete_interval, latest_complete_date, timezone
 from planner.measures.logic.evaluation import demanded_pairs, evaluate
 from planner.measures.logic.formulas import parse_formula, validate_graph
 
@@ -86,47 +85,48 @@ def test_exact_arithmetic_correction_missing_and_zero() -> None:
     assert missing.missing_inputs == (MeasureDate("taken", "2026-10-20"),)
 
 
-def test_calendar_periods_and_explicit_zero_completeness() -> None:
-    interval = complete_interval("2026-10-25", CountPeriod.day, "Europe/Berlin", NOW)
-    zone = timezone("Europe/Berlin")
-    start = datetime.fromisoformat(interval.start_date).replace(tzinfo=zone).astimezone(UTC)
-    end = datetime.fromisoformat(interval.end_date_exclusive).replace(tzinfo=zone).astimezone(UTC)
-    assert (end - start).total_seconds() == 25 * 3600
-    assert latest_complete_date(NOW, "Europe/Berlin", CountPeriod.week) == "2026-10-25"
-    assert latest_complete_date(NOW, "Europe/Berlin", CountPeriod.month) == "2026-09-30"
-    with pytest.raises(PlannerError, match="not complete"):
-        complete_interval("2026-10-31", CountPeriod.month, "Europe/Berlin", NOW)
-    daily = definition("day", kind=MeasureKind.period_count, period=CountPeriod.day)
+def test_explicit_window_arithmetic_ignores_descriptive_kinds_and_units() -> None:
+    daily = definition("day", kind=MeasureKind.running_total)
     weekly = replace(
         daily,
         id="week",
         origin=MeasureOrigin.assembled,
         source_id=None,
-        period=CountPeriod.week,
+        kind=MeasureKind.period_count,
+        unit="different label",
+        timezone="UTC",
         formula=SumDailyExpression(op="sum_daily", measure_id="day", period=CountPeriod.week),
     )
     definitions = {"day": daily, "week": weekly}
     validate_graph("week", definitions)
-    pair = MeasureDate("week", "2026-10-25")
+    # Tuesday selects its ISO week; an unfinished period is not an application error.
+    pair = MeasureDate("week", "2026-10-27")
+    dates = (
+        "2026-10-26",
+        "2026-10-27",
+        "2026-10-28",
+        "2026-10-29",
+        "2026-10-30",
+        "2026-10-31",
+        "2026-11-01",
+    )
     observations = {
-        MeasureDate("day", f"2026-10-{19 + index}"): Observation(
-            "day", f"2026-10-{19 + index}", value, "run", NOW, 1, None
-        )
-        for index, value in enumerate((1, 2, 0, 4, 5, 6, 7))
+        MeasureDate("day", day): Observation("day", day, value, "run", NOW, 1, None)
+        for day, value in zip(dates, (1, 2, 0, -4.5, 5, 6, 7), strict=True)
     }
-    assert evaluate((pair,), definitions, observations, now=NOW)[0].value == 25
-    del observations[MeasureDate("day", "2026-10-21")]
+    assert evaluate((pair,), definitions, observations, now=NOW)[0].value == 16.5
+    assert (
+        evaluate((MeasureDate("week", "2026-11-01"),), definitions, observations, now=NOW)[0].value
+        == 16.5
+    )
+    del observations[MeasureDate("day", "2026-10-28")]
     assert (
         evaluate((pair,), definitions, observations, now=NOW)[0].status
         is MeasureReadStatus.missing_input
     )
-    assert (
-        evaluate((MeasureDate("week", "2026-10-26"),), definitions, observations, now=NOW)[0].status
-        is MeasureReadStatus.invalid_period
-    )
 
 
-def test_graph_and_kind_rules_reject_offset_cycles_and_implicit_conversions() -> None:
+def test_graph_integrity_without_numeric_kind_policing() -> None:
     first = replace(
         definition("a"),
         source_id=None,
@@ -144,8 +144,7 @@ def test_graph_and_kind_rules_reject_offset_cycles_and_implicit_conversions() ->
         period=CountPeriod.week,
         formula=ReferenceExpression(op="reference", measure_id="b", day_offset=0),
     )
-    with pytest.raises(PlannerError, match="aligned period"):
-        validate_graph("a", {"a": count, "b": definition("b")})
+    validate_graph("a", {"a": count, "b": definition("b")})
     total = replace(
         first,
         kind=MeasureKind.running_total,
@@ -155,15 +154,16 @@ def test_graph_and_kind_rules_reject_offset_cycles_and_implicit_conversions() ->
             right=ConstantExpression(op="constant", value=1),
         ),
     )
-    with pytest.raises(PlannerError, match="preserve"):
-        validate_graph("a", {"a": total, "b": definition("b", kind=MeasureKind.running_total)})
-    with pytest.raises(PlannerError, match="offset"):
-        parse_formula({"op": "reference", "measure_id": "b", "day_offset": 1})
+    validate_graph("a", {"a": total, "b": definition("b", kind=MeasureKind.running_total)})
+    assert (
+        parse_formula({"op": "reference", "measure_id": "b", "day_offset": 1000})["op"]
+        == "reference"
+    )
     with pytest.raises(PlannerError, match="finite"):
         parse_formula({"op": "constant", "value": True})
 
 
-def test_total_range_independence_and_bounded_deep_chain() -> None:
+def test_total_range_independence_and_interpreter_deep_chain() -> None:
     taken = definition("total", kind=MeasureKind.running_total)
     total = replace(
         taken,
@@ -189,7 +189,7 @@ def test_total_range_independence_and_bounded_deep_chain() -> None:
             (MeasureDate("combined", "2026-10-25"), one), definitions, observations, now=NOW
         )[1]
     )
-    # Each accepted expression is bounded, but combined recursion can exceed Python's stack.
+    # Combined valid expressions can exceed Python's stack without causing an unhandled error.
     chain = {"0": definition("0")}
     for index in range(1, 64):
         formula = parse_formula({"op": "reference", "measure_id": str(index - 1), "day_offset": 0})

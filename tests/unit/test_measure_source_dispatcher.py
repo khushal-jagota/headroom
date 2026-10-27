@@ -10,7 +10,7 @@ from tests.support.measure_sources import NOW, configured_source
 from planner.core.clock import TestClock as FakeClock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.credentials.contracts import ResolvedCredential
+from planner.credentials.contracts import CredentialResolver
 from planner.measure_sources import data, run_actions
 from planner.measure_sources.contracts import (
     FailureCode,
@@ -20,6 +20,7 @@ from planner.measure_sources.contracts import (
     RunMode,
     RunResult,
     RunStatus,
+    RuntimeLimits,
 )
 from planner.measure_sources.dispatcher import SourceDispatcher
 from planner.measure_sources.scheduling import SourceScheduleParticipant
@@ -33,15 +34,14 @@ class HeldRuntime:
         self.cancelled = threading.Event()
         self.run_ids: list[str] = []
         self.cancelled_ids: list[str] = []
+        self.timeouts: list[float] = []
 
-    def execute(
-        self, admission: RunAdmission, credentials: tuple[ResolvedCredential, ...]
-    ) -> RunResult:
-        assert credentials == ()
+    def execute(self, admission: RunAdmission, credentials: CredentialResolver) -> RunResult:
         self.run_ids.append(admission.run.id)
+        self.timeouts.append(admission.limits.wall_seconds)
         self.started.set()
         assert self.cancelled.wait(5)
-        return RunResult((), RunFailure(FailureCode.interrupted), RunMetrics(0, 0, 0, 1, 0, 0))
+        return RunResult((), RunFailure(FailureCode.interrupted), RunMetrics(0, 0, 0, 1, 0))
 
     def cancel(self, run_id: str) -> None:
         self.cancelled_ids.append(run_id)
@@ -64,13 +64,20 @@ def test_dispatcher_shutdown_interrupts_exact_owned_run(
     )
     runtime = HeldRuntime()
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    dispatcher = SourceDispatcher(path, fake_clock, runtime, key_path=tmp_path / "no-key-needed")
+    dispatcher = SourceDispatcher(
+        path,
+        fake_clock,
+        runtime,
+        key_path=tmp_path / "no-key-needed",
+        runtime_limits=RuntimeLimits(90),
+    )
     dispatcher.start()
     try:
         assert runtime.started.wait(3)
     finally:
         dispatcher.stop(deadline=time.monotonic() + 5)
     assert runtime.run_ids == [run.id] and runtime.cancelled_ids == [run.id]
+    assert runtime.timeouts == [90]
     assert data.read_run(tmp_db, run.id).status is RunStatus.interrupted
     assert not tmp_db.execute(
         "SELECT 1 FROM measure_observations WHERE measure_id=?", (measure.id,)

@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.credentials.contracts import CredentialReference, CredentialScheme, CredentialScope
+from planner.credentials.contracts import CredentialScope
 from planner.measure_sources.contracts import (
-    DestinationGrant,
     FailureEpisode,
-    HttpMethod,
     MeasureSource,
-    PathMatch,
     RunMode,
     RunStatus,
     RunTrigger,
@@ -21,14 +17,13 @@ from planner.measure_sources.contracts import (
     SourceRun,
     SourceRunDetail,
 )
-from planner.measure_sources.logic.health import collection_health, expected_slots
+from planner.measure_sources.logic.health import collection_health
 from planner.measure_sources.records import (
     decode_candidates,
     decode_failure,
     decode_metrics,
     decode_outputs,
 )
-from planner.measure_sources.server_timezone import server_timezone
 from planner.measures.contracts import HistoryWindow, SourceHealthSummary
 
 
@@ -51,11 +46,6 @@ def read_source(conn: sqlite3.Connection, source_id: str) -> MeasureSource:
     row = conn.execute("SELECT * FROM measure_sources WHERE id=?", (source_id,)).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "measure source does not exist")
-    grants = conn.execute(
-        "SELECT d.*,c.scheme,c.name AS credential_name FROM measure_source_destinations d "
-        "LEFT JOIN credentials c ON c.id=d.credential_id WHERE d.source_id=? ORDER BY d.grant_name",
-        (source_id,),
-    ).fetchall()
     return MeasureSource(
         id=str(row["id"]),
         name=str(row["name"]),
@@ -64,27 +54,10 @@ def read_source(conn: sqlite3.Connection, source_id: str) -> MeasureSource:
         if row["responsible_kind"] == "chief"
         else Principal(PrincipalKind.manager, str(row["responsible_manager_id"])),
         responsibility_revision=int(row["responsibility_revision"]),
-        repair_ticket_id=row["repair_ticket_id"],
         enabled=bool(row["enabled"]),
         local_time=row["local_time"],
         source_revision=int(row["source_revision"]),
         active_script=_script(row, "active"),
-        pending_script=_script(row, "pending"),
-        destinations=tuple(
-            DestinationGrant(
-                id=str(grant["grant_name"]),
-                origin=str(grant["origin"]),
-                method=HttpMethod(grant["method"]),
-                path=str(grant["path"]),
-                path_match=PathMatch(grant["path_match"]),
-                credential=CredentialReference(
-                    CredentialScheme(grant["scheme"]), str(grant["credential_name"])
-                )
-                if grant["credential_id"] is not None
-                else None,
-            )
-            for grant in grants
-        ),
         created_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]),
     )
@@ -170,15 +143,6 @@ def read_health(
             (source_id,),
         ).fetchone()
         episode = read_failure_episode(conn, source_id)
-        expected, next_change = (
-            (None, None)
-            if not source.enabled or source.local_time is None
-            else expected_slots(
-                now_local=datetime.fromtimestamp(now, server_timezone()),
-                local_time=source.local_time,
-                created_at=source.created_at,
-            )
-        )
         values.append(
             SourceHealthSummary(
                 source_id=source.id,
@@ -187,11 +151,9 @@ def read_health(
                     enabled=source.enabled,
                     failed=episode is not None,
                     latest_success_frozen_at=None if success is None else int(success[0]),
-                    expected_slot=expected,
                 ),
                 latest_success_at=None if success is None else int(success[1]),
                 latest_failure_run_id=None if episode is None else episode.latest_run_id,
-                next_status_change_at=next_change,
             )
         )
     return tuple(values)

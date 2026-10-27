@@ -1,7 +1,6 @@
-"""Source authority, atomic receipts, restart fences, and clock-sensitive status."""
+"""Source authority, atomic receipts, restart fences, and actual-outcome status."""
 
 from datetime import datetime
-from pathlib import Path
 from sqlite3 import Connection
 from zoneinfo import ZoneInfo
 
@@ -25,21 +24,23 @@ from planner.measure_sources.contracts import (
     RunMode,
     RunResult,
     RunStatus,
+    SourceCreate,
     SourceRun,
     SourceScheduleBody,
     SourceScriptBody,
 )
+from planner.measures import actions as measure_actions
 from planner.measures import data as measure_data
 from planner.measures.contracts import CandidateObservation, SourceHealth
 
-METRICS = RunMetrics(0, 0, 0, 1, 0, 0)
+METRICS = RunMetrics(0, 0, 0, 1, 0)
 
 
 def _run(
     conn: Connection, source_id: str, *, mode: RunMode = RunMode.collection, now: int = NOW
 ) -> SourceRun:
     source = data.read_source(conn, source_id)
-    script = source.active_script if mode is RunMode.collection else source.pending_script
+    script = source.active_script
     assert script is not None
     run = run_actions.request_run(
         conn,
@@ -54,62 +55,88 @@ def _run(
     return run
 
 
-def test_designated_worker_can_only_edit_and_test_pending_revision(
+def test_assigned_worker_saves_tests_and_collects_without_daily_schedule(
     tmp_db: Connection,
     fake_clock: FakeClock,
 ) -> None:
     manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     manager = Principal(PrincipalKind.manager, manager_id)
     worker = Principal(PrincipalKind.ticket, ticket_id)
-    source, measure = configured_source(tmp_db, responsible=manager)
-    with pytest.raises(PlannerError):
-        actions.set_schedule(
-            tmp_db,
-            source.id,
-            SourceScheduleBody(
-                expected_revision=source.source_revision,
-                enabled=False,
-                local_time="12:00",
-            ),
-            principal=manager,
-            now=NOW,
-        )
-    body = SourceScriptBody(
-        expected_revision=source.source_revision,
-        expected_pending_revision=None,
-        text="pass # repair",
+    source, measure = configured_source(
+        tmp_db, responsible=manager, enabled=False, principal=worker
     )
-    with pytest.raises(PlannerError):
-        actions.submit_script(tmp_db, source.id, body, principal=worker, now=NOW)
-    actions.assign_repair_ticket(tmp_db, source.id, ticket_id, principal=manager, now=NOW)
-    source = actions.submit_script(tmp_db, source.id, body, principal=worker, now=NOW)
-    assert source.pending_script is not None
-    with pytest.raises(PlannerError):
-        actions.publish_script(
-            tmp_db,
-            source.id,
-            source.pending_script.revision,
-            expected_revision=source.source_revision,
-            principal=worker,
-            now=NOW,
-        )
-    run = run_actions.request_run(
+    source = actions.set_schedule(
         tmp_db,
         source.id,
-        mode=RunMode.test,
-        history=None,
-        expected_script_revision=source.pending_script.revision,
+        SourceScheduleBody(
+            expected_revision=source.source_revision, enabled=False, local_time="12:00"
+        ),
         principal=worker,
         now=NOW,
     )
-    assert run_actions.claim_run(tmp_db, run.id, now=NOW)
+    body = SourceScriptBody(expected_revision=source.source_revision, text="pass # repair")
+    source = actions.submit_script(tmp_db, source.id, body, principal=worker, now=NOW)
+    assert source.active_script is not None and source.active_script.text == body["text"]
+    with pytest.raises(PlannerError, match="revision changed"):
+        actions.submit_script(tmp_db, source.id, body, principal=worker, now=NOW)
+    other_manager, _ = _item_and_ticket(tmp_db, fake_clock)
+    with pytest.raises(PlannerError):
+        actions.submit_script(
+            tmp_db,
+            source.id,
+            SourceScriptBody(expected_revision=source.source_revision, text="pass"),
+            principal=Principal(PrincipalKind.manager, other_manager),
+            now=NOW,
+        )
     candidate = CandidateObservation(measure.id, "2026-10-27", 120)
-    result = run_actions.complete_run(
-        tmp_db, run.id, RunResult((candidate,), None, METRICS), now=NOW
+    for mode in (RunMode.test, RunMode.collection):
+        run = run_actions.request_run(
+            tmp_db,
+            source.id,
+            mode=mode,
+            history=None,
+            expected_script_revision=source.active_script.revision,
+            principal=worker,
+            now=NOW,
+        )
+        assert run_actions.claim_run(tmp_db, run.id, now=NOW)
+        result = run_actions.complete_run(
+            tmp_db, run.id, RunResult((candidate,), None, METRICS), now=NOW
+        )
+        assert result.run.status is RunStatus.succeeded
+        if mode is RunMode.test:
+            assert result.test_candidates == (candidate,)
+            assert measure_data.latest_observations(tmp_db, (measure.id,)) == ()
+            assert views.status(tmp_db, source.id, now=NOW).health is SourceHealth.disabled
+        else:
+            assert measure_data.latest_observations(tmp_db, (measure.id,))[0].value == 120
+            assert views.status(tmp_db, source.id, now=NOW).health is SourceHealth.healthy
+    with pytest.raises(PlannerError, match="retained"):
+        actions.delete_source(tmp_db, source.id, principal=worker)
+    disposable = actions.create_source(
+        tmp_db, SourceCreate("Optional test", source.scope, manager), principal=worker, now=NOW
     )
-    assert result.run.status is RunStatus.succeeded and result.test_candidates == (candidate,)
-    assert measure_data.latest_observations(tmp_db, (measure.id,)) == ()
-    # Manager project classification does not change explicit source responsibility or scope.
+    disposable = actions.submit_script(
+        tmp_db,
+        disposable.id,
+        SourceScriptBody(expected_revision=disposable.source_revision, text="pass"),
+        principal=worker,
+        now=NOW,
+    )
+    test_run = _run(tmp_db, disposable.id, mode=RunMode.test)
+    assert (
+        run_actions.complete_run(
+            tmp_db, test_run.id, RunResult((), None, METRICS), now=NOW
+        ).run.status
+        is RunStatus.succeeded
+    )
+    actions.delete_source(tmp_db, disposable.id, principal=worker)
+    assert (
+        tmp_db.execute("SELECT 1 FROM measure_source_runs WHERE id=?", (test_run.id,)).fetchone()
+        is None
+    )
+    with pytest.raises(PlannerError, match="does not exist"):
+        data.read_source(tmp_db, disposable.id)
     managers.update_manager(
         tmp_db, manager_id, edits={"project_id": "project_other"}, clock=fake_clock
     )
@@ -154,7 +181,6 @@ def test_atomic_collection_failure_dedup_and_success_recovery(tmp_db: Connection
         source.id,
         SourceScriptBody(
             expected_revision=source.source_revision,
-            expected_pending_revision=None,
             text="pass # test",
         ),
         principal=OWNER_PRINCIPAL,
@@ -217,19 +243,9 @@ def test_pending_restart_and_late_completion_fence(
     assert run_actions.claim_run(tmp_db, pending.id, now=NOW + 2) is not None
 
 
-def test_shared_slot_dedup_and_dst_health_entrypoint(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("TZ", "Europe/Berlin")
+def test_shared_daily_slot_deduplicates_repeated_dst_minute(tmp_db: Connection) -> None:
     zone = ZoneInfo("Europe/Berlin")
-    created = int(datetime(2026, 3, 28, 0, tzinfo=zone).timestamp())
-    source, _ = configured_source(tmp_db, now=created, local_time="02:30")
-    spring_now = int(datetime(2026, 3, 29, 12, tzinfo=zone).timestamp())
-    health = data.read_health(tmp_db, (source.id,), now=spring_now)[0]
-    assert health.next_status_change_at == int(
-        datetime(2026, 3, 30, 2, 31, 30, tzinfo=zone).timestamp()
-    )
-    # The repeated autumn local minute has one durable receipt across both folds.
+    source, _ = configured_source(tmp_db, local_time="02:30")
     first = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=0)
     second = first.replace(fold=1)
     one = run_actions.admit_scheduled_run(
@@ -239,63 +255,55 @@ def test_shared_slot_dedup_and_dst_health_entrypoint(
         tmp_db, source.id, local_now=second, now=int(second.timestamp())
     )
     assert one.id == two.id
-    repeated = data.read_health(tmp_db, (source.id,), now=int(second.timestamp()) + 90)[0]
-    assert repeated.next_status_change_at == int(
-        datetime(2026, 10, 26, 2, 31, 30, tzinfo=zone).timestamp()
+    assert (
+        data.read_health(tmp_db, (source.id,), now=NOW + 86400)[0].health
+        is SourceHealth.never_collected
     )
 
 
-def test_capability_revocation_fences_admitted_results(tmp_db: Connection, tmp_path: Path) -> None:
-    from dataclasses import replace
-
-    from tests.unit.test_credentials_store import write
-
-    from planner.credentials import actions as credentials
-    from planner.measure_sources.contracts import DestinationGrant, HttpMethod, PathMatch
-
+def test_script_change_fences_results_but_schedule_or_label_change_does_not(
+    tmp_db: Connection,
+) -> None:
     source, measure = configured_source(tmp_db)
-    key = tmp_path / "private-key"
-    credential = credentials.create_credential(
-        tmp_db,
-        replace(write(), scope=source.scope),
-        principal=OWNER_PRINCIPAL,
-        now=NOW,
-        key_path=key,
-    )
-    source = actions.set_destinations(
+    run = _run(tmp_db, source.id)
+    source = actions.set_schedule(
         tmp_db,
         source.id,
-        (
-            DestinationGrant(
-                "example-read-key",
-                "https://example.com",
-                HttpMethod.GET,
-                "/query",
-                PathMatch.exact,
-                credential.reference,
-            ),
+        SourceScheduleBody(
+            expected_revision=source.source_revision, enabled=False, local_time="12:00"
         ),
-        expected_revision=source.source_revision,
-        principal=OWNER_PRINCIPAL,
-        now=NOW,
-    )
-    run = _run(tmp_db, source.id)
-    credentials.update_origins(
-        tmp_db,
-        credential.id,
-        ("https://other.example",),
-        expected_revision=credential.revision,
         principal=OWNER_PRINCIPAL,
         now=NOW + 1,
-        key_path=key,
+    )
+    measure_actions.update_measure(
+        tmp_db,
+        measure.id,
+        {"expected_revision": measure.definition_revision, "name": "Renamed reading"},
+        principal=OWNER_PRINCIPAL,
+        now=NOW + 1,
+    )
+    source = data.read_source(tmp_db, source.id)
+    candidate = CandidateObservation(measure.id, "2026-10-27", 100)
+    result = run_actions.complete_run(
+        tmp_db, run.id, RunResult((candidate,), None, METRICS), now=NOW + 2
+    )
+    assert result.run.status is RunStatus.succeeded
+    run = _run(tmp_db, source.id)
+    actions.submit_script(
+        tmp_db,
+        source.id,
+        SourceScriptBody(expected_revision=source.source_revision, text="pass # changed"),
+        principal=OWNER_PRINCIPAL,
+        now=NOW + 3,
     )
     result = run_actions.complete_run(
         tmp_db,
         run.id,
-        RunResult((CandidateObservation(measure.id, "2026-10-27", 100),), None, METRICS),
-        now=NOW + 2,
+        RunResult((CandidateObservation(measure.id, "2026-10-27", 200),), None, METRICS),
+        now=NOW + 4,
     )
     assert (
         result.run.failure is not None and result.run.failure.code is FailureCode.stale_definition
     )
-    assert measure_data.latest_observations(tmp_db, (measure.id,)) == ()
+    assert measure_data.latest_observations(tmp_db, (measure.id,))[0].value == 100
+    assert views.status(tmp_db, source.id, now=NOW + 4).health is SourceHealth.failed

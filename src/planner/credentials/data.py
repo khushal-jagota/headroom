@@ -1,6 +1,5 @@
 """Public metadata reads are separate from private ciphertext lookup."""
 
-import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -19,9 +18,7 @@ from planner.credentials.contracts import (
 from planner.credentials.logic.validation import invalid
 from planner.list_reads.contracts import ListPage
 
-PUBLIC_COLUMNS = (
-    "id,project_id,account,scheme,name,auth_kind,allowed_origins,revision,created_at,updated_at"
-)
+PUBLIC_COLUMNS = "id,project_id,account,scheme,name,auth_kind,revision,created_at,updated_at"
 
 
 @contextmanager
@@ -54,7 +51,6 @@ def _metadata(row: sqlite3.Row) -> CredentialMetadata:
         CredentialScope(row["project_id"], row["account"]),
         CredentialReference(CredentialScheme(row["scheme"]), row["name"]),
         CredentialAuthKind(row["auth_kind"]),
-        tuple(json.loads(row["allowed_origins"])),
         int(row["revision"]),
         int(row["created_at"]),
         int(row["updated_at"]),

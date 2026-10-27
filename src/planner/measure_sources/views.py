@@ -31,8 +31,6 @@ def source_summary(source: MeasureSource) -> SourceSummary:
         source.enabled,
         source.local_time,
         None if source.active_script is None else source.active_script.revision,
-        None if source.pending_script is None else source.pending_script.revision,
-        source.repair_ticket_id,
     )
 
 
@@ -104,7 +102,6 @@ def status(conn: sqlite3.Connection, source_id: str, *, now: int) -> SourceStatu
         episode,
         None if failure_row is None else decode_failure(failure_row[0]),
         None if running is None else str(running[0]),
-        health.next_status_change_at,
     )
 
 

@@ -1,226 +1,139 @@
-"""The real clean launcher, kernel boundary, bounded pipes, and exact cancellation."""
+"""Actual ordinary child execution, errors, and lifecycle cleanup."""
 
 from __future__ import annotations
 
-import concurrent.futures
+import json
 import os
-import socket
-import stat
 import threading
 import time
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from tests.support.measure_runtime import admission
+from tests.support.measure_runtime import MemoryCredentials, admission
 
 from planner.measure_sources.configuration import DEFAULT_LIMITS
-from planner.measure_sources.contracts import FailureCode, RuntimeBudget
-from planner.measure_sources.runtime import Runtime, supervisor
+from planner.measure_sources.contracts import FailureCode, RunResult, RuntimeBudget
+from planner.measure_sources.runtime import Runtime
 
 
-def test_actual_launcher_descriptor_inventory_and_kernel_boundary(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    protected = tmp_path / "protected"
-    protected.write_text("SYNTHETIC-NOT-FOR-SOURCE")
-    monkeypatch.setenv("SYNTHETIC_HOST_SECRET", "SYNTHETIC-NOT-FOR-SOURCE")
-    launched: dict[str, supervisor._Child] = {}
-    source_inodes: dict[int, int] = {}
-    original = supervisor._spawn
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in tuple(os.environ):
+        if key.startswith("PLAN_"):
+            monkeypatch.delenv(key)
 
-    def capture(command: list[str], pass_fds: tuple[int, ...] = ()) -> supervisor._Child:
-        child = original(command, pass_fds)
-        launched["source" if command[0] == "/usr/bin/bwrap" else "broker"] = child
-        if command[0] == "/usr/bin/bwrap":
-            for fd, stream in enumerate((child.stdin, child.stdout, child.stderr)):
-                source_inodes[fd] = os.fstat(stream.fileno()).st_ino
-        return child
 
-    monkeypatch.setattr(supervisor, "_spawn", capture)
-    outputs = tuple(f"fd{fd}_{field}" for fd in range(32) for field in ("kind", "inode", "access"))
-    outputs += ("denied", "memory", "timezone", "mounts")
+def test_normal_python_files_processes_and_prints(tmp_path: Path) -> None:
+    output = tmp_path / "source.txt"
     script = f"""
-import os,stat,ctypes,socket,pathlib,resource
+import os, subprocess, sys
+import httpx
+from pathlib import Path
 from zoneinfo import ZoneInfo
-from datetime import datetime
-for fd in range(32):
- try:
-  info=os.fstat(fd)
-  kind=stat.S_IFMT(info.st_mode)
-  inode=info.st_ino
-  import fcntl
-  access=fcntl.fcntl(fd,fcntl.F_GETFL)&os.O_ACCMODE
-  assert os.readlink('/proc/self/fd/'+str(fd))=='pipe:['+str(inode)+']'
- except OSError:
-  kind=inode=access=-1
- for field,value in [('kind',kind),('inode',inode),('access',access)]:
-  record('fd'+str(fd)+'_'+field,'2026-10-27',value)
-assert 'SYNTHETIC_HOST_SECRET' not in os.environ
-assert not pathlib.Path({str(protected)!r}).exists()
-assert not pathlib.Path('/proc/1/root'+{str(protected)!r}).exists()
-denied=0
-for family in [socket.AF_INET,socket.AF_INET6,socket.AF_UNIX]:
- try: socket.socket(family,socket.SOCK_STREAM)
- except PermissionError: denied+=1
-for path in ['/scratch/x','/x','/dev/x','/dev/shm/x',
-             '/proc/sys/kernel/hostname','/usr/lib/python3.13/x']:
- try: pathlib.Path(path).write_text('x')
- except OSError as error:
-  assert error.errno==30
-  denied+=1
-for operation in [os.fork,lambda:os.unshare(os.CLONE_NEWUSER)]:
- try: operation()
- except PermissionError: denied+=1
-libc=ctypes.CDLL(None,use_errno=True)
-# Native x86_64: legacy AIO, pidfd descriptor access, memfd, and shared memory.
-for number,args in [(206,(1,0)),(434,(os.getpid(),0)),(438,(0,0,0)),(319,(0,0)),(29,(0,1,0o1600))]:
- assert libc.syscall(number,*args)==-1 and ctypes.get_errno()==1
- denied+=1
-try: resource.setrlimit(resource.RLIMIT_AS,(512*1024*1024,)*2)
-except (ValueError,OSError): denied+=1
-try: bytearray(400*1024*1024)
-except MemoryError: record('memory','2026-10-27',1)
-record('denied','2026-10-27',denied)
-mounts=pathlib.Path('/proc/self/mountinfo').read_text().splitlines()
-record('mounts','2026-10-27',sum('rw' in line.split()[5].split(',') for line in mounts))
-z=ZoneInfo('Europe/Berlin')
-record('timezone','2026-10-27',(datetime(2026,10,26,tzinfo=z).timestamp()-datetime(2026,10,25,tzinfo=z).timestamp())/3600)
+assert ZoneInfo('Europe/Berlin')
+Path({str(output)!r}).write_text('ordinary script')
+assert subprocess.check_output([sys.executable, '-c', 'print(42)']).strip() == b'42'
+print('a normal diagnostic')
+print('x' * 300000, file=sys.stderr)
+record('m', '2026-10-27', 42)
 """
-    with protected.open("rb") as handle, socket.socket() as parent_socket:
-        os.set_inheritable(handle.fileno(), True)
-        parent_socket.set_inheritable(True)
-        result = Runtime().execute(admission(script, outputs=outputs), ())
-    assert result.failure is None, result
-    values = {item.measure_id: item.value for item in result.observations}
-    for fd in range(32):
-        if fd < 3:
-            assert values[f"fd{fd}_kind"] == stat.S_IFIFO
-            assert values[f"fd{fd}_access"] == (os.O_RDONLY if fd == 0 else os.O_WRONLY)
-            assert values[f"fd{fd}_inode"] == source_inodes[fd]
-        else:
-            assert (
-                values[f"fd{fd}_kind"] == values[f"fd{fd}_inode"] == values[f"fd{fd}_access"] == -1
-            )
-    assert len({values[f"fd{fd}_inode"] for fd in range(3)}) == 3
-    assert values["denied"] == 17
-    assert values["memory"] == 1 and values["timezone"] == 25 and values["mounts"] == 0
-    assert all(child.status is not None for child in launched.values())
-    assert "SYNTHETIC-NOT-FOR-SOURCE" not in repr(result)
+    resolver = MemoryCredentials()
+    result = Runtime().execute(admission(script), resolver)
+    assert result.failure is None
+    assert result.observations[0].value == 42
+    assert output.read_text() == "ordinary script"
+    assert result.metrics.child_output_bytes > 256 * 1024
+    assert resolver.calls == []
 
 
-@pytest.mark.parametrize(
-    ("script", "budget", "code"),
-    [
-        ("import time;time.sleep(10)", RuntimeBudget.wall_seconds, FailureCode.budget_exhausted),
-        (
-            "import os;os.write(2,b'x'*300000)",
-            RuntimeBudget.child_output_bytes,
-            FailureCode.budget_exhausted,
-        ),
-        (
-            "import os;os.write(1,b'x'*70000)",
-            RuntimeBudget.request_frame_bytes,
-            FailureCode.budget_exhausted,
-        ),
-        ("print('invalid-frame',flush=True)", None, FailureCode.malformed_protocol),
-        (
-            'print(\'{"op":"latest","id":1,"measure_id":"foreign"}\',flush=True)',
-            None,
-            FailureCode.invalid_output,
-        ),
-    ],
-)
-def test_adversarial_protocol_is_bounded(
-    script: str, budget: RuntimeBudget | None, code: FailureCode
-) -> None:
+def test_fault_preserves_fixed_type_and_line_without_message() -> None:
     result = Runtime().execute(
-        admission(script, limits=replace(DEFAULT_LIMITS, wall_seconds=0.5)), ()
+        admission("secret = 'DO-NOT-RECORD'\nvalue = {}[secret]\n"), MemoryCredentials()
     )
     assert result.failure is not None
-    assert result.failure.code == code and result.failure.budget == budget
-    assert not result.observations
-    assert result.metrics.elapsed_milliseconds < 2000
-    assert "invalid-frame" not in repr(result)
+    assert result.failure.code is FailureCode.runtime_failure
+    assert result.failure.exception_type == "KeyError"
+    assert result.failure.source_line == 2
+    assert "DO-NOT-RECORD" not in repr(result)
 
 
-def test_cpu_limit_uses_owned_child_usage_and_cancellation_reaps_children() -> None:
-    runtime = Runtime()
-    cpu = runtime.execute(admission("while True: pass"), ())
-    assert cpu.failure is not None, cpu
-    assert cpu.failure.code == FailureCode.budget_exhausted, cpu
-    assert cpu.failure.budget == RuntimeBudget.script_cpu_seconds, cpu
-    assert 1800 <= cpu.metrics.script_cpu_milliseconds <= 3500, cpu
-    pending = admission("import time;time.sleep(30)", run_id="cancel-me")
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        future = pool.submit(runtime.execute, pending, ())
-        time.sleep(0.1)
-        runtime.cancel(pending.run.id)
-        cancelled = future.result(timeout=2)
-    assert cancelled.failure is not None
-    assert cancelled.failure.code == FailureCode.interrupted
-    runtime.cancel("cancel-before-start")
-    cancelled_before_start = runtime.execute(admission("pass", run_id="cancel-before-start"), ())
-    assert cancelled_before_start.failure is not None
-    assert cancelled_before_start.failure.code == FailureCode.interrupted
-
-
-def test_no_plain_subprocess_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("planner.measure_sources.sandbox.platform.system", lambda: "Unsupported")
-    result = Runtime().execute(admission("record('m','2026-10-27',1)"), ())
+def test_missing_credential_is_an_actual_use_failure() -> None:
+    resolver = MemoryCredentials()
+    result = Runtime().execute(
+        admission("request('http://localhost', 'project missing key')"),
+        resolver,
+    )
     assert result.failure is not None
-    assert result.failure.code == FailureCode.sandbox_unavailable
-    assert not result.observations
+    assert result.failure.code is FailureCode.credential_unavailable
+    assert resolver.calls[0][1].name == "project missing key"
+    unused = Runtime().execute(admission("record('m', '2026-10-27', 1)"), resolver)
+    assert unused.failure is None
+    assert len(resolver.calls) == 1
 
 
-def test_unhandled_memory_and_exit_with_buffered_failure_remain_safe(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    memory = Runtime().execute(admission("bytearray(400*1024*1024)"), ())
-    assert memory.failure is not None
-    assert memory.failure.budget == RuntimeBudget.script_memory_bytes
-    # A broker can exit between a selector snapshot and wait4. Its buffered fixed
-    # FailureReply must win over an unexplained process-exit classification.
-    entry = tmp_path / "broker_failure.py"
-    entry.write_text(
-        "import sys,json\n"
-        "json.loads(sys.stdin.buffer.readline())\n"
-        'sys.stdout.write(\'{"op":"failure","id":null,"failure":{"code":"budget_exhausted","budget":"response_bytes"}}\\n\')\n'
-        "sys.stdout.flush()\n"
+def test_invalid_observation_remains_a_data_error() -> None:
+    for statement in (
+        "record('other', '2026-10-27', 1)",
+        "record('m', 'not-a-date', 1)",
+        "record('m', '2026-10-27', True)",
+    ):
+        result = Runtime().execute(admission(statement), MemoryCredentials())
+        assert result.failure is not None
+        assert result.failure.code is FailureCode.invalid_output
+
+
+def test_timeout_cleans_up_owned_process(tmp_path: Path) -> None:
+    marker = tmp_path / "pid"
+    script = f"""
+import json, os, subprocess, sys, time
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+open({str(marker)!r}, 'w').write(json.dumps([os.getpid(), child.pid]))
+time.sleep(30)
+"""
+    result = Runtime().execute(
+        admission(script, limits=replace(DEFAULT_LIMITS, wall_seconds=0.8)),
+        MemoryCredentials(),
     )
-    original = supervisor._broker_command
-    monkeypatch.setattr(
-        supervisor, "_broker_command", lambda value: [original(value)[0], "-I", str(entry)]
-    )
-    result = Runtime().execute(admission("import time;time.sleep(10)"), ())
-    assert result.failure is not None and result.failure.budget == RuntimeBudget.response_bytes
+    assert result.failure is not None
+    assert result.failure.budget is RuntimeBudget.wall_seconds
+    pid, descendant = json.loads(marker.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    # The source's child is terminated too. Its orphaned exit status belongs to init.
+    status = Path(f"/proc/{descendant}/stat")
+    assert not status.exists() or status.read_text().split()[2] == "Z"
+    assert result.metrics.elapsed_milliseconds < 3000
 
 
-def test_cancellation_reaps_exact_namespace_pid1_and_monitor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    children: list[supervisor._Child] = []
-    identified = threading.Event()
-    identify = supervisor._Child.identify_namespace
-
-    def capture(self: supervisor._Child, pid: int) -> None:
-        identify(self, pid)
-        children.append(self)
-        identified.set()
-
-    monkeypatch.setattr(supervisor._Child, "identify_namespace", capture)
+def test_cancel_before_and_during_execution(tmp_path: Path) -> None:
     runtime = Runtime()
-    value = admission("import time;time.sleep(30)", run_id="owned-cleanup")
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        future = pool.submit(runtime.execute, value, ())
-        assert identified.wait(2)
-        child = children[0]
-        assert child.namespace_pid is not None and child.namespace_pidfd is not None
-        runtime.cancel(value.run.id)
-        result = future.result(timeout=2)
-    assert result.failure is not None and result.failure.code == FailureCode.interrupted
-    assert child.status is not None and child.namespace_pidfd is None
-    assert not Path(f"/proc/{child.namespace_pid}").exists()
-    assert not Path(f"/proc/{child.process.pid}").exists()
+    runtime.cancel("early")
+    early = runtime.execute(admission("raise AssertionError", run_id="early"), MemoryCredentials())
+    assert early.failure is not None and early.failure.code is FailureCode.interrupted
+    marker = tmp_path / "pid"
+    script = f"import os,time\nopen({str(marker)!r},'w').write(str(os.getpid()))\ntime.sleep(30)"
+    results: list[RunResult] = []
+    thread = threading.Thread(
+        target=lambda: results.append(
+            runtime.execute(admission(script, run_id="live"), MemoryCredentials())
+        )
+    )
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    runtime.cancel("live")
+    thread.join(3)
+    assert not thread.is_alive()
+    assert results[0].failure is not None and results[0].failure.code is FailureCode.interrupted
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(marker.read_text()), 0)
+
+
+def test_timeout_can_exceed_old_product_ceiling() -> None:
+    result = Runtime().execute(
+        admission("record('m', '2026-10-27', 1)", limits=replace(DEFAULT_LIMITS, wall_seconds=120)),
+        MemoryCredentials(),
+    )
+    assert result.failure is None

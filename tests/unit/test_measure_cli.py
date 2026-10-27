@@ -20,15 +20,8 @@ from planner.cli.main import main
             "/api/measure-sources/source%20%2Fone/script",
             {
                 "expected_revision": 4,
-                "expected_pending_revision": None,
                 "text": 'value = 12\nrecord("m", "2026-10-27", value)\n',
             },
-        ),
-        (
-            ["measure-source", "publish-script", "source"],
-            "POST",
-            "/api/measure-sources/source/publish",
-            {"expected_revision": 4, "pending_revision": 2},
         ),
         (
             ["measure-source", "request-run", "source"],
@@ -66,12 +59,6 @@ from planner.cli.main import main
             "POST",
             "/api/measures/read",
             {"measure_ids": ["measure"], "first_date": "2026-10-27", "last_date": "2026-10-27"},
-        ),
-        (
-            ["credential", "set-origins", "credential"],
-            "PATCH",
-            "/api/credentials/credential",
-            {"expected_revision": 1, "allowed_origins": ["https://example.com"]},
         ),
     ],
 )
@@ -174,5 +161,5 @@ def test_stdin_refusal_and_credential_commands_have_no_secret_entry(
         assert malformed not in result.output
     result = runner.invoke(main, ["credential", "--help"])
     assert result.exit_code == 0
-    assert "set-origins" in result.output and "list" in result.output
+    assert "list" in result.output and "set-origins" not in result.output
     assert "replace-secret" not in result.output and "create" not in result.output

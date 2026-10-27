@@ -1,4 +1,4 @@
-"""Bounded process execution for already admitted source runs."""
+"""Trusted stored-script execution."""
 
 from planner.measure_sources.runtime.supervisor import Runtime
 

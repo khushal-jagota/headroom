@@ -1,4 +1,4 @@
-"""One source-data revision plus captured clock boundaries for demanded status reads."""
+"""Coherent source-data revisions for demanded status reads."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from planner.resource_versions.data import source_revision
 _TABLES = (
     "credentials",
     "measure_sources",
-    "measure_source_destinations",
     "measures",
     "measure_dependencies",
     "measure_source_runs",
@@ -74,12 +73,8 @@ class MeasureResources:
         now = request.app.state.clock.now_unix()
         revision = source_revision(conn, "automatic-measures", "all")
         if path == "/api/measure-sources":
-            page = views.source_ids(conn, project_id=project_id, limit=limit, offset=offset)
-            # No script/run bodies are loaded to compute a clock revision. A boundary
-            # token changes even while the database is idle and no SSE event occurs.
-            tokens = self._clock_tokens(conn, page.rows, now=now)
             return ResourceSnapshot(
-                revision + tokens,
+                revision,
                 lambda: views.list_json(
                     conn, project_id=project_id, limit=limit, offset=offset, now=now
                 ),
@@ -93,7 +88,7 @@ class MeasureResources:
                 )
             if segments[2] == "status":
                 return ResourceSnapshot(
-                    revision + self._clock_tokens(conn, (identifier,), now=now),
+                    revision,
                     lambda: asdict(views.status(conn, identifier, now=now)),
                 )
             if segments[2] == "runs":
@@ -145,26 +140,3 @@ class MeasureResources:
 
             return ResourceSnapshot(revision, read_credentials)
         return None
-
-    @staticmethod
-    def _clock_tokens(conn: sqlite3.Connection, source_ids: tuple[str, ...], *, now: int) -> str:
-        from datetime import datetime
-
-        from planner.measure_sources.logic.health import expected_slots
-        from planner.measure_sources.server_timezone import server_timezone
-
-        local_now = datetime.fromtimestamp(now, server_timezone())
-        tokens = []
-        for identifier in source_ids:
-            row = conn.execute(
-                "SELECT enabled,local_time,created_at FROM measure_sources WHERE id=?",
-                (identifier,),
-            ).fetchone()
-            if row is not None and row["enabled"] and row["local_time"] is not None:
-                expected, _ = expected_slots(
-                    now_local=local_now,
-                    local_time=row["local_time"],
-                    created_at=int(row["created_at"]),
-                )
-                tokens.append(f"{identifier}:{expected}")
-        return "|" + ",".join(tokens)

@@ -5,14 +5,12 @@
   import { queries } from '../lib/queryCatalogue';
   import SourceCard from '../lib/measureSources/SourceCard.svelte';
   import SourceControls from '../lib/measureSources/SourceControls.svelte';
-  import { armStatusBoundary } from '../lib/measureSources/presentation';
 
   let projectId = $state('');
   let offset = $state(0);
   let selectedId = $state('');
   const projects = createQuery(() => queries.projects());
   const sources = createQuery(() => queries.measureSources(projectId, offset));
-  $effect(() => armStatusBoundary(sources.data?.sources ?? [], () => { void sources.refetch(); }));
   function changeProject() { offset = 0; selectedId = ''; }
 </script>
 <section class="measure-sources" data-screen="measure-sources">

@@ -19,18 +19,17 @@ from planner.core.db import connect
 from planner.core.server import handle_planner_error
 from planner.credentials import actions, api, data
 from planner.credentials.contracts import (
+    BasicSecret,
     BearerSecret,
     CredentialAuthKind,
     CredentialReference,
     CredentialScheme,
     CredentialScope,
     CredentialWrite,
+    HeaderSecret,
 )
-from planner.credentials.logic.validation import associated_data
+from planner.credentials.logic.validation import associated_data, validate_secret
 from planner.credentials.store import DatabaseCredentialResolver, FileCredentialCipher
-from planner.measure_sources.actions import create_source
-from planner.measure_sources.contracts import DestinationGrant, HttpMethod, PathMatch, SourceCreate
-from planner.measure_sources.data import read_source
 
 SECRET = "synthetic-credential-do-not-expose-94"
 REPLACEMENT = "synthetic-replacement-75"
@@ -41,7 +40,6 @@ def write() -> CredentialWrite:
         CredentialScope("project_vylo", "fixture-account"),
         CredentialReference(CredentialScheme.local, "example-read-key"),
         CredentialAuthKind.bearer,
-        ("https://example.com",),
         BearerSecret(SECRET),
     )
 
@@ -52,27 +50,6 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
     key = tmp_path / "private" / "key"
     metadata = actions.create_credential(
         tmp_db, write(), principal=OWNER_PRINCIPAL, now=1, key_path=key
-    )
-    source = create_source(
-        tmp_db,
-        SourceCreate(
-            "Credential fence fixture",
-            metadata.scope,
-            CHIEF_PRINCIPAL,
-            tuple(
-                DestinationGrant(
-                    name,
-                    "https://example.com",
-                    HttpMethod.GET,
-                    path,
-                    PathMatch.exact,
-                    metadata.reference,
-                )
-                for name, path in (("first", "/first"), ("second", "/second"))
-            ),
-        ),
-        principal=OWNER_PRINCIPAL,
-        now=1,
     )
     encrypted = data.read_encrypted(tmp_db, metadata.id)
     assert SECRET.encode() not in encrypted.ciphertext
@@ -89,7 +66,7 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
         cipher.decrypt(
             encrypted,
             associated_data=associated_data(
-                replace(metadata, allowed_origins=("https://other.example",))
+                replace(metadata, scope=replace(metadata.scope, account="other-account"))
             ),
         )
     changed = actions.replace_credential(
@@ -102,27 +79,13 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
         key_path=key,
     )
     assert changed.reference == metadata.reference and changed.id == metadata.id
-    assert read_source(tmp_db, source.id).source_revision == source.source_revision
     assert resolver.resolve(metadata.scope, metadata.reference).secret == BearerSecret(REPLACEMENT)
-    changed = actions.update_origins(
-        tmp_db,
-        metadata.id,
-        ("https://other.example",),
-        expected_revision=2,
-        principal=CHIEF_PRINCIPAL,
-        now=3,
-        key_path=key,
-    )
-    assert changed.revision == 3 and resolver.resolve(
-        metadata.scope, metadata.reference
-    ).metadata.allowed_origins == ("https://other.example",)
-    assert read_source(tmp_db, source.id).source_revision == source.source_revision + 1
     with pytest.raises(PlannerError, match="owner"):
         actions.replace_credential(
             tmp_db,
             metadata.id,
             BearerSecret(SECRET),
-            expected_revision=3,
+            expected_revision=2,
             principal=CHIEF_PRINCIPAL,
             now=4,
             key_path=key,
@@ -132,16 +95,18 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
             tmp_db,
             metadata.id,
             BearerSecret(SECRET),
-            expected_revision=2,
+            expected_revision=1,
             principal=OWNER_PRINCIPAL,
             now=4,
             key_path=key,
         )
 
+    actions.delete_credential(tmp_db, metadata.id, principal=OWNER_PRINCIPAL)
+    with pytest.raises(PlannerError, match="unavailable"):
+        resolver.resolve(metadata.scope, metadata.reference)
 
-def test_missing_wrong_or_exposed_key_fails_without_reset(
-    tmp_db: Connection, tmp_path: Path
-) -> None:
+
+def test_missing_wrong_key_fails_without_reset(tmp_db: Connection, tmp_path: Path) -> None:
     key = tmp_path / "private" / "key"
     metadata = actions.create_credential(
         tmp_db, write(), principal=OWNER_PRINCIPAL, now=1, key_path=key
@@ -162,22 +127,14 @@ def test_missing_wrong_or_exposed_key_fails_without_reset(
             key_path=key,
         )
     assert tmp_db.execute("SELECT COUNT(*) FROM credentials").fetchone()[0] == 1
+    key.write_bytes(b"short")
+    with pytest.raises(PlannerError, match="unusable"):
+        FileCredentialCipher(key, has_records=True)
     key.write_bytes(original)
     key.chmod(0o644)
-    with pytest.raises(PlannerError, match="private"):
-        FileCredentialCipher(key, has_records=True)
-    key.chmod(0o600)
     alias = tmp_path / "alias"
     alias.symlink_to(key)
-    with pytest.raises(PlannerError, match="symlink"):
-        FileCredentialCipher(alias, has_records=True)
-    with pytest.raises(PlannerError, match="exposed"):
-        FileCredentialCipher(Path("/usr/lib/python3.13/private-key"), has_records=False)
-    pipe = key.parent / "fifo"
-    os.mkfifo(pipe, 0o600)
-    with pytest.raises(PlannerError, match="private"):
-        FileCredentialCipher(pipe, has_records=True)
-    cipher = FileCredentialCipher(key, has_records=True)
+    cipher = FileCredentialCipher(alias, has_records=True)
     assert DatabaseCredentialResolver(tmp_db, cipher).resolve(
         metadata.scope, metadata.reference
     ).secret == BearerSecret(SECRET)
@@ -223,15 +180,12 @@ def test_actual_route_parsing_never_echoes_secret_input(tmp_db: Connection) -> N
             assert SECRET not in response.text
         deeply_nested = client.post("/api/credentials", content="[" * 2000 + "0" + "]" * 2000)
         assert deeply_nested.status_code == 400
-        oversized = client.post("/api/credentials", content=SECRET * 4000)
-        assert oversized.status_code == 400 and SECRET not in oversized.text
         body = {
             "project_id": "project_vylo",
             "account": "fixture-account",
             "scheme": "local",
             "name": "example-read-key",
             "auth_kind": "bearer",
-            "allowed_origins": ["https://example.com"],
             "secret": {"token": SECRET},
         }
         response = client.post("/api/credentials", json=body)
@@ -241,3 +195,12 @@ def test_actual_route_parsing_never_echoes_secret_input(tmp_db: Connection) -> N
         denied = client.post("/api/credentials", json=body)
         assert denied.status_code == 400 and SECRET not in denied.text
         assert denied.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_auth_values_follow_protocol_syntax_without_extra_policy() -> None:
+    validate_secret(BasicSecret("", "synthetic"), CredentialAuthKind.basic)
+    validate_secret(HeaderSecret("Accept", "synthetic"), CredentialAuthKind.header)
+    with pytest.raises(PlannerError):
+        validate_secret(HeaderSecret("invalid header", "synthetic"), CredentialAuthKind.header)
+    with pytest.raises(PlannerError):
+        validate_secret(BasicSecret("invalid:username", "synthetic"), CredentialAuthKind.basic)

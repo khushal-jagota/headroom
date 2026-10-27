@@ -39,7 +39,6 @@ class CredentialMetadata:
     scope: CredentialScope
     reference: CredentialReference
     auth_kind: CredentialAuthKind
-    allowed_origins: tuple[str, ...]
     revision: int
     created_at: int
     updated_at: int
@@ -90,7 +89,6 @@ class CreateCredentialBody(TypedDict):
     scheme: CredentialScheme
     name: str
     auth_kind: CredentialAuthKind
-    allowed_origins: list[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +98,6 @@ class CredentialWrite:
     scope: CredentialScope
     reference: CredentialReference
     auth_kind: CredentialAuthKind
-    allowed_origins: tuple[str, ...]
     secret: CredentialSecret = field(repr=False)
 
 
@@ -133,13 +130,13 @@ class ReplaceCredentialRequest(TypedDict):
 class CredentialCipher(Protocol):
     """Replaceable authenticated-encryption boundary; AAD is canonical metadata."""
 
-    def encrypt(self, secret: CredentialSecret, *, associated_data: bytes) -> EncryptedCredential:
-        ...
+    def encrypt(
+        self, secret: CredentialSecret, *, associated_data: bytes
+    ) -> EncryptedCredential: ...
 
     def decrypt(
         self, encrypted: EncryptedCredential, *, associated_data: bytes
-    ) -> CredentialSecret:
-        ...
+    ) -> CredentialSecret: ...
 
 
 class CredentialResolver(Protocol):
@@ -147,5 +144,4 @@ class CredentialResolver(Protocol):
 
     def resolve(
         self, scope: CredentialScope, reference: CredentialReference
-    ) -> ResolvedCredential:
-        ...
+    ) -> ResolvedCredential: ...

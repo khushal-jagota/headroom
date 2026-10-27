@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from dataclasses import replace
+from itertools import islice
 
 from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal
@@ -24,6 +25,16 @@ from planner.measures.logic.evaluation import demanded_pairs, evaluate
 from planner.measures.logic.formulas import dependencies, parse_formula, validate_graph
 
 
+def _require_author(conn: sqlite3.Connection, principal: Principal, source_id: str | None) -> None:
+    if source_id is None:
+        authority.require_above(conn, principal, authority.owner_only("measures"))
+    else:
+        from planner.measure_sources import authority as sources_authority
+        from planner.measure_sources import data as sources_data
+
+        sources_authority.require_author(conn, principal, sources_data.read_source(conn, source_id))
+
+
 def _validate_text(measure: Measure) -> None:
     if (
         not isinstance(measure.name, str)
@@ -43,8 +54,6 @@ def _validate_source(conn: sqlite3.Connection, measure: Measure) -> None:
     source = sources.read_source(conn, measure.source_id)
     if source.scope.project_id != measure.project_id:
         raise invalid("measure and source Projects differ")
-    if len(data.read_source_outputs(conn, source.id)) >= limits.MAX_SOURCE_OUTPUTS:
-        raise invalid("source output limit exceeded")
 
 
 def _bump_source(conn: sqlite3.Connection, measure: Measure, now: int) -> None:
@@ -66,7 +75,6 @@ def _write_edges(conn: sqlite3.Connection, measure: Measure) -> None:
 def create_measure(
     conn: sqlite3.Connection, body: CreateMeasureBody, *, principal: Principal, now: int
 ) -> Measure:
-    authority.require_above(conn, principal, authority.owner_only("measures"))
     formula = parse_formula(body["formula"]) if body["formula"] is not None else None
     measure = Measure(
         new_id("measure"),
@@ -85,6 +93,7 @@ def create_measure(
     )
     _validate_text(measure)
     with data.transaction(conn):
+        _require_author(conn, principal, body["source_id"])
         if (
             conn.execute("SELECT 1 FROM projects WHERE id=?", (measure.project_id,)).fetchone()
             is None
@@ -126,9 +135,9 @@ def update_measure(
     principal: Principal,
     now: int,
 ) -> Measure:
-    authority.require_above(conn, principal, authority.owner_only("measures"))
     with data.transaction(conn):
         current = data.read_measure(conn, measure_id)
+        _require_author(conn, principal, current.source_id)
         if (
             type(body.get("expected_revision")) is not int
             or body["expected_revision"] != current.definition_revision
@@ -146,26 +155,6 @@ def update_measure(
             updated_at=now,
         )
         _validate_text(edited)
-        if (edited.kind, edited.timezone, edited.period) != (
-            current.kind,
-            current.timezone,
-            current.period,
-        ):
-            used = conn.execute(
-                "SELECT 1 FROM measure_observations WHERE measure_id=? UNION ALL SELECT 1 "
-                "FROM measure_dependencies WHERE input_measure_id=? LIMIT 1",
-                (measure_id, measure_id),
-            ).fetchone()
-            if used is not None:
-                raise invalid("used measure semantics are immutable")
-        if edited.unit != current.unit:
-            incompatible = conn.execute(
-                "SELECT 1 FROM measure_dependencies d JOIN measures m ON m.id=d.measure_id "
-                "WHERE d.input_measure_id=? AND m.kind='period_count' AND m.unit<>? LIMIT 1",
-                (measure_id, edited.unit),
-            ).fetchone()
-            if incompatible is not None:
-                raise invalid("unit edit conflicts with a dependent count")
         definitions = data.read_definitions(conn, (measure_id,), proposed=edited)
         validate_graph(measure_id, definitions)
         conn.execute(
@@ -191,9 +180,9 @@ def update_measure(
 def delete_measure(
     conn: sqlite3.Connection, measure_id: str, *, principal: Principal, now: int
 ) -> None:
-    authority.require_above(conn, principal, authority.owner_only("measures"))
     with data.transaction(conn):
         measure = data.read_measure(conn, measure_id)
+        _require_author(conn, principal, measure.source_id)
         retained = conn.execute(
             "SELECT 1 FROM measure_dependencies WHERE input_measure_id=? UNION ALL SELECT "
             "1 FROM measure_observations WHERE measure_id=? UNION ALL SELECT 1 FROM "
@@ -210,13 +199,12 @@ def read_values(conn: sqlite3.Connection, request: ReadMeasuresBody, *, now: int
     identifiers = request["measure_ids"]
     if not identifiers or len(set(identifiers)) != len(identifiers):
         raise invalid("measure read requires distinct measure IDs")
-    maximum = request.get("limit", limits.MAX_OUTPUT_PAIRS)
-    if type(maximum) is not int or not 1 <= maximum <= limits.MAX_OUTPUT_PAIRS:
+    maximum = request.get("limit")
+    if maximum is not None and (type(maximum) is not int or maximum < 1):
         raise invalid("invalid measure read limit")
-    days = date_range(request["first_date"], request["last_date"], maximum=limits.MAX_OUTPUT_PAIRS)
-    if len(days) * len(identifiers) > maximum:
-        raise invalid("measure output limit exceeded")
-    roots = tuple(MeasureDate(identifier, day) for identifier in identifiers for day in days)
+    days = date_range(request["first_date"], request["last_date"])
+    pairs_to_read = (MeasureDate(identifier, day) for identifier in identifiers for day in days)
+    roots = tuple(islice(pairs_to_read, maximum)) if maximum is not None else tuple(pairs_to_read)
     with data.transaction(conn, read_only=True):
         definitions = data.read_definitions(conn, tuple(identifiers))
         for identifier in identifiers:
@@ -225,9 +213,7 @@ def read_values(conn: sqlite3.Connection, request: ReadMeasuresBody, *, now: int
             pairs = demanded_pairs(roots, definitions, now=now)
             observations = data.read_demanded(conn, pairs, definitions)
             values = evaluate(roots, definitions, observations, now=now)
-        except PlannerError as error:
-            if "limit" not in error.message:
-                raise
+        except RecursionError:
             values = tuple(
                 MeasureValue(
                     pair.measure_id,

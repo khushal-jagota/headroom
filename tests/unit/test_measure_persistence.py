@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 from sqlite3 import Connection
 
 import pytest
+from tests.unit.test_manager_wakes import _item_and_ticket
 
+from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
@@ -36,12 +38,10 @@ from planner.measures.contracts import (
 NOW = int(datetime(2026, 10, 27, 12, tzinfo=UTC).timestamp())
 
 
-def source(conn: Connection) -> str:
+def source(conn: Connection, *, responsible: Principal = CHIEF_PRINCIPAL) -> str:
     return create_source(
         conn,
-        SourceCreate(
-            "Synthetic provider", CredentialScope("project_vylo", "fixture"), CHIEF_PRINCIPAL, ()
-        ),
+        SourceCreate("Synthetic provider", CredentialScope("project_vylo", "fixture"), responsible),
         principal=OWNER_PRINCIPAL,
         now=NOW,
     ).id
@@ -53,6 +53,7 @@ def taken(
     *,
     kind: MeasureKind = MeasureKind.reading,
     period: CountPeriod | None = None,
+    principal: Principal = CHIEF_PRINCIPAL,
 ) -> Measure:
     return actions.create_measure(
         conn,
@@ -67,7 +68,7 @@ def taken(
             source_id=identifier,
             formula=None,
         ),
-        principal=CHIEF_PRINCIPAL,
+        principal=principal,
         now=NOW,
     )
 
@@ -174,7 +175,7 @@ def test_atomic_overwrite_history_and_correction(tmp_db: Connection) -> None:
             ),
         )
     assert data.latest_observations(tmp_db, (measure.id,))[0].value == 130
-    # Gaps never erase known history; explicit absent history remains inspectable.
+    # A restated unavailable result replaces an earlier value, just like a new value.
     collect(
         tmp_db,
         identifier,
@@ -189,13 +190,18 @@ def test_atomic_overwrite_history_and_correction(tmp_db: Connection) -> None:
         ),
         history=history,
     )
-    assert [row[0] for row in tmp_db.execute("SELECT date FROM measure_history_gaps")] == [
+    assert {row[0] for row in tmp_db.execute("SELECT date FROM measure_history_gaps")} == {
+        "2026-10-20",
+        "2026-10-21",
+    }
+    assert len(data.read_observations(tmp_db, measure.id, "2026-10-20", "2026-10-27")) == 1
+    collect(tmp_db, identifier, (CandidateObservation(measure.id, "2026-10-20", 99),))
+    assert {row[0] for row in tmp_db.execute("SELECT date FROM measure_history_gaps")} == {
         "2026-10-21"
-    ]
-    assert len(data.read_observations(tmp_db, measure.id, "2026-10-20", "2026-10-27")) == 2
+    }
 
 
-def test_total_neighbors_reject_whole_batch_and_draft_validation_writes_nothing(
+def test_restated_numbers_are_accepted_and_draft_validation_writes_nothing(
     tmp_db: Connection,
 ) -> None:
     identifier = source(tmp_db)
@@ -211,19 +217,18 @@ def test_total_neighbors_reject_whole_batch_and_draft_validation_writes_nothing(
         ),
         history=history,
     )
-    with pytest.raises(PlannerError, match="decrease"):
-        collect(
-            tmp_db,
-            identifier,
-            (
-                CandidateObservation(measure.id, "2026-10-26", 19),
-                CandidateObservation(measure.id, "2026-10-27", 18),
-            ),
-            history=history,
-        )
+    collect(
+        tmp_db,
+        identifier,
+        (
+            CandidateObservation(measure.id, "2026-10-26", -19.5),
+            CandidateObservation(measure.id, "2024-01-01", 5),
+        ),
+        history=history,
+    )
     assert [
-        row.value for row in data.read_observations(tmp_db, measure.id, "2026-10-25", "2026-10-27")
-    ] == [10, 13, 18]
+        row.value for row in data.read_observations(tmp_db, measure.id, "2024-01-01", "2026-10-27")
+    ] == [5, 10, -19.5, 18]
     snapshot = tuple(tuple(row) for row in tmp_db.execute("SELECT * FROM measure_observations"))
     data.validate_batch(
         tmp_db,
@@ -237,8 +242,11 @@ def test_total_neighbors_reject_whole_batch_and_draft_validation_writes_nothing(
         tuple(tuple(row) for row in tmp_db.execute("SELECT * FROM measure_observations"))
         == snapshot
     )
-    with pytest.raises(PlannerError, match="missing required"):
-        collect(tmp_db, identifier, ())
+    collect(tmp_db, identifier, ())
+    assert (
+        tuple(tuple(row) for row in tmp_db.execute("SELECT * FROM measure_observations"))
+        == snapshot
+    )
     stale = data.prepare_outputs(tmp_db, identifier, frozen_at=NOW)
     updated = actions.update_measure(
         tmp_db,
@@ -248,35 +256,37 @@ def test_total_neighbors_reject_whole_batch_and_draft_validation_writes_nothing(
         now=NOW,
     )
     assert updated.definition_revision == 2
-    with pytest.raises(PlannerError, match="stale"):
-        data.validate_batch(
+    # Metadata corrections do not invalidate real in-flight values; captured revision is provenance.
+    with data.transaction(tmp_db):
+        data.commit_observations(
             tmp_db,
+            run_id="run",
             source_id=identifier,
             frozen_at=NOW,
             outputs=stale,
             candidates=(CandidateObservation(measure.id, "2026-10-27", 20),),
             history=None,
         )
+    observation = data.latest_observations(tmp_db, (measure.id,))[0]
+    assert observation.value == 20 and observation.definition_revision == 1
 
 
-def test_count_intervals_definition_authority_and_dependent_units(tmp_db: Connection) -> None:
+def test_metadata_edits_and_large_history_reads_do_not_police_numbers(tmp_db: Connection) -> None:
     identifier = source(tmp_db)
     measure = taken(tmp_db, identifier, kind=MeasureKind.period_count, period=CountPeriod.day)
     run(tmp_db, identifier)
-    collect(tmp_db, identifier, (CandidateObservation(measure.id, "2026-10-26", 2),))
-    interval = data.latest_observations(tmp_db, (measure.id,))[0].period_interval
-    assert interval is not None and (interval.start_date, interval.end_date_exclusive) == (
-        "2026-10-26",
-        "2026-10-27",
+    collect(tmp_db, identifier, (CandidateObservation(measure.id, "2026-10-27", -2.5),))
+    assert data.latest_observations(tmp_db, (measure.id,))[0].period_interval is None
+    edited = actions.update_measure(
+        tmp_db,
+        measure.id,
+        UpdateMeasureBody(
+            expected_revision=1, timezone="UTC", unit="dollars", kind=MeasureKind.running_total
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
     )
-    with pytest.raises(PlannerError, match="immutable"):
-        actions.update_measure(
-            tmp_db,
-            measure.id,
-            UpdateMeasureBody(expected_revision=1, timezone="UTC"),
-            principal=OWNER_PRINCIPAL,
-            now=NOW,
-        )
+    assert edited.timezone == "UTC" and edited.unit == "dollars"
     derived = actions.create_measure(
         tmp_db,
         CreateMeasureBody(
@@ -286,45 +296,63 @@ def test_count_intervals_definition_authority_and_dependent_units(tmp_db: Connec
             origin=MeasureOrigin.assembled,
             kind=MeasureKind.period_count,
             timezone="Europe/Berlin",
-            period=CountPeriod.day,
+            period=CountPeriod.week,
             source_id=None,
             formula=ReferenceExpression(op="reference", measure_id=measure.id, day_offset=0),
         ),
         principal=CHIEF_PRINCIPAL,
         now=NOW,
     )
-    with pytest.raises(PlannerError, match="unit edit"):
-        actions.update_measure(
-            tmp_db,
-            measure.id,
-            UpdateMeasureBody(expected_revision=1, unit="dollars"),
-            principal=OWNER_PRINCIPAL,
-            now=NOW,
-        )
+    result = actions.read_values(
+        tmp_db,
+        ReadMeasuresBody(
+            measure_ids=[measure.id, derived.id], first_date="2025-01-01", last_date="2026-10-27"
+        ),
+        now=NOW,
+    )
+    assert len(result.values) > 366
+    page = actions.read_values(
+        tmp_db,
+        ReadMeasuresBody(
+            measure_ids=[measure.id], first_date="2025-01-01", last_date="2026-10-27", limit=2
+        ),
+        now=NOW,
+    )
+    assert [value.date for value in page.values] == ["2025-01-01", "2025-01-02"]
+    assert result.values[-1].value == -2.5 and result.values[-1].status is MeasureReadStatus.value
+    assert result.sources[0].source_id == identifier
+    with pytest.raises(PlannerError, match="retained"):
+        actions.delete_measure(tmp_db, measure.id, principal=OWNER_PRINCIPAL, now=NOW)
+
+
+def test_assigned_worker_can_manage_taken_definitions(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    _, other_ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    worker = Principal(PrincipalKind.ticket, ticket_id)
+    outsider = Principal(PrincipalKind.ticket, other_ticket_id)
+    identifier = source(tmp_db, responsible=Principal(PrincipalKind.manager, manager_id))
+    measure = taken(tmp_db, identifier, principal=worker)
+    with pytest.raises(PlannerError):
+        taken(tmp_db, identifier, principal=outsider)
     with pytest.raises(PlannerError):
         actions.update_measure(
             tmp_db,
-            derived.id,
-            UpdateMeasureBody(expected_revision=1, name="Unauthorized"),
-            principal=Principal(PrincipalKind.ticket, "nonexistent"),
+            measure.id,
+            UpdateMeasureBody(expected_revision=1, name="Other"),
+            principal=outsider,
             now=NOW,
         )
-    result = actions.read_values(
+    changed = actions.update_measure(
         tmp_db,
-        ReadMeasuresBody(measure_ids=[derived.id], first_date="2026-10-26", last_date="2026-10-26"),
+        measure.id,
+        UpdateMeasureBody(expected_revision=1, name="Repaired"),
+        principal=worker,
         now=NOW,
     )
-    assert result.values[0].value == 2 and result.values[0].status is MeasureReadStatus.value
-    assert result.sources[0].source_id == identifier
-    with pytest.raises(PlannerError, match="output limit"):
-        actions.read_values(
-            tmp_db,
-            ReadMeasuresBody(
-                measure_ids=[measure.id, derived.id],
-                first_date="2026-01-01",
-                last_date="2026-10-26",
-            ),
-            now=NOW,
-        )
-    with pytest.raises(PlannerError, match="retained"):
-        actions.delete_measure(tmp_db, measure.id, principal=OWNER_PRINCIPAL, now=NOW)
+    assert changed.name == "Repaired"
+    with pytest.raises(PlannerError):
+        actions.delete_measure(tmp_db, measure.id, principal=outsider, now=NOW)
+    actions.delete_measure(tmp_db, measure.id, principal=worker, now=NOW)
+    assert tmp_db.execute("SELECT 1 FROM measures WHERE id=?", (measure.id,)).fetchone() is None

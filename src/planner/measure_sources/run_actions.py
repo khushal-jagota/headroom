@@ -11,7 +11,7 @@ from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import new_id
 from planner.measure_sources import data
-from planner.measure_sources.authority import require_author, require_responsible
+from planner.measure_sources.authority import require_author
 from planner.measure_sources.contracts import (
     FailureCode,
     MeasureSource,
@@ -25,16 +25,14 @@ from planner.measure_sources.contracts import (
 )
 from planner.measure_sources.notices import record_failure
 from planner.measure_sources.records import encode_candidates, encode_outputs
-from planner.measure_sources.settings import MAX_RUN_RESULT_BYTES
 from planner.measure_sources.transaction import transaction
 from planner.measures import data as measures_data
-from planner.measures.configuration import MAX_HISTORY_DATES
 from planner.measures.contracts import HistoryWindow
-from planner.measures.logic.dates import date_range
+from planner.measures.logic.dates import calendar_date
 
 
-def _selected_script(source: MeasureSource, mode: RunMode) -> tuple[int, str]:
-    script = source.pending_script if mode is RunMode.test else source.active_script
+def _selected_script(source: MeasureSource) -> tuple[int, str]:
+    script = source.active_script
     if script is None:
         raise PlannerError(ErrorCode.validation, "the selected source script is absent")
     return script.revision, script.sha256
@@ -51,8 +49,9 @@ def _admit(
     slot: tuple[str, str] | None = None,
 ) -> SourceRun:
     if history is not None:
-        date_range(history.first_date, history.last_date, maximum=MAX_HISTORY_DATES)
-    revision, sha256 = _selected_script(source, mode)
+        if calendar_date(history.first_date) > calendar_date(history.last_date):
+            raise PlannerError(ErrorCode.validation, "history starts after its end date")
+    revision, sha256 = _selected_script(source)
     outputs = measures_data.prepare_outputs(conn, source.id, frozen_at=now)
     run_id = new_id("source_run")
     conn.execute(
@@ -92,13 +91,8 @@ def request_run(
 ) -> SourceRun:
     with transaction(conn):
         source = data.read_source(conn, source_id)
-        if mode is RunMode.test:
-            require_author(conn, principal, source)
-        else:
-            require_responsible(conn, principal, source)
-            if not source.enabled:
-                raise PlannerError(ErrorCode.validation, "collection is disabled")
-        revision, _ = _selected_script(source, mode)
+        require_author(conn, principal, source)
+        revision, _ = _selected_script(source)
         if revision != expected_script_revision:
             raise PlannerError(ErrorCode.stale_claim, "selected source script changed")
         return _admit(
@@ -138,21 +132,12 @@ def admit_scheduled_run(
 
 
 def current_definition(conn: sqlite3.Connection, run: SourceRun) -> bool:
-    source = data.read_source(conn, run.source_id)
-    if source.source_revision != run.source_revision:
-        return False
-    if run.mode is RunMode.collection and not source.enabled:
-        return False
     try:
-        revision, sha256 = _selected_script(source, run.mode)
-        outputs = measures_data.prepare_outputs(conn, source.id, frozen_at=run.frozen_at)
+        source = data.read_source(conn, run.source_id)
+        revision, sha256 = _selected_script(source)
     except PlannerError:
         return False
-    return bool(outputs) and (revision, sha256, outputs) == (
-        run.script_revision,
-        run.script_sha256,
-        run.required_outputs,
-    )
+    return (revision, sha256) == (run.script_revision, run.script_sha256)
 
 
 def _fail(
@@ -194,8 +179,6 @@ def claim_run(conn: sqlite3.Connection, run_id: str, *, now: int) -> SourceRun |
 
 
 def _validation_failure(error: PlannerError) -> RunFailure:
-    if error.message == "missing required source output":
-        return RunFailure(FailureCode.missing_output)
     if error.message == "stale measure definition":
         return RunFailure(FailureCode.stale_definition)
     return RunFailure(FailureCode.invalid_output)
@@ -216,8 +199,6 @@ def complete_run(
         if failure is None:
             try:
                 encoded = encode_candidates(result.observations)
-                if len(encoded.encode()) > MAX_RUN_RESULT_BYTES:
-                    raise PlannerError(ErrorCode.validation, "candidate result exceeds its limit")
                 # Validation runs first for both modes. The commit function also validates
                 # as its own transaction-owned contract, before it performs any write.
                 measures_data.validate_batch(
