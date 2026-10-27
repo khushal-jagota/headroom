@@ -87,6 +87,7 @@ from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
 from planner.executor.contracts import ChildReference
+from planner.executor.store import ExecutorStore
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
@@ -512,14 +513,18 @@ class ConversationStore:
         facts: tuple[LifecycleFact, ...],
         *,
         executor_turn: tuple[str, str, str] | None = None,
+        retired_child: ChildReference | None = None,
     ) -> None:
-        await self._write(self._transition_lifecycle_sync, conversation_id, facts, executor_turn)
+        await self._write(
+            self._transition_lifecycle_sync, conversation_id, facts, executor_turn, retired_child
+        )
 
     def _transition_lifecycle_sync(
         self,
         conversation_id: str,
         facts: tuple[LifecycleFact, ...],
         executor_turn: tuple[str, str, str] | None = None,
+        retired_child: ChildReference | None = None,
     ) -> None:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
@@ -528,6 +533,10 @@ class ConversationStore:
             apply_facts(conn, conversation_id, facts)
             if executor_turn is not None:
                 self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
+            if retired_child is not None:
+                ExecutorStore.close_child_in_transaction(
+                    conn, retired_child, self._integer_now() * 1000
+                )
             interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
                 conn,
@@ -701,6 +710,47 @@ class ConversationStore:
             lifecycle,
             executor_turn,
         )
+
+    async def append_initial_shutdown_disposition(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        lifecycle: tuple[LifecycleFact, ...],
+        executor_turn: tuple[str, str, str] | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Commit the complete initial cancellation audit before settling its caller."""
+        return await self._write(
+            self._append_initial_shutdown_disposition_sync,
+            conversation_id,
+            payloads,
+            lifecycle,
+            executor_turn,
+        )
+
+    def _append_initial_shutdown_disposition_sync(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        lifecycle: tuple[LifecycleFact, ...],
+        executor_turn: tuple[str, str, str] | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        with self._publication_connection() as (conn, admission):
+            try:
+                self._begin_validated_attention_write(conn, conversation_id)
+                self._apply_signal_mutation(conn, admission)
+                if executor_turn is not None:
+                    self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
+                written = self.append_in_transaction(
+                    conn, conversation_id, payloads, lifecycle=lifecycle
+                )
+                self._record_signal_result(conn, written)
+                self._commit_rows(conn, payloads)
+            except BaseException as error:
+                self._invalidate_signal_failure(error)
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+        return written
 
     async def admit_sender_messages(
         self,

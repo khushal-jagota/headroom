@@ -174,6 +174,19 @@ the existing command acknowledgment path. Later registry inventories omit those
 outcomes. Journal receipt cleanup and registry confirmation remain separate.
 Neither acknowledgment repeats the native operation.
 
+Conversation shutdown fences its initial command before it waits for input cleanup or a native result.
+Immediate dispatch and reconnect replay check the same fence, including after awaited input preparation.
+The endpoint distinguishes a child start from prompt transmission. A successful start does not prove prompt acceptance.
+Only complete evidence of no prompt transmission permits suppression. A possible partial write retains uncertainty.
+Cancellation preserves the original native outcome and command identity. It does not create a synthetic native result.
+
+An ordinary stop uses its own command identity against the original child reference.
+Its confirmed outcome releases native ownership separately from local cancellation.
+Late outcomes require exact retained command evidence for the original child and incarnation.
+That historical evidence grants no renewed execution, callback, event, or CLI authority.
+If the original command evidence is absent, delivery remains uncertain.
+The [retained initial-prompt procedure](initial-mac-prompt-cancellation.md) replaces only the isolated verification app.
+
 The VPS exposes per-ask evidence: uncertain, reachable, child gone, or callback
 gone, alongside the stored answer and its application. A restored link alone
 cannot prove delivery. During an outage, the owner can save an answer for the exact

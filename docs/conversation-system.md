@@ -53,6 +53,18 @@ VPS acceptance does not prove native callback delivery. Native application is a 
 A VPS restart retains native turn knowledge until executor reconciliation supplies evidence.
 Deployment recovery does not start a replacement turn over unresolved native work.
 
+Explicit conversation shutdown also claims an initial delivery before its settled-phase barrier.
+It fences prompt dispatch and reconnect replay for that reservation before it releases local waiters.
+Complete evidence of no prompt transmission permits an audited discard and suppressed delivery.
+Possible transmission or incomplete older evidence retains unknown prompt delivery through the existing uncertainty records.
+Known native acceptance remains factual. Shutdown never promises to undo its effects.
+
+Local shutdown and native termination remain separate facts. An HTTP shutdown response can precede the original child's confirmed stop.
+Until stop succeeds, the original reference remains quarantined and new delivery remains blocked.
+Restart recovery can bind the original open assignment and intent without a saved native turn row.
+It does not repeat start or prompt, invent a missing command identity, or treat absent evidence as non-delivery.
+The [retained initial-prompt procedure](initial-mac-prompt-cancellation.md) supplies the isolated application handoff.
+
 ## Diagnostic history expiry
 
 Diagnostic expiry remains an explicit offline operator action. Normal startup

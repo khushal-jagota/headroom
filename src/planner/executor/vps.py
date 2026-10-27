@@ -68,7 +68,11 @@ from planner.executor.contracts import (
 )
 from planner.executor.files import snapshot_file
 from planner.executor.mutations import write_ticket_mutation
-from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
+from planner.executor.remote import (
+    RemoteBackendChild,
+    RemoteBackendChildFactory,
+    RemoteInitialDeliveryCancelled,
+)
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
 from planner.executor.transfers import GenerationTransfers
@@ -174,6 +178,11 @@ class ExecutorEndpoint:
         self.children: dict[str, RemoteBackendChild] = {}
         self.sinks: dict[str, BackendEventSink] = {}
         self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
+        self._cancelled_initial_children: set[ChildReference] = set()
+        self._possibly_emitted_commands: set[str] = set()
+        self._prompt_command_ids: set[str] = set()
+        self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
+        self._input_tasks: dict[str, set[asyncio.Task[None]]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._inventory: dict[str, ChildInventory] = {}
         self._retained_inventory: dict[str, CommandOutcome] = {}
@@ -181,7 +190,10 @@ class ExecutorEndpoint:
         self._input_transfer_locks: dict[str, asyncio.Lock] = {}
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self.factory = RemoteBackendChildFactory(
-            self.assign_child, self.send_command, self._read_skill_snapshot
+            self.assign_child,
+            self.send_command,
+            self._read_skill_snapshot,
+            self.cancel_initial_delivery,
         )
         self.file_receiver: Any = None
         self._responses: dict[str, asyncio.Future[WireMessage]] = {}
@@ -276,9 +288,47 @@ class ExecutorEndpoint:
             raise BackendSpawnFailed("remote children need a server-assigned Worker identity")
         self.store.register_child(child, principal.kind.value, principal.id, now_ms())
         self.sinks[child.child_id] = sink
-        proxy = RemoteBackendChild(child, self.send_command, self._read_skill_snapshot)
+        proxy = self.recover_child(child, initial_history_complete=True)
         self.children[child.child_id] = proxy
         return child
+
+    def recover_child(
+        self, child: ChildReference, *, initial_history_complete: bool = False
+    ) -> RemoteBackendChild:
+        """Bind the retained identity without starting it or granting new authority."""
+        return RemoteBackendChild(
+            child,
+            self.send_command,
+            self._read_skill_snapshot,
+            self.cancel_initial_delivery,
+            initial_history_complete=initial_history_complete,
+        )
+
+    def _initial_command_cancelled(self, command: ChildCommand) -> bool:
+        return command.operation in (ChildOperation.start, ChildOperation.write_prompt) and (
+            command.child in self._cancelled_initial_children
+        )
+
+    def cancel_initial_delivery(self, child: ChildReference, command_ids: tuple[str, ...]) -> bool:
+        """Fence before cleanup; retained native outcomes remain untouched."""
+        self._cancelled_initial_children.add(child)
+        prompt_may_have_sent = any(
+            command_id in self._possibly_emitted_commands
+            for command_id in command_ids
+            if command_id in self._prompt_command_ids
+        )
+        for command, future in tuple(self.pending_commands.values()):
+            if command.child != child or not self._initial_command_cancelled(command):
+                continue
+            if command.operation is ChildOperation.write_prompt:
+                prompt_may_have_sent |= command.command_id in self._possibly_emitted_commands
+            for task in self._input_tasks.get(command.command_id, ()):
+                task.cancel()
+            for emission in self._emission_tasks.get(command.command_id, ()):
+                emission.cancel()
+            if not future.done():
+                future.set_exception(RemoteInitialDeliveryCancelled())
+        return prompt_may_have_sent
 
     async def _send(self, message: WireMessage) -> None:
         writer = self.writer
@@ -304,9 +354,29 @@ class ExecutorEndpoint:
             self._responses.pop(request_id, None)
 
     async def _transfer_command_inputs(self, command: ChildCommand) -> None:
-        lock = self._input_transfer_locks.setdefault(command.child.conversation_id, asyncio.Lock())
-        async with lock:
-            await self._transfer_command_inputs_locked(command)
+        if self._initial_command_cancelled(command):
+            return
+
+        async def transfer() -> None:
+            lock = self._input_transfer_locks.setdefault(
+                command.child.conversation_id, asyncio.Lock()
+            )
+            async with lock:
+                if not self._initial_command_cancelled(command):
+                    await self._transfer_command_inputs_locked(command)
+
+        task = asyncio.create_task(transfer())
+        tasks = self._input_tasks.setdefault(command.command_id, set())
+        tasks.add(task)
+        try:
+            await task
+        except asyncio.CancelledError:
+            if not self._initial_command_cancelled(command):
+                raise
+        finally:
+            tasks.discard(task)
+            if not tasks:
+                self._input_tasks.pop(command.command_id, None)
 
     async def _transfer_command_inputs_locked(self, command: ChildCommand) -> None:
         identity = self.identity
@@ -354,15 +424,41 @@ class ExecutorEndpoint:
                     snapshot.local_path.unlink(missing_ok=True)
 
     async def _emit_command(self, command: ChildCommand) -> bool:
+        task = asyncio.create_task(self._emit_command_unsettled(command))
+        tasks = self._emission_tasks.setdefault(command.command_id, set())
+        tasks.add(task)
+        try:
+            return await task
+        except asyncio.CancelledError:
+            if not self._initial_command_cancelled(command):
+                raise
+            return False
+        finally:
+            tasks.discard(task)
+            if not tasks:
+                self._emission_tasks.pop(command.command_id, None)
+
+    async def _emit_command_unsettled(self, command: ChildCommand) -> bool:
         """The final guard is shared by immediate sends and reconnect replay."""
         if command.operation not in (
             ChildOperation.answer_permission_ask,
             ChildOperation.answer_user_input,
         ):
-            await self._send(
-                WireMessage(WireMessageKind.command, command.command_id, _object(command))
-            )
-            return True
+            async with self._send_lock:
+                if self._initial_command_cancelled(command):
+                    return False
+                writer = self.writer
+                if writer is None or not self.ready:
+                    raise ConnectionError("executor link unavailable")
+                # From this point even a failed/partial write may have reached native.
+                self._possibly_emitted_commands.add(command.command_id)
+                if command.operation is ChildOperation.write_prompt:
+                    self._prompt_command_ids.add(command.command_id)
+                await write_frame(
+                    writer,
+                    WireMessage(WireMessageKind.command, command.command_id, _object(command)),
+                )
+                return True
         answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
         identity, writer = self.identity, self.writer
         emitted = False
@@ -433,6 +529,8 @@ class ExecutorEndpoint:
         task.add_done_callback(self._tasks.discard)
 
     async def send_command(self, command: ChildCommand) -> CommandOutcome:
+        if self._initial_command_cancelled(command):
+            raise RemoteInitialDeliveryCancelled()
         existing = self.pending_commands.get(command.command_id)
         if existing is not None:
             if existing[0] != command:
@@ -648,7 +746,12 @@ class ExecutorEndpoint:
                 and outcome.child.executor_incarnation == identity.executor_incarnation
                 and self.store.has_closed_child_assignment(outcome.child)
             )
-            if not retired_refusal and not historical_answer_outcome:
+            historical_initial_outcome = (
+                outcome.child.executor_incarnation == identity.executor_incarnation
+                and self.store.has_closed_child_assignment(outcome.child)
+                and self.store.has_retained_command(outcome)
+            )
+            if not (retired_refusal or historical_answer_outcome or historical_initial_outcome):
                 self._assignment(outcome.child)
             application_payload = outcome.result.get("answer_application")
             if not retired_refusal and isinstance(application_payload, dict):
@@ -1096,9 +1199,7 @@ class ExecutorEndpoint:
                     self._inventory[item.child.child_id] = item
                     proxy = self.children.get(item.child.child_id)
                     if proxy is None:
-                        proxy = RemoteBackendChild(
-                            item.child, self.send_command, self._read_skill_snapshot
-                        )
+                        proxy = self.recover_child(item.child)
                         self.children[item.child.child_id] = proxy
                     await self.runtime.system.adopt_remote_child(item, proxy)
                 for outcome in inventory.retained_command_outcomes:

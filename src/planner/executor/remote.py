@@ -35,6 +35,7 @@ from planner.executor.wire import ProtocolRefused, encode_frame
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
 type AssignChild = Callable[[ResolvedConversationStart, backend.BackendEventSink], ChildReference]
+type CancelInitialDelivery = Callable[[ChildReference, tuple[str, ...]], bool]
 
 
 @dataclass(slots=True)
@@ -42,6 +43,16 @@ class RemoteBackendChildFactory:
     assign_child: AssignChild
     send_command: SendCommand
     skill_snapshot_supplier: SkillSnapshotSupplier
+    cancel_initial_delivery: CancelInitialDelivery | None = None
+
+    def recover(self, reference: ChildReference) -> RemoteBackendChild:
+        return RemoteBackendChild(
+            reference,
+            self.send_command,
+            self.skill_snapshot_supplier,
+            self.cancel_initial_delivery,
+            initial_history_complete=False,
+        )
 
     def __call__(
         self,
@@ -55,6 +66,7 @@ class RemoteBackendChildFactory:
             self.assign_child(resolved_start, event_sink),
             self.send_command,
             self.skill_snapshot_supplier,
+            self.cancel_initial_delivery,
         )
 
 
@@ -66,10 +78,38 @@ class RemoteBackendChild:
         reference: ChildReference,
         send_command: SendCommand,
         skill_snapshot_supplier: SkillSnapshotSupplier,
+        cancel_initial_delivery: CancelInitialDelivery | None = None,
+        *,
+        initial_history_complete: bool = True,
     ) -> None:
         self.reference = reference
         self._send_command = send_command
         self._skill_snapshot_supplier = skill_snapshot_supplier
+        self._cancel_initial_delivery = cancel_initial_delivery
+        self.initial_history_complete = initial_history_complete
+        self.initial_commands: list[ChildCommand] = []
+        self.record_command: Callable[[ChildCommand], Awaitable[None]] | None = None
+        self.initial_delivery_cancelled = False
+        self.prompt_accepted = False
+
+    def cancel_initial_delivery(self) -> bool:
+        """Fence initial work; true proves the prompt never crossed the wire.
+
+        A successful child start does not prove prompt acceptance. Restored children
+        lack complete local transmission history.
+        """
+        self.initial_delivery_cancelled = True
+        may_have_sent = (
+            self._cancel_initial_delivery(
+                self.reference, tuple(command.command_id for command in self.initial_commands)
+            )
+            if self._cancel_initial_delivery is not None
+            else any(
+                command.operation is ChildOperation.write_prompt
+                for command in self.initial_commands
+            )
+        )
+        return self.initial_history_complete and not may_have_sent and not self.prompt_accepted
 
     async def _call(
         self, operation: ChildOperation, turn: backend.TurnToken | None = None, **arguments: Any
@@ -81,6 +121,20 @@ class RemoteBackendChild:
             turn=turn,
             arguments={key: encode_value(value) for key, value in arguments.items()},
         )
+        if operation in (ChildOperation.start, ChildOperation.write_prompt):
+            if self.initial_delivery_cancelled:
+                raise RemoteInitialDeliveryCancelled()
+            self.initial_commands.append(command)
+            if self.record_command is not None:
+                await self.record_command(command)
+            if self.initial_delivery_cancelled:
+                raise RemoteInitialDeliveryCancelled()
+        elif (
+            operation is ChildOperation.stop
+            and self.initial_delivery_cancelled
+            and self.record_command is not None
+        ):
+            await self.record_command(command)
         if operation is ChildOperation.start:
             try:
                 encode_frame(
@@ -117,6 +171,8 @@ class RemoteBackendChild:
             raise errors.get(error_name, backend.BackendSpawnFailed)(
                 str(result.result.get("error_message", "remote operation refused"))
             )
+        if operation is ChildOperation.write_prompt:
+            self.prompt_accepted = True
         return result.result
 
     async def start(
@@ -214,3 +270,7 @@ class RemoteBackendChild:
 
 class RemoteCommandUncertain(RuntimeError):
     """The original native operation has no proven outcome. Do not redispatch it."""
+
+
+class RemoteInitialDeliveryCancelled(RuntimeError):
+    """Local shutdown owns disposition; this is not a native command outcome."""

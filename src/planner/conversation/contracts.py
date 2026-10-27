@@ -941,6 +941,13 @@ class ConversationSystem(Protocol):
 
         There is nothing to return. If the conversation is idle with nothing held, or
         the id names no conversation, nothing happens.
+
+        An initial remote delivery is also cancellable while its start or prompt lacks
+        an outcome. Shutdown suppresses a provably untransmitted prompt; possible
+        transmission retains uncertain delivery. The local operation can finish before
+        native termination is confirmed. The original child remains quarantined until
+        its ordinary stop succeeds; no later prompt runs beside uncertain native work.
+        Cancellation does not undo effects that an accepted operation already produced.
         """
         ...
 

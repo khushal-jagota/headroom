@@ -33,6 +33,8 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
+    PromptDeliveryFate,
+    PromptDeliverySuppressed,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -85,6 +87,7 @@ class ScriptedNativeChild:
         self.turn: TurnToken | None = None
         self.start_count = 0
         self.prompt_count = 0
+        self.stop_count = 0
         self.answers: list[tuple[str, str]] = []
         self.user_answers: list[tuple[str, tuple[UserInputAnswer, ...]]] = []
         self.required_input_path: Path | None = None
@@ -142,7 +145,7 @@ class ScriptedNativeChild:
         )
 
     async def stop(self) -> None:
-        return None
+        self.stop_count += 1
 
     async def raise_ask(self) -> None:
         assert self.sink is not None and self.turn is not None
@@ -1204,6 +1207,131 @@ def test_input_transfer_restarts_before_pending_command_after_link_drop(
     asyncio.run(run())
 
 
+def test_kill_stalled_initial_input_fences_reconnect_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.conversation.message_content import MessageFile, MessageText
+    from planner.executor.contracts import ChildCommand, ChildOperation
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        release_input = asyncio.Event()
+        sending: asyncio.Task[PromptDeliveryFate] | None = None
+        try:
+            assert harness.native.sink is not None and harness.native.turn is not None
+            await harness.native.sink.turn_ended(
+                harness.native.turn,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            await eventually(lambda: harness.events("turn_ended") == 1, "first turn did not end")
+            original_child = next(iter(harness.mac.registry.children.values())).reference
+            contents = bytes(range(256)) * 3000
+            kept = await harness.endpoint.runtime.message_files.keep(
+                "c_scripted", contents, media_type="application/octet-stream"
+            )
+            input_ready = asyncio.Event()
+            transfer_attempts = 0
+            target_command: str | None = None
+            transfer = harness.endpoint._transfer_command_inputs
+            transfer_locked = harness.endpoint._transfer_command_inputs_locked
+
+            async def observe_transfer(command: ChildCommand) -> None:
+                nonlocal transfer_attempts
+                if command.operation is ChildOperation.write_prompt:
+                    transfer_attempts += 1
+                await transfer(command)
+
+            async def stall_input(command: ChildCommand) -> None:
+                nonlocal target_command
+                await transfer_locked(command)
+                if command.operation is ChildOperation.write_prompt and target_command is None:
+                    target_command = command.command_id
+                    input_ready.set()
+                    await release_input.wait()
+
+            monkeypatch.setattr(harness.endpoint, "_transfer_command_inputs", observe_transfer)
+            monkeypatch.setattr(harness.endpoint, "_transfer_command_inputs_locked", stall_input)
+            sending = asyncio.create_task(
+                harness.system.send(
+                    "c_scripted",
+                    (
+                        MessageText("Cancel this initial delivery"),
+                        MessageFile(
+                            kept.stored_file_id,
+                            "application/octet-stream",
+                            "input.bin",
+                            len(contents),
+                        ),
+                    ),
+                    sender_label="Test",
+                )
+            )
+            await asyncio.wait_for(input_ready.wait(), 5)
+            generation = harness.mac.identity.connection_generation
+            assert harness.endpoint.writer is not None
+            harness.endpoint.writer.close()
+            await eventually(
+                lambda: (
+                    harness.mac.identity.connection_generation > generation
+                    and transfer_attempts >= 2
+                ),
+                "reconnect did not copy the pending initial command",
+            )
+
+            await asyncio.wait_for(harness.system.kill("c_scripted"), 5)
+            fate = await asyncio.wait_for(sending, 2)
+            assert isinstance(fate, PromptDeliverySuppressed)
+            release_input.set()
+            await eventually(
+                lambda: harness.native.stop_count == 1 and harness.endpoint.ready,
+                "the original child did not stop after cancellation",
+            )
+            await eventually(
+                lambda: not harness.mac.spool.pending() and not harness.endpoint.pending_commands,
+                "canceled delivery or stop receipts remained pending",
+            )
+            assert harness.native.start_count == 1
+            assert harness.native.prompt_count == 1
+            assert original_child.child_id not in harness.mac.registry.children
+            assert harness.events("prompt_discarded") == 1
+            assert harness.events("prompt_delivery_uncertain") == 0
+            connection = connect(harness.endpoint.db_path)
+            try:
+                prompt_fact = connection.execute(
+                    "SELECT status FROM conversation_lifecycle_facts "
+                    "WHERE conversation_id=? AND operation='prompt' ORDER BY turn_number DESC",
+                    ("c_scripted",),
+                ).fetchone()
+                assert prompt_fact is not None and prompt_fact[0] == "suppressed"
+                assert (
+                    connection.execute(
+                        "SELECT 1 FROM executor_command_outcomes WHERE command_id=?",
+                        (target_command,),
+                    ).fetchone()
+                    is None
+                )
+                assert (
+                    connection.execute(
+                        "SELECT closed_at_ms FROM executor_child_assignments "
+                        "WHERE child_id=? AND conversation_id=?",
+                        (original_child.child_id, "c_scripted"),
+                    ).fetchone()[0]
+                    is not None
+                )
+            finally:
+                connection.close()
+        finally:
+            release_input.set()
+            if sending is not None and not sending.done():
+                sending.cancel()
+                await asyncio.gather(sending, return_exceptions=True)
+            await harness.close()
+
+    asyncio.run(run())
+
+
 def test_concurrent_identical_inputs_keep_distinct_publications(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1749,7 +1877,7 @@ def test_input_receipt_must_validate_before_command_dispatch(
             commands = 0
             send = harness.mac._send
             request = harness.endpoint._request
-            endpoint_send = harness.endpoint._send
+            emit_command = harness.endpoint._emit_command
 
             async def corrupt_ack(message: WireMessage) -> None:
                 if reject and message.kind is WireMessageKind.file_accepted:
@@ -1772,15 +1900,16 @@ def test_input_receipt_must_validate_before_command_dispatch(
                     completions += 1
                 return await request(kind, payload)
 
-            async def count_commands(message: WireMessage) -> None:
+            async def count_commands(command: ChildCommand) -> bool:
                 nonlocal commands
-                if message.kind is WireMessageKind.command:
+                emitted = await emit_command(command)
+                if emitted:
                     commands += 1
-                await endpoint_send(message)
+                return emitted
 
             monkeypatch.setattr(harness.mac, "_send", corrupt_ack)
             monkeypatch.setattr(harness.endpoint, "_request", count_completions)
-            monkeypatch.setattr(harness.endpoint, "_send", count_commands)
+            monkeypatch.setattr(harness.endpoint, "_emit_command", count_commands)
             contents = bytes(range(256)) * 3000
             kept = await harness.endpoint.runtime.message_files.keep(
                 "c_scripted", contents, media_type="application/octet-stream"

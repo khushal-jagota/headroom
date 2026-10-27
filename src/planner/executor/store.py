@@ -29,6 +29,7 @@ from planner.executor.contracts import (
     AskReachability,
     AskReference,
     AuthorizedAction,
+    ChildCommand,
     ChildReference,
     ClockSample,
     CommandOutcome,
@@ -351,21 +352,62 @@ class ExecutorStore:
 
     def close_child(self, child: ChildReference, now_ms: int) -> None:
         with self._transaction() as connection:
-            connection.execute(
-                "UPDATE executor_child_assignments SET closed_at_ms=? "
-                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
-                (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
+            self.close_child_in_transaction(connection, child, now_ms)
+
+    @staticmethod
+    def close_child_in_transaction(
+        connection: sqlite3.Connection, child: ChildReference, now_ms: int
+    ) -> None:
+        """Retire assignment and asks inside the caller's existing transaction."""
+        connection.execute(
+            "UPDATE executor_child_assignments SET closed_at_ms=? "
+            "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+            (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
+        )
+        connection.execute(
+            "UPDATE executor_asks SET reachability=?,observed_at_ms=? "
+            "WHERE executor_incarnation=? AND child_id=?",
+            (
+                AskReachability.child_gone.value,
+                now_ms,
+                child.executor_incarnation,
+                child.child_id,
+            ),
+        )
+
+    def open_conversation_children(self, conversation_id: str) -> tuple[ChildReference, ...]:
+        """Original assignment evidence for explicit shutdown of pre-metadata state."""
+        connection = connect(self.db_path)
+        try:
+            return tuple(
+                ChildReference(str(row[0]), str(row[1]), conversation_id)
+                for row in connection.execute(
+                    "SELECT executor_incarnation,child_id FROM executor_child_assignments "
+                    "WHERE conversation_id=? AND closed_at_ms IS NULL",
+                    (conversation_id,),
+                )
             )
-            connection.execute(
-                "UPDATE executor_asks SET reachability=?,observed_at_ms=? "
-                "WHERE executor_incarnation=? AND child_id=?",
-                (
-                    AskReachability.child_gone.value,
-                    now_ms,
-                    child.executor_incarnation,
-                    child.child_id,
-                ),
+        finally:
+            connection.close()
+
+    def has_retained_command(self, outcome: CommandOutcome) -> bool:
+        """Historical evidence grants no child execution or mutation authority."""
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (outcome.child.conversation_id,),
+            ).fetchone()
+            if row is None or TypeAdapter(ChildReference).validate_json(row[0]) != outcome.child:
+                return False
+            runtime = json.loads(row[1])
+            return any(
+                TypeAdapter(ChildCommand).validate_python(raw).command_id == outcome.command_id
+                and TypeAdapter(ChildCommand).validate_python(raw).child == outcome.child
+                for raw in runtime.get("initial_commands", ())
             )
+        finally:
+            connection.close()
 
     def publish_ask(self, ask: AskReference, option_ids: tuple[str, ...], now_ms: int) -> None:
         with self._transaction() as connection:
