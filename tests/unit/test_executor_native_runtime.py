@@ -83,6 +83,8 @@ def canonical_snapshot() -> CanonicalSkillSnapshot:
 @pytest.fixture(autouse=True)
 def isolated_native_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "native-codex-home"))
+    monkeypatch.setenv("PLAN_HERMES_HOME", str(tmp_path / "native-hermes-home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "native-claude-home"))
 
 
 class ScriptedChild:
@@ -1202,11 +1204,13 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
             process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("backend", list(ConversationBackendKey))
 @pytest.mark.parametrize("policy", list(WorkspacePathPolicy))
 def test_native_start_localizes_vps_identity_and_home_relative_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     policy: WorkspacePathPolicy,
+    backend: ConversationBackendKey,
 ) -> None:
     async def run() -> None:
         vps_home, mac_home = tmp_path / "vps-home", tmp_path / "mac-home"
@@ -1219,6 +1223,13 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             workspace = configured_workspace
         monkeypatch.setenv("HOME", str(mac_home))
         monkeypatch.setenv("CODEX_HOME", str(mac_home / ".codex"))
+        monkeypatch.setenv("PLAN_HERMES_HOME", str(mac_home / ".hermes"))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(mac_home / " claude config "))
+        native_home = {
+            ConversationBackendKey.codex: mac_home / ".codex",
+            ConversationBackendKey.hermes: mac_home / ".hermes",
+            ConversationBackendKey.claude: mac_home / " claude config ",
+        }[backend]
         paths = ExecutorPaths(mac_home / "executor-data")
         spool = FilesystemSpool(paths.spool)
         received: list[ResolvedConversationStart] = []
@@ -1232,15 +1243,20 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 vendor_session_cursor: str | None,
             ) -> None:
                 received.append(resolved_start)
-                native_home = Path(os.environ["CODEX_HOME"])
+                assert vendor_session_cursor == "retained-native-session"
                 for source in canonical_snapshot().sources:
                     assert (
                         native_home / "skills" / source.skill_name / "SKILL.md"
                     ).read_bytes() == source.source_text.encode("utf-8")
                 assert resolved_start.role_materials is not None
-                assert resolved_start.role_materials.role_text.startswith("worker\n\n")
-                assert "PLAN_TICKET_FILES_DIR supersedes" in resolved_start.role_materials.role_text
+                assert resolved_start.role_materials.role_text == "worker"
                 environment = dict(resolved_start.role_materials.identity_environment_variables)
+                generation_skills = Path(environment["PLAN_NATIVE_SKILLS_DIR"])
+                assert generation_skills.parent.parent == paths.skills
+                for source in canonical_snapshot().sources:
+                    assert (generation_skills / source.skill_name / "SKILL.md").read_bytes() == (
+                        source.source_text.encode("utf-8")
+                    )
                 (Path(environment["PLAN_TICKET_FILES_DIR"]) / "proof.txt").write_text(
                     "native artifact"
                 )
@@ -1250,6 +1266,11 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         def factory(
             resolved: ResolvedConversationStart, capability: str, child: ChildReference
         ) -> BackendChildFactory:
+            # Bootstrap is complete before provider construction.
+            for source in canonical_snapshot().sources:
+                assert (native_home / "skills" / source.skill_name / "SKILL.md").read_bytes() == (
+                    source.source_text.encode("utf-8")
+                )
             constructed.append(resolved)
             return cast(BackendChildFactory, lambda **kwargs: native)
 
@@ -1270,10 +1291,13 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             ("PLAN_EXECUTOR_CAPABILITY", "forged-capability"),
             ("HOME", str(vps_home)),
             ("CODEX_HOME", str(vps_home / ".codex")),
+            ("HERMES_HOME", str(vps_home / ".hermes")),
+            ("CLAUDE_CONFIG_DIR", str(vps_home / ".claude")),
+            ("PLAN_NATIVE_SKILLS_DIR", str(vps_home / "forged-skills")),
         )
         resolved = ResolvedConversationStart(
             "c_one",
-            ConversationBackendKey.codex,
+            backend,
             "test",
             None,
             ConversationRoleMaterials("worker", remote_identity),
@@ -1292,7 +1316,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
         remote = RemoteBackendChild(reference, send, lambda start: canonical_snapshot())
-        await remote.start(resolved, vendor_session_cursor=None)
+        await remote.start(resolved, vendor_session_cursor="retained-native-session")
         if policy is WorkspacePathPolicy.legacy_home_mapping:
             assert forwarded[0].arguments["workspace_home_relative"] == "projects/same-checkout"
         else:
@@ -1316,7 +1340,8 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             identity["PLAN_EXECUTOR_CAPABILITY"] == registry.children[reference.child_id].capability
         )
         assert identity["PLAN_EXECUTOR_CAPABILITY"] != "forged-capability"
-        assert "HOME" not in identity and "CODEX_HOME" not in identity
+        assert not {"HOME", "CODEX_HOME", "HERMES_HOME", "CLAUDE_CONFIG_DIR"} & identity.keys()
+        assert identity["PLAN_NATIVE_SKILLS_DIR"] != str(vps_home / "forged-skills")
         assert os.environ["HOME"] == str(mac_home)
         assert os.environ["CODEX_HOME"] == str(mac_home / ".codex")
         spool.close()
@@ -2248,3 +2273,90 @@ def test_native_start_replay_does_not_repeat_skill_bootstrap(
         assert installs == [canonical_snapshot()]
 
     asyncio.run(run())
+
+
+def test_claude_bootstrap_uses_ordinary_account_home_when_unconfigured(
+    native_registry: tuple[NativeChildRegistry, FilesystemSpool, ScriptedChild, ChildCommand],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+    async def run() -> None:
+        registry, _spool, native, start = native_registry
+        resolved = TypeAdapter(ResolvedConversationStart).validate_python(
+            start.arguments["resolved_start"]
+        )
+        resolved = replace(resolved, backend_key=ConversationBackendKey.claude)
+        outcome = await registry.execute_command(
+            replace(start, arguments={**start.arguments, "resolved_start": encode_value(resolved)})
+        )
+        assert outcome.disposition is CommandDisposition.succeeded
+        assert native.starts == 1
+        for source in canonical_snapshot().sources:
+            assert (
+                tmp_path / ".claude" / "skills" / source.skill_name / "SKILL.md"
+            ).read_bytes() == (source.source_text.encode("utf-8"))
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("backend", list(ConversationBackendKey))
+def test_mac_factory_selects_existing_provider_with_inherited_launch_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: ConversationBackendKey,
+) -> None:
+    from planner.conversation.production_backends import production_backend_launches
+
+    executor = make_executor(tmp_path / "executor")
+    launches = production_backend_launches(panels_server_url="https://unused")
+    observed: list[object] = []
+
+    def selected(launch: object) -> BackendChildFactory:
+        observed.append(launch)
+        return cast(BackendChildFactory, object())
+
+    for key, name in (
+        (ConversationBackendKey.codex, "CodexAppServerBackendChildFactory"),
+        (ConversationBackendKey.hermes, "HermesAcpBackendChildFactory"),
+        (ConversationBackendKey.claude, "ClaudeAgentSdkBackendChildFactory"),
+    ):
+
+        def unexpected(launch: object) -> BackendChildFactory:
+            raise AssertionError("wrong provider factory")
+
+        monkeypatch.setattr(
+            "planner.executor.mac." + name, selected if key is backend else unexpected
+        )
+    monkeypatch.setattr(
+        "planner.executor.mac.production_backend_launches", lambda **kwargs: launches
+    )
+    resolved = ResolvedConversationStart(
+        "c_factory",
+        backend,
+        "test",
+        None,
+        ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "t_factory"),)),
+        tmp_path,
+        ConversationAccess.full,
+    )
+    reference = ChildReference("child", executor.identity.executor_incarnation, "c_factory")
+    try:
+        executor._factory("https://unused")(resolved, "native-capability", reference)
+        assert len(observed) == 1
+        expected = getattr(launches, backend.value)
+        actual = observed[0]
+        assert actual == replace(
+            expected,
+            environment_overrides=expected.environment_overrides
+            + (
+                ("PLAN_EXECUTOR_ROOT", str(executor.paths.root)),
+                ("PLAN_EXECUTOR_CHILD_ID", reference.child_id),
+                ("PLAN_EXECUTOR_CAPABILITY", "native-capability"),
+                ("PLAN_TICKET_FILES_DIR", str(executor.paths.artifacts / "t_factory")),
+            ),
+        )
+    finally:
+        executor.spool.close()

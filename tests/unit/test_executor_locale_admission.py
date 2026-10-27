@@ -8,7 +8,7 @@ from sqlite3 import Connection
 
 import pytest
 
-from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -35,7 +35,7 @@ class StartObservingSystem(InMemoryConversationSystem):
         await super().start_conversation(request)
 
 
-def mac_ticket(connection: Connection) -> Ticket:
+def mac_ticket(connection: Connection, backend: str = "codex") -> Ticket:
     ticket = data.create_ticket(
         connection,
         title="Mac worker",
@@ -44,7 +44,7 @@ def mac_ticket(connection: Connection) -> Ticket:
         now=1,
         title_max_chars=200,
         locale=TicketLocale.macos,
-        employee_backend="codex",
+        employee_backend=backend,
         employee_launch_model="scripted-model",
         brief="Brief.",
     )
@@ -141,40 +141,36 @@ def test_local_locale_does_not_depend_on_remote_connection(tmp_db: Connection) -
     assert locale_configuration.can_execute_locale(tmp_db, TicketLocale.vps)
 
 
-def test_codex_creation_is_allowed_offline_but_claude_has_no_mac_compatibility(
+@pytest.mark.parametrize("backend", list(ConversationBackendKey))
+def test_native_provider_creation_is_allowed_offline(
     tmp_db: Connection,
+    backend: ConversationBackendKey,
 ) -> None:
-    ticket = mac_ticket(tmp_db)
-    assert ticket.employee_backend == "codex"
+    ticket = mac_ticket(tmp_db, backend.value)
+    assert ticket.employee_backend == backend.value
     assert not locale_configuration.can_execute_locale(tmp_db, TicketLocale.macos)
+
+
+def test_unknown_native_provider_is_invalid(tmp_db: Connection) -> None:
     before = tuple(tmp_db.iterdump())
-    with pytest.raises(PlannerError) as refusal:
-        data.create_ticket(
-            tmp_db,
-            title="Unsupported native backend",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            locale=TicketLocale.macos,
-            employee_backend="claude",
-            employee_launch_model="scripted-model",
-        )
-    assert refusal.value.detail["employee_backend"] == "claude"
-    assert refusal.value.detail["locale"] == "macos"
+    with pytest.raises(PlannerError):
+        mac_ticket(tmp_db, "unknown-provider")
     assert tuple(tmp_db.iterdump()) == before
 
 
-def test_mac_backend_picker_cannot_bypass_creation_compatibility(tmp_db: Connection) -> None:
+@pytest.mark.parametrize("backend", list(ConversationBackendKey))
+def test_mac_backend_picker_resolves_each_implemented_provider(
+    tmp_db: Connection,
+    backend: ConversationBackendKey,
+) -> None:
     from planner.conversation.backend_state import write_model_enablement
-    from planner.conversation.contracts import ConversationBackendKey
     from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 
     ticket = mac_ticket(tmp_db)
     store = executor_store(tmp_db)
     store.begin_connection(IDENTITY, 100)
     store.mark_ready(IDENTITY, 101)
-    write_model_enablement(tmp_db, ConversationBackendKey.claude, "scripted-model", True)
+    write_model_enablement(tmp_db, backend, "scripted-model", True)
     system = StartObservingSystem()
 
     async def send() -> None:
@@ -184,18 +180,17 @@ def test_mac_backend_picker_cannot_bypass_creation_compatibility(tmp_db: Connect
             ticket.id,
             text_message_content("Begin work"),
             conversation_id=None,
-            created_conversation_id="c_unsupported",
+            created_conversation_id="c_native",
             runs_under=ConversationStartOverrides(
-                backend_key=ConversationBackendKey.claude,
+                backend_key=backend,
                 model="scripted-model",
             ),
             sender_label="Test",
             now=3,
         )
 
-    with pytest.raises(PlannerError) as refusal:
-        asyncio.run(send())
-    assert refusal.value.detail["employee_backend"] == "claude"
-    assert system.starts == []
-    assert data.read_ticket(tmp_db, ticket.id).conversation_id is None
-    assert data.read_ticket(tmp_db, ticket.id).employee_backend == "codex"
+    asyncio.run(send())
+    assert system.starts == ["c_native"]
+    configured = data.read_ticket(tmp_db, ticket.id)
+    assert configured.conversation_id == "c_native"
+    assert configured.employee_backend == backend.value

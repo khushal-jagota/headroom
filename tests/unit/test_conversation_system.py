@@ -3201,3 +3201,19 @@ def test_identified_review_attachment_retry_is_one_delivery_and_keeps_original_r
             await attempt()
 
     _run(exercise)
+
+
+def test_local_worker_does_not_receive_native_context(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(
+            harness,
+            role_materials=ConversationRoleMaterials(
+                "Local Worker role.", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_worker"))
+            ),
+        )
+        await harness.system.send("c", text_message_content("Local work"), sender_label="Panels")
+        assert harness.backend("c").writes[0].content == text_message_content(
+            "Local Worker role.\n\nLocal work"
+        )
+
+    _run(exercise)

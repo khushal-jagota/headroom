@@ -53,8 +53,9 @@ not move existing Tickets.
 
 Creation checks the chosen backend against the configured locale compatibility set.
 A refusal names the locale, backend, and reason before any Ticket exists. Machine
-reachability does not affect creation. Mac execution supports Codex through the native
-executor. Unsupported backends refuse before creation. A VPS process routes Mac work
+reachability does not affect creation. Mac execution admits Codex, Claude, and Hermes
+through the native executor. Unknown backends refuse before creation. Admission does
+not prove native qualification or installed and authenticated prerequisites. A VPS process routes Mac work
 through the configured remote executor and requires its authenticated reconciled
 connection before execution. Local-only mode refuses Mac execution, including manual
 start commands.

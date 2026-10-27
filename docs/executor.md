@@ -3,8 +3,12 @@
 The executor runs a Ticket's backend child on the Mac while the VPS keeps the
 Panels record. The Mac opens one connection to the VPS. Chief, supervisors, and
 VPS Tickets keep their local children. A Mac Ticket starts only after the
-connection and its reconciliation are ready. Codex has accepted Mac session
-evidence; other Mac backends remain unavailable at creation and selection.
+connection and its reconciliation are ready. Codex, Claude, and Hermes are admitted
+for Mac work. Admission states intended support. Missing installation or login
+prerequisites still refuse runtime startup. Native provider qualification and
+outage-answer qualification remain separate, outstanding checks.
+Hermes exposes permission callbacks but no agent-question callback. Admission does
+not add capabilities that an adapter lacks.
 
 ```text
 Mac: ordinary Worker files + backend child
@@ -31,12 +35,14 @@ separate checks. Neither compatibility check converts stored work.
 ## Native skills and artifact paths
 
 Each new Mac Worker start receives the current canonical skills from the VPS database.
-The Mac exposes their exact text through the account's ordinary Codex skills home before the backend starts.
+The Mac exposes their exact text through the selected provider's skills home before the backend starts.
+Codex uses its resolved home. Hermes uses the same home as its native launch.
+Claude uses inherited `CLAUDE_CONFIG_DIR`, or the account's ordinary `.claude` directory.
 Packaged defaults never replace unavailable canonical skills.
 
 The executor stages one complete local copy before it changes account skill links.
 It repairs stale or broken canonical entries and preserves unrelated account skills and external link targets.
-The normal account home, Codex home, and credentials stay unchanged.
+The normal account home, provider settings, permissions, and credentials stay unchanged.
 A failed bootstrap refuses the backend start.
 
 A new start, including a resumed provider session, reads current database rows.
@@ -44,7 +50,13 @@ Transport retries keep the snapshot that belongs to the original start command.
 Adoption of a surviving child does not repeat bootstrap or restart that child.
 Later starts can update the account's shared skill paths.
 
-Native launch context directs artifact writes through `PLAN_TICKET_FILES_DIR`.
+Each composed native Worker delivery directs the Worker to read `panels/SKILL.md` from
+`PLAN_NATIVE_SKILLS_DIR` and resolve subsequent skill layers at that root.
+This variable names the immutable skill generation for its start, even if later
+starts update the shared account links. Retained conversations receive this context too.
+Exact native catalog commands retain their raw command route and omit composed context.
+
+Native delivery context directs artifact writes through `PLAN_TICKET_FILES_DIR`.
 This instruction overrides VPS artifact destinations in the skills without changing their text.
 Ticket fields retain their served `/files/tickets/<ticket-id>/<relative-path>` links.
 

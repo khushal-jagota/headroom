@@ -20,6 +20,15 @@ RECONNECT_INTERVAL_SECONDS: Final = 5.0
 EXIT_QUEUED: Final = 3
 EXECUTOR_ROOT_ENV: Final = "PLAN_EXECUTOR_ROOT"
 TICKET_FILES_DIR_ENV: Final = "PLAN_TICKET_FILES_DIR"
+NATIVE_SKILLS_DIR_ENV: Final = "PLAN_NATIVE_SKILLS_DIR"
+NATIVE_WORKER_CONTEXT: Final = (
+    "For native execution, if PLAN_NATIVE_SKILLS_DIR exists, start with "
+    "PLAN_NATIVE_SKILLS_DIR/panels/SKILL.md and read subsequent skill layers from "
+    "that same root. If PLAN_TICKET_FILES_DIR exists, it supersedes all VPS-local "
+    "Ticket artifact write paths in the skills. Write Ticket artifacts beneath "
+    "PLAN_TICKET_FILES_DIR. Keep served /files/tickets/<ticket-id>/<relative-path> "
+    "links in Ticket fields."
+)
 EXECUTOR_IPC_NAME: Final = "executor.sock"
 
 

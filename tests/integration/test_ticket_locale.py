@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Callable
 
 import httpx
+import pytest
 from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 from planner.core.db import connect
@@ -63,15 +64,12 @@ def test_http_unsupported_mac_backend_requirements_explicit_override_and_schedul
         "employee_backend": "claude",
         "employee_launch_model": "scripted-unsupported-model",
     }
+    request["employee_backend"] = "unknown-provider"
     for choices in ({"locale": "macos"}, {"project_id": project["id"]}):
         before = _stored_tickets(server)
         refusal = httpx.post(server.base + "/api/tickets", json={**request, **choices}, timeout=10)
         assert refusal.status_code == 400, refusal.text
-        error = refusal.json()["error"]
-        assert error["detail"]["locale"] == "macos"
-        assert error["detail"]["employee_backend"] == "claude"
-        assert error["detail"]["reason"]
-        assert "macos" in error["message"]
+        assert refusal.json()["error"]["code"] == "validation"
         assert _stored_tickets(server) == before
 
     explicit = cli(
@@ -114,9 +112,11 @@ def test_http_unsupported_mac_backend_requirements_explicit_override_and_schedul
     assert edited["locale"] == "vps"
 
 
-def test_http_codex_mac_creation_allowed_offline_but_both_execution_doors_wait(
+@pytest.mark.parametrize("backend", ["codex", "claude", "hermes"])
+def test_http_native_provider_creation_allowed_offline_but_both_execution_doors_wait(
     server: ServerHandle,
     cli: Callable[..., JsonObject],
+    backend: str,
 ) -> None:
     project = cli(
         server,
@@ -131,7 +131,7 @@ def test_http_codex_mac_creation_allowed_offline_but_both_execution_doors_wait(
         "worker_type": "coding",
         "brief": "The next worker step requires a reconciled Mac connection.",
         "manager": {"kind": "chief", "id": "chief"},
-        "employee_backend": "codex",
+        "employee_backend": backend,
         "employee_launch_model": "scripted-compatible-model",
         "ceiling": "needs_success_condition",
     }
@@ -139,7 +139,7 @@ def test_http_codex_mac_creation_allowed_offline_but_both_execution_doors_wait(
         response = httpx.post(server.base + "/api/tickets", json={**request, **choices}, timeout=10)
         assert response.status_code == 200, response.text
         created = response.json()
-        assert created["locale"] == "macos" and created["employee_backend"] == "codex"
+        assert created["locale"] == "macos" and created["employee_backend"] == backend
         assert created["stage"] == "needs_success_condition"
         assert created["pending_proposal"] is None
         assert created["conversation_id"] is None
@@ -195,8 +195,9 @@ def test_http_codex_mac_creation_allowed_offline_but_both_execution_doors_wait(
             )
 
 
+@pytest.mark.parametrize("backend", ["codex", "claude", "hermes"])
 def test_creation_context_is_readonly_offline_and_write_revalidates(
-    server: ServerHandle, cli: Callable[..., JsonObject]
+    server: ServerHandle, cli: Callable[..., JsonObject], backend: str
 ) -> None:
     from planner.conversation.backend_state import write_model_enablement
     from planner.conversation.contracts import ConversationBackendKey
@@ -212,7 +213,7 @@ def test_creation_context_is_readonly_offline_and_write_revalidates(
     draft: JsonObject = {
         "worker_type": "coding",
         "project_id": project["id"],
-        "employee_backend": "codex",
+        "employee_backend": backend,
         "employee_launch_model": "draft-model",
     }
     before = _stored_tickets(server)
@@ -221,7 +222,7 @@ def test_creation_context_is_readonly_offline_and_write_revalidates(
     context = response.json()
     assert context == {
         "resolved_locale": "macos",
-        "employee_backend": "codex",
+        "employee_backend": backend,
         "project_id": project["id"],
         "locale_choices": [
             {"locale": "vps", "compatible": True, "reason": None},
@@ -249,7 +250,7 @@ def test_creation_context_is_readonly_offline_and_write_revalidates(
     assert created.status_code == 200, created.text
     assert created.json()["locale"] == context["resolved_locale"]
     with connect(str(server.db_path)) as connection:
-        write_model_enablement(connection, ConversationBackendKey.codex, "draft-model", False)
+        write_model_enablement(connection, ConversationBackendKey(backend), "draft-model", False)
         connection.commit()
     before = _stored_tickets(server)
     refused = httpx.post(

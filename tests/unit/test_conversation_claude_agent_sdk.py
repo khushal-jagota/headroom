@@ -18,19 +18,22 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from claude_agent_sdk import ResultMessage, TextBlock
+from claude_agent_sdk import CLINotFoundError, ResultMessage, TextBlock
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
     SESSION_ID,
     _assistant,
     _bench,
     _run,
+    _ScriptedClaudeSdkClient,
     _start_request,
     _write,
 )
 
 from planner.conversation.backends.contracts import (
+    BackendSpawnFailed,
     NeedsRebind,
+    SessionLoadFailed,
     TurnToken,
 )
 from planner.conversation.contracts import PromptDeliveryMode
@@ -111,3 +114,42 @@ def _failed_result(**changes: object) -> ResultMessage:
 
 
 # --- the claude on this machine ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("failure", "cursor", "expected_error"),
+    [
+        (CLINotFoundError("Claude executable is absent"), SESSION_ID, BackendSpawnFailed),
+        (RuntimeError("Not logged in. Run /login."), None, BackendSpawnFailed),
+        (RuntimeError("Requested session is unavailable"), SESSION_ID, SessionLoadFailed),
+    ],
+)
+def test_unavailable_claude_start_preserves_adapter_failure_and_sends_no_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    cursor: str | None,
+    expected_error: type[Exception],
+) -> None:
+    async def refuse_connect(self: _ScriptedClaudeSdkClient) -> None:
+        raise failure
+
+    monkeypatch.setattr(_ScriptedClaudeSdkClient, "connect", refuse_connect)
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        try:
+            with pytest.raises(expected_error) as refusal:
+                await child.start(start, vendor_session_cursor=cursor)
+            assert str(refusal.value) == str(failure)
+            assert refusal.value.__cause__ is failure
+            assert len(clients) == 1
+            assert clients[0].prompts == []
+            assert clients[0].streamed_messages == []
+            assert sink.cursors == []
+            assert sink.endings == []
+        finally:
+            await child.stop()
+
+    _run(exercise)

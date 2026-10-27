@@ -1674,7 +1674,7 @@ class SqliteProcessConversationSystem:
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
-                held.content,
+                self._with_native_worker_context(state, steer_child, held.content),
                 (
                     (held.sender,)
                     if held.reply_requested
@@ -2655,7 +2655,7 @@ class SqliteProcessConversationSystem:
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
-                content,
+                self._with_native_worker_context(state, child, content),
                 (
                     (sender,)
                     if reply_requested and sender is not None and recipient is not None
@@ -3227,7 +3227,9 @@ class SqliteProcessConversationSystem:
             composed_content = prefix_message_content_text(
                 composed_content, interruption_notice, "\n\n"
             )
-        composed = with_authenticated_reply_directive(composed_content, reply_senders)
+        composed = with_authenticated_reply_directive(
+            self._with_native_worker_context(state, child, composed_content), reply_senders
+        )
         if (
             state.last_ended_turn_token is not None
             and state.last_ended_turn_token.turn_number >= turn_token.turn_number
@@ -3351,7 +3353,8 @@ class SqliteProcessConversationSystem:
                     composed_content, interruption_notice, "\n\n"
                 )
             content = with_authenticated_reply_directive(
-                composed_content, self._reply_senders(messages)
+                self._with_native_worker_context(state, child, composed_content),
+                self._reply_senders(messages),
             )
         try:
             accepted = await child.write_prompt(
@@ -4400,6 +4403,23 @@ class SqliteProcessConversationSystem:
             )
         await self._discard_child(state, child)
         return None if attempt is None else replace(attempt, status=LifecycleStatus.unknown)
+
+    @staticmethod
+    def _with_native_worker_context(
+        state: _ConversationState, child: BackendChild, content: MessageContent
+    ) -> MessageContent:
+        """Tell native Workers where their localized skills and Ticket files live."""
+        from planner.executor.configuration import NATIVE_WORKER_CONTEXT
+        from planner.executor.remote import RemoteBackendChild
+
+        identity = dict(state.record.identity_environment_variables)
+        if (
+            isinstance(child, RemoteBackendChild)
+            and identity.get("PLAN_ACTOR") == "worker"
+            and identity.get("PLAN_TICKET_ID")
+        ):
+            return prefix_message_content_text(content, NATIVE_WORKER_CONTEXT, "\n\n")
+        return content
 
     async def _compose_prompt_content(
         self, state: _ConversationState, content: MessageContent

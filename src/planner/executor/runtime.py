@@ -27,6 +27,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    ConversationBackendKey,
     ConversationRoleMaterials,
     MoveRetirementDisposition,
     MoveRetirementResult,
@@ -34,8 +35,9 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.environments.hermes_home import resolve_planner_home
 from planner.executor.codec import encode_backend_event, encode_value, invoke_child
-from planner.executor.configuration import ExecutorPaths
+from planner.executor.configuration import NATIVE_SKILLS_DIR_ENV, ExecutorPaths
 from planner.executor.contracts import (
     AllocatingDurableSpool,
     AnswerApplication,
@@ -421,6 +423,7 @@ class NativeChildRegistry:
             "PLAN_EXECUTOR_CHILD_ID",
             "PLAN_EXECUTOR_CAPABILITY",
             "PLAN_TICKET_FILES_DIR",
+            NATIVE_SKILLS_DIR_ENV,
         ):
             identity.pop(key, None)
         identity["PLAN_EXECUTOR_CHILD_ID"] = reference.child_id
@@ -432,13 +435,6 @@ class NativeChildRegistry:
             identity["PLAN_EXECUTOR_ROOT"] = str(self.paths.root)
             identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
         role_text = original.role_text if original else ""
-        if self.paths is not None:
-            role_text += (
-                "\n\nFor native execution, PLAN_TICKET_FILES_DIR supersedes all VPS-local "
-                "Ticket artifact write paths in the skills. Write Ticket artifacts beneath "
-                "PLAN_TICKET_FILES_DIR. Keep served /files/tickets/<ticket-id>/<relative-path> "
-                "links in Ticket fields."
-            )
         return replace(
             resolved,
             workspace_folder=workspace,
@@ -527,8 +523,29 @@ class NativeChildRegistry:
                         resolved, command.child, capability, command.arguments
                     )
                     try:
-                        install_native_skill_snapshot(
-                            snapshot, paths=self.paths, native_home=codex_home(os.environ)
+                        if resolved.backend_key is ConversationBackendKey.codex:
+                            native_home = codex_home(os.environ)
+                        elif resolved.backend_key is ConversationBackendKey.hermes:
+                            native_home = resolve_planner_home()
+                        else:
+                            configured_home = os.environ.get("CLAUDE_CONFIG_DIR", "")
+                            native_home = (
+                                Path(configured_home).expanduser()
+                                if configured_home
+                                else Path.home() / ".claude"
+                            )
+                        generation = install_native_skill_snapshot(
+                            snapshot, paths=self.paths, native_home=native_home
+                        )
+                        assert resolved.role_materials is not None
+                        identity = dict(resolved.role_materials.identity_environment_variables)
+                        identity[NATIVE_SKILLS_DIR_ENV] = str(generation / "skills")
+                        resolved = replace(
+                            resolved,
+                            role_materials=replace(
+                                resolved.role_materials,
+                                identity_environment_variables=tuple(identity.items()),
+                            ),
                         )
                     except Exception as error:
                         raise BackendSpawnFailed(
