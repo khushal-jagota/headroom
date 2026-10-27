@@ -321,3 +321,95 @@ def test_reserved_turn_exceeds_native_history_without_lifecycle_facts(
             await harness.runtime.shutdown()
 
     asyncio.run(exercise())
+
+
+def test_refused_evidence_between_cleanup_precheck_and_commit_keeps_core_available(
+    tmp_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.core.contracts import ErrorCode, PlannerError
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        CommandDisposition,
+        CommandOutcome,
+        ReceiptDisposition,
+    )
+    from planner.executor.remote import RemoteBackendChild
+
+    async def exercise() -> None:
+        path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+        harness = _Harness(path)
+        try:
+            async with harness.client() as client:
+                await _start(client, "c")
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            state = harness.system._conversations["c"]
+            assert state.running_turn is not None
+            reference = ChildReference("native-process", "cleanup-child", "c")
+            token = state.running_turn.token
+            native = ExecutorStore(str(path))
+            identity = ExecutorIdentity(
+                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
+            )
+            native.begin_connection(identity, 1)
+            native.register_child(reference, "chief", "chief", 1)
+
+            stops: list[str] = []
+
+            async def stop_result(command: ChildCommand) -> CommandOutcome:
+                if command.operation is ChildOperation.stop:
+                    stops.append(command.command_id)
+                return CommandOutcome(
+                    command.command_id, reference, CommandDisposition.succeeded, {}
+                )
+
+            state.child = RemoteBackendChild(
+                reference, stop_result, lambda start: canonical_snapshot()
+            )
+            state.executor_child_reference = reference
+            metadata = harness.system._executor_turn_metadata(state, state.running_turn)
+            assert metadata is not None
+            await harness.store.save_executor_turn("c", metadata)
+            transition = harness.store.transition_lifecycle
+            guarded = asyncio.Event()
+
+            async def race_receipt(conversation_id: str, facts: Any, **options: Any) -> bool:
+                if options.get("retired_child") is not None:
+                    # The core already read the clean marker. The next canonical
+                    # receipt wins before the atomic closure writer starts.
+                    assert not native.cleanup_evidence_uncertain(reference)
+                    event = BackendEvent(reference, BackendEventMethod.turn_ended, token, {})
+                    queued = _envelope(1, EnvelopeKind.backend_event, event)
+
+                    def refuse(
+                        connection: sqlite3.Connection, envelope: QueuedEnvelope
+                    ) -> JsonObject:
+                        raise PlannerError(ErrorCode.validation, "required final event refused", {})
+
+                    receipt = native.accept(queued, refuse, 100, identity=identity)
+                    assert receipt.disposition is ReceiptDisposition.refused
+                    guarded.set()
+                return await transition(conversation_id, facts, **options)
+
+            monkeypatch.setattr(harness.store, "transition_lifecycle", race_receipt)
+            await asyncio.wait_for(harness.system.kill("c"), 2)
+            assert guarded.is_set()
+            assert not state.lock.locked()
+            assert state.child is not None and state.child_is_quarantined
+            assert state.executor_child_reference == reference
+            assert native.child_assignment(reference) is not None
+            assert native.cleanup_evidence_uncertain(reference)
+            assert harness.store.recording_failures("c") == ()
+            await asyncio.wait_for(harness.system.kill("c"), 2)
+            assert len(stops) == 2 and len(set(stops)) == 2
+            assert state.child_is_quarantined and native.child_assignment(reference) is not None
+            assert ExecutorStore(str(path)).cleanup_evidence_uncertain(reference)
+        finally:
+            # A failed cleanup stays quarantined. Teardown only releases this
+            # test process and must not schedule a second retirement attempt.
+            state.child = None
+            await harness.runtime.shutdown()
+
+    asyncio.run(exercise())

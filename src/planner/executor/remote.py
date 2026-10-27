@@ -44,6 +44,7 @@ class RemoteBackendChildFactory:
     send_command: SendCommand
     skill_snapshot_supplier: SkillSnapshotSupplier
     cancel_initial_delivery: CancelInitialDelivery | None = None
+    retire_reference: Callable[[ChildReference], None] | None = None
 
     def recover(self, reference: ChildReference) -> RemoteBackendChild:
         return RemoteBackendChild(
@@ -52,6 +53,7 @@ class RemoteBackendChildFactory:
             self.skill_snapshot_supplier,
             self.cancel_initial_delivery,
             initial_history_complete=False,
+            retire_reference=self.retire_reference,
         )
 
     def __call__(
@@ -67,6 +69,7 @@ class RemoteBackendChildFactory:
             self.send_command,
             self.skill_snapshot_supplier,
             self.cancel_initial_delivery,
+            retire_reference=self.retire_reference,
         )
 
 
@@ -81,8 +84,10 @@ class RemoteBackendChild:
         cancel_initial_delivery: CancelInitialDelivery | None = None,
         *,
         initial_history_complete: bool = True,
+        retire_reference: Callable[[ChildReference], None] | None = None,
     ) -> None:
         self.reference = reference
+        self._retire_reference = retire_reference
         self._send_command = send_command
         self._skill_snapshot_supplier = skill_snapshot_supplier
         self._cancel_initial_delivery = cancel_initial_delivery
@@ -91,6 +96,10 @@ class RemoteBackendChild:
         self.record_command: Callable[[ChildCommand], Awaitable[None]] | None = None
         self.initial_delivery_cancelled = False
         self.prompt_accepted = False
+
+    def retire_local_reference(self) -> None:
+        if self._retire_reference is not None:
+            self._retire_reference(self.reference)
 
     def cancel_initial_delivery(self) -> bool:
         """Fence initial work; true proves the prompt never crossed the wire.
@@ -129,11 +138,7 @@ class RemoteBackendChild:
                 await self.record_command(command)
             if self.initial_delivery_cancelled:
                 raise RemoteInitialDeliveryCancelled()
-        elif (
-            operation is ChildOperation.stop
-            and self.initial_delivery_cancelled
-            and self.record_command is not None
-        ):
+        elif operation is ChildOperation.stop and self.record_command is not None:
             await self.record_command(command)
         if operation is ChildOperation.start:
             try:

@@ -1216,6 +1216,8 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         release_input = asyncio.Event()
+        release_final_event = asyncio.Event()
+        killing: asyncio.Task[None] | None = None
         sending: asyncio.Task[PromptDeliveryFate] | None = None
         try:
             assert harness.native.sink is not None and harness.native.turn is not None
@@ -1280,8 +1282,56 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
                 "reconnect did not copy the pending initial command",
             )
 
-            await asyncio.wait_for(harness.system.kill("c_scripted"), 5)
+            final_event_waiting = asyncio.Event()
+            stop_hint_seen = asyncio.Event()
+            native_stop = harness.native.stop
+            accept_envelope = harness.endpoint.accept_envelope
+            resolve_command = harness.endpoint._resolve_command
+
+            async def stop_with_final_event() -> None:
+                assert harness.native.sink is not None
+                await harness.native.sink.vendor_session_cursor_rebound("retirement-final-cursor")
+                await native_stop()
+
+            async def withhold_final_event(
+                envelope: QueuedEnvelope, identity: ExecutorIdentity
+            ) -> AcceptanceReceipt:
+                if (
+                    envelope.kind is EnvelopeKind.backend_event
+                    and envelope.payload.get("method") == "vendor_session_cursor_rebound"
+                    and envelope.payload.get("arguments")
+                    == {"vendor_session_cursor": "retirement-final-cursor"}
+                ):
+                    final_event_waiting.set()
+                    await release_final_event.wait()
+                return await accept_envelope(envelope, identity)
+
+            def observe_stop_hint(outcome: Any) -> None:
+                pending = harness.endpoint.pending_commands.get(outcome.command_id)
+                if pending is not None and pending[0].operation is ChildOperation.stop:
+                    stop_hint_seen.set()
+                resolve_command(outcome)
+
+            monkeypatch.setattr(harness.native, "stop", stop_with_final_event)
+            monkeypatch.setattr(harness.endpoint, "accept_envelope", withhold_final_event)
+            monkeypatch.setattr(harness.endpoint, "_resolve_command", observe_stop_hint)
+            killing = asyncio.create_task(harness.system.kill("c_scripted"))
             fate = await asyncio.wait_for(sending, 2)
+            await asyncio.wait_for(final_event_waiting.wait(), 5)
+            cleanup_task = harness.system._conversations["c_scripted"].initial_shutdown_task
+            assert cleanup_task is not None and not cleanup_task.done()
+            await asyncio.wait_for(stop_hint_seen.wait(), 5)
+            pending_stops = [
+                (command, future)
+                for command, future in harness.endpoint.pending_commands.values()
+                if command.operation is ChildOperation.stop
+            ]
+            assert pending_stops and all(not future.done() for _, future in pending_stops)
+            assert harness.endpoint.store.child_assignment(original_child) is not None
+            assert not cleanup_task.done()
+            release_final_event.set()
+            await asyncio.wait_for(cleanup_task, 5)
+            await killing
             assert isinstance(fate, PromptDeliverySuppressed)
             release_input.set()
             await eventually(
@@ -1295,6 +1345,8 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
             assert harness.native.start_count == 1
             assert harness.native.prompt_count == 1
             assert original_child.child_id not in harness.mac.registry.children
+            assert original_child.child_id not in harness.endpoint.children
+            assert original_child.child_id not in harness.endpoint.sinks
             assert harness.events("prompt_discarded") == 1
             assert harness.events("prompt_delivery_uncertain") == 0
             connection = connect(harness.endpoint.db_path)
@@ -1324,6 +1376,10 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
                 connection.close()
         finally:
             release_input.set()
+            release_final_event.set()
+            if killing is not None and not killing.done():
+                killing.cancel()
+                await asyncio.gather(killing, return_exceptions=True)
             if sending is not None and not sending.done():
                 sending.cancel()
                 await asyncio.gather(sending, return_exceptions=True)
@@ -2516,6 +2572,170 @@ def test_generation_change_during_emission_preparation_keeps_pending_answer_for_
             replay_release.set()
             if resume is not None:
                 resume.set()
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.executor.contracts import ChildOperation, CommandOutcome
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        release_outcome, release_application, release_event = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        outcome_waiting, application_waiting, event_waiting, stop_hint = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        stopping = asyncio.Event()
+        accepted: list[QueuedEnvelope] = []
+        killing: asyncio.Task[None] | None = None
+        try:
+            await harness.native.raise_ask()
+            await harness.wait_ask_reachable()
+            reference = harness.ask.child
+            stop_exact = harness.mac.registry._stop_exact_child
+            publish_outcome = harness.mac.registry._publish_outcome
+            publish_application = harness.mac.registry._publish_application
+            native_stop = harness.native.stop
+            accept = harness.endpoint.accept_envelope
+            resolve = harness.endpoint._resolve_command
+
+            async def observe_native_stop(command: Any) -> CommandOutcome:
+                stopping.set()
+                return await stop_exact(command)
+
+            async def late_outcome(outcome: CommandOutcome) -> None:
+                if "answer_application" in outcome.result:
+                    outcome_waiting.set()
+                    await release_outcome.wait()
+                await publish_outcome(outcome)
+
+            async def late_application(application: Any) -> None:
+                application_waiting.set()
+                await release_application.wait()
+                await publish_application(application)
+
+            async def final_native_event() -> None:
+                assert harness.native.sink is not None
+                await harness.native.sink.vendor_session_cursor_rebound("cleanup-cursor")
+                await native_stop()
+
+            async def withheld_event(
+                envelope: QueuedEnvelope, identity: ExecutorIdentity
+            ) -> AcceptanceReceipt:
+                if envelope.kind is EnvelopeKind.backend_event and envelope.payload.get(
+                    "arguments"
+                ) == {"vendor_session_cursor": "cleanup-cursor"}:
+                    event_waiting.set()
+                    await release_event.wait()
+                receipt = await accept(envelope, identity)
+                if receipt.disposition is ReceiptDisposition.accepted:
+                    accepted.append(envelope)
+                return receipt
+
+            def observed_hint(outcome: CommandOutcome) -> None:
+                pending = harness.endpoint.pending_commands.get(outcome.command_id)
+                if pending is not None and pending[0].operation is ChildOperation.stop:
+                    stop_hint.set()
+                resolve(outcome)
+
+            async def cancel_native() -> None:
+                pass
+
+            monkeypatch.setattr(harness.mac.registry, "_stop_exact_child", observe_native_stop)
+            monkeypatch.setattr(harness.mac.registry, "_publish_outcome", late_outcome)
+            monkeypatch.setattr(harness.mac.registry, "_publish_application", late_application)
+            monkeypatch.setattr(harness.native, "cancel_running_turn", cancel_native, raising=False)
+            monkeypatch.setattr(harness.native, "stop", final_native_event)
+            monkeypatch.setattr(harness.endpoint, "accept_envelope", withheld_event)
+            monkeypatch.setattr(harness.endpoint, "_resolve_command", observed_hint)
+            assert await post_owner_answer(harness, harness.ask) == {"landed": True}
+            await asyncio.wait_for(outcome_waiting.wait(), 5)
+            killing = asyncio.create_task(harness.system.kill("c_scripted"))
+            await asyncio.wait_for(stopping.wait(), 5)
+            assert not event_waiting.is_set() and not stop_hint.is_set() and not killing.done()
+            release_outcome.set()
+            await asyncio.wait_for(application_waiting.wait(), 5)
+            assert not stop_hint.is_set() and not killing.done()
+            release_application.set()
+            await asyncio.wait_for(event_waiting.wait(), 5)
+            await asyncio.wait_for(stop_hint.wait(), 5)
+            stops = [
+                (command, future)
+                for command, future in harness.endpoint.pending_commands.values()
+                if command.operation is ChildOperation.stop
+            ]
+            assert stops and all(not future.done() for _, future in stops)
+            assert harness.endpoint.store.child_assignment(reference) is not None
+            assert not killing.done()
+            release_event.set()
+            await asyncio.wait_for(killing, 5)
+            await eventually(lambda: not harness.mac.spool.pending(), "cleanup FIFO did not drain")
+            assert harness.endpoint.store.child_assignment(reference) is None
+            assert harness.events("permission_answered") == 1
+            assert harness.native.answers == [("ask_permission", "allow")]
+            state = harness.system._conversations["c_scripted"]
+            assert state.child is None and not state.child_is_quarantined
+            connection = connect(harness.endpoint.db_path)
+            try:
+                stop = stops[0][0]
+                import hashlib
+
+                submission = "outcome_" + hashlib.sha256(stop.command_id.encode()).hexdigest()
+                stop_sequence = connection.execute(
+                    "SELECT sequence FROM executor_receipts WHERE submission_id=?", (submission,)
+                ).fetchone()[0]
+                final_event = next(
+                    row
+                    for row in accepted
+                    if row.kind is EnvelopeKind.backend_event
+                    and row.payload.get("arguments") == {"vendor_session_cursor": "cleanup-cursor"}
+                )
+                native_outcome = next(
+                    row
+                    for row in accepted
+                    if row.kind is EnvelopeKind.command_outcome
+                    and "answer_application" in cast(dict[str, Any], row.payload["result"])
+                )
+                application = next(
+                    row for row in accepted if row.kind is EnvelopeKind.answer_application
+                )
+                outer_outcome = next(
+                    row
+                    for row in accepted
+                    if row.kind is EnvelopeKind.command_outcome
+                    and str(row.payload["command_id"]).startswith("apply_")
+                )
+                assert all(
+                    row.sequence < stop_sequence
+                    for row in (native_outcome, application, outer_outcome, final_event)
+                )
+                for row in (native_outcome, application, outer_outcome, final_event):
+                    receipt = harness.endpoint.store.lookup_receipt(
+                        row.sender_id, row.submission_id
+                    )
+                    assert (
+                        receipt is not None and receipt.disposition is ReceiptDisposition.accepted
+                    )
+                assert not harness.endpoint.store.cleanup_evidence_uncertain(reference)
+            finally:
+                connection.close()
+        finally:
+            release_outcome.set()
+            release_application.set()
+            release_event.set()
+            if killing is not None and not killing.done():
+                killing.cancel()
+                await asyncio.gather(killing, return_exceptions=True)
             await harness.close()
 
     asyncio.run(run())

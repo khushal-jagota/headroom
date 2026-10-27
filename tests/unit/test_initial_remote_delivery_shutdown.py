@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from sqlite3 import Connection
@@ -50,6 +51,20 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
         endpoint = ExecutorEndpoint(db_path, RealClock())
         endpoint.ready = True
         endpoint.writer = cast(FrameWriter, SimpleNamespace(close=lambda: None))
+        from planner.executor.codec import encode_value
+        from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+        from planner.executor.contracts import (
+            EnvelopeKind,
+            ExecutorIdentity,
+            JsonObject,
+            QueuedEnvelope,
+        )
+        from planner.executor.journal import envelope_payload_digest
+
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "original-incarnation", 1
+        )
+        endpoint.store.begin_connection(identity, 1)
         reference = ChildReference("original-incarnation", "original-child", "c_cancel")
         endpoint.store.register_child(reference, "ticket", "test-ticket", 1)
         entered, release, stopped, stopped_again = (
@@ -180,10 +195,35 @@ def test_initial_kill_settles_callers_and_preserves_exact_dispatch_boundary(
                 stops = [c for c in emitted if c.operation is ChildOperation.stop]
                 assert len(stops) == 2
                 final_stop = stops[-1]
-                endpoint._resolve_command(
-                    CommandOutcome(
-                        final_stop.command_id, reference, CommandDisposition.succeeded, {}
-                    )
+                outcome = CommandOutcome(
+                    final_stop.command_id, reference, CommandDisposition.succeeded, {}
+                )
+                # A direct result alone cannot prove the original FIFO receipt.
+                endpoint._resolve_command(outcome)
+                assert recovered.initial_shutdown_task is not None
+                assert not recovered.initial_shutdown_task.done()
+                payload = cast(JsonObject, encode_value(outcome))
+                submission = "outcome_" + hashlib.sha256(final_stop.command_id.encode()).hexdigest()
+                digest = envelope_payload_digest(
+                    payload,
+                    (),
+                    sender_id="native",
+                    conversation_id="c_cancel",
+                    sequence=1,
+                    submission_id=submission,
+                    kind=EnvelopeKind.command_outcome,
+                )
+                await endpoint.accept_envelope(
+                    QueuedEnvelope(
+                        "native",
+                        "c_cancel",
+                        1,
+                        submission,
+                        EnvelopeKind.command_outcome,
+                        payload,
+                        digest,
+                    ),
+                    identity,
                 )
                 assert recovered.initial_shutdown_task is not None
                 await asyncio.wait_for(recovered.initial_shutdown_task, 2)
@@ -351,9 +391,7 @@ def test_preparation_kill_settles_sender_and_old_continuation_cannot_run_after_s
                         raise RuntimeError("injected disposition failure")
                     return written
 
-                async def expose_first_failure(
-                    state: Any, operation: Any, **kwargs: Any
-                ) -> Any:
+                async def expose_first_failure(state: Any, operation: Any, **kwargs: Any) -> Any:
                     if (
                         operation.func == system._store.append_initial_shutdown_disposition
                         and not failed

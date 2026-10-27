@@ -12,6 +12,8 @@ from threading import Barrier
 
 import pytest
 from tests.support.executor_turns import persist_pending_turn
+from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
+from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
@@ -871,3 +873,479 @@ def test_closed_child_reconciliation_cannot_use_stale_authenticated_generation(
         assert not endpoint._inventory
 
     asyncio.run(run())
+
+
+def test_stop_hints_wait_for_exact_original_canonical_receipt(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, Mock
+
+    from planner.core.clock import RealClock
+    from planner.executor.codec import encode_value
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        CommandDisposition,
+        CommandOutcome,
+        WireMessage,
+        WireMessageKind,
+    )
+    from planner.executor.mac import as_object
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        command = ChildCommand("retire", CHILD, ChildOperation.stop, None, {})
+        outcome = CommandOutcome(command.command_id, CHILD, CommandDisposition.succeeded, {})
+        persist_pending_turn(
+            store, ASK, runtime_overrides={"initial_commands": [encode_value(command)]}
+        )
+        endpoint = ExecutorEndpoint(store.db_path, RealClock())
+        endpoint.store = store
+        endpoint.identity = IDENTITY
+        writer = Mock()
+        endpoint.writer = writer
+        future = asyncio.get_running_loop().create_future()
+        endpoint.pending_commands[command.command_id] = command, future
+        send = AsyncMock()
+        monkeypatch.setattr(endpoint, "_send", send)
+        connection = connect(store.db_path)
+        try:
+            store.record_command_outcome_in_transaction(connection, outcome)
+        finally:
+            connection.close()
+        submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+        # A conflicting accepted submission cannot stand in for this outcome.
+        unrelated = replace(envelope(), submission_id=submission)
+        unrelated = replace(
+            unrelated,
+            payload_sha256=envelope_payload_digest(
+                unrelated.payload,
+                (),
+                sender_id=unrelated.sender_id,
+                conversation_id=unrelated.conversation_id,
+                sequence=1,
+                submission_id=submission,
+                kind=unrelated.kind,
+            ),
+        )
+        store.accept(unrelated, effect, 1100, identity=IDENTITY)
+        assert not store.has_accepted_command_outcome(outcome)
+        await endpoint._handle_message(
+            WireMessage(WireMessageKind.command_outcome, command.command_id, as_object(outcome)),
+            IDENTITY,
+            writer,
+        )
+        assert not future.done() and send.await_count == 0
+        for value in (replace(inventory(), retained_command_outcomes=(outcome,)), inventory()):
+            await endpoint._handle_message(
+                WireMessage(WireMessageKind.reconcile_inventory, "inventory", as_object(value)),
+                IDENTITY,
+                writer,
+            )
+        assert not future.done()
+        assert all(
+            call.args[0].kind is not WireMessageKind.command_outcome_ack
+            for call in send.await_args_list
+        )
+        assert store.child_assignment(CHILD) is not None
+        payload = cast(JsonObject, encode_value(outcome))
+        canonical = QueuedEnvelope(
+            "canonical-sender",
+            CHILD.conversation_id,
+            1,
+            submission,
+            EnvelopeKind.command_outcome,
+            payload,
+            envelope_payload_digest(
+                payload,
+                (),
+                sender_id="canonical-sender",
+                conversation_id=CHILD.conversation_id,
+                sequence=1,
+                submission_id=submission,
+                kind=EnvelopeKind.command_outcome,
+            ),
+        )
+        receipt = await endpoint.accept_envelope(canonical, IDENTITY)
+        assert receipt.disposition is ReceiptDisposition.accepted
+        assert future.done() and future.result() == outcome
+        assert store.has_accepted_command_outcome(outcome)
+        assert store.lookup_receipt(canonical.sender_id, submission) == receipt
+        # The accepted stop preserves its original outcome and leaves canonical
+        # assignment closure to the core retirement transaction.
+        connection = connect(store.db_path)
+        try:
+            assert json.loads(
+                connection.execute(
+                    "SELECT outcome_json FROM executor_command_outcomes WHERE command_id=?",
+                    (command.command_id,),
+                ).fetchone()[0]
+            ) == encode_value(outcome)
+        finally:
+            connection.close()
+
+    from typing import cast
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        EnvelopeKind.backend_event,
+        EnvelopeKind.command_outcome,
+        EnvelopeKind.answer_application,
+        EnvelopeKind.cli_write,
+    ],
+)
+def test_refused_native_evidence_marker_survives_domain_rollback_and_metadata_turns(
+    store: ExecutorStore, kind: EnvelopeKind
+) -> None:
+    import json
+    from typing import cast
+
+    from planner.conversation.storage import ConversationStore
+    from planner.executor.codec import encode_value
+    from planner.executor.contracts import (
+        BackendEvent,
+        BackendEventMethod,
+        CommandDisposition,
+        CommandOutcome,
+    )
+
+    value: object
+    if kind is EnvelopeKind.backend_event:
+        value = BackendEvent(CHILD, BackendEventMethod.turn_ended, ASK.turn, {})
+    elif kind is EnvelopeKind.command_outcome:
+        value = CommandOutcome("late-result", CHILD, CommandDisposition.succeeded, {})
+    elif kind is EnvelopeKind.answer_application:
+        value = AnswerApplication("answer", ASK, 1000)
+    else:
+        value = {"operation": "refused-domain-action"}
+    payload = cast(JsonObject, encode_value(value))
+    queued = replace(envelope(), kind=kind, payload=payload)
+    queued = replace(
+        queued,
+        payload_sha256=envelope_payload_digest(
+            payload,
+            (),
+            sender_id=queued.sender_id,
+            conversation_id=queued.conversation_id,
+            sequence=queued.sequence,
+            submission_id=queued.submission_id,
+            kind=kind,
+        ),
+    )
+
+    def refuse(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+        effect(connection, envelope)
+        raise PlannerError(ErrorCode.validation, "required publication refused", {})
+
+    receipt = store.accept(queued, refuse, 1100, identity=IDENTITY)
+    assert receipt.disposition is ReceiptDisposition.refused
+    assert store.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
+    connection = connect(store.db_path)
+    try:
+        assert connection.execute("SELECT count(*) FROM effects").fetchone()[0] == 0
+        old = connection.execute(
+            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns"
+        ).fetchone()
+        metadata = (
+            old[0],
+            json.dumps(encode_value(replace(ASK.turn, turn_number=2))),
+            json.dumps({"ended": True, "explicit_reply_recipients": []}),
+        )
+        ConversationStore.save_executor_turn_in_transaction(
+            connection, CHILD.conversation_id, metadata
+        )
+    finally:
+        connection.close()
+    assert store.cleanup_evidence_uncertain(CHILD) is (kind is not EnvelopeKind.cli_write)
+    assert store.lookup_receipt(queued.sender_id, queued.submission_id) == receipt
+
+
+def test_retirement_metadata_is_monotonic_and_stale_child_cannot_replace_fresh(
+    store: ExecutorStore,
+) -> None:
+    import json
+
+    from planner.conversation.storage import ConversationStore
+    from planner.executor.codec import encode_value
+
+    connection = connect(store.db_path)
+    try:
+        old = connection.execute(
+            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns"
+        ).fetchone()
+        metadata = (old[0], old[1], json.dumps({"ended": True, "source_retired": True}))
+        ConversationStore.save_executor_turn_in_transaction(
+            connection, CHILD.conversation_id, metadata
+        )
+        unmarked = (old[0], json.dumps(encode_value(replace(ASK.turn, turn_number=2))), old[2])
+        ConversationStore.save_executor_turn_in_transaction(
+            connection, CHILD.conversation_id, unmarked
+        )
+        assert json.loads(
+            connection.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
+        )["source_retired"]
+    finally:
+        connection.close()
+    connection = connect(store.db_path)
+    try:
+        newest_runtime = {
+            "ended": False,
+            "delivery_uncertain": False,
+            "initial_commands": ["new-command"],
+            "callbacks_revoked": False,
+        }
+        newest = (
+            old[0],
+            json.dumps(encode_value(replace(ASK.turn, turn_number=3))),
+            json.dumps(newest_runtime),
+        )
+        ConversationStore.save_executor_turn_in_transaction(
+            connection, CHILD.conversation_id, newest
+        )
+        ConversationStore.save_executor_turn_in_transaction(
+            connection, CHILD.conversation_id, metadata
+        )
+        row = connection.execute(
+            "SELECT turn_json,runtime_json FROM executor_core_turns"
+        ).fetchone()
+        assert json.loads(row[0])["turn_number"] == 3
+        retained = json.loads(row[1])
+        assert retained["initial_commands"] == ["new-command"]
+        assert retained["delivery_uncertain"] is False
+        assert retained["callbacks_revoked"] is False
+        assert retained["source_retired"] is True
+    finally:
+        connection.close()
+    fresh = replace(CHILD, child_id="fresh")
+    store.close_child(CHILD, 1200)
+    store.register_child(fresh, "ticket", "test-ticket", 1201)
+    connection = connect(store.db_path)
+    try:
+        fresh_metadata = (json.dumps(encode_value(fresh)), unmarked[1], old[2])
+        ConversationStore.save_executor_turn_in_transaction(
+            connection, CHILD.conversation_id, fresh_metadata
+        )
+        ConversationStore.save_executor_turn_in_transaction(
+            connection, CHILD.conversation_id, unmarked
+        )
+        row = connection.execute(
+            "SELECT child_json,runtime_json FROM executor_core_turns"
+        ).fetchone()
+        assert json.loads(row[0]) == encode_value(fresh)
+        assert not json.loads(row[1]).get("source_retired")
+        assert not json.loads(row[1]).get("cleanup_evidence_uncertain")
+    finally:
+        connection.close()
+
+
+def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
+    tmp_db: sqlite3.Connection,
+    tmp_path: Path,
+    native_registry: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+    from typing import Any, Literal, cast
+    from unittest.mock import AsyncMock, Mock
+    from uuid import uuid4
+
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        ConversationStartRequest,
+        PromptDeliveryStarted,
+    )
+    from planner.conversation.events import ConversationTurnEnding
+    from planner.conversation.message_content import text_message_content
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        CommandOutcome,
+        WireMessage,
+        WireMessageKind,
+    )
+    from planner.executor.mac import as_object
+    from planner.executor.remote import RemoteBackendChildFactory
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        registry, spool, native, _ = cast(Any, native_registry)
+        path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+        endpoint = ExecutorEndpoint(path, RealClock())
+        identity = replace(IDENTITY, executor_incarnation=registry.incarnation)
+        endpoint.identity = identity
+        endpoint.writer = Mock()
+        endpoint.store.begin_connection(identity, 1)
+        monkeypatch.setattr(endpoint, "_send", AsyncMock())
+        commands: list[ChildCommand] = []
+
+        def assign(start: Any, sink: Any) -> ChildReference:
+            reference = ChildReference(registry.incarnation, str(uuid4()), start.conversation_id)
+            endpoint.store.register_child(reference, "ticket", "synthetic", 1)
+            endpoint.sinks[reference.child_id] = sink
+            return reference
+
+        async def replay() -> None:
+            for queued in spool.pending():
+                spool.acknowledge(await endpoint.accept_envelope(queued, identity))
+
+        async def dispatch(command: ChildCommand) -> CommandOutcome:
+            commands.append(command)
+            outcome = await registry.execute_command(command)
+            await replay()
+            return cast(CommandOutcome, outcome)
+
+        monkeypatch.setattr(endpoint, "send_command", dispatch)
+        monkeypatch.setattr(endpoint, "_read_skill_snapshot", lambda start: canonical_snapshot())
+        factory = RemoteBackendChildFactory(
+            assign,
+            dispatch,
+            lambda start: canonical_snapshot(),
+            retire_reference=endpoint.retire_child,
+        )
+        system = SqliteProcessConversationSystem(
+            store=ConversationStore(path),
+            backend_child_factories={key: factory for key in ConversationBackendKey},
+            message_files=ConversationMessageFiles(path),
+        )
+        endpoint.runtime = SimpleNamespace(system=system)
+        conversation = "retirement-handler"
+
+        async def reconcile(item: ChildInventory) -> None:
+            await endpoint._handle_message(
+                WireMessage(
+                    WireMessageKind.reconcile_inventory,
+                    "inventory",
+                    as_object(ReconciliationInventory(identity, (item,), (), ())),
+                ),
+                identity,
+                cast(Any, endpoint.writer),
+            )
+
+        async def complete() -> None:
+            state = system._conversations[conversation]
+            assert state.running_turn is not None and native.sink is not None
+            await native.sink.turn_ended(
+                state.running_turn.token,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            await replay()
+            await system.wait_until_quiescent()
+
+        class ObservedLock(asyncio.Lock):
+            def __init__(self) -> None:
+                super().__init__()
+                self.waiters = 0
+                self.retirement_waiting = asyncio.Event()
+                self.adoption_waiting = asyncio.Event()
+
+            async def acquire(self) -> Literal[True]:
+                if self.locked():
+                    self.waiters += 1
+                    (self.retirement_waiting if self.waiters == 1 else self.adoption_waiting).set()
+                return await super().acquire()
+
+        try:
+            await system.start_conversation(
+                ConversationStartRequest(conversation, "scripted", workspace_folder=tmp_path)
+            )
+            assert isinstance(
+                await system.send(conversation, text_message_content("first"), sender_label="Test"),
+                PromptDeliveryStarted,
+            )
+            state = system._conversations[conversation]
+            first = state.executor_child_reference
+            assert first is not None
+            active = next(
+                item
+                for item in registry.inventory(identity, include_pending=False).children
+                if item.child == first
+            )
+            await reconcile(active)
+            assert state.child is endpoint.children[first.child_id]
+            await native.sink.vendor_session_cursor_rebound("same-cursor")
+            await replay()
+            await complete()
+            idle = replace(active, active_turn=None)
+            await reconcile(idle)
+            assert state.child is endpoint.children[first.child_id]
+            # Ordered shutdown proves the fresh-child comparison before the race.
+            await system.kill(conversation)
+            assert endpoint.store.child_assignment(first) is None
+            assert isinstance(
+                await system.send(
+                    conversation, text_message_content("ordered resume"), sender_label="Test"
+                ),
+                PromptDeliveryStarted,
+            )
+            second = state.executor_child_reference
+            assert second is not None and second != first
+            assert state.initial_shutdown_task is None
+            assert [c for c in commands if c.operation is ChildOperation.start][-1].arguments[
+                "vendor_session_cursor"
+            ] == "same-cursor"
+            await complete()
+            captured = next(
+                item
+                for item in registry.inventory(identity, include_pending=False).children
+                if item.child == second
+            )
+            entered, release = asyncio.Event(), asyncio.Event()
+            original_stop = native.stop
+
+            async def stopped_at_native() -> None:
+                entered.set()
+                await release.wait()
+                await original_stop()
+
+            monkeypatch.setattr(native, "stop", stopped_at_native)
+            state.lock = lock = ObservedLock()
+            killing = asyncio.create_task(system.kill(conversation))
+            await entered.wait()
+            await lock.acquire()
+            release.set()
+            await lock.retirement_waiting.wait()
+            # Retirement now owns the first lock waiter. The endpoint still sees
+            # an open assignment before adoption queues behind that same lock.
+            assert endpoint.store.child_assignment(second) is not None
+            adopting = asyncio.create_task(reconcile(captured))
+            await lock.adoption_waiting.wait()
+            assert not adopting.done()
+            lock.release()
+            await killing
+            await adopting
+            monkeypatch.setattr(native, "stop", original_stop)
+            assert state.child is None and state.executor_child_reference is None
+            assert endpoint.store.child_assignment(second) is None
+            assert second.child_id not in registry.children
+            assert second.child_id not in endpoint.children
+            assert second.child_id not in endpoint.sinks
+            assert second.child_id not in endpoint._inventory
+            assert isinstance(
+                await system.send(
+                    conversation, text_message_content("raced resume"), sender_label="Test"
+                ),
+                PromptDeliveryStarted,
+            )
+            assert state.executor_child_reference not in (first, second)
+            assert [c for c in commands if c.operation is ChildOperation.start][-1].arguments[
+                "vendor_session_cursor"
+            ] == "same-cursor"
+        finally:
+            await system.shutdown()
+
+    asyncio.run(asyncio.wait_for(run(), 20))

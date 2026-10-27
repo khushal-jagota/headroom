@@ -379,7 +379,7 @@ class _ConversationState:
     executor_child_reference: Any = None
     executor_initial_commands: tuple[ChildCommand, ...] = ()
     executor_delivery_uncertain: bool = False
-    initial_shutdown_task: asyncio.Task[None] | None = None
+    initial_shutdown_task: asyncio.Task[bool] | None = None
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
     last_touched_monotonic: float = 0.0
@@ -1112,10 +1112,10 @@ class SqliteProcessConversationSystem:
         to again — it would sit there until the idle sweep noticed. Whether a turn was
         running makes no difference to that.
 
-        The whole of it happens under the conversation's lock, including the cancel — the
-        one place wire I/O is held under it, because being one act is the point. A queue
-        that could take on a message between the turn dying and the queue emptying would
-        leave something running after a kill, which is what a kill is for stopping.
+        Queue disposition and local ending hold the conversation lock. The ending
+        phase owns cancellation while the lock is free, so final native events can
+        commit before cancellation settles. Remote retirement has its own task and
+        quarantine fence, and its caller joins after it releases the lock.
         """
         state = await self._conversation_state(conversation_id)
         if state is None:
@@ -1132,9 +1132,29 @@ class SqliteProcessConversationSystem:
             try:
                 cancel_fact = None
                 child = state.child
+                if child is None and state.executor_child_reference is not None:
+                    from planner.executor.remote import RemoteBackendChildFactory
+                    from planner.executor.routing import LocaleBackendChildFactory
+                    from planner.executor.store import ExecutorStore
+
+                    reference = state.executor_child_reference
+                    factory = self._backend_child_factories[state.record.backend_key]
+                    if ExecutorStore(self._store._db_path).child_assignment(reference) is not None:
+                        if isinstance(factory, LocaleBackendChildFactory):
+                            child = factory.recover_remote_child(reference)
+                        elif isinstance(factory, RemoteBackendChildFactory):
+                            child = factory.recover(reference)
+                        if child is not None:
+                            state.child = child
                 if child is not None:
                     if running is not None:
-                        cancel_fact = await self._cancel_child_turn(state, child)
+                        self._set_phase(state, _ConversationPhase.ending)
+                        running.ending_is_the_cores = True
+                        state.lock.release()
+                        try:
+                            cancel_fact = await self._cancel_child_turn(state, child)
+                        finally:
+                            await state.lock.acquire()
                     if state.child is child:
                         await self._discard_child(state, child)
                 if running is not None:
@@ -1149,10 +1169,14 @@ class SqliteProcessConversationSystem:
                 self._settle_phase(state)
         finally:
             state.lock.release()
+        cleanup = state.initial_shutdown_task
+        if cleanup is not None and not cleanup.done():
+            await asyncio.shield(cleanup)
 
     async def _kill_initial_delivery(self, state: _ConversationState) -> bool:
         """Own local disposition without waiting for an unacknowledged native operation."""
         from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
+        from planner.executor.routing import LocaleBackendChildFactory
         from planner.executor.store import ExecutorStore
 
         async with state.lock:
@@ -1172,12 +1196,36 @@ class SqliteProcessConversationSystem:
                     and state.executor_child_reference is not None
                     and state.last_ended_turn_token is not None
                 ):
-                    if state.initial_shutdown_task is not None:
+                    if (
+                        state.initial_shutdown_task is not None
+                        and not state.initial_shutdown_task.done()
+                    ):
                         return True
-                    reservation = _ReservedTurn(state.last_ended_turn_token, asyncio.Event())
+                    child = state.child
+                    factory = self._backend_child_factories[state.record.backend_key]
+                    reference = state.executor_child_reference
+                    if (
+                        child is None
+                        and ExecutorStore(self._store._db_path).child_assignment(reference)
+                        is not None
+                    ):
+                        if isinstance(factory, LocaleBackendChildFactory):
+                            child = factory.recover_remote_child(reference)
+                        elif isinstance(factory, RemoteBackendChildFactory):
+                            child = factory.recover(reference)
+                        if child is not None:
+                            state.child = child
+                    await self._discard_held_prompts(state)
+                    if isinstance(child, RemoteBackendChild):
+                        self._schedule_remote_retirement(state, child)
+                    return True
                 if not intents:
                     if reservation is None:
-                        if state.initial_shutdown_task is not None and state.child_is_quarantined:
+                        if (
+                            state.initial_shutdown_task is not None
+                            and not state.initial_shutdown_task.done()
+                            and state.child_is_quarantined
+                        ):
                             await self._discard_held_prompts(state)
                             return True
                         return False
@@ -1208,10 +1256,17 @@ class SqliteProcessConversationSystem:
             child = state.child
             if not isinstance(child, RemoteBackendChild):
                 factory = self._backend_child_factories[state.record.backend_key]
-                if not isinstance(factory, RemoteBackendChildFactory):
+                if not isinstance(factory, (RemoteBackendChildFactory, LocaleBackendChildFactory)):
                     return False
                 if state.executor_child_reference is not None:
-                    child = factory.recover(state.executor_child_reference)
+                    reference = state.executor_child_reference
+                    if ExecutorStore(self._store._db_path).child_assignment(reference) is None:
+                        return True
+                    child = (
+                        factory.recover_remote_child(reference)
+                        if isinstance(factory, LocaleBackendChildFactory)
+                        else factory.recover(reference)
+                    )
                     state.child = child
             # Prompt acceptance can finish through the ordinary factual delivery path.
             if (
@@ -1307,10 +1362,7 @@ class SqliteProcessConversationSystem:
             reservation.resolved.set()
             if child is not None:
                 self._configure_initial_command_recording(state, child, reservation)
-                task = asyncio.create_task(self._stop_initial_child(state, child, reservation))
-                state.initial_shutdown_task = task
-                state.settlement_tasks.add(task)
-                task.add_done_callback(state.settlement_tasks.discard)
+                self._schedule_remote_retirement(state, child, reservation=reservation)
             return True
 
     def _initial_shutdown_metadata(
@@ -1338,6 +1390,14 @@ class SqliteProcessConversationSystem:
             async with state.lock:
                 if reservation.shutdown_owned and command.operation is not ChildOperation.stop:
                     raise RemoteInitialDeliveryCancelled()
+                if state.executor_child_reference != child.reference:
+                    raise RemoteInitialDeliveryCancelled()
+                if command.operation is ChildOperation.write_prompt:
+                    state.executor_initial_commands = tuple(
+                        earlier
+                        for earlier in state.executor_initial_commands
+                        if earlier.operation is ChildOperation.start
+                    )
                 state.executor_initial_commands += (command,)
                 metadata = (
                     self._initial_shutdown_metadata(state, reservation)
@@ -1362,33 +1422,132 @@ class SqliteProcessConversationSystem:
 
         child.record_command = record
 
+    def _schedule_remote_retirement(
+        self, state: _ConversationState, child: Any, *, reservation: _ReservedTurn | None = None
+    ) -> asyncio.Task[bool]:
+        """Fence the captured identity before its cleanup owner yields the lock."""
+        existing = state.initial_shutdown_task
+        if existing is not None and not existing.done():
+            return existing
+        state.child_is_quarantined = True
+        token = next(
+            (
+                command.turn
+                for command in reversed(
+                    state.executor_initial_commands + tuple(child.initial_commands)
+                )
+                if command.child == child.reference and command.turn is not None
+            ),
+            None,
+        )
+        if token is None:
+            token = (
+                reservation.token
+                if reservation is not None
+                else state.reserved_turn.token
+                if state.reserved_turn is not None and child.initial_commands
+                else state.running_turn.token
+                if state.running_turn is not None
+                else state.last_ended_turn_token
+            )
+        pending = state.reserved_turn
+        dependency = pending if pending is not None and pending.token == token else None
+        if token is None:
+            # Without original metadata there is no identity-safe retirement commit.
+            async def unconfirmed() -> bool:
+                return False
+
+            task = asyncio.create_task(unconfirmed())
+        else:
+            snapshot = self._executor_turn_metadata(
+                state, _RunningTurn(token=token, ended=True, callbacks_revoked=True)
+            )
+            if snapshot is not None:
+                cleanup_runtime = json.loads(snapshot[2])
+                cleanup_runtime["source_retired"] = False
+                snapshot = (snapshot[0], snapshot[1], json.dumps(cleanup_runtime))
+
+            async def record_stop(command: ChildCommand) -> None:
+                async with state.lock:
+                    if snapshot is None or command.child != child.reference:
+                        raise ValueError("Retirement lacks exact child metadata")
+                    from planner.executor.codec import encode_value
+
+                    runtime = json.loads(snapshot[2])
+                    commands = tuple(
+                        earlier
+                        for earlier in state.executor_initial_commands
+                        if earlier.child == child.reference
+                    ) + (command,)
+                    runtime["initial_commands"] = encode_value(commands)
+                    if state.executor_child_reference == child.reference:
+                        state.executor_initial_commands = commands
+                    await self._persist(
+                        state,
+                        partial(
+                            self._store.transition_lifecycle,
+                            state.record.conversation_id,
+                            (),
+                            executor_turn=(snapshot[0], snapshot[1], json.dumps(runtime)),
+                        ),
+                    )
+
+            child.record_command = record_stop
+            task = asyncio.create_task(self._stop_initial_child(state, child, dependency, snapshot))
+        state.initial_shutdown_task = task
+        state.settlement_tasks.add(task)
+        task.add_done_callback(state.settlement_tasks.discard)
+        return task
+
     async def _stop_initial_child(
-        self, state: _ConversationState, child: Any, reservation: _ReservedTurn
-    ) -> None:
+        self,
+        state: _ConversationState,
+        child: Any,
+        dependency: _ReservedTurn | None,
+        metadata: tuple[str, str, str] | None,
+    ) -> bool:
+        from planner.executor.store import ExecutorStore
+
+        reference = child.reference
+        if dependency is not None:
+            await dependency.resolved.wait()
         try:
             await child.stop()
         except asyncio.CancelledError:
             raise
         except Exception:
-            LOGGER.exception("Initial child termination remains unconfirmed")
-            return
+            LOGGER.exception("Remote child termination remains unconfirmed")
+            return False
         async with state.lock:
-            await self._persist(
+            if metadata is None or ExecutorStore(self._store._db_path).cleanup_evidence_uncertain(
+                reference
+            ):
+                return False
+            runtime = json.loads(metadata[2])
+            if state.executor_child_reference == reference:
+                from planner.executor.codec import encode_value
+
+                runtime["initial_commands"] = encode_value(state.executor_initial_commands)
+            runtime["source_retired"] = True
+            retired = await self._persist(
                 state,
                 partial(
                     self._store.transition_lifecycle,
                     state.record.conversation_id,
                     (),
-                    executor_turn=self._initial_shutdown_metadata(
-                        state, reservation, source_retired=True
-                    ),
-                    retired_child=child.reference,
+                    executor_turn=(metadata[0], metadata[1], json.dumps(runtime)),
+                    retired_child=reference,
                 ),
             )
+            if retired is False:
+                return False
+            child.retire_local_reference()
             if state.child is child:
                 state.child = None
-            state.executor_child_reference = None
-            state.child_is_quarantined = False
+            if state.executor_child_reference == reference:
+                state.executor_child_reference = None
+                state.child_is_quarantined = False
+            return True
 
     async def is_running(self, conversation_id: str) -> bool:
         """Whether a turn is running right now.
@@ -2771,8 +2930,14 @@ class SqliteProcessConversationSystem:
             async with state.lock:
                 child = state.child
                 if child is not None:
-                    state.child = None
-                    termination_confirmed = await self._stop_child(state, child)
+                    from planner.executor.remote import RemoteBackendChild
+
+                    if isinstance(child, RemoteBackendChild):
+                        self._schedule_remote_retirement(state, child)
+                        termination_confirmed = False
+                    else:
+                        state.child = None
+                        termination_confirmed = await self._stop_child(state, child)
                     if not termination_confirmed:
                         # Keep the uncertain process attached so no replacement can run
                         # beside it. The held line stays intact until an operator or a
@@ -3050,6 +3215,7 @@ class SqliteProcessConversationSystem:
         try:
             if reservation is None:
                 return await self._deliver_prompt_unsettled(state, turn_token, **kwargs)
+
             async def deliver_reserved_prompt() -> _PromptDeliveryAttempt:
                 from planner.executor.remote import RemoteInitialDeliveryCancelled
 
@@ -3204,6 +3370,10 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
+        from planner.executor.remote import RemoteBackendChild
+
+        if isinstance(child, RemoteBackendChild) and state.reserved_turn is not None:
+            self._configure_initial_command_recording(state, child, state.reserved_turn)
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -3309,9 +3479,17 @@ class SqliteProcessConversationSystem:
         saying two different things about what it is running on. Dropping it costs one
         lazy respawn and keeps the record the only answer.
         """
+        from planner.executor.remote import RemoteBackendChild
+
         old_child = state.child
-        state.child = None
-        if old_child is not None:
+        if isinstance(old_child, RemoteBackendChild):
+            async with state.lock:
+                cleanup = self._schedule_remote_retirement(state, old_child)
+                matching = any(command.turn == turn_token for command in old_child.initial_commands)
+            if matching or not await asyncio.shield(cleanup):
+                return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
+        elif old_child is not None:
+            state.child = None
             if not await self._stop_child(state, old_child):
                 state.child = old_child
                 state.child_is_quarantined = True
@@ -3331,6 +3509,10 @@ class SqliteProcessConversationSystem:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
+        from planner.executor.remote import RemoteBackendChild
+
+        if isinstance(child, RemoteBackendChild) and state.reserved_turn is not None:
+            self._configure_initial_command_recording(state, child, state.reserved_turn)
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -3520,6 +3702,15 @@ class SqliteProcessConversationSystem:
                 # One transaction: the change, the conversation's new values and the
                 # prompt are one fact about one delivery, and a half-written one would
                 # leave the record saying something that never happened.
+                accepted_metadata = self._executor_turn_metadata(state, accepted_turn)
+                if accepted_metadata is not None:
+                    accepted_runtime = json.loads(accepted_metadata[2])
+                    accepted_runtime["delivery_uncertain"] = False
+                    accepted_metadata = (
+                        accepted_metadata[0],
+                        accepted_metadata[1],
+                        json.dumps(accepted_runtime),
+                    )
                 written = await self._persist(
                     state,
                     partial(
@@ -3539,7 +3730,7 @@ class SqliteProcessConversationSystem:
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
-                        executor_turn=self._executor_turn_metadata(state, accepted_turn),
+                        executor_turn=accepted_metadata,
                         composed_content_delivered=composed_content_delivered,
                         model_change=carried_change,
                         extra_prompts=tuple(
@@ -3589,6 +3780,7 @@ class SqliteProcessConversationSystem:
                         reasoning_effort=carried_change.reasoning_effort,
                     )
                 state.has_delivered_prompt = True
+                state.executor_delivery_uncertain = False
                 if self._signal is None:
                     state.running_turn = accepted_turn
                 self._set_phase(state, _ConversationPhase.running)
@@ -4330,6 +4522,10 @@ class SqliteProcessConversationSystem:
 
         if isinstance(child, RemoteBackendChild):
             state.executor_child_reference = child.reference
+            state.executor_initial_commands = ()
+            state.executor_delivery_uncertain = False
+            if state.initial_shutdown_task is not None and state.initial_shutdown_task.done():
+                state.initial_shutdown_task = None
             # Retain the original identity even while native start is unacknowledged.
             state.child = child
             if state.reserved_turn is not None:
@@ -4351,6 +4547,11 @@ class SqliteProcessConversationSystem:
         The new one resumes from the stored session cursor on the values the record
         holds, which is how a conversation gets back to one answer about itself.
         """
+        from planner.executor.remote import RemoteBackendChild
+
+        if isinstance(child, RemoteBackendChild):
+            self._schedule_remote_retirement(state, child)
+            return
         if state.child is child:
             state.child = None
         stopped = await self._stop_child(state, child)
@@ -4846,11 +5047,10 @@ class SqliteProcessConversationSystem:
         A conversation whose lock is held is in the middle of something and is not idle, so
         it is left for the next sweep rather than waited on.
 
-        Stopping happens under the conversation's lock, wire call and all — the same
-        reasoning as a kill, and for the same reason: forgetting the child and stopping it
-        are one act. Done separately, a message arriving in between spawns its own child
-        while the one being stopped is still alive, and the conversation briefly has two
-        agents in it.
+        Remote cleanup registers quarantine under the lock, then awaits retirement
+        outside it. The fence prevents another child before confirmation. A failed
+        owned attempt requires explicit shutdown to retry. Local stops retain their
+        existing lock ownership.
         """
         due_ids = await self._store.conversations_due_for_automatic_compaction(
             due_at_or_before=(int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS),
@@ -4871,27 +5071,48 @@ class SqliteProcessConversationSystem:
         async with self._conversations_lock:
             states = list(self._conversations.values())
         recovered_quarantines: list[_ConversationState] = []
+        from planner.executor.remote import RemoteBackendChild
+
         for state in states:
             if state.child is None or state.lock.locked():
                 continue
+            cleanup: asyncio.Task[bool] | None = None
             async with state.lock:
                 child = state.child
                 if child is None or state.phase is not _ConversationPhase.idle:
                     continue
                 was_quarantined = state.child_is_quarantined
-                if not was_quarantined:
-                    idle_for = self._monotonic_now() - state.last_touched_monotonic
-                    if idle_for < self._idle_child_stop_after_seconds:
+                if isinstance(child, RemoteBackendChild):
+                    # Only an explicit operation retries failed remote cleanup.
+                    if was_quarantined and (
+                        state.initial_shutdown_task is not None
+                        or any(
+                            command.operation is ChildOperation.stop
+                            for command in state.executor_initial_commands
+                        )
+                    ):
                         continue
-                state.child = None
-                stopped = await self._stop_child(state, child)
-                if not stopped:
-                    state.child = child
-                    state.child_is_quarantined = True
-                    continue
-                state.child_is_quarantined = False
-                if was_quarantined and state.held_prompts:
-                    recovered_quarantines.append(state)
+                    if not was_quarantined and (
+                        self._monotonic_now() - state.last_touched_monotonic
+                        < self._idle_child_stop_after_seconds
+                    ):
+                        continue
+                    cleanup = self._schedule_remote_retirement(state, child)
+                else:
+                    if not was_quarantined:
+                        idle_for = self._monotonic_now() - state.last_touched_monotonic
+                        if idle_for < self._idle_child_stop_after_seconds:
+                            continue
+                    state.child = None
+                    if not await self._stop_child(state, child):
+                        state.child = child
+                        state.child_is_quarantined = True
+                        continue
+                    state.child_is_quarantined = False
+                    if was_quarantined and state.held_prompts:
+                        recovered_quarantines.append(state)
+            if cleanup is not None and await asyncio.shield(cleanup) and state.held_prompts:
+                recovered_quarantines.append(state)
         for state in recovered_quarantines:
             await self._drain_held_prompts(state)
 
@@ -4910,7 +5131,6 @@ class SqliteProcessConversationSystem:
         )
         if reference is None:
             return None
-        state.executor_child_reference = reference
         runtime = {
             "automatic_compaction": running.automatic_compaction,
             "compaction_confirmed": running.compaction_confirmed,
@@ -5036,23 +5256,27 @@ class SqliteProcessConversationSystem:
             if state.phase is _ConversationPhase.idle and state.held_prompts:
                 asyncio.create_task(self._drain_held_prompts(state))
 
-    async def adopt_remote_child(self, inventory: Any, child: BackendChild) -> None:
+    async def adopt_remote_child(self, inventory: Any, child: BackendChild) -> bool:
         """Reattach only the exact Mac child and callbacks confirmed by inventory."""
         state = await self._conversation_state(inventory.child.conversation_id)
         if state is None:
             raise ValueError("remote inventory names an unknown conversation")
+        from planner.executor.store import ExecutorStore
+
         async with state.lock:
+            if ExecutorStore(self._store._db_path).child_assignment(inventory.child) is None:
+                return False
             if state.reserved_turn is not None:
                 # Its original adapter owns command history and finalization. Inventory
                 # is evidence, never authority to replace the pending delivery owner.
-                return
+                return False
             if state.child_is_quarantined and state.last_ended_turn_token is not None:
-                return
+                return False
             if (
                 state.executor_child_reference is not None
                 and state.executor_child_reference != inventory.child
             ):
-                return
+                return False
             token = inventory.active_turn
             if token is not None and (
                 (
@@ -5061,10 +5285,11 @@ class SqliteProcessConversationSystem:
                 )
                 or (state.running_turn is not None and state.running_turn.token != token)
             ):
-                return
+                return False
             from planner.executor.contracts import AskKind
 
             state.child = child
+            state.executor_child_reference = inventory.child
             if token is not None:
                 running = state.running_turn
                 predicted = _RunningTurn(token=token) if running is None else replace(running)
@@ -5126,6 +5351,8 @@ class SqliteProcessConversationSystem:
                 self._set_phase(state, _ConversationPhase.running)
             # Absent inventory liveness is not proof of native termination. Retain
             # saved callbacks and expose uncertain delivery through executor evidence.
+
+            return True
 
     async def receive_remote_answer_application(
         self, application: Any, envelope: Any, acceptor: Any, record_application: Any

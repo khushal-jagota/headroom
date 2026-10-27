@@ -138,7 +138,9 @@ class NativeChildRegistry:
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
         self._retiring_tickets: set[str] = set()
-        self._source_work: dict[str, int] = {}
+        self._source_work: dict[ChildReference, int] = {}
+        self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
+        self._failed_source_work: set[ChildReference] = set()
         self._retirements: dict[
             str, tuple[SourceRetirementRequest, asyncio.Task[SourceRetirementReceipt]]
         ] = {}
@@ -156,15 +158,15 @@ class NativeChildRegistry:
             raise PermissionError("unknown executor child capability")
         return child
 
-    def begin_source_work(self, child: ChildReference) -> None:
+    def begin_source_work(self, child: ChildReference, *, final_event: bool = False) -> None:
         native = self.children.get(child.child_id)
         if (
             child.child_id in self._retired_children
-            or child.child_id in self._retiring_children
+            or (child.child_id in self._retiring_children and not final_event)
             or (native is not None and native.ticket_id in self._retiring_tickets)
         ):
             raise PermissionError("source child is retired or retiring")
-        key = child.conversation_id
+        key = child
         self._source_work[key] = self._source_work.get(key, 0) + 1
 
     async def source_work[T](
@@ -173,12 +175,15 @@ class NativeChildRegistry:
         work: Callable[[], Awaitable[T]],
         *,
         new_work: bool = False,
+        final_event: bool = False,
     ) -> T:
         # Existing native work can still publish its final events after admission closes.
         if new_work and self.admission_stopped:
             raise PermissionError("executor admission stopped")
-        self.begin_source_work(child)
+        self.begin_source_work(child, final_event=final_event)
         task = asyncio.ensure_future(work())
+        tasks = self._source_tasks.setdefault(child, set())
+        tasks.add(cast(asyncio.Task[object], task))
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -191,14 +196,22 @@ class NativeChildRegistry:
                     continue
                 except Exception:
                     break
-            if not task.cancelled():
-                task.exception()
+            failed = task.cancelled() or task.exception() is not None
+            if final_event and failed:
+                self._failed_source_work.add(child)
+            raise
+        except Exception:
+            if final_event:
+                self._failed_source_work.add(child)
             raise
         finally:
+            tasks.discard(cast(asyncio.Task[object], task))
+            if not tasks:
+                self._source_tasks.pop(child, None)
             self.end_source_work(child)
 
     def end_source_work(self, child: ChildReference) -> None:
-        key = child.conversation_id
+        key = child
         self._source_work[key] -= 1
         if not self._source_work[key]:
             del self._source_work[key]
@@ -275,7 +288,11 @@ class NativeChildRegistry:
                     or child.lock.locked()
                     for child in children
                 )
-                or any(self._source_work.get(conv, 0) for conv in conversations)
+                or any(
+                    count
+                    for ref, count in self._source_work.items()
+                    if ref.conversation_id in conversations
+                )
                 or any(
                     not task.done()
                     for key, task in self._tasks.items()
@@ -314,9 +331,11 @@ class NativeChildRegistry:
                     )
             for child in children:
                 self.children.pop(child.reference.child_id, None)
-            if any(self._source_work.get(conv, 0) for conv in conversations) or any(
-                self.spool.has_pending(conv) for conv in conversations
-            ):
+            if any(
+                count
+                for ref, count in self._source_work.items()
+                if ref.conversation_id in conversations
+            ) or any(self.spool.has_pending(conv) for conv in conversations):
                 return receipt(
                     MoveRetirementDisposition.uncertain, "source retirement produced unsettled work"
                 )
@@ -441,8 +460,137 @@ class NativeChildRegistry:
             role_materials=ConversationRoleMaterials(role_text, tuple(identity.items())),
         )
 
+    def _reference_conflicts(self, reference: ChildReference, command_id: str) -> bool:
+        child = self.children.get(reference.child_id)
+        if child is not None and child.reference != reference:
+            return True
+        return any(
+            other.child != reference
+            for other in self._commands.values()
+            if other.child.child_id == reference.child_id
+            and other.command_id != command_id
+            and other.child.executor_incarnation == self.incarnation
+            and (
+                (retained_outcome := self.outcomes.get(other.command_id)) is None
+                or retained_outcome.result.get("reason")
+                not in ("incarnation_gone", "child_reference_conflict")
+            )
+        )
+
+    async def _stop_exact_child(self, command: ChildCommand) -> CommandOutcome:
+        reference = command.child
+
+        def outcome(disposition: CommandDisposition, reason: str) -> CommandOutcome:
+            return CommandOutcome(command.command_id, reference, disposition, {"reason": reason})
+
+        child = self.children.get(reference.child_id)
+        if reference.executor_incarnation != self.incarnation:
+            return outcome(CommandDisposition.refused, "incarnation_gone")
+        if self._reference_conflicts(reference, command.command_id):
+            return outcome(CommandDisposition.refused, "child_reference_conflict")
+        current = asyncio.current_task()
+        stop_owner = next(
+            (
+                task
+                for key, task in self._tasks.items()
+                if not task.done()
+                and self._commands[key].child == reference
+                and self._commands[key].operation == ChildOperation.stop
+            ),
+            current,
+        )
+        if stop_owner is not current:
+            # Never join another stop: two owners otherwise wait on one another.
+            return outcome(CommandDisposition.refused, "child_stop_in_progress")
+        if child is not None and child.ticket_id in self._retiring_tickets:
+            return outcome(CommandDisposition.refused, "source_retirement_in_progress")
+
+        # Admission closes before the first await. Failed attempts retain this fence,
+        # but a later explicit stop can retry once its previous owner finished.
+        self._retiring_children.add(reference.child_id)
+        commands = [
+            task
+            for key, task in self._tasks.items()
+            if task is not current
+            and self._commands[key].child == reference
+            and self._commands[key].operation != ChildOperation.stop
+            and not task.done()
+        ]
+        if child is None:
+            unsettled = (
+                bool(commands)
+                or bool(self._source_work.get(reference, 0))
+                or reference in self._failed_source_work
+                or any(
+                    other.child == reference and key not in self._outcomes_published
+                    for key, other in self.outcomes.items()
+                )
+                or any(
+                    application.ask.child == reference and key not in self._applications_published
+                    for key, application in self._applications.items()
+                )
+                or self.spool.has_pending(reference.conversation_id)
+            )
+            if unsettled:
+                return outcome(CommandDisposition.uncertain, "child_has_unsettled_work")
+        else:
+            try:
+                # Native-lock release alone is insufficient: wrappers can still mint
+                # command outcomes and callback applications after that release.
+                if commands:
+                    await asyncio.gather(*(asyncio.shield(task) for task in commands))
+                await self._finish_source_work(reference)
+                async with child.lock:
+                    await child.native.stop()
+                await self._finish_source_work(reference)
+                if (
+                    reference in self._failed_source_work
+                    or any(
+                        other.child == reference and key not in self._outcomes_published
+                        for key, other in self.outcomes.items()
+                    )
+                    or any(
+                        application.ask.child == reference
+                        and key not in self._applications_published
+                        for key, application in self._applications.items()
+                    )
+                ):
+                    raise RuntimeError("required source publication failed")
+            except Exception as error:
+                return CommandOutcome(
+                    command.command_id,
+                    reference,
+                    CommandDisposition.uncertain,
+                    {"error_type": type(error).__name__, "error_message": str(error)},
+                )
+        self._retired_children.add(reference.child_id)
+        self._retiring_children.discard(reference.child_id)
+        if child is not None and self.children.get(reference.child_id) is child:
+            self.children.pop(reference.child_id)
+        return CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
+
+    async def _finish_source_work(self, reference: ChildReference) -> None:
+        while tasks := tuple(self._source_tasks.get(reference, ())):
+            await asyncio.gather(*(asyncio.shield(task) for task in tasks))
+        # The source_work owner removes its count in its finally block. Its task
+        # result can wake this waiter first, so let that owner finish accounting.
+        while self._source_work.get(reference, 0):
+            await asyncio.sleep(0)
+
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
-        if (
+        if command.child.executor_incarnation != self.incarnation:
+            outcome = CommandOutcome(
+                command.command_id, command.child, CommandDisposition.refused,
+                {"reason": "incarnation_gone"},
+            )
+        elif self._reference_conflicts(command.child, command.command_id):
+            outcome = CommandOutcome(
+                command.command_id, command.child, CommandDisposition.refused,
+                {"reason": "child_reference_conflict"},
+            )
+        elif command.operation == ChildOperation.stop:
+            outcome = await self._stop_exact_child(command)
+        elif (
             command.child.child_id in self._retired_children
             or command.child.child_id in self._retiring_children
         ):
@@ -454,13 +602,6 @@ class NativeChildRegistry:
                     "error_type": "BackendSpawnFailed",
                     "error_message": "source child identity was retired",
                 },
-            )
-        elif command.child.executor_incarnation != self.incarnation:
-            outcome = CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.refused,
-                {"reason": "incarnation_gone"},
             )
         elif (
             command.operation
@@ -579,6 +720,11 @@ class NativeChildRegistry:
                     )
                 else:
                     async with child.lock:
+                        if (
+                            command.child.child_id in self._retired_children
+                            or command.child.child_id in self._retiring_children
+                        ):
+                            raise _CommandAdmissionRefused("source child identity is retiring")
                         if command.operation == ChildOperation.write_prompt:
                             if self.admission_stopped:
                                 raise _CommandAdmissionRefused("executor is quiescing")
@@ -600,8 +746,6 @@ class NativeChildRegistry:
                                 self._applications[command.command_id] = application
                                 result = {**result, "answer_application": encode_value(application)}
                             child.user_inputs.pop(str(command.arguments["request_id"]), None)
-                        elif command.operation == ChildOperation.stop:
-                            self.children.pop(child.reference.child_id, None)
                         outcome = CommandOutcome(
                             command.command_id, command.child, CommandDisposition.succeeded, result
                         )
@@ -673,7 +817,9 @@ class NativeChildRegistry:
         arguments: dict[str, object],
     ) -> None:
         await self.source_work(
-            reference, lambda: self._report_event(reference, method, turn, arguments)
+            reference,
+            lambda: self._report_event(reference, method, turn, arguments),
+            final_event=True,
         )
 
     async def _report_event(
@@ -684,7 +830,7 @@ class NativeChildRegistry:
         arguments: dict[str, object],
     ) -> None:
         child = self.children.get(reference.child_id)
-        if child is None:
+        if child is None or child.reference != reference:
             raise ValueError("event from unknown child")
         if method == BackendEventMethod.permission_ask_raised:
             ask = cast(BackendPermissionAsk, arguments["ask"])
@@ -742,6 +888,9 @@ class NativeChildRegistry:
         )
 
     async def apply_answer(self, answer: DurableAnswer) -> AnswerApplication | None:
+        return await self.source_work(answer.ask.child, lambda: self._apply_answer(answer))
+
+    async def _apply_answer(self, answer: DurableAnswer) -> AnswerApplication | None:
         command = self._native_answer_command(answer)
         previous_answer = self._answers.get(answer.answer_id)
         if previous_answer is not None and previous_answer != answer:
@@ -797,6 +946,7 @@ class NativeChildRegistry:
             lambda: self._emit(
                 action.ask.child.conversation_id, EnvelopeKind.authorized_action, action
             ),
+            final_event=True,
         )
 
     def inventory(
@@ -825,14 +975,20 @@ class NativeChildRegistry:
         # Retain only ID->command identity so duplicate IDs cannot cause another native write.
         # The VPS is authoritative for accepted results; commands are not auto-replayed.
         self._confirmed_command_ids.add(command_id)
-        self._outcomes_published.add(command_id)
-        outcome = self.outcomes.get(command_id)
-        if outcome is not None and "answer_application" in outcome.result:
-            application = TypeAdapter(AnswerApplication).validate_python(
-                outcome.result["answer_application"]
-            )
-            self._applications_published.add(application.answer_id)
-        self._tasks.pop(command_id, None)
+        task = self._tasks.get(command_id)
+        if task is None:
+            return
+
+        def release_finished_wrapper(finished: asyncio.Task[CommandOutcome]) -> None:
+            # ACKs can arrive from inventory before the local publication returns.
+            # Keep that wrapper visible to stop and quiescence until it finishes.
+            if self._tasks.get(command_id) is finished:
+                self._tasks.pop(command_id)
+
+        if task.done():
+            release_finished_wrapper(task)
+        else:
+            task.add_done_callback(release_finished_wrapper)
 
     def _quiescence_counts(self) -> tuple[int, int, int, int]:
         active = sum(child.active_turn is not None for child in self.children.values())

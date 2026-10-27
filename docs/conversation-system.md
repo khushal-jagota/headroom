@@ -59,8 +59,14 @@ Complete evidence of no prompt transmission permits an audited discard and suppr
 Possible transmission or incomplete older evidence retains unknown prompt delivery through the existing uncertainty records.
 Known native acceptance remains factual. Shutdown never promises to undo its effects.
 
-Local shutdown and native termination remain separate facts. An HTTP shutdown response can precede the original child's confirmed stop.
-Until stop succeeds, the original reference remains quarantined and new delivery remains blocked.
+Local shutdown and native termination remain separate facts.
+Shutdown during an unsettled initial delivery can return its local disposition before the original child stops.
+Ordinary remote shutdown waits outside the conversation lock for confirmed retirement before it returns.
+The original reference remains quarantined until its exact stop outcome receives canonical acceptance.
+Required native evidence that receives a refusal keeps cleanup uncertain across explicit retries and restarts.
+Confirmed retirement closes the assignment and prevents later inventory from restoring that exact child.
+The next explicit prompt starts a fresh child with the same provider session cursor.
+Historical uncertain outcomes remain unchanged.
 Restart recovery can bind the original open assignment and intent without a saved native turn row.
 It does not repeat start or prompt, invent a missing command identity, or treat absent evidence as non-delivery.
 The [retained initial-prompt procedure](initial-mac-prompt-cancellation.md) supplies the isolated application handoff.

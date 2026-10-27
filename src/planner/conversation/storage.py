@@ -514,8 +514,8 @@ class ConversationStore:
         *,
         executor_turn: tuple[str, str, str] | None = None,
         retired_child: ChildReference | None = None,
-    ) -> None:
-        await self._write(
+    ) -> bool:
+        return await self._write(
             self._transition_lifecycle_sync, conversation_id, facts, executor_turn, retired_child
         )
 
@@ -525,11 +525,28 @@ class ConversationStore:
         facts: tuple[LifecycleFact, ...],
         executor_turn: tuple[str, str, str] | None = None,
         retired_child: ChildReference | None = None,
-    ) -> None:
+    ) -> bool:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
+            if retired_child is not None:
+                retained = conn.execute(
+                    "SELECT child_json,runtime_json FROM executor_core_turns "
+                    "WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                if retained is None or (
+                    json.loads(retained[0])
+                    != {
+                        "executor_incarnation": retired_child.executor_incarnation,
+                        "child_id": retired_child.child_id,
+                        "conversation_id": retired_child.conversation_id,
+                    }
+                    or json.loads(retained[1]).get("cleanup_evidence_uncertain")
+                ):
+                    conn.rollback()
+                    return False
             apply_facts(conn, conversation_id, facts)
             if executor_turn is not None:
                 self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
@@ -552,6 +569,8 @@ class ConversationStore:
                     claim_revisions != self._recovery_ticket_claim_revisions(conn, conversation_id)
                 ),
             )
+
+        return True
 
     def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
         """Actual recording errors retained for explicit persistence reconciliation."""
@@ -1998,13 +2017,59 @@ class ConversationStore:
             "WHERE conversation_id=?",
             (conversation_id,),
         ).fetchone()
+        incoming_child = json.loads(metadata[0])
+        current = json.loads(metadata[2])
+        assignment = conn.execute(
+            "SELECT rowid,closed_at_ms FROM executor_child_assignments "
+            "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+            (incoming_child["executor_incarnation"], incoming_child["child_id"], conversation_id),
+        ).fetchone()
         if previous is not None:
+            committed_child = json.loads(previous[0])
             committed = json.loads(previous[2])
+            if committed_child != incoming_child:
+                committed_assignment = conn.execute(
+                    "SELECT rowid FROM executor_child_assignments "
+                    "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+                    (
+                        committed_child["executor_incarnation"],
+                        committed_child["child_id"],
+                        conversation_id,
+                    ),
+                ).fetchone()
+                # An old wrapper can finish after a fresh child owns the row.
+                # Canonical assignment order, not callback arrival, owns identity.
+                if (
+                    assignment is None
+                    or assignment[1] is not None
+                    or (
+                        committed_assignment is not None and assignment[0] < committed_assignment[0]
+                    )
+                ):
+                    return
+            else:
+                if json.loads(metadata[1])["turn_number"] < json.loads(previous[1])["turn_number"]:
+                    # A late wrapper for this child cannot roll back its turn.
+                    # Child-wide retirement facts still survive the stale write.
+                    for flag in ("source_retired", "cleanup_evidence_uncertain"):
+                        if current.get(flag):
+                            committed[flag] = True
+                    if assignment is not None and assignment[1] is not None:
+                        committed["source_retired"] = True
+                    conn.execute(
+                        "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                        (json.dumps(committed), conversation_id),
+                    )
+                    return
+                for flag in ("source_retired", "cleanup_evidence_uncertain"):
+                    if committed.get(flag):
+                        current[flag] = True
             archive = committed.get("legacy_request_public_ids")
             if archive:
-                current = json.loads(metadata[2])
                 current["legacy_request_public_ids"] = archive
-                metadata = (metadata[0], metadata[1], json.dumps(current))
+        if assignment is not None and assignment[1] is not None:
+            current["source_retired"] = True
+        metadata = (metadata[0], metadata[1], json.dumps(current))
         if (
             previous is not None
             and json.loads(previous[0]) == json.loads(metadata[0])
@@ -2014,8 +2079,8 @@ class ConversationStore:
             committed = json.loads(previous[2])
             if committed.get("callbacks_revoked"):
                 current["callbacks_revoked"] = True
-            recipients = current["explicit_reply_recipients"]
-            for recipient in committed["explicit_reply_recipients"]:
+            recipients = current.setdefault("explicit_reply_recipients", [])
+            for recipient in committed.get("explicit_reply_recipients", []):
                 if recipient not in recipients:
                     recipients.append(recipient)
             metadata = (metadata[0], metadata[1], json.dumps(current))

@@ -245,3 +245,279 @@ def test_oversized_full_start_frame_refuses_before_dispatch(tmp_path: Path) -> N
         assert commands == []
 
     asyncio.run(run())
+
+
+def test_explicit_cleanup_retry_recovers_through_locale_factory_and_fresh_turn_restores(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    """A failed owned stop cannot consume the next explicit cleanup or taint fresh work."""
+    import hashlib
+    import json
+    from typing import Any, cast
+
+    from planner.executor.codec import encode_value
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.executor.contracts import (
+        EnvelopeKind,
+        ExecutorIdentity,
+        JsonObject,
+        QueuedEnvelope,
+    )
+    from planner.executor.journal import envelope_payload_digest
+    from planner.executor.routing import LocaleBackendChildFactory
+    from planner.executor.store import ExecutorStore
+
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    store = ExecutorStore(db_path)
+    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "native", 1)
+    store.begin_connection(identity, 1)
+    commands: list[ChildCommand] = []
+    references: list[ChildReference] = []
+    sequence = 0
+    stops = 0
+
+    def assign(start: Any, sink: Any) -> ChildReference:
+        del sink
+        reference = ChildReference("native", f"child-{len(references)}", start.conversation_id)
+        references.append(reference)
+        store.register_child(reference, "ticket", "test", 1)
+        return reference
+
+    async def native(command: ChildCommand) -> CommandOutcome:
+        nonlocal sequence, stops
+        commands.append(command)
+        if command.operation is ChildOperation.stop:
+            stops += 1
+        disposition = (
+            CommandDisposition.uncertain
+            if (command.operation is ChildOperation.write_prompt and len(references) == 1)
+            or (command.operation is ChildOperation.stop and stops == 1)
+            else CommandDisposition.succeeded
+        )
+        outcome = CommandOutcome(
+            command.command_id,
+            command.child,
+            disposition,
+            {"composed_content_delivered": True}
+            if command.operation is ChildOperation.write_prompt
+            else {},
+        )
+        sequence += 1
+        payload = cast(JsonObject, encode_value(outcome))
+        submission = "outcome_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+        digest = envelope_payload_digest(
+            payload,
+            (),
+            sender_id="native",
+            conversation_id=command.child.conversation_id,
+            sequence=sequence,
+            submission_id=submission,
+            kind=EnvelopeKind.command_outcome,
+        )
+        store.accept(
+            QueuedEnvelope(
+                "native",
+                command.child.conversation_id,
+                sequence,
+                submission,
+                EnvelopeKind.command_outcome,
+                payload,
+                digest,
+            ),
+            lambda conn, row: store.record_command_outcome_in_transaction(conn, outcome) or {},
+            sequence,
+            identity=identity,
+        )
+        return outcome
+
+    factory = RemoteBackendChildFactory(
+        assign,
+        native,
+        lambda start: CanonicalSkillSnapshot(
+            tuple(
+                CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\nTest\n")
+                for name in ("panels", "panels-worker", "panels-worker-coding")
+            ),
+            ("panels", "panels-worker", "panels-worker-coding"),
+        ),
+    )
+
+    def no_local(**kwargs: Any) -> Any:
+        raise AssertionError("Recovery must not allocate a local child")
+
+    def core(*, restored: bool = False) -> SqliteProcessConversationSystem:
+        # Dispatch uses a direct factory in this synthetic conversation. Recovery uses
+        # the production wrapper, whose __call__ must never run for the old identity.
+        selected = LocaleBackendChildFactory(db_path, no_local, factory) if restored else factory
+        return SqliteProcessConversationSystem(
+            store=ConversationStore(db_path),
+            backend_child_factories={key: selected for key in ConversationBackendKey},
+            message_files=ConversationMessageFiles(db_path),
+        )
+
+    def advance_sequence() -> None:
+        nonlocal sequence
+        sequence += 1
+
+    async def run() -> None:
+        system = core()
+        await system.start_conversation(
+            ConversationStartRequest("c_retry", "scripted", workspace_folder=tmp_path)
+        )
+        assert isinstance(
+            await system.send("c_retry", text_message_content("original"), sender_label="Test"),
+            PromptDeliveryUncertain,
+        )
+        await system.kill("c_retry")
+        await system.wait_until_quiescent()
+        assert system._conversations["c_retry"].child_is_quarantined
+        original_rows = tuple(
+            tmp_db.execute(
+                "SELECT outcome_json FROM executor_command_outcomes ORDER BY rowid"
+            ).fetchall()
+        )
+        await system.shutdown()
+        restored = core(restored=True)
+        await restored.kill("c_retry")
+        await restored.wait_until_quiescent()
+        assert not restored._conversations["c_retry"].child_is_quarantined
+        assert store.child_assignment(references[0]) is None
+        assert stops == 2
+        assert (
+            tuple(
+                tmp_db.execute(
+                    "SELECT outcome_json FROM executor_command_outcomes ORDER BY rowid LIMIT 3"
+                ).fetchall()
+            )
+            == original_rows
+        )
+        # A separate explicit send uses the same conversation with a fresh identity.
+        restored._backend_child_factories = {key: factory for key in ConversationBackendKey}
+        await restored.send("c_retry", text_message_content("fresh"), sender_label="Test")
+        assert len(references) == 2
+        metadata = await restored._store.read_executor_turn("c_retry")
+        assert metadata is not None and not json.loads(metadata[2])["delivery_uncertain"]
+        await restored.shutdown()
+        healthy = core()
+        state = healthy._conversations["c_retry"]
+        assert not state.child_is_quarantined
+        assert state.running_turn is not None
+        assert state.executor_child_reference == references[1]
+        assert all(c.child == references[1] for c in state.executor_initial_commands)
+        await healthy.kill("c_retry")
+        assert not state.child_is_quarantined and state.child is None
+
+        async def suppress(*args: Any, **kwargs: Any) -> Any:
+            return (), "test_suppression", False
+
+        # Fresh preparation owns the unresolved reservation. Its cleanup must wait
+        # until normal suppression finalizes that reservation, then acquire the lock.
+        original_native = factory.send_command
+        stop_after_resolution = asyncio.Event()
+
+        async def observe_cleanup(command: ChildCommand) -> CommandOutcome:
+            if command.operation is ChildOperation.stop:
+                assert state.reserved_turn is None
+                assert not state.lock.locked()
+                stop_after_resolution.set()
+            return await original_native(command)
+
+        factory.send_command = observe_cleanup
+        original_admission = healthy._admit_dispatch_messages
+        healthy._admit_dispatch_messages = suppress  # type: ignore[method-assign]
+        from planner.conversation.contracts import PromptDeliverySuppressed
+
+        result = await healthy.send(
+            "c_retry", text_message_content("suppressed"), sender_label="Test"
+        )
+        assert isinstance(result, PromptDeliverySuppressed)
+        await asyncio.wait_for(stop_after_resolution.wait(), 2)
+        await healthy.wait_until_quiescent()
+        assert state.child is None and not state.child_is_quarantined
+        assert store.child_assignment(references[-1]) is None
+        factory.send_command = original_native
+        healthy._admit_dispatch_messages = original_admission  # type: ignore[method-assign]
+
+        from planner.conversation.backends.contracts import NeedsRebind
+        from planner.conversation.events import ConversationTurnEnding
+
+        await healthy.send("c_retry", text_message_content("before rebind"), sender_label="Test")
+        old_child = state.child
+        old_reference = references[-1]
+        assert old_child is not None and state.running_turn is not None
+        async with state.lock:
+            await healthy._end_turn(
+                state, state.running_turn, ConversationTurnEnding.completed, None
+            )
+            healthy._settle_phase(state)
+
+        async def needs_rebind(*args: Any, **kwargs: Any) -> Any:
+            raise NeedsRebind("model change")
+
+        old_child.write_prompt = needs_rebind
+        previous_count = len(references)
+        # This old child's events use the previous token. Its stop must not await
+        # the distinct new reservation that needs the replacement in order to finish.
+        await asyncio.wait_for(
+            healthy.send("c_retry", text_message_content("after rebind"), sender_label="Test"), 2
+        )
+        assert len(references) == previous_count + 1
+        assert store.child_assignment(old_reference) is None
+        assert state.running_turn is not None and not state.child_is_quarantined
+
+        from planner.core.contracts import ErrorCode, PlannerError
+        from planner.executor.contracts import BackendEvent, BackendEventMethod, ReceiptDisposition
+
+        # A real refused native publication marks exact cleanup evidence within its
+        # receipt transaction. Later successful stops cannot erase that refusal.
+        sequence_before_refusal = sequence
+        event = BackendEvent(
+            references[-1], BackendEventMethod.turn_ended, state.running_turn.token, {}
+        )
+        payload = cast(JsonObject, encode_value(event))
+        submission = "refused-final-event"
+        digest = envelope_payload_digest(
+            payload,
+            (),
+            sender_id="native",
+            conversation_id="c_retry",
+            sequence=sequence_before_refusal + 1,
+            submission_id=submission,
+            kind=EnvelopeKind.backend_event,
+        )
+
+        def refuse(connection: Connection, envelope: QueuedEnvelope) -> JsonObject:
+            raise PlannerError(ErrorCode.validation, "final publication refused")
+
+        receipt = store.accept(
+            QueuedEnvelope(
+                "native",
+                "c_retry",
+                sequence_before_refusal + 1,
+                submission,
+                EnvelopeKind.backend_event,
+                payload,
+                digest,
+            ),
+            refuse,
+            100,
+            identity=identity,
+        )
+        assert receipt.disposition is ReceiptDisposition.refused
+        # Keep this one synthetic sender's canonical FIFO sequence aligned.
+        advance_sequence()
+        poisoned = references[-1]
+        await healthy.kill("c_retry")
+        assert state.child_is_quarantined and store.child_assignment(poisoned) is not None
+        await healthy.kill("c_retry")
+        await healthy.wait_until_quiescent()
+        assert state.child_is_quarantined and store.cleanup_evidence_uncertain(poisoned)
+        await healthy.shutdown()
+        quarantined = core(restored=True)
+        await quarantined.kill("c_retry")
+        await quarantined.wait_until_quiescent()
+        assert quarantined._conversations["c_retry"].child_is_quarantined
+        assert store.child_assignment(poisoned) is not None
+        await quarantined.shutdown()
+
+    asyncio.run(run())

@@ -192,8 +192,19 @@ The endpoint distinguishes a child start from prompt transmission. A successful 
 Only complete evidence of no prompt transmission permits suppression. A possible partial write retains uncertainty.
 Cancellation preserves the original native outcome and command identity. It does not create a synthetic native result.
 
-An ordinary stop uses its own command identity against the original child reference.
-Its confirmed outcome releases native ownership separately from local cancellation.
+An ordinary stop uses its own recorded command identity against the original child reference.
+The Mac fences that exact child before cleanup and waits for admitted native work and its final publications.
+The original stop outcome needs an accepted canonical journal receipt before the VPS confirms retirement.
+Direct outcome frames and reconnect inventory cannot replace that receipt.
+A refused required native publication keeps cleanup uncertain for that exact child across retries and restarts.
+Ordinary domain refusals do not affect cleanup evidence.
+
+Confirmed retirement closes the exact assignment and preserves its retirement fact in one transaction.
+Later metadata and delayed inventory cannot revive that identity.
+Live idle and active children still qualify for adoption through their open assignments.
+The next explicit prompt starts a fresh child with the retained provider session cursor.
+An explicit new stop can confirm an absent exact child only after all earlier work and journal receipts settle.
+An old uncertain command always retains its first outcome. A failed cleanup keeps quarantine and blocks replacement.
 Late outcomes require exact retained command evidence for the original child and incarnation.
 That historical evidence grants no renewed execution, callback, event, or CLI authority.
 If the original command evidence is absent, delivery remains uncertain.

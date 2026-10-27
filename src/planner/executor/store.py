@@ -29,12 +29,15 @@ from planner.executor.contracts import (
     AskReachability,
     AskReference,
     AuthorizedAction,
+    BackendEvent,
     ChildCommand,
+    ChildOperation,
     ChildReference,
     ClockSample,
     CommandOutcome,
     ConnectionState,
     DurableAnswer,
+    EnvelopeKind,
     ExecutorIdentity,
     ExecutorTurnContext,
     FileManifest,
@@ -156,6 +159,7 @@ class ExecutorStore:
                 connection.execute("RELEASE SAVEPOINT domain_write")
                 disposition = ReceiptDisposition.refused
                 result = cast(JsonObject, error.to_payload())
+                self._mark_refused_cleanup_evidence(connection, envelope, identity)
             connection.execute(
                 "INSERT INTO executor_receipts VALUES (?,?,?,?,?,?,?,?)",
                 (
@@ -177,6 +181,107 @@ class ExecutorStore:
                 result,
                 now_ms,
             )
+
+    @staticmethod
+    def _mark_refused_cleanup_evidence(
+        connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> None:
+        # A refused domain command is an ordinary answer. Only a required native
+        # publication can invalidate evidence that cleanup waits for.
+        if envelope.kind is EnvelopeKind.backend_event:
+            child = TypeAdapter(BackendEvent).validate_python(envelope.payload).child
+        elif envelope.kind is EnvelopeKind.command_outcome:
+            child = TypeAdapter(CommandOutcome).validate_python(envelope.payload).child
+        elif envelope.kind is EnvelopeKind.answer_application:
+            child = TypeAdapter(AnswerApplication).validate_python(envelope.payload).ask.child
+        else:
+            return
+        if (
+            child.executor_incarnation != identity.executor_incarnation
+            or child.conversation_id != envelope.conversation_id
+        ):
+            return
+        row = connection.execute(
+            "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
+            (child.conversation_id,),
+        ).fetchone()
+        if row is None or _parse(ChildReference, row[0]) != child:
+            return
+        runtime = json.loads(row[1])
+        runtime["cleanup_evidence_uncertain"] = True
+        connection.execute(
+            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+            (_json(runtime), child.conversation_id),
+        )
+
+    def cleanup_evidence_uncertain(self, child: ChildReference) -> bool:
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (child.conversation_id,),
+            ).fetchone()
+            # Missing exact metadata cannot establish confirmed cleanup.
+            return (
+                row is None
+                or _parse(ChildReference, row[0]) != child
+                or bool(json.loads(row[1]).get("cleanup_evidence_uncertain"))
+            )
+        finally:
+            connection.close()
+
+    def is_retirement_outcome(self, outcome: CommandOutcome) -> bool:
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT child_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (outcome.child.conversation_id,),
+            ).fetchone()
+            if row is None or _parse(ChildReference, row[0]) != outcome.child:
+                return False
+            return any(
+                command.command_id == outcome.command_id
+                and command.child == outcome.child
+                and command.operation is ChildOperation.stop
+                for raw in json.loads(row[1]).get("initial_commands", ())
+                for command in (TypeAdapter(ChildCommand).validate_python(raw),)
+            )
+        finally:
+            connection.close()
+
+    def has_accepted_command_outcome(self, outcome: CommandOutcome) -> bool:
+        """A retained result alone does not prove its original FIFO publication."""
+        submission_id = "outcome_" + hashlib.sha256(outcome.command_id.encode()).hexdigest()
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT outcome_json FROM executor_command_outcomes "
+                "WHERE executor_incarnation=? AND command_id=?",
+                (outcome.child.executor_incarnation, outcome.command_id),
+            ).fetchone()
+            if row is None or row[0] != _record(outcome):
+                return False
+            from planner.executor.journal import envelope_payload_digest
+
+            for receipt in connection.execute(
+                "SELECT * FROM executor_receipts WHERE submission_id=? AND conversation_id=? "
+                "AND disposition=?",
+                (submission_id, outcome.child.conversation_id, ReceiptDisposition.accepted.value),
+            ).fetchall():
+                digest = envelope_payload_digest(
+                    cast(JsonObject, asdict(outcome)),
+                    (),
+                    sender_id=receipt["sender_id"],
+                    conversation_id=outcome.child.conversation_id,
+                    sequence=receipt["sequence"],
+                    submission_id=submission_id,
+                    kind=EnvelopeKind.command_outcome,
+                )
+                if digest == receipt["payload_sha256"]:
+                    return True
+            return False
+        finally:
+            connection.close()
 
     def begin_connection(self, identity: ExecutorIdentity, now_ms: int) -> None:
         if (
@@ -476,7 +581,10 @@ class ExecutorStore:
                 if recorded is not None:
                     if recorded[0] != _record(outcome):
                         raise _invalid("Command outcome conflicts with first result")
-                    acknowledged_commands.append(outcome.command_id)
+                    if not self.is_retirement_outcome(outcome) or self.has_accepted_command_outcome(
+                        outcome
+                    ):
+                        acknowledged_commands.append(outcome.command_id)
             for row in connection.execute("SELECT * FROM executor_asks").fetchall():
                 ask = _parse(AskReference, row["reference_json"])
                 reachability = preserved_reachability(

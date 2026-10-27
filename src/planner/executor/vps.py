@@ -194,6 +194,7 @@ class ExecutorEndpoint:
             self.send_command,
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
+            self.retire_child,
         )
         self.file_receiver: Any = None
         self._responses: dict[str, asyncio.Future[WireMessage]] = {}
@@ -302,7 +303,31 @@ class ExecutorEndpoint:
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
             initial_history_complete=initial_history_complete,
+            retire_reference=self.retire_child,
         )
+
+    def retire_child(self, child: ChildReference) -> None:
+        """Drop only the exact retired proxy and its reconciliation material."""
+        proxy = self.children.get(child.child_id)
+        if proxy is not None and proxy.reference == child:
+            self.children.pop(child.child_id, None)
+            self.sinks.pop(child.child_id, None)
+        item = self._inventory.get(child.child_id)
+        if item is not None and item.child == child:
+            self._inventory.pop(child.child_id, None)
+
+    def _outcome_requires_receipt(self, outcome: CommandOutcome) -> bool:
+        pending = self.pending_commands.get(outcome.command_id)
+        return (
+            pending is not None
+            and pending[0].child == outcome.child
+            and pending[0].operation is ChildOperation.stop
+        ) or self.store.is_retirement_outcome(outcome)
+
+    def _outcome_hint_acknowledged(self, outcome: CommandOutcome) -> bool:
+        return not self._outcome_requires_receipt(
+            outcome
+        ) or self.store.has_accepted_command_outcome(outcome)
 
     def _initial_command_cancelled(self, command: ChildCommand) -> bool:
         return command.operation in (ChildOperation.start, ChildOperation.write_prompt) and (
@@ -602,6 +627,8 @@ class ExecutorEndpoint:
     ) -> AcceptanceReceipt:
         previous = self.store.preflight(envelope, identity=identity)
         if previous is not None:
+            if envelope.kind is EnvelopeKind.command_outcome:
+                self._resolve_command(TypeAdapter(CommandOutcome).validate_python(envelope.payload))
             return previous
         if envelope.kind is EnvelopeKind.backend_event:
             event = TypeAdapter(BackendEvent).validate_python(envelope.payload)
@@ -822,6 +849,8 @@ class ExecutorEndpoint:
         return {"recorded": True}
 
     def _resolve_command(self, outcome: CommandOutcome) -> None:
+        if not self._outcome_hint_acknowledged(outcome):
+            return
         pending = self.pending_commands.get(outcome.command_id)
         if pending is not None and pending[0].child == outcome.child and not pending[1].done():
             pending[1].set_result(outcome)
@@ -1181,7 +1210,7 @@ class ExecutorEndpoint:
                 self.store.verify_connection(identity)
                 for item in inventory.children:
                     if self._closed_reconciliation_child(item.child, identity):
-                        self._inventory.pop(item.child.child_id, None)
+                        self.retire_child(item.child)
                         continue
                     previous = self._inventory.get(item.child.child_id)
                     if previous is not None and previous.active_turn == item.active_turn:
@@ -1202,6 +1231,10 @@ class ExecutorEndpoint:
                         proxy = self.recover_child(item.child)
                         self.children[item.child.child_id] = proxy
                     await self.runtime.system.adopt_remote_child(item, proxy)
+                    # Adoption can wait behind shutdown. Its earlier assignment
+                    # precheck grants no authority after that await.
+                    if self._closed_reconciliation_child(item.child, identity):
+                        self.retire_child(item.child)
                 for outcome in inventory.retained_command_outcomes:
                     self._closed_reconciliation_child(outcome.child, identity)
                     self._retained_inventory[outcome.command_id] = outcome
@@ -1218,6 +1251,11 @@ class ExecutorEndpoint:
                     )
                     reconciliation = self.store.reconcile(merged, now_ms())
                     for command_id in reconciliation.acknowledged_command_ids:
+                        retained_outcome = self._retained_inventory.get(command_id)
+                        if retained_outcome is not None and not self._outcome_hint_acknowledged(
+                            retained_outcome
+                        ):
+                            continue
                         await self._send(
                             WireMessage(
                                 WireMessageKind.command_outcome_ack,
@@ -1277,6 +1315,8 @@ class ExecutorEndpoint:
             elif message.kind is WireMessageKind.command_outcome:
                 outcome = TypeAdapter(CommandOutcome).validate_python(message.payload)
                 self._resolve_command(outcome)
+                if not self._outcome_hint_acknowledged(outcome):
+                    return
                 result, response_kind = (
                     {"command_id": outcome.command_id},
                     WireMessageKind.command_outcome_ack,
