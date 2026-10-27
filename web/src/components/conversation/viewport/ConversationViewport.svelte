@@ -20,7 +20,7 @@
   } from "../../../lib/conversation/wire";
   import { REPLY_LINE_MOVE_MS, SENT_MESSAGE_TOP_GAP_PIXELS, TEXT_RESTORATION_WAIT_MS } from "./viewportConfiguration";
   import { restorationWait } from './restorationWait';
-  import { threadGeometry, type ThreadReading } from "./threadGeometry";
+  import { threadGeometry, retirementGeometry, type ThreadReading } from "./threadGeometry";
   import { copyViewReaderAnchor } from '../../../lib/conversation/view/copyAnchor';
   import { conversationTextPresentations, TextPresentationRegistry } from '../../../lib/conversation/view/textPresentation';
   import { releaseTextRestoration, type TextRestorationPlacement, type LatestPlacementIntent } from './placement';
@@ -71,7 +71,66 @@
   let threadElement = $state<HTMLDivElement | null>(null);
   let contentElement = $state<HTMLDivElement | null>(null);
   let reservedSpaceElement = $state<HTMLDivElement | null>(null);
+  // This is the entire tail, including the former external flex gap.
   let reservedSpacePixels = $state(0);
+  let retainedTopInset = $state<number | null>(null);
+  let tailGap = $state(0);
+  let manualReader = $state(false);
+  let retirementOwner: object | null = null;
+  let correctingRetirement = false;
+  let navigationPending = false;
+  let navigationTop = 0;
+  let navigationHeight = 0;
+  let navigationBase = 0;
+  function rememberNavigationPosition(thread: HTMLDivElement): void {
+    navigationTop = thread.scrollTop;
+    navigationHeight = thread.clientHeight;
+    navigationBase = threadGeometry(thread, reservedSpaceElement).baseHeight();
+  }
+
+  function actualNewestIsHeld(): boolean {
+    return reader === null || reader.pages.some(page => page.scope.kind === 'timeline' && page.newer === null);
+  }
+
+  /** One synchronous geometry transaction, before the browser can paint a clamp. */
+  function retireReplySpace(thread: HTMLDivElement, normalizeInset = true, latestFrame = false): void {
+    if ((!manualReader && !latestFrame) || latestPending && !latestFrame || retirementOwner === null || !canMeasure() || pendingOpen) return;
+    if (reservedSpacePixels === 0 && retainedTopInset === null) return;
+    const owner = retirementOwner;
+    const geometry = threadGeometry(thread, reservedSpaceElement);
+    const viewport = thread.getBoundingClientRect();
+    const row = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key], [data-conversation-source-key]')]
+      .find(node => node.getBoundingClientRect().bottom > viewport.top && node.getBoundingClientRect().top < viewport.bottom);
+    const key = row?.dataset.conversationViewKey ?? row?.dataset.conversationSourceKey;
+    const text = key ? textPresentations.capture(key, viewport) : undefined;
+    const before = text && key ? textPresentations.measure(key, text) : null;
+    const anchorTop = before?.kind === 'ready' ? before.rect.top : row?.getBoundingClientRect().top;
+    const style = getComputedStyle(thread);
+    const topInset = Number.parseFloat(style.paddingTop) || 0;
+    const ordinaryInset = geometry.gap();
+    const plan = retirementGeometry(thread.scrollTop, thread.clientHeight, geometry.baseHeight(), reservedSpacePixels,
+      normalizeInset && retainedTopInset !== null ? ordinaryInset - topInset : 0);
+    if (!plan || owner !== retirementOwner || thread !== threadElement) return;
+    correctingRetirement = true;
+    try {
+      if (plan.insetDelta !== 0) {
+        retainedTopInset = null;
+        thread.style.paddingTop = `${topInset + plan.insetDelta}px`;
+      }
+      if (reservedSpaceElement) {
+        reservedSpaceElement.style.height = `${plan.tail}px`;
+        reservedSpaceElement.style.marginTop = `${-geometry.gap()}px`;
+      }
+      reservedSpacePixels = plan.tail;
+      // Force layout first: native anchoring can already pay all of this correction.
+      thread.getBoundingClientRect();
+      const after = text && key ? textPresentations.measure(key, text) : null;
+      const afterTop = after?.kind === 'ready' ? after.rect.top : row?.getBoundingClientRect().top;
+      const wanted = anchorTop !== undefined && afterTop !== undefined
+        ? thread.scrollTop + afterTop - anchorTop : plan.top;
+      if (owner === retirementOwner && wanted >= 0 && wanted <= thread.scrollHeight - thread.clientHeight + .01) moveTheThread(thread, wanted);
+    } finally { correctingRetirement = false; rememberNavigationPosition(thread); }
+  }
   let jumpVisible = $state(false);
   let belowCount = $state(0);
   const newerHistory = $derived(reader?.pages.some(page => page.scope.kind === "timeline" && page.newer !== null) ?? false);
@@ -180,7 +239,7 @@
     return aligned;
   }
   let pendingPresentationTarget: Element | null = null;
-  let heldSent: { messageId: string; displayKey: string | null; rowKey: string | null } | null = null;
+  let heldSent = $state<{ messageId: string; displayKey: string | null; rowKey: string | null } | null>(null);
   let liveArrivalPixels = 0;
   const streamWrites = new Map<object, { following: boolean; generation: number; messageKey: string | null; streaming: boolean; top: number; motionPixels: number }>();
   const arrivingMessages = new Map<string, boolean>();
@@ -208,6 +267,7 @@
   function onTextPresentation(event: Event): void {
     const { token, phase, before, after } = (event as CustomEvent<{token:object;phase:'before'|'after';before:number;after:number}>).detail;
     if (phase === 'before') {
+      navigationPending = false;
       const target = event.target as HTMLElement;
       const messageKey = target.closest<HTMLElement>('[data-conversation-view-key]')?.dataset.conversationViewKey ?? target.closest<HTMLElement>('[data-conversation-source-key]')?.dataset.conversationSourceKey ?? null;
       const stream = target.closest<HTMLElement>('.c2-streaming');
@@ -255,6 +315,7 @@
     if (!canMeasure() || pendingOpen || !placementReady) return;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return;
+    if (manualReader) retireReplySpace(thread);
     takeTheReading(geometry.read(reservedSpacePixels));
     if (conversationMotion(thread).active(positionMotion)) {
       return;
@@ -295,7 +356,14 @@
     if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
   }
   function supersedeRestorationWithAcceptedSend(): void {
-    cancelLatestRecovery();
+    if (latestIntent !== null) {
+      latestIntent.controller?.abort();
+      latestIntent = null;
+      latestPending = false;
+      if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
+    }
+    retirementOwner = null;
+    manualReader = false;
     if (textRestoration === null) return;
     cancelTextRestoration();
     viewAnchor = null;
@@ -304,6 +372,12 @@
     placementReady = true;
   }
   function stopAutomaticTravel(): void {
+    if (threadElement && answerRoomMessageId !== null) retainedTopInset = Number.parseFloat(getComputedStyle(threadElement).paddingTop) || SENT_MESSAGE_TOP_GAP_PIXELS;
+    answerRoomMessageId = null;
+    manualReader = true;
+    navigationPending = true;
+    retirementOwner = {};
+    latestIntent?.controller?.abort();
     gestureGeneration += 1;
     cancelLatestRecovery();
     cancelTextRestoration();
@@ -328,6 +402,7 @@
     latestPending = false;
     if (threadElement) conversationMotion(threadElement).cancel(positionMotion);
     withTheNewestLineBeforeTheWrite = false;
+    if (threadElement) { retireReplySpace(threadElement); rememberNavigationPosition(threadElement); }
   }
   async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS, current: () => boolean = () => true): Promise<boolean> {
     const from = thread.scrollTop;
@@ -341,6 +416,7 @@
     const clamped = Math.max(0, Math.min(wanted, thread.scrollHeight - thread.clientHeight));
     if (Math.abs(thread.scrollTop - clamped) >= 0.5) {
       const before = thread.scrollTop;
+      if (!correctingRetirement) navigationPending = false;
       thread.scrollTop = clamped;
       positionWritesPixels += thread.scrollTop - before;
       // A tab can disappear between motion frames. Remember the line actually
@@ -392,26 +468,37 @@
     const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
     const key=element?.dataset.conversationViewKey;
     const item=reader.pages.flatMap(page=>page.items).find(item=>item.key===key);
-    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:jumpVisible===false&&!latestPending&&heldUnreadKey===null,content:textPresentations.capture(item.key,thread.getBoundingClientRect())};
+    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following:!manualReader&&withTheNewestLineBeforeTheWrite&&!latestPending&&heldUnreadKey===null,content:textPresentations.capture(item.key,thread.getBoundingClientRect())};
   }
 
   function onThreadScroll(): void {
     const thread = threadElement;
-    if (thread === null || !canMeasure() || pendingOpen || !placementReady || latestIntent?.cause === 'restoration-fallback' || conversationMotion(thread).active(positionMotion)) return;
+    if (thread === null || correctingRetirement || !canMeasure() || pendingOpen || !placementReady || latestIntent?.cause === 'restoration-fallback' || conversationMotion(thread).active(positionMotion)) return;
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return;
     // Native anchoring can scroll after content grows, before ResizeObserver updates
     // the cached last-line position. Read current geometry before deciding to follow.
+    // A native resize can dispatch scroll before ResizeObserver. A changed shape
+    // cannot spend the preceding gesture's admission evidence.
+    if (thread.clientHeight !== navigationHeight || Math.abs(geometry.baseHeight() - navigationBase) > .01) navigationPending = false;
+    const readerMoved = navigationPending && Math.abs(thread.scrollTop - navigationTop) >= .5;
+    if (manualReader) retireReplySpace(thread);
     takeTheReading(geometry.read(reservedSpacePixels));
-    withTheNewestLineBeforeTheWrite = !jumpVisible && heldUnreadKey === null;
+    if (readerMoved && manualReader && reservedSpacePixels === 0 && actualNewestIsHeld()
+      && Math.abs(thread.scrollTop - Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels))) <= 1) {
+      manualReader = false;
+      retirementOwner = null;
+      withTheNewestLineBeforeTheWrite = true;
+    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !jumpVisible && heldUnreadKey === null;
+    rememberNavigationPosition(thread);
     saveLogicalAnchor(thread);
   }
 
   function isCurrentLatest(intent: typeof latestIntent): boolean {
     return intent !== null && latestIntent === intent && !disposed &&
       intent.generation === generation && intent.reader === reader &&
-      (intent.cause !== 'restoration-fallback' || !intent.controller?.signal.aborted &&
-        intent.gesture === gestureGeneration && intent.attempt === (reader?.restorationAttempt ?? 0) && !hasUnplacedAcceptedSend());
+      !intent.controller?.signal.aborted && intent.gesture === gestureGeneration && !hasUnplacedAcceptedSend() &&
+      (intent.cause !== 'restoration-fallback' || intent.attempt === (reader?.restorationAttempt ?? 0));
   }
 
   function hasUnplacedAcceptedSend(): boolean {
@@ -422,6 +509,8 @@
   }
 
   async function jumpToTheNewestLine(button: HTMLButtonElement | null, cause: LatestPlacementIntent<ConversationViewReader>['cause'] = 'latest', attempt: number | null = null): Promise<void> {
+    latestIntent?.controller?.abort();
+    retirementOwner = null;
     cancelLatestRecovery();
     // Keep the last visible address until this Latest operation actually lands.
     // A reader replacement cancels an unfinished click and restores that address.
@@ -457,7 +546,7 @@
     }
     const intent: LatestPlacementIntent<ConversationViewReader> = {
       reader, generation, cause, attempt, gesture: gestureGeneration,
-      controller: cause === 'restoration-fallback' ? new AbortController() : null,
+      controller: new AbortController(),
       admitted: reader === null,
       focusButton: button
     };
@@ -466,7 +555,7 @@
     if (intent.reader !== null) {
       const admitted = cause === 'restoration-fallback' && intent.controller !== null
         ? await intent.reader.loadLatest({kind:'restoration-fallback', signal:intent.controller.signal, isCurrent:() => isCurrentLatest(intent)})
-        : await intent.reader.load({kind:"timeline",key:null},null,"older",true);
+        : await intent.reader.load({kind:"timeline",key:null},null,"older",true, {kind:'restoration-fallback',signal:intent.controller!.signal,isCurrent:() => isCurrentLatest(intent)});
       if (!isCurrentLatest(intent)) return;
       if (!admitted) {
         latestIntent = null;
@@ -570,6 +659,7 @@
         dirty = false;
 
         let geometry = threadGeometry(thread, reservedSpaceElement);
+        tailGap = geometry.gap();
         takeTheReading(geometry.read(reservedSpacePixels));
 
         for (const key of arrivingMessages.keys()) {
@@ -602,6 +692,8 @@
           recoveryToPlace = null;
           newestPlacementMessageId = id;
           answerRoomMessageId = id;
+          retainedTopInset = SENT_MESSAGE_TOP_GAP_PIXELS;
+          tailGap = geometry.gap();
           reservedSpacePixels = geometry.answerRoomPixels(accepted);
           const wrapper = accepted.closest<HTMLElement>('[data-conversation-view-key]');
           heldSent = { messageId: id, displayKey: wrapper?.dataset.conversationDisplayKey ?? null, rowKey: wrapper?.dataset.conversationViewKey ?? null };
@@ -618,6 +710,7 @@
           }
         }
 
+        if (manualReader) retireReplySpace(thread);
         if (heldUnreadKey !== null) {
           const held = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
             .find(node => node.dataset.conversationViewKey === heldUnreadKey);
@@ -695,8 +788,23 @@
         } else if (!settledOnOpening || pendingOpen) {
           landTheOpen(thread);
         } else if (latestPending && isCurrentLatest(intent) && intent?.admitted) {
-          const completed = await travel(thread, geometry.newestLineScrollTop(newestLineBottomPixels), CONVERSATION_MOVE_MS, () => isCurrentLatest(intent));
+          retirementOwner = intent;
+          const from = thread.scrollTop;
+          const initialInset = Number.parseFloat(getComputedStyle(thread).paddingTop) || 0;
+          const destination = Math.max(0, Math.min(geometry.newestLineScrollTop(newestLineBottomPixels), Math.round(geometry.baseHeight()) - thread.clientHeight));
+          const completed = await conversationMotion(thread).move(positionMotion, fraction => {
+            if (!isCurrentLatest(intent) || retirementOwner !== intent) return;
+            const insetChange = (Number.parseFloat(getComputedStyle(thread).paddingTop) || 0) - initialInset;
+            moveTheThread(thread, from + (destination - from) * fraction + insetChange);
+            retireReplySpace(thread, true, true);
+          }, CONVERSATION_MOVE_MS, undefined, true);
           if (!completed || !isCurrentLatest(intent) || thread !== threadElement) return;
+          // Each frame drained only range that its intended position no longer needs.
+          // The arrival position fits the real bottom without an intermediate clamp.
+          await tick();
+          if (!isCurrentLatest(intent) || thread !== threadElement) return;
+          geometry = threadGeometry(thread, reservedSpaceElement);
+          takeTheReading(geometry.read(reservedSpacePixels));
           if (intent.cause === 'restoration-fallback') {
             await tick();
             if (!isCurrentLatest(intent) || thread !== threadElement || !canMeasure()) return;
@@ -814,9 +922,11 @@
         const finalRow = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
           .filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
         const latestPresented = intent?.cause !== 'restoration-fallback' || presentationReady(finalRow);
-        const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && !jumpVisible && latestPresented;
-        if (latestPlaced) latestPending = false;
-        withTheNewestLineBeforeTheWrite = (followingMore || !jumpVisible) && !latestPending && heldUnreadKey === null && heldSent === null;
+        const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && actualNewestIsHeld()
+          && reservedSpacePixels === 0 && Math.abs(thread.scrollTop - Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels))) <= 1
+          && !jumpVisible && latestPresented;
+        if (latestPlaced) { latestPending = false; manualReader = false; retirementOwner = null; }
+        withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !jumpVisible) && !latestPending && heldUnreadKey === null && heldSent === null;
         saveLogicalAnchor(thread);
         if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
@@ -864,6 +974,10 @@
       noteMessageArrivals();
       heldSent = null;
       heldUnreadKey = null;
+      manualReader = anchor !== null && !anchor.following;
+      retirementOwner = null;
+      navigationPending = false;
+      retainedTopInset = null;
       reservedSpacePixels = 0;
       answerRoomMessageId = null;
       sentMessageToPlace = null;
@@ -920,8 +1034,9 @@
     threadElement;
     untrack(() => {
       const thread = threadElement;
+      navigationPending = false;
       if (hasUnplacedAcceptedSend()) supersedeRestorationWithAcceptedSend();
-      if (thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && heldUnreadKey === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
+      if (!manualReader && thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && heldUnreadKey === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
       noteMessageArrivals();
       requestReconciliation();
     });
@@ -938,7 +1053,20 @@
       if (!moved) return;
       // Changing height is not a reason to move the thread. Only coming back from
       // rest is, because the thread was not there to be read a moment ago.
-      if (previous === "rest" && wanted !== "rest") pendingOpen = true;
+      if (previous === "rest" && wanted !== "rest") {
+        pendingOpen = true;
+        // A plain reopen owns a fresh destination. Saved-address restoration keeps
+        // its distinct manual ownership, including a reader replacement in flight.
+        if (textRestoration === null && (viewAnchor === null || viewAnchor.following)) {
+          manualReader = false;
+          retirementOwner = null;
+          navigationPending = false;
+          if (answerRoomMessageId === null && heldSent === null && heldUnreadKey === null) {
+            reservedSpacePixels = 0;
+            retainedTopInset = null;
+          }
+        }
+      }
       requestReconciliation();
     });
   });
@@ -953,6 +1081,7 @@
       if (!canMeasure()) return;
       const height = thread.clientHeight;
       const difference = previousThreadHeight - height;
+      if (difference !== 0) navigationPending = false;
       previousThreadHeight = height;
       if (keys.includes(positionMotion)) return;
       if (difference !== 0 && heldUnreadKey === null && heldSent === null && !pendingOpen) {
@@ -962,11 +1091,13 @@
       repairLayout(thread);
     });
     const observer = new ResizeObserver(() => {
+      navigationPending = false;
       if (!canMeasure()) { dirty = true; return; }
       repairLayout(thread);
       requestReconciliation();
     });
     const acceptanceObserver = new MutationObserver(() => {
+      navigationPending = false;
       if (hasUnplacedAcceptedSend()) supersedeRestorationWithAcceptedSend();
       repairLayout(thread);
       requestReconciliation();
@@ -1002,15 +1133,17 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div
     class="chat-thread"
-    style:padding-top={heldUnreadKey !== null || answerRoomMessageId !== null ? `${SENT_MESSAGE_TOP_GAP_PIXELS}px` : undefined}
+    style:padding-top={heldUnreadKey !== null ? `${SENT_MESSAGE_TOP_GAP_PIXELS}px` : retainedTopInset !== null ? `${retainedTopInset}px` : undefined}
     data-conversation-thread
     data-conversation-placement-ready={placementReady}
+    data-conversation-position-owner={latestPending ? "latest" : manualReader ? "manual" : heldSent !== null ? "sent" : "following"}
     role="region"
     aria-label="Conversation"
     tabindex="0"
     bind:this={threadElement}
-    onloadcapture={requestReconciliation}
+    onloadcapture={() => { navigationPending = false; requestReconciliation(); }}
     onscroll={onThreadScroll}
+    onscrollend={() => { navigationPending = false; }}
     onwheel={stopAutomaticTravel}
     ontouchmove={stopAutomaticTravel}
     onpointerdown={(event) => { if (event.target === event.currentTarget) stopAutomaticTravel(); }}
@@ -1046,11 +1179,12 @@
         data-conversation-reserved-space
         bind:this={reservedSpaceElement}
         style:height={`${reservedSpacePixels}px`}
+        style:margin-top={`${-tailGap}px`}
         aria-hidden="true"
       ></div>
     {/if}
   </div>
-  {#if jumpVisible || newerHistory || newerThanUnplacedAnchor || latestPending}
+  {#if jumpVisible || newerHistory || newerThanUnplacedAnchor || latestPending || manualReader && reservedSpacePixels > 0}
     <button
       type="button"
       class="chat-jump"
@@ -1066,5 +1200,5 @@
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */
-  .c2-reserved { flex: none; }
+  .c2-reserved { flex: none; overflow-anchor: none; }
 </style>
