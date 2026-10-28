@@ -143,7 +143,9 @@ def test_real_vite_applications_share_only_their_generation(
             assert result.returncode == 0, result.stderr
             return dict(json.loads(result.stdout))
 
-        assert owner.get("/api/previews").status_code == 403
+        owner_preview = owner.get("/api/previews")
+        assert owner_preview.status_code == 400
+        assert owner_preview.json()["error"]["code"] == "agent_forbidden"
 
         project = api(
             "POST", "/api/projects", json={"name": "Vite proof", "folder_path": str(repo)}
