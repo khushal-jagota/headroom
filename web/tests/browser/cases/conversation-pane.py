@@ -1021,6 +1021,7 @@ def _run(browser, urls):
             assert len(phase_requests) == 1 and not phase_failures, (phase_requests, phase_failures)
             original_route = pending[0]
             next_identity = page.evaluate('window.__selectEquivalentScrollConversation()')
+            settled(page)
             active_entry = entry_phase()
             assert active_entry['id'] == next_identity and next_identity != settled_entry['id'], active_entry
             assert active_entry['sameRoot'] and active_entry['samePreview'] and active_entry['activeBusy'], active_entry
