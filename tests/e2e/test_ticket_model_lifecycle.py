@@ -8,6 +8,7 @@ this case adds no browser host and makes no claim about native/provider operatio
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, Request, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
@@ -29,6 +30,7 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
+    tmp_path: Path,
 ) -> None:
     server = rail_server
     api.direct_post(server, "/api/test/ticket-model-catalog", {})
@@ -149,3 +151,4 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
         page.locator("[data-model-picker-check]").click()
     assert retry.value.ok, retry.value.text()
     assert retry.value.json()["validation"]["corrective_action"] == "authenticate_provider"
+    page.screenshot(path=str(tmp_path / "ticket-model-lifecycle.png"), full_page=True)
