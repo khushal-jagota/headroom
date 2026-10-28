@@ -27,7 +27,7 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
         "title": "Exact mounted model intent", "worker_type": "coding",
         "brief": "Offline synthetic provider proof.", "project_id": project["id"],
         "manager": {"kind": "chief", "id": "chief"}, "locale": "vps",
-        "employee_backend": "codex", "employee_launch_model": "gpt-6.1-sol",
+        "employee_backend": "codex", "employee_launch_model": "gpt-browser-initial",
         "employee_launch_reasoning_effort": None, "selection_kind": "concrete",
     })
     identity = str(ticket["id"])

@@ -29,7 +29,7 @@ def _no_native_identity() -> Never:
 class TicketModelObserver(ScriptedCatalogObserver):
     def __init__(self) -> None:
         super().__init__(_no_native_identity)
-        self.models = ("gpt-6.1-sol", "gpt-browser-proof")
+        self.models = ("gpt-browser-initial", "gpt-browser-proof")
         self.efforts = ()
         self.credentials = PrerequisiteStatus.available
 
