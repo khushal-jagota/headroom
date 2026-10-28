@@ -262,7 +262,18 @@ def _preview_lifecycle(browser, url):
         page.wait_for_function("!document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
         assert not page.evaluate("window.__firstPreview.isConnected")
         assert sum('preview0.html' in href for href in reads) == 2, reads
-        expect(restored_slot.locator('.quiet-line')).to_have_text('file fetch failed: 503')
+        expect(restored_slot.locator('.quiet-line')).to_have_text('preview0.html — file fetch failed: 503')
+        failed_name = restored_slot.locator('.file-preview-failed-name')
+        expect(failed_name).to_have_text('preview0.html')
+        assert failed_name.evaluate("""element => {
+          const style = getComputedStyle(element);
+          const reference = document.createElement('span');
+          reference.style.color = 'var(--text-strong)';
+          element.append(reference);
+          const strongColor = getComputedStyle(reference).color;
+          reference.remove();
+          return style.fontWeight === '600' && style.color === strongColor;
+        }""")
         # Failure completes restoration and is retryable when this preview returns.
         page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
         page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-state]')?.dataset.visibleContentState !== 'active'")
@@ -948,6 +959,11 @@ def _run(browser, urls):
         )
         before = newest_reading(page)
         before_row_height = page.evaluate("window.__delayedRow.getBoundingClientRect().height")
+        capped_following = kind == "markdown" and mode == "following"
+        if capped_following:
+            before_clip_height = page.evaluate(
+                "window.__delayedRow.querySelector('.file-preview-clip').getBoundingClientRect().height"
+            )
         if mode == "scrollback":
             assert page.evaluate("performance.now() - window.__lastRegressionWheel") < 400
         # This is response release, with no row assignment, replaced message, or app event.
@@ -990,7 +1006,27 @@ def _run(browser, urls):
         assert page.evaluate("window.__delayedRow.isConnected")
         assert page.locator("[data-conversation-row]").count() == row_count
         growth = page.evaluate("window.__delayedRow.getBoundingClientRect().height") - before_row_height
-        assert growth > 0, growth
+        if capped_following:
+            # The approved card replaces its capped placeholder without thread travel.
+            clip = page.evaluate("""() => {
+              const clip = window.__delayedRow.querySelector('.file-preview-clip');
+              const style = getComputedStyle(clip);
+              return {height:clip.getBoundingClientRect().height,
+                cap:parseFloat(style.maxHeight),
+                expectedCap:24 * parseFloat(getComputedStyle(document.documentElement).fontSize),
+                contentHeight:clip.scrollHeight, clientHeight:clip.clientHeight,
+                overflow:style.overflowY, mask:style.maskImage};
+            }""")
+            assert clip["cap"] == clip["expectedCap"], clip
+            assert abs(before_clip_height - clip["cap"]) <= 1, (before_clip_height, clip)
+            assert abs(clip["height"] - clip["cap"]) <= 1, clip
+            assert clip["contentHeight"] > clip["clientHeight"], clip
+            assert clip["overflow"] == "hidden", clip
+            assert clip["mask"].startswith("linear-gradient("), clip
+            assert abs(growth) <= 1, growth
+            print("CAPPED_MARKDOWN_PROOF", clip, flush=True)
+        else:
+            assert growth > 0, growth
         if held:
             assert held["text"].startswith("Tall paragraph"), held
             actual = assert_native_growth(page, held, growth)
@@ -1000,6 +1036,9 @@ def _run(browser, urls):
             actual_scroll = actual["scrollTop"]
         if not held:
             assert abs((actual_scroll - before["scrollTop"]) - growth) <= 2, (growth, before, actual_scroll)
+        if capped_following:
+            assert abs(actual_scroll - before["scrollTop"]) <= 1, (before, actual)
+            assert abs(actual["bottom"] - before["bottom"]) <= 1, (before, actual)
         print(
             "DELAYED_GEOMETRY",
             kind,
