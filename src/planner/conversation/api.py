@@ -871,16 +871,70 @@ async def read_destination_model_choices(
 
     with closing(connect(runtime.database_path)) as conn:
         ticket_id = raw.get("ticket_id")
-        if ticket_id is not None:
-            if not isinstance(ticket_id, str) or set(raw) != {"ticket_id"}:
-                raise PlannerError(
-                    ErrorCode.validation, "model choices require an exact Ticket context", {}
-                )
+        if "ticket_id" in raw:
+            from planner.conversation.contracts import require_conversation_backend_key
+            from planner.conversation.model_resolution.contracts import SelectionKind
+            from planner.tickets.contracts import TicketLocale
+            from planner.tickets.validation.data import read_launch_selection
+
+            allowed = {
+                "ticket_id",
+                "locale",
+                "employee_backend",
+                "employee_launch_model",
+                "employee_launch_reasoning_effort",
+                "selection_kind",
+            }
+            if set(raw) - allowed:
+                raise PlannerError(ErrorCode.validation, "unknown model choices field", {})
+            for key, value in raw.items():
+                if key == "employee_launch_reasoning_effort" and value is None:
+                    continue
+                if not isinstance(value, str) or not value.strip():
+                    raise PlannerError(ErrorCode.validation, f"invalid {key}", {})
             authority.require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
+            ticket = ticket_data.read_ticket(conn, ticket_id)
+            prior = (
+                None
+                if ticket.employee_launch_model is None
+                else read_launch_selection(conn, ticket_id)
+            )
+            backend = raw.get("employee_backend", ticket.employee_backend)
+            model = raw.get("employee_launch_model", ticket.employee_launch_model)
+            effort = raw.get(
+                "employee_launch_reasoning_effort", ticket.employee_launch_reasoning_effort
+            )
+            changed = backend != ticket.employee_backend or model != ticket.employee_launch_model
+            try:
+                destination = TicketLocale(raw.get("locale", ticket.locale))
+                require_conversation_backend_key(backend)
+                requested_kind = (
+                    SelectionKind(raw["selection_kind"]) if "selection_kind" in raw else None
+                )
+            except ValueError as error:
+                raise PlannerError(
+                    ErrorCode.validation, "invalid model choices selection", {}
+                ) from error
+            if prior is not None and not changed:
+                if requested_kind is not None and requested_kind is not prior.selection_kind:
+                    raise PlannerError(
+                        ErrorCode.validation, "selection kind conflicts with saved intent", {}
+                    )
+                kind = prior.selection_kind
+            else:
+                kind = requested_kind or SelectionKind.legacy_unclassified
+            # Supply the complete effective selection: an effort-only preview must not
+            # fall through the launch helper's omitted-configuration compatibility path.
             validation = await verify_ticket_launch(
                 runtime.system,
                 conn,
-                ticket_data.read_ticket(conn, ticket_id),
+                ticket,
+                locale=destination,
+                employee_backend=backend,
+                employee_launch_model=model,
+                employee_launch_reasoning_effort=effort,
+                selection_kind=kind,
+                classify_new=changed,
                 persist=False,
                 now=int(time.time()),
             )

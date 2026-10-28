@@ -306,6 +306,13 @@ async def verify_ticket_launch(
     validator = getattr(system, "validate_launch_selection", None)
     if callable(validator):
         stored = read_launch_validation(conn, ticket.id)
+        # The same token on another provider is not the same alias history.
+        history = (
+            stored
+            if stored is not None
+            and stored.validation.selection.backend_key == selection.backend_key
+            else None
+        )
         validation = await validator(
             selection,
             workspace,
@@ -313,9 +320,9 @@ async def verify_ticket_launch(
             classify_new=classify_new,
             previous_alias_resolution=(
                 None
-                if stored is None
-                else stored.validation.current_alias_resolution
-                or stored.validation.previous_alias_resolution
+                if history is None
+                else history.validation.current_alias_resolution
+                or history.validation.previous_alias_resolution
             ),
         )
     else:
@@ -323,7 +330,12 @@ async def verify_ticket_launch(
         validation = unresolved_validation(selection, ValidationReason.catalog_unavailable)
     from planner.runtime.logic.launch_selection import preserve_alias_history
 
-    validation = preserve_alias_history(validation, None if stored is None else stored.validation)
+    validation = preserve_alias_history(
+        validation,
+        None
+        if stored is None or stored.validation.selection.backend_key != selection.backend_key
+        else stored.validation,
+    )
     if persist and not proposed and locale is None:
         if validation.selection.selection_kind != selection.selection_kind:
             updated = set_selection_kind(

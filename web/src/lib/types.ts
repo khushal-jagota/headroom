@@ -287,6 +287,8 @@ export type TicketFieldApproval = {
 };
 
 export type TicketDetail = {
+  /** Missing in an older decoded body means unobserved, never compatible. */
+  launch_validation?: import("./ticketWorkspace/contracts").LaunchValidationProjection;
   locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;

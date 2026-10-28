@@ -1,4 +1,5 @@
-export type { PickerRow, CanonicalModelValidation, ModelSelection } from "./modelResolutionWire";
+import type { CanonicalModelValidation, DestinationModelChoicesRequest, DestinationModelChoicesResponse } from "./modelResolutionWire";
+export type { PickerRow, CanonicalModelValidation, ModelSelection, DestinationModelChoicesRequest, DestinationModelChoicesResponse, TicketModelChoicesRequest, DraftModelChoicesRequest } from "./modelResolutionWire";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
@@ -282,6 +283,7 @@ export type ConversationEvent =
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
         refusal_detail?: string | null;
+        model_validation?: CanonicalModelValidation;
         sender_message_id?: string;
       } & AddressedMessageFields
     >
@@ -385,7 +387,7 @@ export type PromptDeliveryFate =
   | { fate: "started" }
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
-  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
+  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason; model_validation?: CanonicalModelValidation }
   | { fate: "uncertain" }
   | { fate: "suppressed"; reason: string };
 
@@ -394,7 +396,7 @@ export type HeldPromptPromotionResult =
   | ({ promoted: true } & (
       | { fate: "started" }
       | { fate: "injected" }
-      | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
+      | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason; model_validation?: CanonicalModelValidation }
       | { fate: "uncertain" }
       | { fate: "suppressed"; reason: string }
     ));
@@ -722,6 +724,12 @@ export function promoteHeldPrompt(
       + `/held-prompts/${encodeURIComponent(heldPromptId)}/promote`,
     postJson({ mode })
   );
+}
+
+export function readDestinationModelChoices(
+  selection: DestinationModelChoicesRequest
+): Promise<DestinationModelChoicesResponse> {
+  return request<DestinationModelChoicesResponse>("/backends/model-choices", postJson(selection));
 }
 
 export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {

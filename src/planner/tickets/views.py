@@ -106,39 +106,36 @@ def launch_validation_json(conn: sqlite3.Connection, ticket_id: str) -> JsonDict
     from pydantic import TypeAdapter
 
     from planner.conversation.model_resolution.contracts import (
-        CanonicalModelValidation,
-        ModelSelection,
+        CorrectiveAction,
+        ValidationReason,
+        ValidationState,
     )
+    from planner.tickets.validation.contracts import LaunchValidationProjection
     from planner.tickets.validation.data import read_launch_selection, read_launch_validation
 
     ticket = tickets_data.read_ticket(conn, ticket_id)
+    projection: LaunchValidationProjection
     if ticket.employee_launch_model is None:
-        return {
+        projection = {
             "selection": None,
             "validation": None,
             "current": False,
             "transition_revision": None,
-            "state": "unresolved",
-            "reason": "legacy_unscoped",
-            "corrective_action": "classify_selection",
+            "state": ValidationState.unresolved,
+            "reason": ValidationReason.legacy_unscoped,
+            "corrective_action": CorrectiveAction.classify_selection,
         }
-    stored = read_launch_validation(conn, ticket_id)
-    return {
-        "selection": TypeAdapter(ModelSelection).dump_python(
-            read_launch_selection(conn, ticket_id),
-            mode="json",
-        ),
-        "validation": (
-            None
-            if stored is None
-            else TypeAdapter(CanonicalModelValidation).dump_python(
-                stored.validation,
-                mode="json",
-            )
-        ),
-        "current": stored is not None and stored.current,
-        "transition_revision": None if stored is None else stored.transition_revision,
-    }
+    else:
+        stored = read_launch_validation(conn, ticket_id)
+        projection = {
+            "selection": read_launch_selection(conn, ticket_id),
+            "validation": None if stored is None else stored.validation,
+            "current": stored is not None and stored.current,
+            "transition_revision": None if stored is None else stored.transition_revision,
+        }
+    encoded = TypeAdapter(LaunchValidationProjection).dump_python(projection, mode="json")
+    assert isinstance(encoded, dict)
+    return encoded
 
 
 def ticket_creation_json(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:

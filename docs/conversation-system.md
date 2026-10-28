@@ -790,6 +790,23 @@ existing format 2 container. The VPS keeps command arguments in the existing
 verification authority. Known outcomes replay as recorded. Unknown outcomes never
 authorize redispatch.
 
+`POST /api/conversation/backends/model-choices` reads `{validation, rows}` without
+changing Ticket settings, claims or launch authority. An existing Ticket request names
+`ticket_id` and may supply `locale`, `employee_backend`, `employee_launch_model`,
+`employee_launch_reasoning_effort` and `selection_kind`. Omitted values preserve saved
+intent, including effort when the model changes. An explicit null effort requests the
+provider default. The saved kind cannot be relabelled while backend and token remain
+unchanged. A different backend or token is classified from its own scoped evidence.
+Alias history follows destination changes within the same backend; another backend's
+same-spelled token does not inherit that history. Authority is checked before discovery.
+The existing creation-draft request remains supported. These reads may cache metadata;
+their answers are advisory and settings writes and admission still revalidate.
+
+Ticket detail and workspace reads expose `launch_validation`: selection, nullable
+validation, whether that validation is current, and its transition revision. Historical
+missing selections also expose the canonical unresolved reason and corrective action.
+Refused prompt replies and events may carry `model_validation`; older records omit it.
+
 Backend reads expose typed picker facts and structured validation. Presentation remains
 subject to the separately approved compact-controls Design. This source requires the
 combined review and matching peers before any later operator application.

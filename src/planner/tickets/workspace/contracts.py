@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from planner.core.contracts import JsonDict, Principal
+from planner.core.contracts import Principal
 from planner.tickets.contracts import TicketFieldApproval, TicketLocale
+from planner.tickets.validation.contracts import LaunchValidationProjection
 
 
 class WorkspaceProposal(TypedDict):
@@ -41,7 +42,7 @@ class WorkspaceTicket(TypedDict):
     employee_launch_model: str | None
     employee_launch_reasoning_effort: str | None
     employee_configuration_editable: bool
-    launch_validation: JsonDict
+    launch_validation: LaunchValidationProjection
     stage: str
     ticket_status: str
     is_backlogged: bool
