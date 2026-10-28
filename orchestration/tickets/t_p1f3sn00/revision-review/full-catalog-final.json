@@ -1,0 +1,293 @@
+{
+  "outcome": "passed",
+  "cases": [
+    {
+      "id": "feedback-inbox",
+      "entry": "shell-feedback",
+      "status": "passed",
+      "seconds": 23.526496922015212,
+      "timing": {
+        "navigationSeconds": 1.2301695080241188,
+        "screenshotSeconds": 0.6721846128348261,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 2,
+        "screenshots": 18,
+        "fixedWaits": 0,
+        "unattributedSeconds": 21.624142801156268
+      }
+    },
+    {
+      "id": "workspace-utility-pane",
+      "entry": "shell-feedback",
+      "status": "passed",
+      "seconds": 95.38354158203583,
+      "timing": {
+        "navigationSeconds": 1.3805606140522286,
+        "screenshotSeconds": 2.102930895984173,
+        "fixedWaitSeconds": 27.805149303167127,
+        "fixedWaitRequestedSeconds": 27.61000000000001,
+        "navigations": 15,
+        "screenshots": 43,
+        "fixedWaits": 97,
+        "unattributedSeconds": 64.0949007688323
+      }
+    },
+    {
+      "id": "stage-owner",
+      "entry": "ticket-review",
+      "status": "passed",
+      "seconds": 0.4250595049234107,
+      "timing": {
+        "navigationSeconds": 0.06843329803086817,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.06387813214678317,
+        "fixedWaitRequestedSeconds": 0.05999999999999872,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 3,
+        "unattributedSeconds": 0.29274807474575937
+      }
+    },
+    {
+      "id": "approve-default",
+      "entry": "ticket-review",
+      "status": "passed",
+      "seconds": 9.017025526962243,
+      "timing": {
+        "navigationSeconds": 0.4100209790049121,
+        "screenshotSeconds": 0.21550119307357818,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 3,
+        "screenshots": 4,
+        "fixedWaits": 0,
+        "unattributedSeconds": 8.391503354883753
+      }
+    },
+    {
+      "id": "ticket-review-flow",
+      "entry": "ticket-review",
+      "status": "passed",
+      "seconds": 23.722158927004784,
+      "timing": {
+        "navigationSeconds": 0.13465533801354468,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.5750819590175524,
+        "fixedWaitRequestedSeconds": 0.5600000000000023,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 6,
+        "unattributedSeconds": 23.012421629973687
+      }
+    },
+    {
+      "id": "scheduled-tasks",
+      "entry": "configuration-schedules",
+      "status": "passed",
+      "seconds": 3.127849565935321,
+      "timing": {
+        "navigationSeconds": 0.6493916109902784,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 2.4784579549450427
+      }
+    },
+    {
+      "id": "skill-editors",
+      "entry": "configuration-schedules",
+      "status": "passed",
+      "seconds": 1.1095214890083298,
+      "timing": {
+        "navigationSeconds": 0.2738324721576646,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 4,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 0.8356890168506652
+      }
+    },
+    {
+      "id": "conversation-pane",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 180.2037025130121,
+      "timing": {
+        "navigationSeconds": 10.348213641904294,
+        "screenshotSeconds": 2.5618735385360196,
+        "fixedWaitSeconds": 20.71773423301056,
+        "fixedWaitRequestedSeconds": 20.480000000000018,
+        "navigations": 79,
+        "screenshots": 44,
+        "fixedWaits": 110,
+        "unattributedSeconds": 146.57588109956123
+      }
+    },
+    {
+      "id": "live-conversation-switch",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 1.9542215670226142,
+      "timing": {
+        "navigationSeconds": 0.03184166306164116,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.7614203160628676,
+        "fixedWaitRequestedSeconds": 0.7500000000000071,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 7,
+        "unattributedSeconds": 1.1609595878981054
+      }
+    },
+    {
+      "id": "live-conversation-unanswered-send",
+      "entry": "conversation",
+      "status": "passed",
+      "seconds": 50.62867798109073,
+      "timing": {
+        "navigationSeconds": 0.3542264651041478,
+        "screenshotSeconds": 0.3251594961620867,
+        "fixedWaitSeconds": 30.930947832297534,
+        "fixedWaitRequestedSeconds": 30.704999999999856,
+        "navigations": 14,
+        "screenshots": 5,
+        "fixedWaits": 115,
+        "unattributedSeconds": 19.018344187526964
+      }
+    },
+    {
+      "id": "conversation-composer",
+      "entry": "composer-voice",
+      "status": "passed",
+      "seconds": 4.060089075937867,
+      "timing": {
+        "navigationSeconds": 1.1576578838285059,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0.10177092789672315,
+        "fixedWaitRequestedSeconds": 0.09999999999999432,
+        "navigations": 27,
+        "screenshots": 0,
+        "fixedWaits": 2,
+        "unattributedSeconds": 2.800660264212638
+      }
+    },
+    {
+      "id": "skeleton-regions",
+      "entry": "skeleton",
+      "status": "passed",
+      "seconds": 8.369069328997284,
+      "timing": {
+        "navigationSeconds": 0.5428461729316041,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 1,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 7.82622315606568
+      }
+    },
+    {
+      "id": "vps-page",
+      "entry": "vps",
+      "status": "passed",
+      "seconds": 2.159839548985474,
+      "timing": {
+        "navigationSeconds": 0.051722259959205985,
+        "screenshotSeconds": 0.5276418791618198,
+        "fixedWaitSeconds": 0.19287533010356128,
+        "fixedWaitRequestedSeconds": 0.16999999999997328,
+        "navigations": 1,
+        "screenshots": 10,
+        "fixedWaits": 8,
+        "unattributedSeconds": 1.3876000797608867
+      }
+    },
+    {
+      "id": "artifact-keeps-its-conversation",
+      "entry": "artifact-in-place",
+      "status": "passed",
+      "seconds": 2.2719543679850176,
+      "timing": {
+        "navigationSeconds": 0.20320100907702,
+        "screenshotSeconds": 0,
+        "fixedWaitSeconds": 0,
+        "fixedWaitRequestedSeconds": 0,
+        "navigations": 2,
+        "screenshots": 0,
+        "fixedWaits": 0,
+        "unattributedSeconds": 2.0687533589079976
+      }
+    }
+  ],
+  "companion": {
+    "schema": 1,
+    "invocationId": "a0fe9471-7e72-4601-81fd-2ee6cc5fd9c2",
+    "revision": "16bdfe4f975548f5b474827c70a6df7ddf63819f",
+    "outcome": "passed",
+    "compiler": "passed",
+    "runtime": [
+      {
+        "path": "web/tests/artifact-press.test.ts",
+        "cases": [
+          {
+            "name": "the press that opens an artifact where it was named > takes a preview address, which exists to ask for the viewer",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > takes a managed link whose format has something to show",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves a managed file with nothing to preview as the download it is",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > takes a preview address even for a file the viewer can only offer",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves a link the writer marked as a download",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves a press asking for another tab, and one asking for a new window",
+            "status": "passed"
+          },
+          {
+            "name": "the press that opens an artifact where it was named > leaves every other address alone",
+            "status": "passed"
+          }
+        ]
+      }
+    ]
+  },
+  "schema": 1,
+  "revision": "16bdfe4f975548f5b474827c70a6df7ddf63819f",
+  "invocationId": "a0fe9471-7e72-4601-81fd-2ee6cc5fd9c2",
+  "selected": [
+    "web/tests/shell-feedback-browser.test.mjs",
+    "web/tests/ticket-review-browser.test.mjs",
+    "web/tests/configuration-schedules-browser.test.mjs",
+    "web/tests/conversation-browser.test.mjs",
+    "web/tests/composer-voice-browser.test.mjs",
+    "web/tests/skeleton-regions-browser.test.mjs",
+    "web/tests/vps-browser.test.mjs",
+    "web/tests/artifact-in-place-browser.test.mjs"
+  ],
+  "timing": {
+    "companionSeconds": 5.7136655769999996,
+    "prepareSeconds": 0.019746052999999847,
+    "sharedBuildSeconds": 8.410655636,
+    "sharedServerSeconds": 0.004271646999999575,
+    "browserStartupSeconds": 0.07265660096891224,
+    "teardownSeconds": 0.014856479999958537,
+    "invocationSeconds": 421.98336334
+  }
+}

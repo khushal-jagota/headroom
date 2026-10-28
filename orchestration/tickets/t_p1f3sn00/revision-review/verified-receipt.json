@@ -1,0 +1,16 @@
+{
+  "revision": "16bdfe4f975548f5b474827c70a6df7ddf63819f",
+  "staging_base": "c1d99e049b3d8daa121c21cd0a88ac8d9234d546",
+  "invocation": "a0fe9471-7e72-4601-81fd-2ee6cc5fd9c2",
+  "outcome": "passed",
+  "declared_cases": 14,
+  "passed_cases": 14,
+  "selected_entries": 8,
+  "companion": "passed",
+  "compiler": "passed",
+  "seconds": 421.98336334,
+  "selectors_absent": true,
+  "source_unchanged_through_run": true,
+  "no_gate_retry": true,
+  "attribution": "Unreproduced; no causal attribution established"
+}

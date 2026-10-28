@@ -1,0 +1,673 @@
+{
+  "attribution": "Inconclusive. Original10.97px failure remains unreproduced. Neither pre-existing nor branch-caused is established.",
+  "strict_entrance_limit_pixels": 8,
+  "original_failure_pixels": 10.969999999999995,
+  "retries": 0,
+  "experiments": [
+    {
+      "name": "feedback-attribution",
+      "source_module_counts": {
+        "baseline": 587,
+        "branch": 587
+      },
+      "raw_imported_source_differences": [],
+      "runs": {
+        "baseline": {
+          "result": {
+            "revision": "c1d99e049b3d8daa121c21cd0a88ac8d9234d546",
+            "source_root": "/home/vps/projects/panels/worktrees/t_p1f3sn00-feedback-baseline",
+            "status": "passed",
+            "host": "v2202607386010487796",
+            "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+            "interpreter": "/home/vps/projects/panels/worktrees/t_p1f3sn00-feedback-baseline/.venv/bin/python",
+            "playwright": "1.61.0",
+            "cpu_count": 12,
+            "load_start": [
+              1.05078125,
+              1.12060546875,
+              2.138671875
+            ],
+            "viewport": {
+              "desktop": [
+                1280,
+                844
+              ],
+              "phone": [
+                390,
+                844
+              ]
+            },
+            "clock": "Original full case uses wall clock except original page.clock.install/fast_forward section. No wrapper timing changes.",
+            "gate_receipt": false,
+            "planner_source": "/home/vps/projects/panels/worktrees/t_p1f3sn00-feedback-baseline/src/planner/__init__.py",
+            "browser": "149.0.7827.55",
+            "seconds": 24.02100872399751,
+            "load_end": [
+              0.69091796875,
+              1.029296875,
+              2.080078125
+            ]
+          },
+          "entrance_max_absolute_delta_pixels": 6.189999999999998,
+          "entrance_frame_count": 76,
+          "worst_pair": [
+            {
+              "ms": 207,
+              "height": 19.64,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 772.36,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            },
+            {
+              "ms": 223,
+              "height": 25.83,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 766.17,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            }
+          ],
+          "frame_trace": "feedback-attribution/baseline/frame-captures.json",
+          "entry_url": ".test-scratch/feedback-index-3898063.html"
+        },
+        "branch": {
+          "result": {
+            "revision": "974aee1a9541241bc63625ea5fd8d15c84102329",
+            "source_root": "/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers",
+            "status": "passed",
+            "host": "v2202607386010487796",
+            "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+            "interpreter": "/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/bin/python",
+            "playwright": "1.61.0",
+            "cpu_count": 12,
+            "load_start": [
+              0.69091796875,
+              1.029296875,
+              2.080078125
+            ],
+            "viewport": {
+              "desktop": [
+                1280,
+                844
+              ],
+              "phone": [
+                390,
+                844
+              ]
+            },
+            "clock": "Original full case uses wall clock except original page.clock.install/fast_forward section. No wrapper timing changes.",
+            "gate_receipt": false,
+            "planner_source": "/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/src/planner/__init__.py",
+            "browser": "149.0.7827.55",
+            "seconds": 24.02310358104296,
+            "load_end": [
+              0.4541015625,
+              0.94580078125,
+              2.02392578125
+            ]
+          },
+          "entrance_max_absolute_delta_pixels": 6.359999999999999,
+          "entrance_frame_count": 75,
+          "worst_pair": [
+            {
+              "ms": 192,
+              "height": 18.67,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 773.33,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            },
+            {
+              "ms": 208,
+              "height": 25.03,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 766.97,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            }
+          ],
+          "frame_trace": "feedback-attribution/branch/frame-captures.json",
+          "entry_url": ".test-scratch/feedback-index-3898063.html"
+        }
+      },
+      "emitted": {
+        "baseline": {
+          "reachable_feedback_js_css": [
+            "assets/ArtifactsBand-BmN8WEp3.js",
+            "assets/ArtifactsBand-CQr4ju2r.css",
+            "assets/BackendsRoute-Bd050m14.css",
+            "assets/BackendsRoute-C5KTqJyT.js",
+            "assets/ConfigRoute-DDOqbkf5.js",
+            "assets/ConfigRoute-DPAN3rdT.css",
+            "assets/FeedbackRoute-tx4HqfkC.js",
+            "assets/FilePreviewRoute-CuN9zZQH.js",
+            "assets/IdeasRoute-CEx7ShdZ.js",
+            "assets/ManagerWorkspace-BDUzWa9F.js",
+            "assets/ManagerWorkspace-DgOzkJ9u.css",
+            "assets/ReviewRoute-BD9pvG9V.js",
+            "assets/ReviewRoute-DLJwuDck.css",
+            "assets/ScreenHeader-CFsNVjrL.js",
+            "assets/SegmentedControl-CNlOIycy.js",
+            "assets/SettingsRoute-B_V4N1-q.css",
+            "assets/SettingsRoute-DsbjpU66.js",
+            "assets/TicketRoute-Dc7PDTB-.css",
+            "assets/TicketRoute-DfVGWuV8.js",
+            "assets/WorkerProposalCard-CeZSVXU7.js",
+            "assets/WorkerProposalCard-Cku3Dm2y.css",
+            "assets/employeeConfigurationEditor.svelte-gLmBwwif.js",
+            "assets/feedback-index-3898063-BDwpJAGb.js",
+            "assets/parser.worker-BlNHhEYv.js"
+          ],
+          "workspace_host_chunks": [],
+          "workspace_host_reachable_from_feedback": [],
+          "all_build_raw_hashes": {
+            "assets/ArtifactsBand-BmN8WEp3.js": "8c034a2b13915ff5db142fdd4040fae348b2b1c99f99e43cf76a3a4470a74195",
+            "assets/ArtifactsBand-CQr4ju2r.css": "ae318a707f2c84e0f3dbf20ec0937c66411c62bd01e94a8b6d2da3668fd16392",
+            "assets/BackendsRoute-Bd050m14.css": "483c593f4822d71bf505022f9e55f9c28532e20f65e7d9daf1d055cfbd1b75f4",
+            "assets/BackendsRoute-C5KTqJyT.js": "01174eceb13768879aa00ac5235a38f4fcbefe03c60aa86a5555c9cee1b56b58",
+            "assets/ConfigRoute-DDOqbkf5.js": "5714b8176ebb9658679dafced4a274210cc2631181358bd374e5eceb53dd0d54",
+            "assets/ConfigRoute-DPAN3rdT.css": "3052e83e20c8af53fab6102e46dc9ec80fa17e6c60dc5019f46823adf1b5f8c3",
+            "assets/FeedbackRoute-tx4HqfkC.js": "0024f8849b2fcf833c4403c1dcd8eb8b865ee13fb1667aede3d09dbdbb59373e",
+            "assets/FilePreviewRoute-CuN9zZQH.js": "1a15588b25ba5239016821b8d8070c9b78dc603de5799592ad119a3213a9864c",
+            "assets/IdeasRoute-CEx7ShdZ.js": "806e5a69b2e55c259fb1ead6fe20958c5f8c17f6d15883cde9d3f5b1a0dda538",
+            "assets/ManagerWorkspace-BDUzWa9F.js": "885f4df34c1f33526a31acfb71d948dd39d5c07a0b674b9285686c4293e0ffc6",
+            "assets/ManagerWorkspace-DgOzkJ9u.css": "0578313766df1e6bccd9ded677292afa9e0905b6c502d9accdcfb5dd064345ad",
+            "assets/ReviewRoute-BD9pvG9V.js": "bd25dbbf34bda8b9800d4b41a68776617303558fa49872d6ef58a61d320b4aa2",
+            "assets/ReviewRoute-DLJwuDck.css": "54ebbd25908a9b9fb006254ca8af8cb7b09f132dac030f3aa6e0fcc6c5dcede8",
+            "assets/ScreenHeader-CFsNVjrL.js": "37c76a7a9e96510fa7329edef22b28932ef21777f99dc6a1fe9c9a0886b4d718",
+            "assets/SegmentedControl-CNlOIycy.js": "e25baf3f9315d458c5a7e85d2fc145cb6de5b7d055a6e6e19c4aea3616c90399",
+            "assets/SettingsRoute-B_V4N1-q.css": "78c1a9f050bf88aa807d0cf5abd3620499fa368c938016e431921c3ad5e45775",
+            "assets/SettingsRoute-DsbjpU66.js": "af2af61b12282cf431b21a3729231114b6f3cfea9c110da64ffe8858978f9b0b",
+            "assets/TicketRoute-Dc7PDTB-.css": "608da1ba1b7ea1704418c5e4ff0f4397c2ebbbd1f5a3839db40e300cbf561706",
+            "assets/TicketRoute-DfVGWuV8.js": "637b21ba1332862b9d972833fe79bd781326a4fc72ea62b0e85d61171f50196a",
+            "assets/WorkerProposalCard-CeZSVXU7.js": "85ca42027d665e7a2df11b2d309213731230c7c86f8605c055cab40ddf0bfa4d",
+            "assets/WorkerProposalCard-Cku3Dm2y.css": "e7b8674f73e23452b27cb6ee4c0438d25d367c30ed5b2740dd9e6a54d5c3b7d2",
+            "assets/employeeConfigurationEditor.svelte-gLmBwwif.js": "a212a80893e8d9e9b646530dcb7901bbe7cc834d5e9a722830c02dac6ced43b9",
+            "assets/feedback-index-3898063-BDwpJAGb.js": "de362573e0d2cbf6ef0c56098d04c98b7a95cc193be8d64ec8f98ed79af77f09",
+            "assets/feedback-index-3898063-Dbk-BOr3.css": "4bd595d2f7c8999dc1cabc9e246804cb8b9dba32cea338882a407f68fc4094b5",
+            "assets/parser.worker-BlNHhEYv.js": "ecb3112d2c3f56175bce64b304587352b757cb31d91a0776eac6c2abda9ce7ba"
+          },
+          "feedback_css_scope_normalized_sha256": {
+            "assets/ConfigRoute-HASH.css": "6f6ed71487a4cb9a49cda24805fd09a0aacbc6e02b38473691f6212e2461f1c9",
+            "assets/BackendsRoute-HASH.css": "ce7fcc2feb1a8b317a9ac419321f424a779a045a62b81d565d5d26f25c85c78c",
+            "assets/ManagerWorkspace-HASH.css": "ea8adc246de01a61190ba450011f624c40946ff6b8148719bb97f3d99f2bcf42",
+            "assets/TicketRoute-HASH.css": "2389ee32f39e2ead0eb984eb72577ae915f78f613e2b9f563d3bb4c0867d5c0c",
+            "assets/ReviewRoute-HASH.css": "ab4966f88c82f656e211e2cde81e3a86cf87e6fda96037a36dad5449bcbba41f",
+            "assets/ArtifactsBand-HASH.css": "caee432c2e4eca3acf7a7635d5b1359fbeabd19d74f915fc93ea3c9a87422def",
+            "assets/SettingsRoute-HASH.css": "36f3532b90115012a5880113e9e617bfc7b306004aea2eb5aa34f29c7cc692b2",
+            "assets/WorkerProposalCard-HASH.css": "0179ee3772fd7afe35410e726a99822b834031e1e162ac3f2894e581f16f8e5f"
+          }
+        },
+        "branch": {
+          "reachable_feedback_js_css": [
+            "assets/ArtifactsBand-Bcs0N5HG.js",
+            "assets/ArtifactsBand-Bq37rJCA.css",
+            "assets/BackendsRoute-DjzCDdbK.js",
+            "assets/BackendsRoute-ZdhmAoRL.css",
+            "assets/ConfigRoute-BhHiHj4t.css",
+            "assets/ConfigRoute-DcK59Noq.js",
+            "assets/FeedbackRoute-CvrcgobC.js",
+            "assets/FilePreviewRoute-CL3OGFPd.js",
+            "assets/IdeasRoute-6OTyh33J.js",
+            "assets/ManagerWorkspace-BfXZopfe.js",
+            "assets/ManagerWorkspace-BjHsWsUT.css",
+            "assets/ReviewRoute-5NYkbd3K.js",
+            "assets/ReviewRoute-rCtrbAcj.css",
+            "assets/ScreenHeader-D4mj2n4h.js",
+            "assets/SegmentedControl-DTPo9x0v.js",
+            "assets/SettingsRoute-Buxxq2he.js",
+            "assets/SettingsRoute-eO4SGJ33.css",
+            "assets/TicketRoute-B5766i2e.css",
+            "assets/TicketRoute-CCSsQh7H.js",
+            "assets/WorkerProposalCard-BIba2d_g.js",
+            "assets/WorkerProposalCard-CE5nQ7oB.css",
+            "assets/employeeConfigurationEditor.svelte-C48Bbr6e.js",
+            "assets/feedback-index-3898063-DTGNATF5.js",
+            "assets/parser.worker-BlNHhEYv.js"
+          ],
+          "workspace_host_chunks": [],
+          "workspace_host_reachable_from_feedback": [],
+          "all_build_raw_hashes": {
+            "assets/ArtifactsBand-Bcs0N5HG.js": "56023bad2c2c8082da2188a1345a8cde541113939316340b5a950c1a0599c198",
+            "assets/ArtifactsBand-Bq37rJCA.css": "07536bf5819ef3ee02c4e3bb2e1afa21b0b95857809171261eaadcf13d08aa90",
+            "assets/BackendsRoute-DjzCDdbK.js": "3fd960d9db7fcb5b4b36a66b2a44d55054ec5e39606ffa21cdc5d8929088591f",
+            "assets/BackendsRoute-ZdhmAoRL.css": "881e3f8760241dad4100fe0f4e6d582fa428ef1cda1f9fcfa751160d91dbf64f",
+            "assets/ConfigRoute-BhHiHj4t.css": "d143d14888f9c63edd873215a0d31b35674902d204311d9e6bba5f114891ae0d",
+            "assets/ConfigRoute-DcK59Noq.js": "0d891ea1358236af2d3c2670e1575e211715383f6828a89d46466a980c924db3",
+            "assets/FeedbackRoute-CvrcgobC.js": "0c3531fe68dd4d3aaddf272ea835a11d994699b33307799d863f52c793776a2e",
+            "assets/FilePreviewRoute-CL3OGFPd.js": "f2bfc55f793c0ec4cd8bc9b7d241635ba5be41c4ebf67845e8d106ccb4ba54f1",
+            "assets/IdeasRoute-6OTyh33J.js": "b53d9e74e4d90e40eddbdf052630c2ab3e4aca926ebae38eac397f429b352c99",
+            "assets/ManagerWorkspace-BfXZopfe.js": "daf97d2d7e4e991753dafcc01feaa0b63dfd42e43b43249235b1beff38ec0ba1",
+            "assets/ManagerWorkspace-BjHsWsUT.css": "8e17166d9839a82c7aba8207d1f034fa175ca676119a879f9001e119a9985ccc",
+            "assets/ReviewRoute-5NYkbd3K.js": "8a6a768d130800b237827bdf7ce516f4849f8cbcea8758e809385e8b75c769f6",
+            "assets/ReviewRoute-rCtrbAcj.css": "f0eb7ad4ec94a30c5f1d284de394e1ddd2c6479da63e6d8bdc81f7cdec56a533",
+            "assets/ScreenHeader-D4mj2n4h.js": "881e8291f5291b490aad01de7630ccc66c883866e8ff4bb9d674e323d12fc12d",
+            "assets/SegmentedControl-DTPo9x0v.js": "f0149b99f38e6c1419c7a29944935d78fede3a106fb3987a9963094d8f3368f6",
+            "assets/SettingsRoute-Buxxq2he.js": "d0ad83444bef48483622119e4bf746e6f0be0d5e5aa7cf54481713a8b04667bb",
+            "assets/SettingsRoute-eO4SGJ33.css": "320f37ce4742b33f31e84780d911e3c410c5d7c1de0d3ed2bda20dd1bb3d73be",
+            "assets/TicketRoute-B5766i2e.css": "4f8525909f38fe9f22571ee66a877ab5a5bae83f2ee749fb89e5707f516a5d04",
+            "assets/TicketRoute-CCSsQh7H.js": "5c40b462c7338fec2536caf74887b455ebc7e54d5a6c084ec253024919a58069",
+            "assets/WorkerProposalCard-BIba2d_g.js": "4eea1c203861824dbdb6a5852f64d080be64d0879e791225bb822a163113f1c6",
+            "assets/WorkerProposalCard-CE5nQ7oB.css": "53a3d367f34b89f03889a72e6b0a54bce8ca86202f42fb919178107ba1f19f89",
+            "assets/employeeConfigurationEditor.svelte-C48Bbr6e.js": "7fc140ab12e1079eb4310d828e0e648aed4517ac87f3b3d4ef5aa8f529143f70",
+            "assets/feedback-index-3898063-DMH5rzIA.css": "3ac59f73cce79d63af1b56f5ef4e3fe06e2901988e8ecfe6c96834c56fa3529c",
+            "assets/feedback-index-3898063-DTGNATF5.js": "37ac307d86f6dc285b036effa3753e021397d209be860cd810be263f4d5a2b0e",
+            "assets/parser.worker-BlNHhEYv.js": "ecb3112d2c3f56175bce64b304587352b757cb31d91a0776eac6c2abda9ce7ba"
+          },
+          "feedback_css_scope_normalized_sha256": {
+            "assets/ConfigRoute-HASH.css": "6f6ed71487a4cb9a49cda24805fd09a0aacbc6e02b38473691f6212e2461f1c9",
+            "assets/TicketRoute-HASH.css": "2389ee32f39e2ead0eb984eb72577ae915f78f613e2b9f563d3bb4c0867d5c0c",
+            "assets/SettingsRoute-HASH.css": "36f3532b90115012a5880113e9e617bfc7b306004aea2eb5aa34f29c7cc692b2",
+            "assets/ArtifactsBand-HASH.css": "caee432c2e4eca3acf7a7635d5b1359fbeabd19d74f915fc93ea3c9a87422def",
+            "assets/WorkerProposalCard-HASH.css": "0179ee3772fd7afe35410e726a99822b834031e1e162ac3f2894e581f16f8e5f",
+            "assets/ReviewRoute-HASH.css": "ab4966f88c82f656e211e2cde81e3a86cf87e6fda96037a36dad5449bcbba41f",
+            "assets/BackendsRoute-HASH.css": "ce7fcc2feb1a8b317a9ac419321f424a779a045a62b81d565d5d26f25c85c78c",
+            "assets/ManagerWorkspace-HASH.css": "ea8adc246de01a61190ba450011f624c40946ff6b8148719bb97f3d99f2bcf42"
+          }
+        }
+      },
+      "feedback_css_equal_after_scope_normalization": true
+    },
+    {
+      "name": "feedback-attribution-shared",
+      "source_module_counts": {
+        "baseline": 602,
+        "branch": 602
+      },
+      "raw_imported_source_differences": [
+        "web/.test-scratch/workspace-utility-pane-host-3898967.svelte"
+      ],
+      "runs": {
+        "baseline": {
+          "result": {
+            "revision": "c1d99e049b3d8daa121c21cd0a88ac8d9234d546",
+            "source_root": "/home/vps/projects/panels/worktrees/t_p1f3sn00-feedback-baseline",
+            "status": "passed",
+            "host": "v2202607386010487796",
+            "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+            "interpreter": "/home/vps/projects/panels/worktrees/t_p1f3sn00-feedback-baseline/.venv/bin/python",
+            "playwright": "1.61.0",
+            "cpu_count": 12,
+            "load_start": [
+              1.2177734375,
+              1.0087890625,
+              1.9228515625
+            ],
+            "viewport": {
+              "desktop": [
+                1280,
+                844
+              ],
+              "phone": [
+                390,
+                844
+              ]
+            },
+            "clock": "Original full case uses wall clock except original page.clock.install/fast_forward section. No wrapper timing changes.",
+            "gate_receipt": false,
+            "planner_source": "/home/vps/projects/panels/worktrees/t_p1f3sn00-feedback-baseline/src/planner/__init__.py",
+            "browser": "149.0.7827.55",
+            "seconds": 23.896065296954475,
+            "load_end": [
+              1.0126953125,
+              0.97607421875,
+              1.8916015625
+            ]
+          },
+          "entrance_max_absolute_delta_pixels": 6.210000000000001,
+          "entrance_frame_count": 76,
+          "worst_pair": [
+            {
+              "ms": 197,
+              "height": 19.59,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 772.41,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            },
+            {
+              "ms": 213,
+              "height": 25.8,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 766.2,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            }
+          ],
+          "frame_trace": "feedback-attribution-shared/baseline/frame-captures.json",
+          "entry_url": ".test-scratch/feedback-index-3898967.html"
+        },
+        "branch": {
+          "result": {
+            "revision": "974aee1a9541241bc63625ea5fd8d15c84102329",
+            "source_root": "/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers",
+            "status": "passed",
+            "host": "v2202607386010487796",
+            "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+            "interpreter": "/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.venv/bin/python",
+            "playwright": "1.61.0",
+            "cpu_count": 12,
+            "load_start": [
+              1.0126953125,
+              0.97607421875,
+              1.8916015625
+            ],
+            "viewport": {
+              "desktop": [
+                1280,
+                844
+              ],
+              "phone": [
+                390,
+                844
+              ]
+            },
+            "clock": "Original full case uses wall clock except original page.clock.install/fast_forward section. No wrapper timing changes.",
+            "gate_receipt": false,
+            "planner_source": "/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/src/planner/__init__.py",
+            "browser": "149.0.7827.55",
+            "seconds": 23.938071584911086,
+            "load_end": [
+              0.79150390625,
+              0.9287109375,
+              1.85107421875
+            ]
+          },
+          "entrance_max_absolute_delta_pixels": 6.210000000000001,
+          "entrance_frame_count": 76,
+          "worst_pair": [
+            {
+              "ms": 202,
+              "height": 19.59,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 772.41,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            },
+            {
+              "ms": 218,
+              "height": 25.8,
+              "slotBottom": 800,
+              "utilitiesTop": 800,
+              "footTop": 766.2,
+              "closing": false,
+              "effects": 2,
+              "heightEffects": 1
+            }
+          ],
+          "frame_trace": "feedback-attribution-shared/branch/frame-captures.json",
+          "entry_url": ".test-scratch/feedback-index-3898967.html"
+        }
+      },
+      "emitted": {
+        "baseline": {
+          "reachable_feedback_js_css": [
+            "assets/AppWithQueryClient-BLpukdYb.js",
+            "assets/ArtifactsBand-BG53IjPA.js",
+            "assets/ArtifactsBand-CQr4ju2r.css",
+            "assets/BackendsRoute-Bd050m14.css",
+            "assets/BackendsRoute-DGxZS-72.js",
+            "assets/ConfigRoute-BuJM5Su3.js",
+            "assets/ConfigRoute-DPAN3rdT.css",
+            "assets/FeedbackRoute-CQlOPmS8.js",
+            "assets/FilePreviewRoute-BfVQh_fl.js",
+            "assets/IdeasRoute-UTf4mT92.js",
+            "assets/LiveConversation-BrlqP1Gg.js",
+            "assets/LiveConversation-CPLpk9QT.css",
+            "assets/ManagerFrame-eZCUB9wo.js",
+            "assets/ManagerFrame-nVCr18Ee.css",
+            "assets/ManagerWorkspace-DgOzkJ9u.css",
+            "assets/ManagerWorkspace-aZCj_llK.js",
+            "assets/ReviewRoute-DLJwuDck.css",
+            "assets/ReviewRoute-DWc3x2Xn.js",
+            "assets/ScreenHeader-ClylJA7A.js",
+            "assets/SegmentedControl-DWWn2del.js",
+            "assets/SettingsRoute-B_V4N1-q.css",
+            "assets/SettingsRoute-D61-EUHE.js",
+            "assets/TicketRoute-CXMPt2Kw.js",
+            "assets/TicketRoute-Dc7PDTB-.css",
+            "assets/WorkerProposalCard-Bi3OTQGG.js",
+            "assets/WorkerProposalCard-Cku3Dm2y.css",
+            "assets/contracts-C34f4CL3.js",
+            "assets/contracts-DnH9c2qB.css",
+            "assets/contracts-aGVw_awV.js",
+            "assets/employeeConfigurationEditor.svelte-CdsdPJBE.js",
+            "assets/feedback-index-3898967-CaMoAJ9v.js",
+            "assets/index-client-rbgVuWC-.js",
+            "assets/managerWorkspaceDom-CgmCgi_J.js",
+            "assets/parser.worker-BlNHhEYv.js",
+            "assets/preload-helper-ckwbz45p.js",
+            "assets/queryClient-xOnMunMR.js"
+          ],
+          "workspace_host_chunks": [
+            "assets/workspace-utility-pane-index-3898967-D1OfTwJK.js"
+          ],
+          "workspace_host_reachable_from_feedback": [],
+          "all_build_raw_hashes": {
+            "assets/AppWithQueryClient-BLpukdYb.js": "9969e211acbb49c1baacb3c0fb2731c3ca22c0e7c567172bcd782a1330f73c87",
+            "assets/AppWithQueryClient-CRKLQsAy.css": "f490ad64a914422617156aebe8723c7cc3148930dbd8b86263ffef59bcf26832",
+            "assets/ArtifactsBand-BG53IjPA.js": "05f31401a79aafb1ae38ba132c188e514ad3465124888bbd6a0f61f314c52015",
+            "assets/ArtifactsBand-CQr4ju2r.css": "ae318a707f2c84e0f3dbf20ec0937c66411c62bd01e94a8b6d2da3668fd16392",
+            "assets/BackendsRoute-Bd050m14.css": "483c593f4822d71bf505022f9e55f9c28532e20f65e7d9daf1d055cfbd1b75f4",
+            "assets/BackendsRoute-DGxZS-72.js": "efe70f2bac8ee03015f0cdabedcfe7d025a6b6a0a7be2e938a900cd8f003063c",
+            "assets/ConfigRoute-BuJM5Su3.js": "de64291f13d305e6edf2a7af0384c4e9a1a1618c527130ad8d8feb021fae6cc6",
+            "assets/ConfigRoute-DPAN3rdT.css": "3052e83e20c8af53fab6102e46dc9ec80fa17e6c60dc5019f46823adf1b5f8c3",
+            "assets/FeedbackRoute-CQlOPmS8.js": "4bcb04cb64f090e4c0903430b0947ecd6b558df5ad5179f1c683310e5f8be765",
+            "assets/FilePreviewRoute-BfVQh_fl.js": "73a0c962c2f13456e22b506b226fc222db67fe01729aad5cac8bafa2ea3d3f26",
+            "assets/IdeasRoute-UTf4mT92.js": "412c0a25c139f24d13e6b0a1ea55e1fc24659dabbf7ba0ec0c9c1915e5b0e0ff",
+            "assets/LiveConversation-BrlqP1Gg.js": "d1c501d3f24363fdf9a3cd1aede27c95a4034eccaee95dee33b1739ca8709263",
+            "assets/LiveConversation-CPLpk9QT.css": "26081725c589c88b766803c181be2681542d110ba74299e577db106d0d6c2810",
+            "assets/ManagerFrame-eZCUB9wo.js": "922304e66d1709505c8c2dc0b5a15de035f8e00ec597e5842032e96caa2e9062",
+            "assets/ManagerFrame-nVCr18Ee.css": "bb2dd67c08ec9924132a4f99c0f032fe19a3fe2d0325c07a83d14ff1be5b4140",
+            "assets/ManagerWorkspace-DgOzkJ9u.css": "0578313766df1e6bccd9ded677292afa9e0905b6c502d9accdcfb5dd064345ad",
+            "assets/ManagerWorkspace-aZCj_llK.js": "578891ea277f8f08896f3e1e3327a94274f9caa9b850e77011c8ca0d14ba7bc8",
+            "assets/ReviewRoute-DLJwuDck.css": "54ebbd25908a9b9fb006254ca8af8cb7b09f132dac030f3aa6e0fcc6c5dcede8",
+            "assets/ReviewRoute-DWc3x2Xn.js": "3aef592154b42083962f24900fcde102d6081addada915dbebbb091b9c16b81d",
+            "assets/ScreenHeader-ClylJA7A.js": "7f8e23c50edcd6a4609b8701732e7ad865945e4e3e0ad5f3051de5a885faec44",
+            "assets/SegmentedControl-DWWn2del.js": "063ecd3ee59d632276dbb80684b9475fb8340c8cb5f556e63313d9322a303fbc",
+            "assets/SettingsRoute-B_V4N1-q.css": "78c1a9f050bf88aa807d0cf5abd3620499fa368c938016e431921c3ad5e45775",
+            "assets/SettingsRoute-D61-EUHE.js": "5c6792926ba24b9dfafe3515fcf5319713058af6d2da9ee5d83976d9f0c2a07c",
+            "assets/TicketRoute-CXMPt2Kw.js": "1d653104d10724854a1e81ae4d9a8abbe5fd83d34372b0a356af759146dd14a7",
+            "assets/TicketRoute-Dc7PDTB-.css": "608da1ba1b7ea1704418c5e4ff0f4397c2ebbbd1f5a3839db40e300cbf561706",
+            "assets/WorkerProposalCard-Bi3OTQGG.js": "8357e2af4949712c6cef154eefe781562fbcd9dd9ad8fae40739384153d31429",
+            "assets/WorkerProposalCard-Cku3Dm2y.css": "e7b8674f73e23452b27cb6ee4c0438d25d367c30ed5b2740dd9e6a54d5c3b7d2",
+            "assets/contracts-C34f4CL3.js": "31a013581b992bc02d1a51fdfd2a69477f25e7723dd4b71921e077ac8bf609c5",
+            "assets/contracts-DnH9c2qB.css": "30056d6d02bdfd2201370b5cc9c99a9fe51249396724586ba9b322b085828b3e",
+            "assets/contracts-aGVw_awV.js": "76da27cf5fea63a7806d48edf6bd793c04c558c5b504c5076e23a162bf5028bf",
+            "assets/conversation-layer-index-3898967-D2CWJKWJ.css": "65bbc898e476a6ed03f13b3b028716d958cf7cb9480ea2873d40559c2410081b",
+            "assets/conversation-layer-index-3898967-DVV-jK5u.js": "a48eb62bd8d90a3d7a22468fd819215ad5b90fd94746ad1b87d67d38d6883516",
+            "assets/conversationViewReaderFixture-BCkuPnUk.js": "af729dbd4dd4c4e0c5b47d68a4690cfb18fe3a4b737522bbed3386247335ee46",
+            "assets/employeeConfigurationEditor.svelte-CdsdPJBE.js": "9380b995f9c2cf4920f6ee0f67ea002ca9ddb3d21dc87f789e8debf44f39c74e",
+            "assets/feedback-index-3898967-CaMoAJ9v.js": "c86c3641d726e59669aa0fa5c35ce703f782f106badae8b92e9b05f4f3a84f22",
+            "assets/index-client-rbgVuWC-.js": "f18ced4d9aa1d36aa4802f4ce46770787cf2c30eda12694f068b62e729e08d58",
+            "assets/live-switch-host-3898967-CvyCich6.js": "7b875186b209c6eed1bbb5f1d52d49c8136fbe5895ecd875673d1013ab06e9f1",
+            "assets/live-switch-index-3898967-DEnO3Zaj.js": "d902f51dca1033c48437854dd27a6d470a14f8056f590df4468ade7adafe1bc6",
+            "assets/managerWorkspaceDom-CgmCgi_J.js": "a4a83cdbe062fa0f6f99a6f7924454a8e43248453875174ba64d917ab611e71b",
+            "assets/parser.worker-BlNHhEYv.js": "ecb3112d2c3f56175bce64b304587352b757cb31d91a0776eac6c2abda9ce7ba",
+            "assets/preload-helper-ckwbz45p.js": "b1cf8db666a7d7bfc05e8f8c93c4536728e9d086bf6f0270fa1fd0e607491519",
+            "assets/queryClient-xOnMunMR.js": "91fbddd5fd93622d1e66ad8d0cf2e9ddb5ff5a3640958702b9524ec2c7bc17cb",
+            "assets/unanswered-send-host-3898967-BTigkTHB.js": "ddc891a4f4dd4b241a6c21c4e38200c34917bfa0bfbd86fe7d24fb57177560d4",
+            "assets/unanswered-send-index-3898967-CFMkfpvk.js": "3c52adb60c49c3e3ae502b2732b3a75c2a89fd299f65ee0618eca9e2b262ffff",
+            "assets/view-fixture-Bfrg4cPh.js": "661650aaf20de0d693d8d71473463f568840ac7c341e6eed9735941935ea53eb",
+            "assets/workspace-utility-pane-index-3898967-Bmh6LiED.css": "84ec166590bef5851c3113f6b4a9bf497c8ae379d69f91821403c71ed9f5bc04",
+            "assets/workspace-utility-pane-index-3898967-D1OfTwJK.js": "295dd61b90549b53ee443823d09042279850c0085e0de3647cd0adb5f1a396eb"
+          },
+          "feedback_css_scope_normalized_sha256": {
+            "assets/ArtifactsBand-HASH.css": "caee432c2e4eca3acf7a7635d5b1359fbeabd19d74f915fc93ea3c9a87422def",
+            "assets/ConfigRoute-HASH.css": "6f6ed71487a4cb9a49cda24805fd09a0aacbc6e02b38473691f6212e2461f1c9",
+            "assets/BackendsRoute-HASH.css": "ce7fcc2feb1a8b317a9ac419321f424a779a045a62b81d565d5d26f25c85c78c",
+            "assets/LiveConversation-HASH.css": "ab13185ec5d9e3abf5bfe5a792467cfd3f036b02f6d04d2bb4333ae00ba79c8d",
+            "assets/ManagerWorkspace-HASH.css": "ea8adc246de01a61190ba450011f624c40946ff6b8148719bb97f3d99f2bcf42",
+            "assets/contracts-HASH.css": "30056d6d02bdfd2201370b5cc9c99a9fe51249396724586ba9b322b085828b3e",
+            "assets/ReviewRoute-HASH.css": "ab4966f88c82f656e211e2cde81e3a86cf87e6fda96037a36dad5449bcbba41f",
+            "assets/WorkerProposalCard-HASH.css": "0179ee3772fd7afe35410e726a99822b834031e1e162ac3f2894e581f16f8e5f",
+            "assets/SettingsRoute-HASH.css": "36f3532b90115012a5880113e9e617bfc7b306004aea2eb5aa34f29c7cc692b2",
+            "assets/TicketRoute-HASH.css": "2389ee32f39e2ead0eb984eb72577ae915f78f613e2b9f563d3bb4c0867d5c0c",
+            "assets/ManagerFrame-HASH.css": "ce9cf8921e5abcbbd04d449ea6be8dcdbda5e9371eda418cf6c3e00bd126d8cc"
+          }
+        },
+        "branch": {
+          "reachable_feedback_js_css": [
+            "assets/AppWithQueryClient-SpDVU2DO.js",
+            "assets/ArtifactsBand-Bq37rJCA.css",
+            "assets/ArtifactsBand-ToNsgYx-.js",
+            "assets/BackendsRoute-ZdhmAoRL.css",
+            "assets/BackendsRoute-lM-NIxom.js",
+            "assets/ConfigRoute-BhHiHj4t.css",
+            "assets/ConfigRoute-DhdUex_5.js",
+            "assets/FeedbackRoute-CZsaFq6J.js",
+            "assets/FilePreviewRoute-DUsGeXcM.js",
+            "assets/IdeasRoute-BrdgzKwz.js",
+            "assets/LiveConversation-wKtYpRhJ.css",
+            "assets/LiveConversation-zEYuTstg.js",
+            "assets/ManagerFrame-Cn3Ajr7W.js",
+            "assets/ManagerFrame-CwLpRcMl.css",
+            "assets/ManagerWorkspace-BjHsWsUT.css",
+            "assets/ManagerWorkspace-Bop8_yjR.js",
+            "assets/ReviewRoute-DwlLaZo8.js",
+            "assets/ReviewRoute-rCtrbAcj.css",
+            "assets/ScreenHeader-DvaoZnTT.js",
+            "assets/SegmentedControl-BDHJ-J4K.js",
+            "assets/SettingsRoute-COWlYgjb.js",
+            "assets/SettingsRoute-eO4SGJ33.css",
+            "assets/TicketRoute-B5766i2e.css",
+            "assets/TicketRoute-BpPz3H71.js",
+            "assets/WorkerProposalCard-CE5nQ7oB.css",
+            "assets/WorkerProposalCard-Ykg1QPBD.js",
+            "assets/contracts-C34f4CL3.js",
+            "assets/contracts-DnH9c2qB.css",
+            "assets/contracts-aGVw_awV.js",
+            "assets/employeeConfigurationEditor.svelte-GVAnigbz.js",
+            "assets/feedback-index-3898967-CUeQ_l28.js",
+            "assets/index-client-rbgVuWC-.js",
+            "assets/managerWorkspaceDom-CeKgeYnr.js",
+            "assets/parser.worker-BlNHhEYv.js",
+            "assets/preload-helper-ckwbz45p.js",
+            "assets/queryClient-xOnMunMR.js"
+          ],
+          "workspace_host_chunks": [
+            "assets/workspace-utility-pane-index-3898967-NZjeNkav.js"
+          ],
+          "workspace_host_reachable_from_feedback": [],
+          "all_build_raw_hashes": {
+            "assets/AppWithQueryClient-SpDVU2DO.js": "628d9535f19f8fb3fb110b5c0e7adec9f59bc752870dbe597b54441f00331766",
+            "assets/AppWithQueryClient-v846z96z.css": "5137b8f71ad49e43596fb31fb945565d1d43be5e1438c05e3dce4f5cabe48775",
+            "assets/ArtifactsBand-Bq37rJCA.css": "07536bf5819ef3ee02c4e3bb2e1afa21b0b95857809171261eaadcf13d08aa90",
+            "assets/ArtifactsBand-ToNsgYx-.js": "b7ad1fb13574beb0648170201963f5dac754bb65b43a3e190599f6f53d526908",
+            "assets/BackendsRoute-ZdhmAoRL.css": "881e3f8760241dad4100fe0f4e6d582fa428ef1cda1f9fcfa751160d91dbf64f",
+            "assets/BackendsRoute-lM-NIxom.js": "b96d52785c4a508cef529487b5b33b9c134f74db413db27c74b6c39d3a714168",
+            "assets/ConfigRoute-BhHiHj4t.css": "d143d14888f9c63edd873215a0d31b35674902d204311d9e6bba5f114891ae0d",
+            "assets/ConfigRoute-DhdUex_5.js": "11471498e679087e2cac65db4a14697c9d013e85940d0dfcf47e79ae67f0c066",
+            "assets/FeedbackRoute-CZsaFq6J.js": "8e3aafa691fd291c3ac3abdf76433ef9c6932200f176f33726aa4142c89e888e",
+            "assets/FilePreviewRoute-DUsGeXcM.js": "5e1020d2d30b74a4de387964ad00cc1fd40de79c143814989a185b48f3f684a1",
+            "assets/IdeasRoute-BrdgzKwz.js": "ee8b2e3429f3119e4f9a6dd02b5fd5475e81e552f389fd2187e8a440169bae69",
+            "assets/LiveConversation-wKtYpRhJ.css": "e07cf72c0811c8bafa3056f69d435ebf8ed99e61d484f8e43f872d888d8109f9",
+            "assets/LiveConversation-zEYuTstg.js": "ebb8d8f9ed77ca06470ace18e1420f61b27d8f1f512ecad1f851407c2cf53628",
+            "assets/ManagerFrame-Cn3Ajr7W.js": "7d0c17b96fa1f2df46aee351e5cb1019a74488b6e6b7711c50ed26fb4e93908b",
+            "assets/ManagerFrame-CwLpRcMl.css": "fbb06f7ed6b88cbb03f0b8c733cc4130d6d98e0a8ef18f4bcac8a46812f25283",
+            "assets/ManagerWorkspace-BjHsWsUT.css": "8e17166d9839a82c7aba8207d1f034fa175ca676119a879f9001e119a9985ccc",
+            "assets/ManagerWorkspace-Bop8_yjR.js": "6702a6a104bdcf691563992cfa6e85f65ad44514561edec20d48f003bc0e5257",
+            "assets/ReviewRoute-DwlLaZo8.js": "c315f60dcbb18efd7b9ce5cb4075fae4b40caf14b703ced8b6683026545d3ff1",
+            "assets/ReviewRoute-rCtrbAcj.css": "f0eb7ad4ec94a30c5f1d284de394e1ddd2c6479da63e6d8bdc81f7cdec56a533",
+            "assets/ScreenHeader-DvaoZnTT.js": "77b97ff3540e1c75a1ed4118e578793130ab55f55edf25294fd1c582b13d6c65",
+            "assets/SegmentedControl-BDHJ-J4K.js": "d99a55abcac5d33e582ae4f523cf425e18f72eb4760dee12cc11041c020012cd",
+            "assets/SettingsRoute-COWlYgjb.js": "77e0e562a9b68f3b81be56be08b5a14d9b829981a61b427c7ae1292d748adbb5",
+            "assets/SettingsRoute-eO4SGJ33.css": "320f37ce4742b33f31e84780d911e3c410c5d7c1de0d3ed2bda20dd1bb3d73be",
+            "assets/TicketRoute-B5766i2e.css": "4f8525909f38fe9f22571ee66a877ab5a5bae83f2ee749fb89e5707f516a5d04",
+            "assets/TicketRoute-BpPz3H71.js": "78293ff1a372a3a7af9fe8fcbd99bb17433116d547b08cd16cf1cdea99bdd049",
+            "assets/WorkerProposalCard-CE5nQ7oB.css": "53a3d367f34b89f03889a72e6b0a54bce8ca86202f42fb919178107ba1f19f89",
+            "assets/WorkerProposalCard-Ykg1QPBD.js": "e2a87f274e838cbc00015c337937158bee3276e6f539d5b937aa0977499addb5",
+            "assets/contracts-C34f4CL3.js": "31a013581b992bc02d1a51fdfd2a69477f25e7723dd4b71921e077ac8bf609c5",
+            "assets/contracts-DnH9c2qB.css": "30056d6d02bdfd2201370b5cc9c99a9fe51249396724586ba9b322b085828b3e",
+            "assets/contracts-aGVw_awV.js": "76da27cf5fea63a7806d48edf6bd793c04c558c5b504c5076e23a162bf5028bf",
+            "assets/conversation-layer-index-3898967-C6nz67FG.js": "73547fd7b753178539d7e58e036f1856306d458358fc53584e771f29e0782970",
+            "assets/conversation-layer-index-3898967-Wcj01zrA.css": "88c00a59d8ab42b9154f972682b021a4106e368ce0416a457e6c6f1ca5a43bb1",
+            "assets/conversationViewReaderFixture-BCkuPnUk.js": "af729dbd4dd4c4e0c5b47d68a4690cfb18fe3a4b737522bbed3386247335ee46",
+            "assets/employeeConfigurationEditor.svelte-GVAnigbz.js": "b413dccbaaf7144a9c7b723645fec44144c93ceba207d15c196eff44bba2746d",
+            "assets/feedback-index-3898967-CUeQ_l28.js": "d157c8e0c95c7540a0c1acb3a08885e71b964c19b265ecb0f12ed5c4b3aa0cb7",
+            "assets/index-client-rbgVuWC-.js": "f18ced4d9aa1d36aa4802f4ce46770787cf2c30eda12694f068b62e729e08d58",
+            "assets/live-switch-host-3898967-DdpUml-U.js": "b7a5a6a1fed4c66fcc6c2ee7307f5640e42f8163f4f2b1e8e0374a9ac48d4c29",
+            "assets/live-switch-index-3898967-DKeCTO3H.js": "e8db1384985914b0e9daf648c7f06627101a430bc9777258ee63fdae7059abd5",
+            "assets/managerWorkspaceDom-CeKgeYnr.js": "91be6e5583092221f11b3b55d94430f772c1abfb10016f7cd4fe8e6a7aea4d6d",
+            "assets/parser.worker-BlNHhEYv.js": "ecb3112d2c3f56175bce64b304587352b757cb31d91a0776eac6c2abda9ce7ba",
+            "assets/preload-helper-ckwbz45p.js": "b1cf8db666a7d7bfc05e8f8c93c4536728e9d086bf6f0270fa1fd0e607491519",
+            "assets/queryClient-xOnMunMR.js": "91fbddd5fd93622d1e66ad8d0cf2e9ddb5ff5a3640958702b9524ec2c7bc17cb",
+            "assets/unanswered-send-host-3898967-BtHqi0Ca.js": "9f85dcca6fcc8fa1e98de7d3c95775db0b3d770083677176963a106ba6f62681",
+            "assets/unanswered-send-index-3898967-B0GVHeNs.js": "ef1cbea448802293bde4db7f1f3b52add2a1fb58daa9f5503ea790fd6cc16b14",
+            "assets/view-fixture-Bfrg4cPh.js": "661650aaf20de0d693d8d71473463f568840ac7c341e6eed9735941935ea53eb",
+            "assets/workspace-utility-pane-index-3898967-Bmh6LiED.css": "84ec166590bef5851c3113f6b4a9bf497c8ae379d69f91821403c71ed9f5bc04",
+            "assets/workspace-utility-pane-index-3898967-NZjeNkav.js": "cd2ab54b6d99cd365a42f382efa4af5b76e39cca888c6adf50a33f6d6e713dac"
+          },
+          "feedback_css_scope_normalized_sha256": {
+            "assets/TicketRoute-HASH.css": "2389ee32f39e2ead0eb984eb72577ae915f78f613e2b9f563d3bb4c0867d5c0c",
+            "assets/BackendsRoute-HASH.css": "ce7fcc2feb1a8b317a9ac419321f424a779a045a62b81d565d5d26f25c85c78c",
+            "assets/ManagerWorkspace-HASH.css": "ea8adc246de01a61190ba450011f624c40946ff6b8148719bb97f3d99f2bcf42",
+            "assets/ArtifactsBand-HASH.css": "caee432c2e4eca3acf7a7635d5b1359fbeabd19d74f915fc93ea3c9a87422def",
+            "assets/ConfigRoute-HASH.css": "6f6ed71487a4cb9a49cda24805fd09a0aacbc6e02b38473691f6212e2461f1c9",
+            "assets/ReviewRoute-HASH.css": "ab4966f88c82f656e211e2cde81e3a86cf87e6fda96037a36dad5449bcbba41f",
+            "assets/ManagerFrame-HASH.css": "ce9cf8921e5abcbbd04d449ea6be8dcdbda5e9371eda418cf6c3e00bd126d8cc",
+            "assets/WorkerProposalCard-HASH.css": "0179ee3772fd7afe35410e726a99822b834031e1e162ac3f2894e581f16f8e5f",
+            "assets/SettingsRoute-HASH.css": "36f3532b90115012a5880113e9e617bfc7b306004aea2eb5aa34f29c7cc692b2",
+            "assets/LiveConversation-HASH.css": "ab13185ec5d9e3abf5bfe5a792467cfd3f036b02f6d04d2bb4333ae00ba79c8d",
+            "assets/contracts-HASH.css": "30056d6d02bdfd2201370b5cc9c99a9fe51249396724586ba9b322b085828b3e"
+          }
+        }
+      },
+      "feedback_css_equal_after_scope_normalization": true
+    }
+  ],
+  "limits": [
+    "One run per tree in each distinct build context. Passing samples cannot rule out a timing-sensitive defect.",
+    "Shared-build experiment matches the five original inputs and executes feedback first. Other cases are not executed, and no catalog receipt is produced.",
+    "Pair uses the same tracked Chromium process via CDP and identical origin/URL, with fresh contexts and original case clock/input/viewport. Original catalog did not use CDP attachment.",
+    "Machine load and Chromium frame scheduling vary despite the same physical host and sequential execution.",
+    "Sources and semantic dependency inspection support independence. They do not attribute an unreproduced observed frame jump."
+  ],
+  "baseline_retained": "/home/vps/projects/panels/worktrees/t_p1f3sn00-feedback-baseline",
+  "critical_source_hashes": {
+    "web/tests/browser/cases/feedback-inbox.py": {
+      "baseline": "615a6168e8b8c4b041d2daf995ae80631409df97cc62fdecaa57dcdca8dff313",
+      "branch": "615a6168e8b8c4b041d2daf995ae80631409df97cc62fdecaa57dcdca8dff313"
+    },
+    "web/tests/browser/cases/feedback-inbox.mjs": {
+      "baseline": "f65cda5b9dd6529034441c14114f113b26d98db88d32e4b58123b4b97c1fb1e1",
+      "branch": "f65cda5b9dd6529034441c14114f113b26d98db88d32e4b58123b4b97c1fb1e1"
+    },
+    "web/package-lock.json": {
+      "baseline": "5c9f5a3230fb64eb2691f4725d7234ed2d9773e740c7d9999dd079a7b3f6012c",
+      "branch": "5c9f5a3230fb64eb2691f4725d7234ed2d9773e740c7d9999dd079a7b3f6012c"
+    },
+    "web/package.json": {
+      "baseline": "34f2d73146bb6e9a1d91693e438940123d5f68b41f0a9c93dc97149aaa7120f6",
+      "branch": "34f2d73146bb6e9a1d91693e438940123d5f68b41f0a9c93dc97149aaa7120f6"
+    },
+    "agent_backends/package-lock.json": {
+      "baseline": "610b93f31f150c34d9e9447ef135198bba5b2805a94e55b19cf9863897a7469d",
+      "branch": "610b93f31f150c34d9e9447ef135198bba5b2805a94e55b19cf9863897a7469d"
+    },
+    "requirements.txt": {
+      "baseline": "d3db85e045607ddf63f39cb48fd4b70b292e59db085a2e0eee7a42d8fa70b0f8",
+      "branch": "d3db85e045607ddf63f39cb48fd4b70b292e59db085a2e0eee7a42d8fa70b0f8"
+    },
+    "AGENTS.md": {
+      "baseline": "8ab9147ac7f6d8c1de47d37cc0f23ef38456c022b8cf051dbbc3378bcbd9d0b7",
+      "branch": "8ab9147ac7f6d8c1de47d37cc0f23ef38456c022b8cf051dbbc3378bcbd9d0b7"
+    }
+  },
+  "product_diff": []
+}

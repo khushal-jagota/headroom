@@ -1,0 +1,40 @@
+{
+  "command": [
+    "node",
+    "web/tests/browser/run.mjs",
+    "--report",
+    "/home/vps/projects/panels/worktrees/t_p1f3sn00-state-barriers/.scratch/t_p1f3sn00-revision/full-catalog-final.json",
+    "--revision",
+    "16bdfe4f975548f5b474827c70a6df7ddf63819f",
+    "--invocation-id",
+    "a0fe9471-7e72-4601-81fd-2ee6cc5fd9c2"
+  ],
+  "revision": "16bdfe4f975548f5b474827c70a6df7ddf63819f",
+  "invocation": "a0fe9471-7e72-4601-81fd-2ee6cc5fd9c2",
+  "selectors": {
+    "CONVERSATION_LATEST_CASE": null,
+    "CONVERSATION_SCROLL_CASE": null,
+    "CONVERSATION_SETTLED_CASE": null,
+    "PANELS_CONVERSATION_MENU_ONLY": null
+  },
+  "host": "v2202607386010487796",
+  "platform": "Linux-6.12.96+deb13-amd64-x86_64-with-glibc2.41",
+  "python": "3.13.5",
+  "load_before": [
+    0.63134765625,
+    0.7861328125,
+    1.6630859375
+  ],
+  "selections": [],
+  "all_cases_required": 14,
+  "companion_required": [
+    "web/tests/artifact-press.test.ts"
+  ],
+  "exit": 0,
+  "seconds": 422.45798041298985,
+  "load_after": [
+    1.6318359375,
+    1.43896484375,
+    1.62548828125
+  ]
+}
