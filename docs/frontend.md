@@ -254,7 +254,9 @@ One screen per part of the system:
   one editable ceiling/reviewer picker that opens directly with one click. A ceiling choice followed by a reviewer choice completes the gesture. An explicit raise past the visible pending stage accepts that exact
   submission through atomic Accept, with the selected onward ceiling and reviewer.
   Same/lower scope preserves the proposal. Reviewer-only changes reroute it without
-  approval. Approve is a direct entry to the same picker and approval action. Send it back opens
+  approval. At an earlier gate, Approve opens the same picker and approval action.
+  At the last gate, Approve immediately accepts the visible proposal, including local
+  edits, with no further ceiling and the saved reviewer. It opens no picker. Send it back opens
   a note and uses the existing revision action. Pristine Kickoff keeps the existing
   Review exception: edit its proposal before approval instead of sending revision
   guidance to a Worker that does not yet have a conversation. A running step states its approved
@@ -662,8 +664,11 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **WorkerProposalCard** — the single approval card on both the Ticket and Review
   screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
-  opens the existing compact ceiling/reviewer rail directly; there is no adjacent
-  ceiling control. The reviewer heading opens the same picker for reviewer-only
+  opens the compact ceiling/reviewer rail at earlier gates. When the manifest marks
+  the actual next Stage terminal, it directly approves with no further ceiling and
+  the saved reviewer. The final Approve is an ordinary button: Enter and Space
+  activate it; arrow keys open nothing. There is no adjacent ceiling control.
+  The reviewer heading opens the same picker for reviewer-only
   routing. A Ticket reviewer is labelled Worker, distinct from its assigned Manager.
   A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
@@ -830,8 +835,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
-  leaves nothing behind, and only a completed pair reaches the Ticket. The running-step card keeps its own trigger. In a pending proposal, Approve and
-  the reviewer heading are the entry points to that same picker.
+  leaves nothing behind, and only a completed pair reaches the Ticket. The running-step card keeps its own trigger. In a pending proposal, the reviewer heading
+  opens that picker. Approve also opens it when the next Stage is not terminal.
 - **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
