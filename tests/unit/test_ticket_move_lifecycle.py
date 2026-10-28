@@ -370,7 +370,22 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
 
         async def command(cmd: ChildCommand) -> CommandOutcome:
             assert not tmp_db.in_transaction
-            return await registry.execute_command(cmd)
+            outcome = await registry.execute_command(cmd)
+            pending = registry.spool.pending()
+            assert pending, "native command must publish its actual durable outcome"
+            envelope = pending[0]
+            assert (
+                envelope.kind is EnvelopeKind.command_outcome
+                and envelope.payload.get("command_id") == cmd.command_id
+            ), "fixture must accept earlier callbacks before a command outcome; never skip FIFO"
+            assert TypeAdapter(CommandOutcome).validate_python(envelope.payload) == outcome
+            # Production resolves command futures only after canonical acceptance.
+            # Recording the real outcome settles the exact start lease before the
+            # next prompt command binds it. Generic events keep the drain below.
+            receipt = await remote.accept_envelope(envelope, identity)
+            registry.spool.acknowledge(receipt)
+            registry.confirm_command(cmd.command_id)
+            return outcome
 
         remote.factory.send_command = command
 
@@ -523,7 +538,8 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         assert h.backend("c_move").stops == 2
         await h.system.shutdown()
 
-    asyncio.run(run())
+    # This fixture bound does not settle an uncertain command or release its authority.
+    asyncio.run(asyncio.wait_for(run(), 20))
 
 
 @pytest.mark.parametrize("failure", ["hash", "authority", "compatibility", "claim", "same_locale"])
