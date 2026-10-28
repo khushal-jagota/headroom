@@ -147,6 +147,11 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
     with current_navigation_database(path) as conn:
         before = snapshot(conn)
         conn.execute("BEGIN")
+        # Rewind only this empty synthetic table with the Review source branch.
+        # Its migration descends from Review, so an applied marker would skip
+        # the projection upgrade that this fixture must exercise.
+        assert conn.execute("SELECT COUNT(*) FROM conversation_video_uploads").fetchone()[0] == 0
+        conn.execute("DROP TABLE conversation_video_uploads")
         conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
         # This synthetic fixture already contains the independent executor and
         # workspace branch. Retain its applied marker while rewinding only Review.
