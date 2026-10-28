@@ -22,10 +22,10 @@
     presentationAttempt;
     if (item?.body.kind!=='deferred') return;
     const reference=item.body.reference; const requestedVersion=version; const abort=new AbortController(); error=null;
-    void reader.body(reference,abort.signal).then(text=>parseDeferredViewBody(text,abort.signal)).then(body=>{if(!abort.signal.aborted)deferred={version:requestedVersion,body};}).catch(reason=>{if(!abort.signal.aborted){error=reason instanceof DiagnosticExpiredError ? DIAGNOSTIC_EXPIRED_MESSAGE : 'This message did not load.'; if(item)reader.failTextRestoration(item.key, reason instanceof DiagnosticExpiredError); if(reader.entryTarget?.key===item?.key)reader.failEntry();}});
+    void reader.body(reference,abort.signal).then(text=>parseDeferredViewBody(text,abort.signal)).then(body=>{if(!abort.signal.aborted)deferred={version:requestedVersion,body};}).catch(reason=>{if(!abort.signal.aborted){error=reason instanceof DiagnosticExpiredError ? DIAGNOSTIC_EXPIRED_MESSAGE : 'This message did not load.'; if(item)reader.failTextRestoration(item.key, reason instanceof DiagnosticExpiredError);}});
     return ()=>abort.abort();
   });
-  $effect(()=>{if(item && body) { reader.entryBodyReady(item.key); reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); }});
+  $effect(()=>{if(item && body) { reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); }});
 </script>
 <SkeletonRegion shape="block" loading={!prompt&&!local&&!error} loadingText="Loading conversation detail…">
   {#if prompt || local}{#key presentationAttempt}<UserMessage presentationRowKey={item?.key ?? null} row={prompt} {local} conversationId={reader.id} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>{/key}{:else if error}<p role="status">{error}</p>{/if}

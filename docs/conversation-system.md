@@ -201,7 +201,7 @@ needs the owner's attention.
 
 Stream progress alone does not earn read credit. The browser keeps a separate safe read
 position, established when an admitted newest timeline page survives retention. Initial
-entry keeps that baseline even when placement takes the person to earlier unread text.
+entry uses newest content without a destination from the owner-read watermark.
 Replacing newest with history, refusing a new timeline row, or losing the newest edge
 freezes further credit. Hidden rows and status updates cannot restore that evidence.
 Older rows can leave retention without stopping credit while the newest edge remains held.

@@ -146,8 +146,6 @@
 
   let view = $state<ConversationView | null>(null);
   let reader = $state<ConversationViewReader | null>(null);
-  let entryWatermark: number | null = null;
-  let entryPending = true;
   let viewAnchor=$state<ViewReaderAnchor|null>(null);
   let viewFolds=new Set<string>();
   let openTools=new SvelteSet<string>();
@@ -383,8 +381,6 @@
     closeStream();
     openedId = id;
     refreshedReadThrough.clear();
-    entryWatermark=null;
-    entryPending=true;
     viewAnchor=null;
     viewFolds=new Set();
     openTools=new SvelteSet();
@@ -454,7 +450,6 @@
     let lastCoverage=-1;
     const local=new ConversationViewReader(id,lens,documentIsVisible&&conversationState!=="rest",()=>{
       if(reader!==local)return;
-      if(local.entryPhase==='complete')entryPending=false;
       connectionTrouble=local.trouble;
       livenessPulse++;
       if(local.coverage!==lastCoverage){
@@ -462,7 +457,7 @@
         void refreshView(id);
         void reconcileReceipts(local).catch(()=>undefined);
       }
-    },viewAnchor,viewFolds,openTools,entryPending ? entryWatermark : null);
+    },viewAnchor,viewFolds,openTools);
     reader=local;
     return local;
   }
@@ -480,7 +475,6 @@
     try{
       const snapshot=await readConversation(id);
       if(openedId!==id)return;
-      if(entryWatermark===null)entryWatermark=snapshot.owner_read_through_sequence;
       view=snapshot;
       void refreshComposerCatalog(id);
       const local=attachReader(id);
