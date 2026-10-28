@@ -114,6 +114,7 @@ export function resolveComposerRunControls(
       canonicalRows: input.canonicalRows,
       validation,
       refusalValidation: input.refusalValidation,
+      readError: input.readError,
       disabled: input.inputDisabled,
       picker: {
         ...resolveModelPicker({

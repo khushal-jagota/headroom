@@ -26,6 +26,7 @@
   canonicalRows={view.canonicalRows}
   validation={view.validation}
   refusalValidation={view.refusalValidation}
+  readError={view.readError}
   {onRetry}
   chevron="drawn"
   view={view.picker}

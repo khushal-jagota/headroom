@@ -20,7 +20,9 @@ const input: ComposerRunControlsInput = {
 // nor preserve two kinds sharing one token. Existing catalog tests exercise legacy input.
 describe("canonical composer intent", () => {
   it("retains exact hidden model and unsupported explicit effort across unavailable reads", () => {
-    const view = resolveComposerRunControls(input);
+    const view = resolveComposerRunControls({...input, readError: "The scoped request failed."});
+    expect(view.readError).toBe("The scoped request failed.");
+    expect(view.validation).toBeNull();
     expect(view.normalizedSelection).toEqual(input.selection);
     expect(view.carriedRunValues).toEqual({model: "exact-hidden-id", reasoningEffort: "high", backendKey: null, selectionKind: "concrete", effortIsSet: true});
     expect(view.canonicalRows).toEqual([]);

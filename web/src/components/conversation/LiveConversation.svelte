@@ -1090,6 +1090,7 @@
   {current}
   canonicalRows={pickerTicketId === null ? undefined : scopedChoices?.rows ?? []}
   validation={scopedChoices?.validation ?? null}
+  readError={pickerReadError}
   refusalValidation={refusalValidation ?? recordedRefusalValidation}
   onRetryModelChoices={pickerTicketId === null ? undefined : retryScopedChoices}
   onPreviewRunSelection={pickerTicketId === null ? undefined : previewRunSelection}

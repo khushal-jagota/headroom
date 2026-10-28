@@ -27,6 +27,7 @@
     canonicalRows,
     validation,
     refusalValidation,
+    readError = null,
     onRetry,
     scrollPanel = false,
     view,
@@ -48,6 +49,8 @@
     validation?: CanonicalModelValidation | null;
     /** Historical delivery outcome, separate from this advisory selection read. */
     refusalValidation?: CanonicalModelValidation | null;
+    /** Scoped transport failure; it supplies no canonical launch judgment. */
+    readError?: string | null;
     onRetry?: () => Promise<void>;
     scrollPanel?: boolean;
     view: ModelPickerView;
@@ -102,7 +105,7 @@
   let rows = $derived((showing === "models" ? factualRows ?? view.models : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? canonicalRows ? currentRows.length === 1 ? `canonical-${canonicalRows.indexOf(currentRows[0])}` : null : view.modelValue : currentEffort);
   let triggerFace = $derived(canonicalRows ? currentRows.length > 1 ? "Selection unresolved" : canonicalSelection ? pickerRowName(canonicalSelection) : effectiveValidation?.selection.submitted_token ?? "Selection unobserved" : view.face);
-  let foot = $derived(feedback ?? (effectiveValidation && effectiveValidation.state !== "compatible" ? validationSummary(effectiveValidation) : null) ?? (refusalValidation ? "Recorded delivery refusal." : null) ?? (canonicalRows ? null : view.staleModelReason ?? view.catalogueWarning));
+  let foot = $derived(feedback ?? readError ?? (effectiveValidation && effectiveValidation.state !== "compatible" ? validationSummary(effectiveValidation) : null) ?? (refusalValidation ? "Recorded delivery refusal." : null) ?? (canonicalRows ? null : view.staleModelReason ?? view.catalogueWarning));
   let pickerBusy = $derived(disabled || refreshing);
   let refreshControl = $derived(backendRefreshControl(refreshing));
 

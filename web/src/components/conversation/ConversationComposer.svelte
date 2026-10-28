@@ -112,6 +112,7 @@
     canonicalRows,
     validation = null,
     refusalValidation = null,
+    readError = null,
     onRetryModelChoices,
     onPreviewRunSelection,
     models = [],
@@ -168,6 +169,7 @@
     canonicalRows?: readonly import("../../lib/conversation/modelResolutionWire").PickerRow[];
     validation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
     refusalValidation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
+    readError?: string | null;
     onRetryModelChoices?: () => Promise<void>;
     onPreviewRunSelection?: (selection: ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
@@ -393,6 +395,7 @@
     canonicalRows,
     validation,
     refusalValidation,
+    readError,
     backendKey,
     conversationExists,
     running,
