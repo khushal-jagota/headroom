@@ -103,7 +103,7 @@ let previewArrival = $state(0);
 $effect(() => navigation.owner.setDemand('historical-review-fixture', review && reviewTicketId === 't_personal_pending'
   ? {selected:{kind:'ticket',id:reviewTicketId},windows:[]} : undefined));
 (window as any).__showReview = (id = "t_review", field = "success_condition") => { preview = false; reviewTicketId = id; reviewField = field; review = true; };
-(window as any).__showTicket = (id: string) => { preview = false; review = false; ticketId = id; };
+(window as any).__showTicket = (id: string) => { config = false; preview = false; review = false; ticketId = id; };
 (window as any).__showPreview = (hash: string) => { location.hash = hash; previewArrival += 1; preview = true; };
 (window as any).__showConfig = () => { config = true; };
 </script>
