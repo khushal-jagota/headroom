@@ -148,6 +148,28 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
                 )
             )
             continue
+        goal = conn.execute(
+            "SELECT h.owner_id,g.title FROM conversation_history_catalog h "
+            "JOIN goals g ON g.id=h.owner_id WHERE h.conversation_id=? "
+            "AND h.owner_kind='goal' LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        if goal is not None:
+            captured.append(
+                CapturedTurn(
+                    conversation_id,
+                    int(fact["turn_number"]),
+                    occurrence_id,
+                    turn_epoch,
+                    str(fact["status"]),
+                    str(goal[1]),
+                    "goal",
+                    str(goal[0]),
+                    None,
+                    None,
+                )
+            )
+            continue
         owner = conn.execute(
             "SELECT h.owner_id,m.title FROM conversation_history_catalog h "
             "JOIN managers m ON m.id=h.owner_id "

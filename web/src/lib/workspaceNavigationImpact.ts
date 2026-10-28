@@ -76,10 +76,10 @@ export const managerEditImpact=(id:string,field:'title'|'recap'):CommandImpact=>
 export const managerSettleImpact=(id:string):CommandImpact=>({complete:true,records:[{kind:'manager',id,fields:['settled','updated_at']}]});
 
 /** Send/reset may replace its pointer and exact conversation facts; stable owner scopes observers before future ids exist. */
-export function conversationOwnerImpact(presentation:NavigationPresentation | undefined,kind:'chief'|'manager',id:string):CommandImpact {
-  if(!presentation || (kind==='chief' ? !presentation.chief : !presentation.rawManagersById.has(id))) return {complete:false,reason:'missing_conversation_owner_source'};
-  const records:RecordImpact[]=[kind==='chief' ? {kind:'chief',id,fields:['conversation_id']} : {kind:'manager',id,fields:['conversation_id','updated_at']}];
-  const pointer=kind==='chief' ? presentation?.chief?.conversation_id : presentation?.rawManagersById.get(id)?.value.conversation_id;
+export function conversationOwnerImpact(presentation:NavigationPresentation | undefined,kind:'chief'|'manager'|'goal',id:string):CommandImpact {
+  if(!presentation || (kind==='chief' ? !presentation.chief : kind==='goal' ? !presentation.rawGoalsById.has(id) : !presentation.rawManagersById.has(id))) return {complete:false,reason:'missing_conversation_owner_source'};
+  const records:RecordImpact[]=[kind==='chief' ? {kind:'chief',id,fields:['conversation_id']} : {kind,id,fields:['conversation_id','updated_at']}];
+  const pointer=kind==='chief' ? presentation?.chief?.conversation_id : kind==='goal' ? presentation?.rawGoalsById.get(id)?.value.conversation_id : presentation?.rawManagersById.get(id)?.value.conversation_id;
   if(pointer) records.push({kind:'conversation',id:pointer,fields:'*'});
   for(const addresses of presentation?.addressesByConversation.values() ?? []) for(const address of addresses) {
     if(address.value.owner_kind===kind && address.value.owner_id===id) records.push({kind:'address',id:address.id,fields:'*'});

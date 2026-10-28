@@ -90,6 +90,8 @@ def _target_is_itself_a_principal(conn: sqlite3.Connection, target: Target) -> b
     if target.kind is TargetKind.ticket:
         row = conn.execute("SELECT 1 FROM tickets WHERE id = ?", (target.id,)).fetchone()
         return row is not None
+    if target.kind is TargetKind.goal:
+        return conn.execute("SELECT 1 FROM goals WHERE id = ?", (target.id,)).fetchone() is not None
     if target.kind is TargetKind.manager:
         row = conn.execute("SELECT 1 FROM managers WHERE id = ?", (target.id,)).fetchone()
         return row is not None

@@ -15,6 +15,7 @@
   import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
   import { actualMark, expectedMark } from "../lib/conversationSignalDom";
   import { createQuery } from "@tanstack/svelte-query";
+  import GoalsOverview from "./goals/GoalsOverview.svelte";
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -31,7 +32,7 @@
   } from "../lib/conversation/wire";
 
   import type { ManagedFileTarget } from "../lib/filePreview";
-  let { showRequestErrorLine = true, requestedConversationId = null, openedFile = null, onOpenFile }: { showRequestErrorLine?: boolean; requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
+  let { allGoals = false, showRequestErrorLine = true, requestedConversationId = null, openedFile = null, onOpenFile }: { allGoals?: boolean; showRequestErrorLine?: boolean; requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
   const navigation = (() => {
     const value = navigationApplication();
     if (!value) throw new Error("Chief conversation requires the application navigation owner");
@@ -125,6 +126,8 @@
 
 <div class="chief-workspace-host" bind:this={root}>
 <ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
+  <GoalsOverview all={allGoals}/>
+  {#if !allGoals}
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
@@ -132,6 +135,7 @@
   <section class="manager-workers" aria-label="Workers">
     <ManagerChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
   </section>
+  {/if}
   {#snippet conversation()}
 <!-- A failed read is a line next to the conversation, not a screen in place of it.
      Replacing it takes the transcript, and takes words somebody typed and has not

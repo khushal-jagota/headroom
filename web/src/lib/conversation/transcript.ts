@@ -599,6 +599,7 @@ export function principalLabel(principal: Principal): string {
     case "chief": return "Chief";
     case "ticket": return `Ticket ${principal.id}`;
     case "manager": return `Manager ${principal.id}`;
+    case "goal": return `Goal ${principal.id}`;
   }
 }
 

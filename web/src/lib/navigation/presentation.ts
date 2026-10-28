@@ -1,4 +1,4 @@
-import type { TicketValue, TicketRecord, ManagerRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledManagerRecord } from './contracts';
+import type { TicketValue, TicketRecord, GoalRecord, ManagerRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledManagerRecord } from './contracts';
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState } from '../types';
 import type { WorkspaceTicket, WorkspaceManager, WorkspaceSettledManager, WorkspaceChief } from '../workspaceRail';
@@ -32,6 +32,7 @@ function agentState(status: string | null, stage: string | null, knowledge: Conv
 export function navigationWorkspacePresentation(view: EffectiveNavigationView): NavigationPresentation {
   const records=view.publication.records;
   const conversationSignals=new Map([...view.conversations].map(([id,knowledge])=>[id,signal(knowledge)]));
+  const rawGoalsById=new Map<string,GoalRecord>();
   const rawTicketsById=new Map<string,TicketRecord>();
   const rawManagersById=new Map<string,ManagerRecord>();
   const rawSettledManagersById=new Map<string,ViewSettledManagerRecord>();
@@ -43,7 +44,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   let exactOutClaimCount=0;
   let chiefRecord:Extract<(typeof records)[number],{kind:'chief'}> | undefined;
   for(const record of records) {
-    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') {
+    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') {
       if(record.value.conversation_id!==null) currentConversationIds.add(record.value.conversation_id);
     }
     if(record.kind==='ticket') {
@@ -63,6 +64,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     }
     else if(record.kind==='project') rawProjectsById.set(record.id,record);
     else if(record.kind==='chief') chiefRecord=record;
+    else if(record.kind==='goal') rawGoalsById.set(record.id,record);
     else if(record.kind==='address') {const addresses=addressesByConversation.get(record.value.conversation_id) ?? [];addresses.push(record);addressesByConversation.set(record.value.conversation_id,addresses);}
   }
   const projects=new Map([...rawProjectsById].map(([id,record])=>[id,record.value]));
@@ -137,7 +139,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const ticket=byTicket.get(address.owner_id), item=managersById.get(address.owner_id);
     const parentId=address.parent_kind==='chief' ? 'chief' : address.parent_id;
     const parent=parentId === null ? undefined : managersById.get(parentId);
-    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='manager' ? item?.title : chief?.label;
+    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='manager' ? item?.title : address.owner_kind==='goal' ? rawGoalsById.get(address.owner_id)?.value.title : chief?.label;
     if(title===undefined) continue;
     seen.add(key);
     messages.push({kind:address.owner_kind==='manager' ? 'manager' : address.owner_kind,
@@ -157,7 +159,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     // to a former owner when the canonical owner is excluded.
     reviewConversations.add(address.conversation_id);
     const owner=address.owner_kind==='ticket' ? rawTicketsById.get(address.owner_id)?.value
-      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : chiefRecord?.value;
+      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : address.owner_kind==='goal' ? rawGoalsById.get(address.owner_id)?.value : chiefRecord?.value;
     if(!owner)continue;
     if(address.owner_kind==='ticket' && ('stage' in owner && owner.stage==='done' || 'is_backlogged' in owner && owner.is_backlogged))continue;
     if(address.owner_kind==='manager' && 'settled' in owner && owner.settled)continue;
@@ -189,7 +191,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     }
     unreadConversationIdsByWindow.set(window.window_id,ids);
   }
-  return {tickets,managers,settledManagers,chief,messages,conversationSignals,rawTicketsById,rawManagersById,rawProjectsById,
+  return {tickets,managers,settledManagers,chief,messages,conversationSignals,rawGoalsById,rawTicketsById,rawManagersById,rawProjectsById,
     ticketsById:byTicket,managersById:new Map(managers.map(item=>[item.id,item])),
     ticketsByParent,ticketMastheadsById,addressesByConversation,
     unreadConversationIdsByWindow,
@@ -226,7 +228,7 @@ export function navigationWorkingAgentCount(view:EffectiveNavigationView | null 
   if(counts)return counts.running_conversations;
   const pointers=new Set<string>();
   for(const record of view.publication.records) {
-    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') && record.value.conversation_id!==null) {
+    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') && record.value.conversation_id!==null) {
       pointers.add(record.value.conversation_id);
     }
   }
@@ -269,6 +271,7 @@ export function navigationTicketMasthead(view:EffectiveNavigationView,id:string)
 }
 
 export type NavigationPresentationIndexes = {
+  readonly rawGoalsById: ReadonlyMap<string,GoalRecord>;
   readonly unreadConversationIdsByWindow:ReadonlyMap<string,ReadonlySet<string>>;
   readonly addressesByConversation:ReadonlyMap<string,readonly AddressRecord[]>;
   readonly rawTicketsById:ReadonlyMap<string,TicketRecord>;

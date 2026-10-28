@@ -12,8 +12,19 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022",
-    "types": ["svelte"]
+    "types": [
+      "svelte"
+    ],
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.svelte"],
-  "exclude": ["dist", "node_modules"]
+  "include": [
+    "src/**/*.d.ts",
+    "src/**/*.ts",
+    "src/**/*.svelte",
+    "src/**/*.tsx"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
 }

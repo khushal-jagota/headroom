@@ -119,3 +119,14 @@ it("retains a Chief artifact and selected conversation through reload and close"
   expect(workspaceAddress(address.selection,address.view,address.openFile,address.selectedConversationId)).toBe(href);
   expect(parseWorkspaceAddress(workspaceAddress(address.selection,address.view,null,address.selectedConversationId))?.openFile).toBeNull();
 });
+
+describe('goal conversation destinations',()=>{
+ it('keeps the goal, historical conversation, artifact and rail view together',()=>{
+  const original=parseWorkspaceAddress('#/workspace/goal/goal%20one?view=tickets&conversation=past');
+  expect(original?.selection).toEqual({kind:'goal',id:'goal one'});
+  expect(whatTheAddressOpens(original!).markedGoalId).toBe('goal one');
+  expect(whatTheAddressOpens(original!).chiefMarked).toBe(true);
+  expect(workspaceAddress(original!.selection,original!.view,original!.openFile,original!.selectedConversationId)).toBe('#/workspace/goal/goal%20one?conversation=past&view=tickets');
+  expect(parseWorkspaceAddress('#/workspace/goals')?.selection).toEqual({kind:'goals'});
+ });
+});

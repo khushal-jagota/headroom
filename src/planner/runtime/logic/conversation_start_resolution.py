@@ -237,3 +237,37 @@ def resolve_agent_conversation_start(
         workspace_folder=workspace_folder,
         access=FLOOR_DEFAULT_ACCESS,
     )
+
+
+def resolve_goal_conversation_start(
+    *,
+    goal_id: str,
+    launch_configuration: ConversationStartConfiguration,
+    overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
+    workspace_folder: Path,
+) -> ConversationStartValues:
+    resolved = _with_overrides(launch_configuration, overrides)
+    return ConversationStartValues(
+        backend_key=resolved.backend_key,
+        model=resolved.model,
+        reasoning_effort=resolved.reasoning_effort,
+        workspace_folder=workspace_folder,
+        access=FLOOR_DEFAULT_ACCESS,
+        role_materials=ConversationRoleMaterials(
+            role_text=(
+                "Start with the `panels` skill. You are the agent for goal " + goal_id + ". "
+                "Read your goal and page document with "
+                "`panels goal show " + goal_id + " --json`. "
+                "Read bound measurement results with `panels goal read " + goal_id + " --json`. "
+                "Chief owns the overall goals surface and goal setting. "
+                "Use `panels goal --help` for canonical goal and page edits. "
+                "You can mark or reverse completion and activate or make your goal inactive "
+                "without approval steps. Completion and active state are independent. "
+                "Marking done never deactivates a goal. Deactivation is explicit. "
+                "You own no Tickets. Request work from Chief through ordinary messages. "
+                "This goal has no Ticket stages or automatic Worker continuation."
+                + _ROLE_REPLY_REQUIREMENT
+            ),
+            identity_environment_variables=(("PLAN_ACTOR", "goal"), ("PLAN_GOAL_ID", goal_id)),
+        ),
+    )

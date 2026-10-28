@@ -100,7 +100,7 @@
     draftKey: string;
     transcriptLoading?: boolean;
     conversationId: string;
-    roleLabel?: "Worker" | "Manager" | "Chief";
+    roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
      *  is not one existing, so only whoever has read the record can say. */

@@ -38,6 +38,10 @@
   /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
    * that it barely lifts off the page, which is what makes it right for them. */
   --accent-text: #dce6f8;
+  --accent-attention: #d4ab6c; /* binary goals due today */
+  --type-chart-reading: 40px;
+  --type-chart-compact: 32px;
+  --type-chart-completion: 36px;
   --accent-done: #7fa564;  /* the green done marks */
   --accent-error: #d85d5d; /* red marks for errored ticket stages */
   /* The one pure white in the palette: the row dot for a worker waiting on a permission

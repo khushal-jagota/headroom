@@ -11,7 +11,7 @@ from planner.conversation.contracts import ConversationBackendKey
 
 class CorrectionTarget(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    kind: Literal["ticket", "manager", "chief", "worker-default"]
+    kind: Literal["ticket", "manager", "chief", "goal", "worker-default"]
     id: str
 
 

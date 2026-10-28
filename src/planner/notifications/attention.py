@@ -416,6 +416,18 @@ def capture_conversation_attention(
                 occurred_at,
             )
 
+    for row in conn.execute(
+        "SELECT g.id FROM goals g JOIN agents a ON a.agent_key='goal_' || g.id "
+        "WHERE a.conversation_id=?",
+        (conversation_id,),
+    ):
+        for notification_type, active in (
+            ("awaiting_reply", attention.unread_message),
+            ("awaiting_answer", attention.pending_ask),
+            ("errored", attention.errored),
+        ):
+            _record(conn, "goal", str(row[0]), notification_type, active, occurred_at)
+
 
 def reconcile_attention(
     conn: sqlite3.Connection,

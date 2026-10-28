@@ -62,7 +62,7 @@ export interface AgentMessageRowBody {
   to_owner: boolean;
 }
 
-export type PrincipalKind = "owner" | "chief" | "manager" | "ticket";
+export type PrincipalKind = "owner" | "chief" | "manager" | "goal" | "ticket";
 
 export interface Principal {
   kind: PrincipalKind;

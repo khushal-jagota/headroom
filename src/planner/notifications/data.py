@@ -203,6 +203,8 @@ def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Princi
     """Translate unchanged notification rows to the shared identity contract."""
     if subject_kind == "ticket":
         return Principal(PrincipalKind.ticket, subject_id)
+    if subject_kind == "goal":
+        return Principal(PrincipalKind.goal, subject_id)
     if subject_kind == "manager":
         return Principal(PrincipalKind.manager, subject_id)
     if subject_kind == "agent" and subject_id == CHIEF_SETTINGS_KEY:
@@ -220,6 +222,8 @@ def _preference_subject_key(edge: AttentionEdge) -> str:
     """
     if edge.subject.kind is PrincipalKind.ticket:
         return TICKET_NOTIFICATION_SUBJECT_KEY
+    if edge.subject.kind is PrincipalKind.goal:
+        return "goals"
     if edge.subject.kind is PrincipalKind.manager:
         return MANAGER_NOTIFICATION_SUBJECT_KEY
     if edge.subject.kind is PrincipalKind.chief:
@@ -261,6 +265,8 @@ def _prune_missing_subjects(conn: sqlite3.Connection) -> None:
             "OR (subject_kind = 'manager' AND NOT EXISTS ("
             "SELECT 1 FROM managers "
             f"WHERE managers.id = {table}.subject_id)) "
+            "OR (subject_kind = 'goal' AND NOT EXISTS ("
+            f"SELECT 1 FROM goals WHERE goals.id = {table}.subject_id)) "
             "OR (subject_kind = 'agent' AND NOT EXISTS ("
             f"SELECT 1 FROM agents WHERE agents.agent_key = {table}.subject_id))"
         )
@@ -347,6 +353,22 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
                 conversation.occurred_at,
             )
 
+    for row in conn.execute(
+        "SELECT g.id,g.title,a.conversation_id FROM goals g "
+        "JOIN agents a ON a.agent_key='goal_' || g.id"
+    ):
+        attention = conversations.get(str(row["conversation_id"]), attention_data.NOTHING_WAITING)
+        for notification_type, active in (
+            ("awaiting_reply", attention.unread_message),
+            ("awaiting_answer", attention.pending_ask),
+            ("errored", attention.errored),
+        ):
+            desired[("goal", str(row["id"]), notification_type)] = (
+                active,
+                Principal(PrincipalKind.goal, str(row["id"])),
+                str(row["title"]),
+                attention.occurred_at,
+            )
     attention_data.reconcile_attention(
         conn,
         {key: (active, occurred_at) for key, (active, _, _, occurred_at) in desired.items()},
@@ -385,6 +407,10 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
         if subject_key[0] == "ticket":
             label_row = conn.execute(
                 "SELECT title FROM tickets WHERE id=?", (subject_key[1],)
+            ).fetchone()
+        elif subject_key[0] == "goal":
+            label_row = conn.execute(
+                "SELECT title FROM goals WHERE id=?", (subject_key[1],)
             ).fetchone()
         elif subject_key[0] == "manager":
             label_row = conn.execute(
@@ -452,6 +478,8 @@ _SUBJECT_STILL_EXISTS = (
     "AND EXISTS (SELECT 1 FROM tickets WHERE tickets.id = d.subject_id)) "
     "OR (d.subject_kind = 'manager' "
     "AND EXISTS (SELECT 1 FROM managers WHERE managers.id = d.subject_id)) "
+    "OR (d.subject_kind = 'goal' "
+    "AND EXISTS (SELECT 1 FROM goals WHERE goals.id = d.subject_id)) "
     "OR (d.subject_kind = 'agent' "
     "AND EXISTS (SELECT 1 FROM agents WHERE agents.agent_key = d.subject_id)))"
 )

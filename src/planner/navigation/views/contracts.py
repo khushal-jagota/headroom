@@ -13,6 +13,7 @@ from planner.navigation.contracts import (
     AttentionKnowledge,
     ChiefRecord,
     Continuity,
+    GoalRecord,
     ManagerValue,
     ProjectRecord,
     RecordKey,
@@ -24,7 +25,9 @@ from planner.navigation.proof_contracts import ProofResult
 VIEW_WIRE_VERSION = 3
 VIEW_PROJECTION_VERSION = 6
 
-ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
+ViewSection = Literal[
+    "rail_parents", "rail_tickets", "children", "settled", "unread", "review", "goals"
+]
 ViewGroup = Literal[
     "all",
     "awaiting_approval",
@@ -43,7 +46,7 @@ ViewGroup = Literal[
 
 
 class ViewOwner(TypedDict):
-    kind: Literal["chief", "manager", "ticket"]
+    kind: Literal["chief", "manager", "ticket", "goal"]
     id: str
 
 
@@ -142,6 +145,7 @@ type ViewRecord = (
     | ViewSettledManagerRecord
     | ViewConversationRecord
     | ChiefRecord
+    | GoalRecord
     | AddressRecord
     | ProjectRecord
 )
