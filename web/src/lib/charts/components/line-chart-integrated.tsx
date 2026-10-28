@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type PointerEvent, type Ref } from "react";
 import { AnimatePresence, animate, motion, useInView, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring, useTransform, type MotionValue } from "motion/react";
-import { motionTokens } from "../lib/motion-tokens";
+import { motionTokens } from "../lib/chart-motion";
 import styles from "./line-chart.module.css";
 
 export interface LineChartSeries {
@@ -54,6 +54,8 @@ export interface LineChartProps {
   defaultHiddenSeries?: string[];
   onHiddenSeriesChange?: (hidden: string[]) => void;
   /** Called as the crosshair moves, and with null when it leaves. Use it to drive a headline readout. */
+  /** Commits a selected observation for an editable measurement. */
+  onSelect?: (index: number) => void;
   onActiveChange?: (index: number | null, datum: LineChartDatum | null) => void;
   /** Keeps the current lines on screen, dimmed, while the next range loads. */
   loading?: boolean;
@@ -191,7 +193,7 @@ function axisPicks(data: LineChartDatum[], width: number) {
   return labeled.reverse().filter((_, rank) => rank % stride === 0).reverse();
 }
 
-export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), hiddenSeries, defaultHiddenSeries, onHiddenSeriesChange, onActiveChange, loading = false, emptyLabel = "No data for this range", legend, categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
+export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), hiddenSeries, defaultHiddenSeries, onHiddenSeriesChange, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", legend, categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
   const reduced = useReducedMotionSafe();
   const figure = useRef<HTMLElement>(null);
   const plot = useRef<HTMLDivElement>(null);
@@ -396,6 +398,7 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
     const at=clamp((clientX-rect.left)/rect.width,0,1);return positions.reduce((best,x,i)=>Math.abs(x-at)<Math.abs(positions[best]-at)?i:best,0);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if ((event.key === "Enter" || event.key === " ") && onSelect && !empty) { event.preventDefault(); onSelect(index ?? last); return; }
     if (event.key === "Escape" && scrubbing) { event.preventDefault(); setActive(null); return; }
     const from = index ?? last + 1, page = Math.max(1, Math.round(data.length / 6));
     const next = ({ ArrowLeft: from - 1, ArrowDown: from - 1, ArrowRight: index === null ? last : from + 1, ArrowUp: index === null ? last : from + 1, PageDown: from - page, PageUp: from + page, Home: 0, End: last } as Record<string, number>)[event.key];
@@ -427,7 +430,7 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
     </div>}
     <div className={styles.chart} data-scrubbing={scrubbing || undefined} data-loading={loading || undefined}>
       <div ref={plot} className={styles.plot} style={{ height }} role="slider" tabIndex={empty ? -1 : 0} aria-label={`${label}, explore by ${categoryLabel.toLowerCase()}`} aria-orientation="horizontal" aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={(index ?? last) + 1} aria-valuetext={valueText}
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setActive(null); }} onPointerCancel={() => setActive(null)} onPointerLeave={event => { if (event.pointerType === "mouse") setActive(null); }} onKeyDown={onKeyDown} onBlur={() => setActive(null)}
+        onClick={event => { if (!empty) onSelect?.(pointAt(event.clientX)); }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setActive(null); }} onPointerCancel={() => setActive(null)} onPointerLeave={event => { if (event.pointerType === "mouse") setActive(null); }} onKeyDown={onKeyDown} onBlur={() => setActive(null)}
         onFocus={event => { if (event.currentTarget.matches(":focus-visible") && !empty) setActive(current => current ?? last); }}>
         <svg className={styles.svg} width="100%" height={height} aria-hidden="true" focusable="false">
           <defs>{series.filter(line=>line.compareTo).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>

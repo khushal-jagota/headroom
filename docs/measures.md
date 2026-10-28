@@ -1,6 +1,6 @@
-# Automatic project measures
+# Project measures
 
-This build provides backend APIs and CLI commands only. It adds no screens or secret-entry form.
+Goal charts read shared dated measures. Manual charts also offer owner controls for dated totals, cumulative snapshots, and individual readings.
 
 Measures store dated numbers for Projects. A source runs a saved Python script. An assembled measure calculates arithmetic from retained observations. Another source needs a script and configuration, not a deployment.
 
@@ -8,7 +8,7 @@ The owner chose trusted scripts and simple, replaceable secret storage. Scripts 
 
 ## Set up a source
 
-Create a source with a name, Project, account, and responsible Manager or Chief. The existing assignment chain controls source work. The responsible agent and its assigned Workers can save scripts, configure schedules, test, and collect. There is no repair designation or publication step. Taken measures use that same source authority. Assembled definitions use the existing owner/Chief authority for Project definitions.
+Create a source with a name, Project, account, and responsible Manager or Chief. The existing assignment chain controls source work. The responsible agent and its assigned Workers can save scripts, configure schedules, test, and collect. There is no repair designation or publication step. Taken measures use that same source authority. Assembled and manual definitions use the existing owner/Chief authority for Project definitions.
 
 The backend supports future owner secret submission through `POST /api/credentials` and replacement through `PUT /api/credentials/{id}/secret`. Supported authentication kinds are bearer token, named header, and Basic authentication. This build includes no UI for these operations. The credential CLI lists descriptive names and metadata only. Metadata responses omit secret values. Scripts reference named keys rather than embed secret literals.
 
@@ -79,3 +79,18 @@ Failure records contain structured categories, HTTP status where applicable, and
 A provider supplies the meaning of its figure. A PostHog query can return a provider-computed count through JSON POST. This build does not choose a Stripe MRR source or define revenue accounting. Any Stripe example must identify the actual value it collects.
 
 New scripts can use ordinary installed Python capabilities. This is not a universal integration engine. Unsupported libraries or new storage adapters can require host changes. Async provider work must fit the configured run duration unless the script supplies its own provider-specific continuation data.
+
+
+## Manual observations
+
+A manual measure has `origin: "manual"`, no source, and no formula. Owner controls use the existing owner/Chief authority. Goal-agent writes remain outside this approved operation.
+
+`GET /api/measures/{id}/manual-state?date=YYYY-MM-DD` returns the selected observation, latest snapshot through that date, timezone, current local date, definition revision, and write revision. Without a date, the snapshot selects the measure-local current date from the server clock. An absent observation remains missing. Every snapshot carries the measure-wide write revision, including absent dates.
+
+`POST /api/measures/{id}/manual-writes` accepts an explicit date, request ID, definition revision, and `date` or `latest` basis. A `replace` request supplies `value` and `expected_write_revision`. An `increment` request supplies `delta`. The server checks replacements against the measure-wide write revision. It calculates increments from the accepted base within one write transaction.
+
+Daily increments use the selected date. Cumulative increments use the latest snapshot on or before the explicit action date. Only an explicit increment starts an absent base at zero. Cumulative reads never sum snapshots. Individual readings use date-specific replacements. Signed numbers, fractions, decreases, and values above a chart target remain valid. Targets stay separate from observations.
+
+Each accepted request stores its authenticated actor, payload fingerprint, accepted date/value/revision, and timestamp. The record supports attribution and safe replay after a lost response. The same request ID and payload return the original acknowledgement, even after later edits. A reused ID with another payload or actor returns a conflict. No history browser, prior-value stream, undo, or automatic retry system exists.
+
+Each numeric observation references exactly one real source run or manual receipt. Formula inputs retain that provenance. Manual writes do not fabricate source runs or change provider gaps. HTTP 409 responses for stale definition or value edits include the current snapshot in `error.detail.state`.

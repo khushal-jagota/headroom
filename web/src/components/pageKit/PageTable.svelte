@@ -21,7 +21,8 @@
   let shiftHeld = false;
   let anchor: number | null = null;
   let tableEl = $state<HTMLTableElement | null>(null);
-  let widths = $state<number[] | null>(null);
+  let measuredWidths = $state<number[] | null>(null);
+  let widths = $derived(block.column_widths ?? measuredWidths);
   let band = $state<{ left: number; width: number } | null>(null);
 
   $effect(() => {
@@ -38,10 +39,11 @@
     const table = tableEl;
     if (!table || widths) return;
     const measure = () => {
+      if (getComputedStyle(table).display !== "table") return false;
       const total = table.getBoundingClientRect().width;
       const cells = [...table.querySelectorAll<HTMLTableCellElement>("thead th[data-key]")];
       if (!total || cells.length !== block.columns.length) return false;
-      widths = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
+      measuredWidths = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
       return true;
     };
     if (measure()) return;
@@ -74,6 +76,17 @@
       band = next;
     };
     update();
+    if (index !== undefined && getComputedStyle(table).display !== "table") {
+      const cell = table.querySelectorAll<HTMLTableCellElement>("thead th[data-key]")[index];
+      const strip = cell?.parentElement;
+      if (cell && strip && strip.scrollWidth > strip.clientWidth) {
+        const bounds = strip.getBoundingClientRect();
+        const target = cell.getBoundingClientRect();
+        const start = Math.max(bounds.left, strip.querySelector("th:not([data-key])")?.getBoundingClientRect().right ?? bounds.left) + 8;
+        const shift = target.right > bounds.right - 8 ? target.right - bounds.right + 8 : target.left < start ? target.left - start : 0;
+        if (shift) strip.scrollTo({ left: strip.scrollLeft + shift, behavior: reduced ? "auto" : "smooth" });
+      }
+    }
     const observer = new ResizeObserver(update);
     observer.observe(table);
     return () => observer.disconnect();
@@ -174,7 +187,7 @@
     if (!selectable) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (target.closest("a, button, input, label, select, textarea")) return;
+    if (target.closest("a, button, input, label, select, textarea, [role=button], [contenteditable=true]")) return;
     if (window.getSelection()?.toString()) return;
     toggleRow(key, event.shiftKey);
     (event.currentTarget as HTMLElement).querySelector<HTMLInputElement>("input[type=checkbox]")?.focus({ preventScroll: true });
@@ -355,7 +368,7 @@
         <tbody>
           {#if ordered.length === 0}
             <tr>
-              <td class="empty" colspan={block.columns.length + (selectable ? 1 : 0)}>No rows to show</td>
+              <td class="empty" colspan={block.columns.length + (selectable ? 1 : 0)}>{block.empty_message ?? "No rows to show"}</td>
             </tr>
           {:else}
             {#each ordered as line (line.key)}
@@ -376,6 +389,7 @@
                     data-sorted={sort?.index === index ? "" : undefined}
                     data-numeric={numeric[index] ? "" : undefined}
                     data-tone={block.cell_tones?.[line.key]?.[index] ?? undefined}
+                    data-missing={missing(cell) ? "" : undefined}
                   ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}{#if context?.updateBlock}<GoalInlineEdit revision={context!.revision} value={cell} ariaLabel={`Edit ${block.columns[index]}`} onSave={(value, revision)=>context!.updateBlock!(block.id,old=>old.type === "table" ? {...old,rows:old.rows.map((row,r)=>r===line.key?row.map((c,i)=>i===index?value:c):row)} : old, revision)} />{:else}{cell}{/if}</div></td>
                 {/each}
               </tr>
@@ -384,37 +398,47 @@
         </tbody>
       </table>
     </div>
+    {#if selectable}
     <div class="footer">
       <p class="count" data-active={selectable && selectedCount > 0 ? "" : undefined}>{countLabel}</p>
       {#if selectable && selectedCount > 0}
         <button type="button" class="clear" data-clear transition:fade={{ duration: reduced ? 0 : 140 }} onclick={clearSelection}>Clear</button>
       {/if}
     </div>
+    {/if}
   </div>
   <p class="sr" role="status">{message}</p>
 </div>
 
 <style>
-  .table-block { min-width: 0; }
-  .caption {
-    margin: 0 0 var(--space-3);
+  .table-block {
+    min-width: 0;
+    padding: 28px;
+    border: 1px solid var(--chart-card-border);
+    border-radius: 28px;
+    background: var(--chart-surface);
     color: var(--text-strong);
-    font-size: var(--type-md);
-    font-weight: 500;
-    line-height: 1.4;
+  }
+  .caption {
+    margin: 0 0 24px;
+    color: var(--text-strong);
+    font-size: 18px;
+    font-weight: 550;
+    line-height: normal;
+    letter-spacing: -.012em;
   }
   .card {
-    --column-wash: color-mix(in srgb, var(--text-strong) 2.5%, var(--surface-2));
-    --row-line: color-mix(in srgb, var(--border-color) 45%, transparent);
+    --column-wash: var(--chart-surface-muted);
+    --row-line: color-mix(in srgb, var(--chart-grid) 92%, transparent);
     position: relative;
     min-width: 0;
     overflow: hidden;
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-lg);
-    background: var(--surface-2);
-    color: var(--text-default);
+    border: var(--border-hairline) solid var(--chart-grid);
+    border-radius: 8px;
+    background: var(--chart-surface);
+    color: var(--text-strong);
   }
-  .scroller { position: relative; overflow-x: auto; }
+  .scroller { position: relative; overflow-x: auto; overscroll-behavior-x: contain; }
   .band {
     position: absolute;
     top: 0;
@@ -427,15 +451,16 @@
     position: relative;
     z-index: 1;
     width: 100%;
+    min-width: 560px;
     border-collapse: separate;
     border-spacing: 0;
-    font-size: var(--type-sm);
-    line-height: 1.4;
+    font-size: 13px;
+    line-height: 1.5;
     text-align: left;
   }
   table[data-fixed] { table-layout: fixed; }
   th, td {
-    --cell-base: var(--surface-2);
+    --cell-base: var(--chart-surface);
     --cell-fill: var(--cell-base);
     position: relative;
     background-color: var(--cell-fill);
@@ -445,8 +470,8 @@
   th {
     height: 44px;
     padding: 0;
-    border-bottom: var(--border-hairline) solid var(--border-color);
-    color: var(--text-faint);
+    border-bottom: var(--border-hairline) solid var(--chart-grid);
+    color: var(--chart-muted);
     font-size: var(--type-sm);
     font-weight: 500;
     white-space: nowrap;
@@ -456,16 +481,18 @@
     height: 52px;
     padding: 0 var(--space-4);
     border-bottom: var(--border-hairline) solid var(--row-line);
-    color: var(--text-default);
+    color: var(--text-strong);
     font-weight: 400;
     overflow-wrap: anywhere;
   }
-  td[data-primary] { color: var(--text-strong); font-weight: 500; }
+  td[data-primary] { color: var(--text-strong); font-weight: 400; }
+  td[data-missing] { color: var(--chart-muted); }
   td[data-tone="good"] { color: var(--accent-done); }
   td[data-tone="attention"] { color: var(--accent-attention); }
   td[data-tone="bad"] { color: var(--accent-error); }
-  td[data-tone="neutral"] { color: var(--text-faint); }
-  td[data-tone] .cell-copy { display: flex; align-items: center; gap: var(--space-2); }
+  td[data-tone="neutral"] { color: var(--chart-legend); }
+  td[data-tone="info"] { color: var(--accent-bright); }
+  td[data-tone] .cell-copy { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
   .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
   tbody tr:last-child td { border-bottom: 0; }
   table[data-selectable] tbody tr { cursor: pointer; }
@@ -498,9 +525,9 @@
     width: var(--space-4);
     height: var(--space-4);
     flex: none;
-    border: var(--border-hairline) solid var(--border-color);
+    border: var(--border-hairline) solid var(--chart-grid);
     border-radius: var(--radius-sm);
-    background: var(--surface-2);
+    background: var(--chart-surface);
     pointer-events: none;
     transition: transform var(--motion-fast) var(--motion-ease);
   }
@@ -524,7 +551,7 @@
   }
   .glyph path {
     fill: none;
-    stroke: var(--surface-2);
+    stroke: var(--chart-surface);
     stroke-width: 1.75;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -582,7 +609,7 @@
     stroke-linejoin: round;
   }
   .sort-hint {
-    color: var(--text-faint);
+    color: var(--chart-muted);
     opacity: 0;
     transition: opacity var(--motion-fast) linear;
   }
@@ -614,7 +641,7 @@
   th[data-sorted] .sort-hint { opacity: 0; }
   .empty {
     height: 120px;
-    color: var(--text-faint);
+    color: var(--chart-muted);
     font-weight: 400;
     text-align: center;
   }
@@ -626,8 +653,8 @@
     gap: var(--space-3);
     margin: 0;
     padding: 0 var(--space-2) 0 var(--space-4);
-    border-top: var(--border-hairline) solid var(--border-color);
-    color: var(--text-faint);
+    border-top: var(--border-hairline) solid var(--chart-grid);
+    color: var(--chart-muted);
     font-size: var(--type-sm);
     font-weight: 400;
     line-height: 1.4;
@@ -682,4 +709,46 @@
     filter: none;
   }
   .reduced .hit-input:active + .box { transform: none; }
+  @container page (max-width: 620px) {
+    .table-block { padding: 24px 16px; border-radius: 24px; }
+    .caption { padding-inline: 8px; }
+    .scroller { overflow: visible; }
+    .band { display: none; }
+    table { display: block; width: 100%; min-width: 0; max-width: 100%; }
+    colgroup { display: none; }
+    thead { display: block; }
+    thead tr { display: flex; align-items: center; gap: 4px; padding: 4px 8px; overflow-x: auto; border-bottom: 1px solid var(--chart-grid); scrollbar-width: none; }
+    thead tr::-webkit-scrollbar { display: none; }
+    th { display: block; flex: none; height: auto; border: 0; padding: 0; background: transparent; }
+    th.select-cell { position: sticky; left: -8px; z-index: 1; width: 40px; margin-left: -8px; padding: 0 0 0 12px; background: var(--chart-surface); }
+    th.select-cell .hit { height: 32px; }
+    th .sort { width: auto; height: 32px; border-radius: 8px; padding: 0 10px; }
+    th[data-sorted] .sort { background: var(--chart-surface-muted); }
+    th[data-numeric] .sort-inner { flex-direction: row; }
+    .sort:focus-visible { outline-offset: -1px; }
+    tbody { display: block; width: 100%; }
+    tbody tr { --row-fill: var(--chart-surface); position: relative; display: flex; width: 100%; min-height: 64px; box-sizing: border-box; flex-wrap: wrap; align-items: baseline; align-content: center; gap: 2px 8px; padding: 10px 16px; border-bottom: 1px solid var(--row-line); background-color: var(--row-fill); }
+    tbody tr::after { order: 1; flex-basis: 100%; content: ""; }
+    table[data-selectable] tbody tr { padding-left: 44px; }
+    table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--chart-surface)); }
+    tbody tr:last-child { border-bottom: 0; }
+    td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: 11px; text-align: left; }
+    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
+    td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: 13px; }
+    td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: 11px; }
+    td[data-sorted]:not([data-primary]):not([data-tone]) { color: var(--text-strong); }
+    td[data-tone] .cell-copy { font-size: 11px; }
+    td.select-cell { position: absolute; top: 0; bottom: 0; left: 4px; display: flex; width: 36px; align-items: center; padding: 0; }
+    td.select-cell .hit { justify-content: center; }
+    .empty { flex: 1 0 100%; height: auto; padding: 24px 0; text-align: center; }
+    table[data-selectable] tbody tr:has(.empty) { padding-left: 16px; }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    @container page (max-width: 620px) {
+      tbody tr:hover { --row-fill: color-mix(in srgb, var(--text-strong) 3%, var(--chart-surface)); }
+      table[data-selectable] tbody tr[data-selected]:hover { --row-fill: color-mix(in srgb, var(--accent-bright) 11%, var(--chart-surface)); }
+      tbody tr:hover td { background: transparent; }
+    }
+  }
+
 </style>

@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState, useId, type CSSProperties } from "react";
 import { AnimatePresence, animate, motion, useInView, useMotionValue, useMotionValueEvent, useReducedMotion, useTransform, useSpring, type Variants } from "motion/react";
-import { motionTokens } from "../lib/motion-tokens";
+import { motionTokens } from "../lib/chart-motion";
 import styles from "./gauge.module.css";
 import chartStyles from "./line-chart.module.css";
 
 type GaugeTone = "accent" | "success" | "warning" | "danger";
 /** A band that starts at `from`: the highest band the value reaches sets the tone and names the state, so it never rests on color alone. */
 export interface GaugeThreshold { from: number; tone: GaugeTone; label: string; }
-export interface GaugeProps { formatValue?: (value:number)=>string; value: number; min?: number; max?: number; label: string; detail?: string; tone?: GaugeTone; thresholds?: GaugeThreshold[]; target?: { value: number; label: string }; }
+export interface GaugeProps { formatValue?: (value:number)=>string; unit?: string; value: number; min?: number; max?: number; label: string; detail?: string; tone?: GaugeTone; thresholds?: GaugeThreshold[]; target?: { value: number; label: string }; }
 
 /** Copy enters from the side the value moved toward: a rise comes up from below, a fall drops from above. */
 const rise: Variants = { hidden: (direction: number) => ({ opacity: 0, y: `${.3 * direction}em`, filter: `blur(${motionTokens.blur.soft}px)` }), shown: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter] } }, gone: (direction: number) => ({ opacity: 0, y: `${-.3 * direction}em`, filter: `blur(${motionTokens.blur.subtle}px)`, transition: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.standard] } }) };
@@ -33,10 +33,15 @@ function arcFor(sweep: number) {
 }
 const track = arcFor(1);
 
-export function Gauge({ formatValue = value => `${Math.round(value)}%`, value, min = 0, max = 100, label, detail, tone = "accent", thresholds, target }: GaugeProps) {
+export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '%', value, min = 0, max = 100, label, detail, tone = "accent", thresholds, target }: GaugeProps) {
   const safeMax = max > min ? max : min + 1;
   const percentage = Math.min(1, Math.max(0, (value - min) / (safeMax - min)));
   const displayValue = value;
+  const displayUnit = unit && formatValue(displayValue).endsWith(unit) ? unit : '';
+  const formatDigits = (number: number) => {
+    const text = formatValue(number);
+    return displayUnit && text.endsWith(displayUnit) ? text.slice(0, -displayUnit.length) : text;
+  };
   // A target occupies its actual position on the same scale as the reading.
   const targetFraction = target ? (target.value - min) / (safeMax - min) : null;
   const showTarget = targetFraction !== null && targetFraction >= 0 && targetFraction <= 1;
@@ -78,7 +83,7 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, value, m
   const path = useTransform(sweep, arcFor);
   // The cap fades in over the first sliver instead of popping in as a dot.
   const arcOpacity = useTransform(sweep, current => Math.min(1, Math.max(0, current / .02)));
-  const digits = useTransform(count, current => formatValue(current));
+  const digits = useTransform(count, current => formatDigits(current));
   const [moved, setMoved] = useState({ value: displayValue, direction: 1 });
   if (moved.value !== displayValue) setMoved({ value: displayValue, direction: displayValue < moved.value ? -1 : 1 });
 
@@ -131,14 +136,14 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, value, m
         </g>}
       </svg>
       <div className={styles.readout} aria-hidden="true">
-        <span className={styles.number}><motion.span className={styles.digits} style={{ width: digitsWidth }}>{digits}</motion.span><span ref={sizer} className={styles.sizer}>{formatValue(displayValue)}</span></span>
+        <span className={styles.number}><motion.span className={styles.digits} style={{ width: digitsWidth }}>{digits}</motion.span>{displayUnit && <span className={styles.unit}>{displayUnit}</span>}<span ref={sizer} className={styles.sizer}>{formatDigits(displayValue)}</span></span>
         {thresholds && <span className={styles.status}><Swap text={filled ? shown?.label ?? "" : ""} direction={moved.direction} /></span>}
       </div>
     </div>
     <motion.div ref={tipRef} id={tooltipId} role="tooltip" className={[chartStyles.tooltip,styles.inspectionTooltip].join(' ')} style={{x:tipX,y:tipY}} data-open={inspecting||undefined} aria-hidden={!inspecting}>
       <p className={chartStyles.tipTitle}>{label}</p>
       <p className={chartStyles.tipRow} style={{'--series':'var(--gauge-color)'} as CSSProperties}><span className={chartStyles.tipSwatch}/><span className={chartStyles.tipName}>Current</span><span className={chartStyles.tipValue}>{formatValue(displayValue)}</span></p>
-      {target&&<p className={chartStyles.tipRow} style={{'--series':'var(--text-faintest)'} as CSSProperties}><span className={chartStyles.tipSwatch} data-dashed/><span className={chartStyles.tipName}>Target</span><span className={chartStyles.tipValue}>{formatValue(target.value)}</span></p>}
+      {target&&<p className={chartStyles.tipRow} style={{'--series':'var(--chart-reference)'} as CSSProperties}><span className={chartStyles.tipSwatch} data-dashed/><span className={chartStyles.tipName}>Target</span><span className={chartStyles.tipValue}>{formatValue(target.value)}</span></p>}
     </motion.div>
     <figcaption><strong><Swap text={label} /></strong>{detail && <span className={styles.detail}><Swap text={detail} direction={moved.direction} /></span>}</figcaption>
   </figure>;

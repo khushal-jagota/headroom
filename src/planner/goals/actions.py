@@ -15,6 +15,7 @@ from planner.core.ids import new_id
 from planner.goals import data
 from planner.goals.contracts import ChartBlock, Goal
 from planner.goals.logic.documents import blocks, measure_ids, prepare_document, validate_chart
+from planner.measures.contracts import MeasureOrigin
 from planner.measures.data import read_measure, transaction
 from planner.worker_settings.service import read_chief_settings
 
@@ -72,6 +73,15 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
         raise ValueError("primary chart ID must be unique")
     for identifier in measure_ids(result.primary_chart, result.page):
         read_measure(conn, identifier)
+    charts = ([result.primary_chart] if result.primary_chart else []) + [
+        cast(ChartBlock, item) for item in blocks(result.page) if item["type"] == "chart"
+    ]
+    for chart in charts:
+        if (
+            "manual" in chart
+            and read_measure(conn, chart["measure_id"]).origin is not MeasureOrigin.manual
+        ):
+            raise ValueError("manual controls require a manual-origin measure")
     return result
 
 

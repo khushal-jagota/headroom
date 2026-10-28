@@ -13,6 +13,8 @@ from planner.measure_sources import data, views
 from planner.measure_sources.settings import DEFAULT_PAGE_LIMIT
 from planner.measures import configuration as measure_limits
 from planner.measures import data as measure_data
+from planner.measures import manual
+from planner.measures.logic.dates import local_date
 from planner.resource_versions.contracts import ResourceSnapshot, ResourceSourceTrigger
 from planner.resource_versions.data import source_revision
 
@@ -60,6 +62,23 @@ class MeasureResources:
         query = parse_qs(parsed.query, keep_blank_values=True)
         if any(len(values) != 1 for values in query.values()):
             return None
+        segments = path.removeprefix("/api/").split("/")
+        if len(segments) == 3 and segments[0] == "measures" and segments[2] == "manual-state":
+            if set(query) - {"date"}:
+                return None
+            now = request.app.state.clock.now_unix()
+            measure = measure_data.read_measure(conn, segments[1])
+            revision = (
+                source_revision(conn, "automatic-measures", "all")
+                + ":"
+                + local_date(now, measure.timezone).isoformat()
+            )
+            return ResourceSnapshot(
+                revision,
+                lambda: asdict(
+                    manual.read_state(conn, measure.id, query.get("date", [None])[0], now=now)
+                ),
+            )
         allowed = {"project_id", "source_id", "account", "limit", "offset"}
         if set(query) - allowed:
             return None

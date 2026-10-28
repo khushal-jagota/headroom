@@ -14,6 +14,7 @@ export interface ChartSeries {
 
 export interface ChartRange {
   target?: number;
+  domain?: [number, number];
   id: string;
   label: string;
   series: Array<ChartSeries>;
@@ -30,6 +31,11 @@ export interface ChartFormat {
   prefix?: string;
   suffix?: string;
   decimals?: number;
+}
+
+export interface ManualChartControls {
+  model: "daily_quota" | "cumulative_target" | "individual_readings";
+  increments?: Array<number>;
 }
 
 export interface ChartBlock {
@@ -56,6 +62,13 @@ export interface ChartBlock {
   difference_unit?: "pp";
   allocation_mode?: "value" | "percentage";
   total_label?: string;
+  plot_height?: number;
+  scale_label?: string;
+  shortfall_label?: "below target" | "to target";
+  comparison_decimals?: number;
+  within_limit_label?: "under limit" | "remaining";
+  emphasis?: "hero";
+  manual?: ManualChartControls;
 }
 
 export interface ChecklistItem {
@@ -85,8 +98,10 @@ export interface TableBlock {
   id: string;
   columns: Array<string>;
   rows: Array<Array<string>>;
-  cell_tones?: Array<Array<"neutral" | "attention" | "bad" | "good" | null>>;
+  cell_tones?: Array<Array<"neutral" | "attention" | "bad" | "good" | "info" | null>>;
   caption?: string;
+  empty_message?: string;
+  column_widths?: Array<number>;
 }
 
 export interface SectionBlock {
@@ -238,6 +253,7 @@ export interface InputObservation {
   definition_revision: number;
   value: number | null;
   run_id: string | null;
+  manual_write_id: string | null;
 }
 
 export interface MeasureDate {
@@ -251,4 +267,74 @@ export interface SourceHealthSummary {
   health: "disabled" | "never_collected" | "healthy" | "failed";
   latest_success_at: number | null;
   latest_failure_run_id: string | null;
+}
+
+export interface ManualMeasureState {
+  measure_id: string;
+  definition_revision: number;
+  write_revision: number;
+  timezone: string;
+  current_date: string;
+  date: string;
+  observation: Observation | null;
+  latest_observation: Observation | null;
+}
+
+export interface Observation {
+  measure_id: string;
+  date: string;
+  value: number;
+  run_id: string | null;
+  observed_at: number;
+  definition_revision: number;
+  period_interval: PeriodInterval | null;
+  manual_write_id: string | null;
+}
+
+export interface PeriodInterval {
+  start_date: string;
+  end_date_exclusive: string;
+}
+
+export type ManualWriteBody = ManualReplaceBody | ManualIncrementBody;
+
+export interface ManualReplaceBody {
+  request_id: string;
+  date: string;
+  expected_definition_revision: number;
+  basis: "date" | "latest";
+  operation: "replace";
+  value: number;
+  expected_write_revision: number;
+}
+
+export interface ManualIncrementBody {
+  request_id: string;
+  date: string;
+  expected_definition_revision: number;
+  basis: "date" | "latest";
+  operation: "increment";
+  delta: number;
+}
+
+export interface ManualWriteResult {
+  receipt: ManualWriteReceipt;
+  state: ManualMeasureState;
+  replayed: boolean;
+}
+
+export interface ManualWriteReceipt {
+  request_id: string;
+  measure_id: string;
+  actor: Principal;
+  payload_fingerprint: string;
+  date: string;
+  value: number;
+  write_revision: number;
+  accepted_at: number;
+}
+
+export interface Principal {
+  kind: "owner" | "chief" | "manager" | "goal" | "ticket";
+  id: string;
 }

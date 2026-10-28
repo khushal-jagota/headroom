@@ -42,6 +42,35 @@
   --type-chart-reading: 40px;
   --type-chart-compact: 32px;
   --type-chart-completion: 36px;
+  /* Approved chart-sheet surfaces and category palettes. These remain separate
+   * from the shell so the production renderer preserves the approved examples. */
+  --chart-surface: #1a1a1a;
+  --chart-surface-raised: #252525;
+  --chart-surface-muted: #212121;
+  --chart-card-border: #ffffff0e;
+  --chart-grid: #ffffff0c;
+  --chart-border-strong: #ffffff24;
+  --chart-secondary: #bfbfbf;
+  --chart-muted: #8e8e8e;
+  --chart-legend: #a6a6a6;
+  --chart-reference: #777777;
+  --chart-range-surface: #232323;
+  --chart-sample-control: #222222;
+  --chart-range-border: #ffffff06;
+  --chart-range-selected: #191919;
+  --chart-range-shadow: 0 1px 3px #0003;
+  --chart-meter-track: #2a2a2a;
+  --chart-budget-track: #424242;
+  --chart-budget-remaining: #676767;
+  --chart-allocation-blue: #9aadd2;
+  --chart-allocation-blue-muted: #647998;
+  --chart-allocation-blue-dark: #414f65;
+  --chart-allocation-blue-active: #bccceb;
+  --chart-allocation-blue-muted-active: #839bbd;
+  --chart-allocation-blue-dark-active: #667d9e;
+  --chart-composition-blue: #9aadd2;
+  --chart-composition-blue-muted: #646f87;
+  --chart-composition-blue-dark: #474b55;
   --accent-done: #7fa564;  /* the green done marks */
   --accent-error: #d85d5d; /* red marks for errored ticket stages */
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
@@ -52,6 +81,7 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-xl: 24px;
   --radius-pill: 999px;
 
   /* Motion durations — entrances ease out, nothing bounces */

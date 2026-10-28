@@ -8,6 +8,7 @@ from typing import Literal, NotRequired, TypedDict
 from planner.measures.contracts import MeasureValue, SourceHealthSummary
 
 Tone = Literal["neutral", "attention", "bad", "good"]
+TableCellTone = Literal["neutral", "attention", "bad", "good", "info"]
 GoalKind = Literal["binary", "quantitative"]
 ChartKind = Literal[
     "line", "bar", "gauge", "number", "binary", "progress", "time-budget", "allocation"
@@ -28,6 +29,7 @@ class ChartSeries(TypedDict):
 
 class ChartRange(TypedDict):
     target: NotRequired[float]
+    domain: NotRequired[tuple[float, float]]
     id: str
     label: str
     series: list[ChartSeries]
@@ -44,6 +46,11 @@ class ChartFormat(TypedDict, total=False):
     prefix: str
     suffix: str
     decimals: int
+
+
+class ManualChartControls(TypedDict):
+    model: Literal["daily_quota", "cumulative_target", "individual_readings"]
+    increments: NotRequired[list[float]]
 
 
 class ChartBlock(TypedDict):
@@ -70,6 +77,13 @@ class ChartBlock(TypedDict):
     difference_unit: NotRequired[Literal["pp"]]
     allocation_mode: NotRequired[Literal["value", "percentage"]]
     total_label: NotRequired[str]
+    plot_height: NotRequired[int]
+    scale_label: NotRequired[str]
+    shortfall_label: NotRequired[Literal["below target", "to target"]]
+    comparison_decimals: NotRequired[int]
+    within_limit_label: NotRequired[Literal["under limit", "remaining"]]
+    emphasis: NotRequired[Literal["hero"]]
+    manual: NotRequired[ManualChartControls]
 
 
 class ChecklistItem(TypedDict):
@@ -99,8 +113,10 @@ class TableBlock(TypedDict):
     id: str
     columns: list[str]
     rows: list[list[str]]
-    cell_tones: NotRequired[list[list[Tone | None]]]
+    cell_tones: NotRequired[list[list[TableCellTone | None]]]
     caption: NotRequired[str]
+    empty_message: NotRequired[str]
+    column_widths: NotRequired[list[float]]
 
 
 class SectionBlock(TypedDict):

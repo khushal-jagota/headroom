@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from starlette.requests import Request
+from tests.unit.test_manual_measures import manual_measure
 from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 
 from planner.core.clock import TestClock as FakeClock
@@ -22,7 +23,14 @@ from planner.goals.logic.status import (
     quantitative_status,
 )
 from planner.goals.resource_versions import GoalResources
-from planner.measures.contracts import CandidateObservation
+from planner.measures import actions as measure_actions
+from planner.measures.contracts import (
+    CandidateObservation,
+    ConstantExpression,
+    CreateMeasureBody,
+    MeasureKind,
+    MeasureOrigin,
+)
 
 
 def page() -> JsonDict:
@@ -246,6 +254,11 @@ def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Co
         "below_target_tone": "attention",
         "target_label": "floor",
         "difference_unit": "pp",
+        "plot_height": 260,
+        "emphasis": "hero",
+        "scale_label": "12 interviews",
+        "shortfall_label": "to target",
+        "within_limit_label": "remaining",
         "series": [
             {
                 "name": "Teams",
@@ -281,13 +294,16 @@ def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Co
     without_base = cast(ChartBlock, {key: value for key, value in chart.items() if key != "series"})
     assert chart_summary(without_base, []) == (10, 2)  # fallback range carries its own target
     del chart["ranges"]
+    chart["domain"] = (0, 15)
     document = page()
     document["blocks"].append(
         {
             "type": "table",
             "columns": ["Experiment", "Outcome"],
             "rows": [["First", "Keep"], ["Second", "Stop"]],
-            "cell_tones": [[None, "good"], [None, "bad"]],
+            "cell_tones": [[None, "good"], [None, "info"]],
+            "column_widths": [60, 40],
+            "empty_message": "No experiments recorded",
         }
     )
     goal = create(tmp_db, kind="quantitative", primary_chart=chart, page=document)
@@ -307,6 +323,17 @@ def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Co
             now=NOW + 1,
         )
     assert data.read_goal(tmp_db, goal.id).revision == 1
+    for widths in ([60], [0, 100], [60, 60]):
+        invalid = deepcopy(goal.page)
+        cast(Any, invalid["blocks"][-1])["column_widths"] = widths
+        with pytest.raises(PlannerError, match="column widths"):
+            actions.update_goal(
+                tmp_db,
+                goal.id,
+                {"expected_revision": 1, "page": invalid},
+                principal=OWNER_PRINCIPAL,
+                now=NOW + 1,
+            )
 
 
 def test_sheet_category_totals_share_one_identity_and_meter_denominators() -> None:
@@ -368,3 +395,81 @@ def test_sheet_category_totals_share_one_identity_and_meter_denominators() -> No
         validate_chart(chart)
     chart["kind"] = "bar"
     validate_chart(chart)  # prior signed line/bar contract is unchanged
+
+
+def test_manual_controls_require_matching_models_and_manual_origin(tmp_db: Connection) -> None:
+    """A saved control must edit its explicit manual measure, never provider or formula data."""
+    from planner.goals.logic.documents import validate_chart
+
+    measure = manual_measure(tmp_db)
+    daily: ChartBlock = {
+        "type": "chart",
+        "id": "daily",
+        "kind": "bar",
+        "placement": "primary",
+        "measure_id": measure.id,
+        "target": 8,
+        "manual": {"model": "daily_quota", "increments": [-0.5, 1]},
+    }
+    cumulative: ChartBlock = {
+        "type": "chart",
+        "id": "cumulative",
+        "kind": "gauge",
+        "placement": "supporting",
+        "measure_id": measure.id,
+        "target": 20,
+        "manual": {"model": "cumulative_target", "increments": [2]},
+    }
+    reading: ChartBlock = {
+        "type": "chart",
+        "id": "reading",
+        "kind": "line",
+        "placement": "supporting",
+        "measure_id": measure.id,
+        "manual": {"model": "individual_readings"},
+    }
+    document = page()
+    document["blocks"].extend([cumulative, reading])
+    goal = create(tmp_db, kind="quantitative", primary_chart=daily, page=document)
+    saved = data.read_goal(tmp_db, goal.id)
+    assert saved.primary_chart == daily and saved.page == goal.page
+
+    external = taken(tmp_db, source(tmp_db))
+    assembled = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="Derived",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="UTC",
+            period=None,
+            source_id=None,
+            formula=ConstantExpression(op="constant", value=2),
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    with pytest.raises(PlannerError, match="manual-origin"):
+        create(tmp_db, kind="quantitative", primary_chart={**daily, "measure_id": external.id})
+    rejected = deepcopy(saved.page)
+    cast(ChartBlock, rejected["blocks"][-1])["measure_id"] = assembled.id
+    with pytest.raises(PlannerError, match="manual-origin"):
+        actions.update_goal(
+            tmp_db,
+            goal.id,
+            {"expected_revision": 1, "page": rejected},
+            principal=OWNER_PRINCIPAL,
+            now=NOW,
+        )
+    assert data.read_goal(tmp_db, goal.id).page == saved.page
+
+    for invalid, message in (
+        ({**daily, "kind": "line"}, "matching chart kind"),
+        ({key: value for key, value in daily.items() if key != "measure_id"}, "measure binding"),
+        ({key: value for key, value in daily.items() if key != "target"}, "require a target"),
+        ({**cumulative, "target": 0}, "positive target"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_chart(cast(ChartBlock, invalid))

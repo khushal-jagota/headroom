@@ -4,8 +4,8 @@ import { useReducedMotion } from 'motion/react';
 import { Chart, registerables, type ChartDataset } from 'chart.js';
 import type { ChartBlock, ChartSeries } from '../../goals/contracts';
 import type { LineChartDatum } from './line-chart-integrated';
-import { chartHeadline, chartTone, formatReading } from '../presentation';
-import { motionTokens } from '../lib/motion-tokens';
+import { chartHeadline, chartTone, formatReading, formatAxisTick } from '../presentation';
+import { motionTokens } from '../lib/chart-motion';
 import { seriesColor } from './goal-indicators';
 
 Chart.register(...registerables);
@@ -20,8 +20,13 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
   const [hidden, setHidden] = useState<string[]>([]);
   const reduce = useReducedMotion();
   const plotted = series.length ? series : [{ name: block.title ?? 'Current', points: [] }];
-  const entries = plotted.map((item, i) => ({ key: i === 0 ? 'actual' : item.name, label: item.name, color: block.stacked ? seriesColor(item, i) : i === 0 ? 'var(--accent-done)' : seriesColor(item, i) }));
-  if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--text-faintest)' });
+  const latest = data.at(-1)?.values;
+  const currentTone = chartTone(block, latest?.actual, latest?.target);
+  const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
+    : { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--chart-muted)' }[currentTone];
+  const entries = plotted.map((item, i) => ({ key: i === 0 ? 'actual' : item.name, label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? currentColor : seriesColor(item, i, 'composition') }));
+  const topStackKey = entries.at(-1)?.key;
+  if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--chart-reference)' });
 
   useEffect(() => {
     if (!ref.current) return;
@@ -29,13 +34,14 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
     const resolve = (css: string) => css.replace(/var\((--[a-z-]+)\)/g, (_, name: string) => color(name));
     const datasets: ChartDataset<'bar' | 'line', (number | null)[]>[] = entries.map(entry => entry.key === 'target' ? {
       type: 'line', label: entry.label, data: data.map(d => d.values.target ?? null),
-      borderColor: color('--text-faintest'), borderDash: [4, 5], borderWidth: 1.5, pointRadius: 0,
+      borderColor: color('--chart-reference'), borderDash: [4, 5], borderWidth: 1.5, pointRadius: 0,
       hidden: hidden.includes(entry.key),
     } : {
       type: 'bar', label: entry.label, data: data.map(d => d.values[entry.key] ?? null),
       backgroundColor: block.stacked || entry.key !== 'actual' ? resolve(entry.color) : data.map(d => d.values.target === undefined ? color('--accent-bright') :
         color(chartTone(block, d.values.actual, d.values.target) === 'good' ? '--accent-done' : block.below_target_tone === 'attention' ? '--accent-attention' : '--accent-error')),
-      borderRadius: 4, maxBarThickness: 40, ...(block.stacked ? { stack: 'composition' } : {}), hidden: hidden.includes(entry.key),
+      borderRadius: block.stacked ? (entry.key === topStackKey ? { topLeft: 4, topRight: 4 } : 0) : 4,
+      maxBarThickness: 40, ...(block.stacked ? { stack: 'composition' } : {}), hidden: hidden.includes(entry.key),
     });
     const configuration = {
       type: 'bar', data: { labels: data.map(d => d.axisLabel), datasets },
@@ -45,12 +51,12 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
         interaction: { mode: 'index', intersect: false },
         plugins: {
           legend: { display: false },
-          tooltip: { backgroundColor: color('--surface-2'), padding: 12, cornerRadius: 14,
+          tooltip: { backgroundColor: color('--chart-surface-raised'), padding: 12, cornerRadius: 12,
             callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y === null ? 'No reading' : formatReading(block, ctx.parsed.y)}` } },
         },
         scales: {
-          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--text-faintest'), maxRotation: 0, maxTicksLimit: 4 } },
-          y: { stacked: block.stacked, position: 'right', beginAtZero: true, border: { display: false }, grid: { color: color('--border-color') }, ticks: { color: color('--text-faintest'), maxTicksLimit: 5, callback: v => formatReading(block, Number(v)) } },
+          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxRotation: 0, maxTicksLimit: 4 } },
+          y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxTicksLimit: 5, callback: v => formatAxisTick(block, Number(v)) } },
         },
         onHover: (_, elements) => { const i = elements[0]?.index ?? null; callback.current(i === null ? null : data[i]); },
       },
@@ -82,7 +88,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
       onClick={() => { inspect(null); setHidden(current => current.includes(entry.key) ? current.filter(key => key !== entry.key) : [...current, entry.key]); }}>
       <i style={{ background: entry.color }} />{entry.label}
     </button>)}</div>
-    <div className="bar-plot" style={{ height: compact ? 176 : 260 }}>
+    <div className="bar-plot" style={{ height: block.plot_height ?? (compact ? 176 : 242) }}>
       <canvas ref={ref} role="slider" tabIndex={data.length ? 0 : -1} aria-label={`${block.title ?? 'Chart'}, explore observations`}
         aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={Math.max(1, (index ?? data.length - 1) + 1)}
         aria-valuetext={`${selected?.label ?? 'No readings'}: ${reading === undefined ? 'No reading' : formatReading(block, reading)}`}

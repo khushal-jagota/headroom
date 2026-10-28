@@ -11,6 +11,24 @@ export function formatReading(block: ChartBlock, value: number): string {
   })}${block.format?.suffix ?? block.unit ?? ''}`;
 }
 
+/** Compact readings keep fractional precision without padding whole numbers. */
+export function formatTrimmedReading(block: ChartBlock, value: number): string {
+  if (!Number.isFinite(value)) return 'No reading';
+  return `${block.format?.prefix ?? ''}${value.toLocaleString('en-US', {
+    maximumFractionDigits: block.format?.decimals ?? 0,
+  })}${block.format?.suffix ?? block.unit ?? ''}`;
+}
+
+/** Axis labels use the approved abbreviated scale; readings retain full precision. */
+export function formatAxisTick(block: ChartBlock, value: number): string {
+  const prefix = block.format?.prefix ?? '';
+  const suffix = block.format?.suffix ?? block.unit ?? '';
+  if (prefix && (block.stacked || Math.abs(value) >= 1000)) return `${prefix}${(value / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k${suffix}`;
+  if (suffix === '%') return `${Number(value.toFixed(1))}%`;
+  if (prefix) return `${prefix}${Math.round(value).toLocaleString('en-US')}${suffix}`;
+  return String(Math.round(value));
+}
+
 export function selectedSeries(block: ChartBlock, range: string): ChartSeries[] {
   const series = block.ranges?.find(item => item.id === range)?.series ?? block.series ?? block.ranges?.[0]?.series ?? [];
   return block.measure_id ? series.slice(0, 1) : series;
@@ -19,6 +37,11 @@ export function selectedSeries(block: ChartBlock, range: string): ChartSeries[] 
 export function selectedTarget(block: ChartBlock, range: string): number | undefined {
   const selected = block.ranges?.find(item => item.id === range) ?? (!block.series ? block.ranges?.[0] : undefined);
   return selected?.target ?? block.target;
+}
+
+export function selectedDomain(block: ChartBlock, range: string): ChartBlock['domain'] {
+  const selected = block.ranges?.find(item => item.id === range) ?? (!block.series ? block.ranges?.[0] : undefined);
+  return selected?.domain ?? block.domain;
 }
 
 export function chartData(block: ChartBlock, values: MeasureValue[], range: ChartRangeSelection): LineChartDatum[] {
@@ -80,6 +103,18 @@ export function compositionTotal(data: LineChartDatum[], reading: LineChartDatum
   return keys.reduce((sum, key) => sum + reading.values[key]!, 0);
 }
 
+/** Whole-percent summaries preserve the total and put the largest category first. */
+export function allocationSummary(series: ChartSeries[], reading: LineChartDatum | undefined): string {
+  const values = series.map((item, index) => ({ name: item.name, index, value: reading?.values[index === 0 ? 'actual' : item.name] }));
+  if (values.some(item => item.value === undefined)) return 'Current reading unavailable';
+  const total = values.reduce((sum, item) => sum + item.value!, 0);
+  if (total <= 0) return '';
+  const shares = values.map(item => ({ ...item, exact: item.value! / total * 100, percent: Math.floor(item.value! / total * 100) }));
+  const remaining = 100 - shares.reduce((sum, item) => sum + item.percent, 0);
+  [...shares].sort((a, b) => (b.exact - b.percent) - (a.exact - a.percent) || a.index - b.index).slice(0, remaining).forEach(item => item.percent++);
+  return shares.sort((a, b) => b.exact - a.exact || a.index - b.index).map(item => `${item.percent}% ${item.name.toLowerCase()}`).join(' · ');
+}
+
 export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeKey: string | null = null) {
   const reading = inspectedReading(data, activeKey);
   const missingCount = data.filter(d => d.values.actual === undefined).length;
@@ -106,13 +141,16 @@ export function chartTone(block: ChartBlock, value: number | undefined, target: 
 export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined): string {
   if (value === undefined || target === undefined) return '';
   const difference = Math.abs(value - target);
+  const decimals = block.comparison_decimals ?? block.format?.decimals ?? 0;
   const amount = block.difference_unit === 'pp'
-    ? `${difference.toLocaleString('en-US', { minimumFractionDigits: block.format?.decimals ?? 0, maximumFractionDigits: block.format?.decimals ?? 0 })} pp`
-    : formatReading(block, difference);
+    ? `${difference.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} pp`
+    : formatReading({ ...block, format: { ...block.format, decimals } }, difference);
   if (block.kind === 'progress') return value === target ? 'Target reached' : amount + (value < target ? ' remaining' : ' beyond target');
   if (block.kind === 'time-budget') return value === target ? 'Budget used' : amount + (value < target ? ' remaining' : ' over budget');
   const label = block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target');
-  if (difference < .0001) return `On ${label}`;
+  if (difference < .0001 && block.kind !== 'bar' && !block.aggregate) return `On ${label}`;
+  if (value < target && block.direction === 'atmost' && block.within_limit_label === 'remaining') return `${amount} remaining`;
+  if (value < target && block.direction !== 'atmost' && label === 'target' && block.shortfall_label === 'to target') return `${amount} to target`;
   return `${amount} ${block.direction === 'atmost' ? (value <= target ? 'under' : 'over') : (value >= target ? 'above' : 'below')} ${label}`;
 }
 

@@ -1,6 +1,6 @@
-.support-disclosure{min-width:0;--text-3xl:var(--type-display);border:var(--border-hairline) solid var(--border-color);border-radius:24px;padding:24px;background:var(--surface-2)}
+.support-disclosure{min-width:0;--text-3xl:var(--type-display);border:var(--border-hairline) solid var(--chart-card-border);border-radius:24px;padding:24px 20px;background:var(--chart-surface)}
 .support-summary{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 20px;row-gap:8px;width:100%;min-height:88px;padding:0;border:0;background:none;color:var(--text-strong);font:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.support-title-text{grid-column:1;font-size:14px;line-height:20px;font-weight:500;color:var(--text-muted)}
+.support-title-text{grid-column:1;font-size:14px;line-height:20px;font-weight:500;color:var(--chart-secondary)}
 .support-reading{grid-column:1;display:flex;align-items:baseline;height:32px;font-size:28px;line-height:32px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.025em}
 .support-status{grid-column:1;min-height:18px;font-size:12px;line-height:18px}
 .support-status .comparison{margin:0;min-height:0;font:inherit}
@@ -14,8 +14,11 @@
 .support-chart-body .ranges{width:100%;justify-content:space-between}
 .support-chart-body .ranges button{flex:1}
 .support-chart-body>figure{margin:0}
-.support-chart-body .allocation-layout{padding:4px 0 0}
+.support-chart-body .allocation-layout{padding:4px 0 0;min-height:0;gap:16px}
+.support-chart-body .ring-center{--text-3xl:36px}
+.support-chart-body .meter-plot{margin-bottom:28px}
 .support-chart-body .allocation-layout .ring-chart{max-width:50%;width:144px}
 .support-chart-body .allocation-legend button{font-size:12px}
 .support-chart-body>figure figcaption{display:none}
+@media(max-width:650px){.support-chart-body .allocation-layout{gap:12px}.support-chart-body .ring-center{--text-3xl:32px}}
 @media(prefers-reduced-motion:reduce){.support-reveal{height:0!important;opacity:1!important}.support-disclosure[data-expanded=true]>.support-reveal{height:auto!important}}

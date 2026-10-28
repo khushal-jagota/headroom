@@ -131,6 +131,14 @@ def prepare_document(value: Any, new_identity: Callable[[], str]) -> PageDocumen
                 len(row) != len(block["columns"]) for row in tones
             ):
                 raise ValueError("table cell tones must match its rows and columns")
+        if block["type"] == "table" and "column_widths" in block:
+            widths = block["column_widths"]
+            if (
+                len(widths) != len(block["columns"])
+                or any(width <= 0 for width in widths)
+                or abs(sum(widths) - 100) > 1e-6
+            ):
+                raise ValueError("table column widths must be positive percentages totaling 100")
         if block["type"] == "chart":
             validate_chart(cast(ChartBlock, block))
     return accepted
@@ -138,14 +146,34 @@ def prepare_document(value: Any, new_identity: Callable[[], str]) -> PageDocumen
 
 def validate_chart(chart: ChartBlock) -> None:
     validate_shape(chart, ChartBlock)
+    if "manual" in chart:
+        model = chart["manual"]["model"]
+        kind = {"daily_quota": "bar", "cumulative_target": "gauge", "individual_readings": "line"}[
+            model
+        ]
+        if chart["kind"] != kind or not chart.get("measure_id", "").strip():
+            raise ValueError("manual controls require a measure binding and matching chart kind")
+        if model in ("daily_quota", "cumulative_target") and "target" not in chart:
+            raise ValueError("manual quota and cumulative controls require a target")
+        if model == "cumulative_target" and chart["target"] <= 0:
+            raise ValueError("cumulative target geometry requires a positive target")
     if not chart["id"].strip():
         raise ValueError("chart ID must be nonempty")
     if "measure_id" in chart and not chart["measure_id"].strip():
         raise ValueError("measure ID must be nonempty")
     if chart.get("format", {}).get("decimals", 0) < 0:
         raise ValueError("decimal places must be nonnegative")
+    if chart.get("comparison_decimals", 0) < 0:
+        raise ValueError("comparison decimal places must be nonnegative")
     if "domain" in chart and chart["domain"][0] >= chart["domain"][1]:
         raise ValueError("chart domain minimum must be less than its maximum")
+    if any(
+        "domain" in group and group["domain"][0] >= group["domain"][1]
+        for group in chart.get("ranges", [])
+    ):
+        raise ValueError("chart range domain minimum must be less than its maximum")
+    if chart.get("plot_height", 1) <= 0:
+        raise ValueError("chart plot height must be positive")
     if chart["kind"] in ("progress", "time-budget") and (
         chart.get("target", 0) <= 0
         or any(group.get("target", chart["target"]) <= 0 for group in chart.get("ranges", []))

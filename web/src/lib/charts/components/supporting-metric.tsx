@@ -1,7 +1,7 @@
 import React,{useId} from 'react';
 import {motion,useReducedMotion} from 'motion/react';
 import './supporting-metric.css';
-import {motionTokens} from '../lib/motion-tokens';
+import {motionTokens} from '../lib/chart-motion';
 export function SupportingMetric({title,reading,status,open,onToggle,children}:{title:string;reading:React.ReactNode;status:React.ReactNode;open:boolean;onToggle:()=>void;children:React.ReactNode}){
  const id=useId(),reduce=useReducedMotion();
  return <article className="support-disclosure" data-expanded={open}>

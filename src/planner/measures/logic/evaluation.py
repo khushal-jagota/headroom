@@ -97,6 +97,7 @@ def evaluate(
                 resolved.definition_revision,
                 resolved.value,
                 stored.run_id if stored else None,
+                stored.manual_write_id if stored else None,
             )
             missing.update(resolved.missing_inputs)
             if resolved.status is not Status.value and status is Status.value:
@@ -134,7 +135,7 @@ def evaluate(
             return number(left / right)
 
         if status is Status.value:
-            if measure.origin is MeasureOrigin.taken:
+            if measure.origin is not MeasureOrigin.assembled:
                 observed = observations.get(pair)
                 if observed is None:
                     status = Status.missing_input

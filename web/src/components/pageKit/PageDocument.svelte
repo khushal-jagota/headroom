@@ -10,7 +10,7 @@
     <h1>{document.title}</h1>
     <p class="summary">{document.summary}</p>
   </header>{/if}
-  <div class="page-body">
+  <div class="page-body" class:with-header={showHeader}>
     <PageBlocks blocks={document.blocks} />
   </div>
 </article>
@@ -40,5 +40,5 @@
     color: var(--text-muted);
     white-space: pre-wrap;
   }
-  .page-body { margin-top: var(--space-6); }
+  .page-body.with-header { margin-top: var(--space-6); }
 </style>

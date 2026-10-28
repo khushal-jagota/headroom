@@ -81,7 +81,7 @@ export function AnimatedCounter({ value, label, prefix = "", suffix = "", decima
       {prefix && <span className={styles.symbol}>{prefix}</span>}
       <AnimatePresence initial={false}>
         {parts.map(part => "digit" in part
-          ? <Column key={part.key} digit={part.digit} direction={direction} armed={armed} delay={Math.min(part.order * motionTokens.stagger.item, motionTokens.stagger.maximum)} reduceMotion={reduceMotion} />
+          ? <Column key={part.key} digit={part.digit} direction={direction} armed={armed} delay={Math.min(part.order * motionTokens.stagger.item, .25)} reduceMotion={reduceMotion} />
           : <motion.span key={part.key} className={styles.symbol} {...presence} transition={reduceMotion ? { duration: 0 } : motionTokens.spring.morph}>{part.text}</motion.span>)}
       </AnimatePresence>
       {suffix && <span className={styles.symbol}>{suffix}</span>}

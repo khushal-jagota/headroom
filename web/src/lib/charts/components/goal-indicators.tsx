@@ -9,8 +9,8 @@ import { AnimatedCounter } from './animated-counter';
 import { motionTokens } from '../lib/motion-tokens';
 import { formatReading, compositionTotal } from '../presentation';
 
-export const seriesColor = (series: ChartSeries, index: number) =>
-  `var(--chart-${series.color ?? (index === 0 ? 'blue' : index === 1 ? 'blue-muted' : 'blue-dark')})`;
+export const seriesColor = (series: ChartSeries, index: number, palette = 'allocation', active = false) =>
+  `var(--chart-${palette}-${series.color ?? (index === 0 ? 'blue' : index === 1 ? 'blue-muted' : 'blue-dark')}${active ? '-active' : ''})`;
 
 function useTransition() {
   return useReducedMotion() ? { duration: 0 } : motionTokens.spring.smooth;
@@ -25,7 +25,7 @@ export function ProgressCard({ block, value }: { block: ChartBlock; value: numbe
       aria-valuetext={value === undefined ? 'No reading' : `${formatReading(block, value)} of ${formatReading(block, target)}`}>
       <motion.div className="meter-fill" initial={false} animate={{ width: `${value === undefined ? 0 : Math.max(0, Math.min(value / target, 1)) * 100}%`, backgroundColor: tone }} transition={transition} />
     </div>
-    <div className="meter-scale"><span>0</span><span>{formatReading(block, target)}</span></div>
+    <div className="meter-scale"><span>0</span><span>{block.scale_label ?? formatReading(block, target)}</span></div>
   </div>;
 }
 
@@ -45,7 +45,7 @@ export function TimeBudgetCard({ block, value }: { block: ChartBlock; value: num
           const start = offset; offset += amount / budget;
           return <g key={i}>
             <motion.circle cx="100" cy="100" r="80" fill="none" transform="rotate(-90 100 100)" initial={false}
-              animate={{ strokeDasharray: `${Math.max(0, amount / budget * circumference - (amount === budget ? 0 : 5))} ${circumference}`, strokeDashoffset: -start * circumference, stroke: i === 0 ? tone : 'var(--text-faintest)', strokeWidth: active === i ? 16 : 12, opacity: active === null || active === i ? 1 : .5 }}
+              animate={{ strokeDasharray: `${Math.max(0, amount / budget * circumference - (amount === budget ? 0 : 5))} ${circumference}`, strokeDashoffset: -start * circumference, stroke: i === 0 ? tone : 'var(--chart-budget-track)', strokeWidth: active === i ? 16 : 12, opacity: active === null || active === i ? 1 : .5 }}
               transition={transition} style={{ pointerEvents: 'none' }} />
             {amount > 0 && <circle data-segment={i} cx="100" cy="100" r="80" fill="none" stroke="transparent" strokeWidth="28" transform="rotate(-90 100 100)"
               strokeDasharray={`${amount / budget * circumference} ${circumference}`} strokeDashoffset={-start * circumference} style={{ pointerEvents: 'stroke' }} onPointerEnter={() => setActive(i)} onClick={() => setActive(i)} />}
@@ -60,7 +60,7 @@ export function TimeBudgetCard({ block, value }: { block: ChartBlock; value: num
         onFocus={() => setActive(i)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(i)} onMouseLeave={() => setActive(null)} onClick={() => setActive(i)}
         animate={{ opacity: active === null || active === i ? 1 : .5 }} transition={transition}
         aria-label={`${name}, ${amount === undefined ? 'No reading' : formatReading(block, amount)}`}>
-        <i style={{ background: i === 0 ? tone : remaining !== undefined && remaining < 0 ? 'var(--accent-error)' : 'var(--text-faintest)' }} /><span>{name}</span><strong>{amount === undefined ? '—' : formatReading(block, amount)}</strong>
+        <i style={{ background: i === 0 ? tone : remaining !== undefined && remaining < 0 ? 'var(--accent-error)' : 'var(--chart-budget-remaining)' }} /><span>{name}</span><strong>{amount === undefined ? '—' : formatReading(block, amount)}</strong>
       </motion.button>;
     })}</div>
   </div>;
@@ -82,17 +82,17 @@ export function AllocationCard({ block, data, series }: { block: ChartBlock; dat
   let offset = 0;
   return <div className="ring-layout allocation-layout">
     <div className="ring-chart" role="img" aria-label={entries.map(({ item, key }) => `${item.name}: ${format(reading?.values[key])}`).join(', ')}>
-      <svg viewBox="0 0 200 200" aria-hidden="true" onPointerLeave={() => setActive(null)}>{entries.map(({ item, key, color }) => {
+      <svg viewBox="0 0 200 200" aria-hidden="true" onPointerLeave={() => setActive(null)}>{entries.map(({ item, key, color }, index) => {
         const amount = reading?.values[key], fraction = total && amount !== undefined ? amount / total : 0;
         const start = offset; offset += fraction;
         return <g key={item.name}>
           <motion.circle cx="100" cy="100" r="80" fill="none" transform="rotate(-90 100 100)" initial={false}
-            animate={{ strokeDasharray: `${Math.max(0, fraction * circumference - (fraction === 1 ? 0 : 5))} ${circumference}`, strokeDashoffset: -start * circumference, strokeWidth: active === key ? 16 : 12, stroke: color, opacity: active === null || active === key ? 1 : .5 }} transition={transition} style={{ pointerEvents: 'none' }} />
+            animate={{ strokeDasharray: `${Math.max(0, fraction * circumference - (fraction === 1 ? 0 : 5))} ${circumference}`, strokeDashoffset: -start * circumference, strokeWidth: active === key ? 16 : 12, stroke: active === key ? seriesColor(item, index, 'allocation', true) : color, opacity: active === null || active === key ? 1 : .5 }} transition={transition} style={{ pointerEvents: 'none' }} />
           {fraction > 0 && <circle data-segment={key} cx="100" cy="100" r="80" fill="none" stroke="transparent" strokeWidth="28" transform="rotate(-90 100 100)"
             strokeDasharray={`${fraction * circumference} ${circumference}`} strokeDashoffset={-start * circumference} style={{ pointerEvents: 'stroke' }} onPointerEnter={() => setActive(key)} onClick={() => setActive(key)} />}
         </g>;
       })}</svg>
-      <div className="ring-center">{activeValue === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={activeValue} prefix={percentage ? undefined : block.format?.prefix} suffix={percentage ? '%' : block.format?.suffix ?? block.unit} decimals={percentage && activeEntry ? 1 : block.format?.decimals ?? 0} />}<span>{activeEntry?.item.name ?? (percentage ? 'Total' : block.total_label ?? 'Total')}</span></div>
+      <div className="ring-center">{activeValue === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={activeValue} prefix={percentage ? undefined : block.format?.prefix} suffix={percentage ? '%' : block.format?.suffix ?? block.unit} decimals={percentage ? (activeEntry ? 1 : 0) : block.format?.decimals ?? 0} />}<span>{activeEntry?.item.name ?? (percentage ? 'Total' : block.total_label ?? 'Total')}</span></div>
     </div>
     <div className="allocation-legend" data-active={active ?? undefined}>{entries.map(({ item, key, color }) => <motion.button key={key} type="button" data-selected={active === key}
       onFocus={() => setActive(key)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(key)} onMouseLeave={() => setActive(null)} onClick={() => setActive(current => current === key ? null : key)}
