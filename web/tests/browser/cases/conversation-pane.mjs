@@ -359,6 +359,21 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       description: "Stop the worker", argument_hint: null }
   ];
   let conversationState = $state<ConversationState>("rest");
+  let fixtureConversationId = $state("browser-fixture");
+  let scrollSnapshotNumber = 0;
+  // These synthetic conversations intentionally share text and a Ticket-owned file.
+  // Select a coherent snapshot through ordinary Pane inputs, preserving scoped keys.
+  (window as any).__selectEquivalentScrollConversation = () => {
+    const snapshot = {
+      id: "browser-fixture-scroll-" + ++scrollSnapshotNumber,
+      rows: rows.map(row => ({...row}))
+    };
+    flushSync(() => {
+      fixtureConversationId = snapshot.id;
+      rows = snapshot.rows;
+    });
+    return snapshot.id;
+  };
   let lens = $state<"focus" | "full">("focus");
 
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
@@ -833,7 +848,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       <ConversationPane
         bind:conversationState
         bind:lens
-        conversationId="browser-fixture"
+        conversationId={fixtureConversationId}
         conversationExists
         {rows}
         {visibleRows}
