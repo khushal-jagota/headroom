@@ -29,8 +29,11 @@ async def application(request):
             await response.write(b'start')
             await asyncio.sleep(60)
         else:
-            for _ in range(256):
+            # Keep every admitted slot occupied until the client disconnects.
+            # A finite body can finish while later socket proofs are running.
+            while True:
                 await response.write(b'x' * 65536)
+                await asyncio.sleep(0)
     except (ConnectionError, asyncio.CancelledError):
         pass
     return response
