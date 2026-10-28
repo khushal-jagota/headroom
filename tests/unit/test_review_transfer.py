@@ -10,18 +10,15 @@ from __future__ import annotations
 import asyncio
 from sqlite3 import Connection
 
-import pytest
-
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import text_message_content
-from planner.core import authority
-from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.managers import data as managers_data
+from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, ReviewTransferNotice
 from planner.tickets.review_transfer import notify_review_transfers
@@ -124,36 +121,14 @@ def test_third_party_move_notifies_the_previous_holder_with_the_movers_name(
         holder=OWNER_PRINCIPAL,
         manager_id=mover_item.id,
     )
-    actor = Principal(PrincipalKind.manager, mover_item.id)
-    notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=CHIEF_PRINCIPAL, actor=actor)
+    actor = CHIEF_PRINCIPAL
+    new_holder = Principal(PrincipalKind.manager, mover_item.id)
+    notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=actor)
     assert notice.previous_holder == OWNER_PRINCIPAL
-    assert notice.new_holder == CHIEF_PRINCIPAL
-    assert notice.new_holder_name == "The Chief"
-    assert notice.notify_previous_holder is True
-    assert notice.mover_name == "Reassigning supervisor"
-
-
-def test_new_holder_can_be_a_ticket(
-    tmp_db: Connection, fake_clock: FakeClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    ticket_id = _parked_ticket(
-        tmp_db, fake_clock, title="Transferred to a ticket", holder=OWNER_PRINCIPAL
-    )
-    holder_ticket = tickets_data.create_ticket(
-        tmp_db,
-        title="Reviewer ticket",
-        principal=OWNER_PRINCIPAL,
-        now=fake_clock.now_unix(),
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        brief="Start",
-    )
-    # A Ticket reviewer needs declared authority, independent of its review address.
-    monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "coding", (authority.ticket(ticket_id),))
-    new_holder = Principal(PrincipalKind.ticket, holder_ticket.id)
-    notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=OWNER_PRINCIPAL)
     assert notice.new_holder == new_holder
-    assert notice.new_holder_name == "Reviewer ticket"
+    assert notice.new_holder_name == "Reassigning supervisor"
+    assert notice.notify_previous_holder is True
+    assert notice.mover_name == "The Chief"
 
 
 def test_new_holder_can_be_a_manager(tmp_db: Connection, fake_clock: FakeClock) -> None:
@@ -171,7 +146,7 @@ def test_new_holder_can_be_a_manager(tmp_db: Connection, fake_clock: FakeClock) 
 
 
 def test_delivery_addresses_both_targets_on_a_third_party_move(
-    tmp_db: Connection, fake_clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+    tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     mover_item = managers_data.create_manager(
         tmp_db, title="Reassigning supervisor", project_id="project_vylo", clock=fake_clock
@@ -183,32 +158,23 @@ def test_delivery_addresses_both_targets_on_a_third_party_move(
         holder=OWNER_PRINCIPAL,
         manager_id=mover_item.id,
     )
-    holder_ticket = tickets_data.create_ticket(
-        tmp_db,
-        title="Reviewer ticket",
-        principal=OWNER_PRINCIPAL,
-        now=fake_clock.now_unix(),
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        brief="Start",
-    )
-    # A Ticket reviewer needs declared authority, independent of its review address.
-    monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "coding", (authority.ticket(ticket_id),))
-    new_holder = Principal(PrincipalKind.ticket, holder_ticket.id)
-    actor = Principal(PrincipalKind.manager, mover_item.id)
+    new_holder = Principal(PrincipalKind.manager, mover_item.id)
+    actor = CHIEF_PRINCIPAL
     notice = _transfer(tmp_db, fake_clock, ticket_id, new_holder=new_holder, actor=actor)
     assert notice.notify_previous_holder is True
 
     system = InMemoryConversationSystem()
     asyncio.run(notify_review_transfers(system, tmp_db, [notice], now=fake_clock.now_unix()))
 
-    new_holder_conversation = tickets_data.read_ticket(tmp_db, holder_ticket.id).conversation_id
+    new_holder_conversation = conversation_start.read_agent_conversation(
+        tmp_db, mover_item.manager_agent_key
+    )
     assert new_holder_conversation is not None
     new_holder_observations = system.observations(new_holder_conversation)
     assert len(new_holder_observations) == 1
     assert new_holder_observations[0].kind is InMemoryConversationObservationKind.prompt_delivered
     assert new_holder_observations[0].content == text_message_content(
-        f"Reassigning supervisor moved the review of {notice.ticket_title} to you."
+        f"The Chief moved the review of {notice.ticket_title} to you."
     )
 
     owner_conversation = tickets_data.read_ticket(tmp_db, ticket_id).conversation_id
@@ -222,7 +188,7 @@ def test_delivery_addresses_both_targets_on_a_third_party_move(
     assert len(message_to_owner) == 1
     assert message_to_owner[0].recipient == OWNER_PRINCIPAL
     assert message_to_owner[0].content == text_message_content(
-        f"Reassigning supervisor moved the review of {notice.ticket_title} to Reviewer ticket."
+        f"The Chief moved the review of {notice.ticket_title} to Reassigning supervisor."
     )
 
 

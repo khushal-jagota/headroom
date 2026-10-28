@@ -259,9 +259,10 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
         "/api/tickets", json={"title": "Ordinary Ticket", "worker_type": "coding"}
     )
     assert manager.status_code == reviewer.status_code == 200
-    for holder in (
-        {"kind": "manager", "id": manager.json()["id"]},
-        {"kind": "ticket", "id": reviewer.json()["id"]},
+    for holder, assignment in (
+        ({"kind": "manager", "id": manager.json()["id"]}, {"kind": "chief", "id": "chief"}),
+        ({"kind": "ticket", "id": reviewer.json()["id"]}, {"kind": "chief", "id": "chief"}),
+        ({"kind": "chief", "id": "chief"}, {"kind": "manager", "id": manager.json()["id"]}),
     ):
         before = _snapshot(db_path)
         refused = client.post(
@@ -270,12 +271,16 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
                 "title": "Invalid reviewer", "worker_type": "coding",
                 "brief": "This Brief must not normalize the invalid holder to owner.",
                 "ceiling_holder": holder,
+                "manager": assignment,
             },
         )
         assert refused.status_code == 400, refused.text
         error = refused.json()["error"]
         assert error["code"] == "validation"
-        assert error["message"] == "ceiling holder must have authority to decide this Ticket"
+        assert error["message"] == (
+            "ceiling holder must be the user or the Ticket's direct manager; "
+            "name an eligible holder explicitly"
+        )
         assert error["detail"]["holder"] == holder
         assert error["detail"]["ticket_id"]
         assert _snapshot(db_path) == before
