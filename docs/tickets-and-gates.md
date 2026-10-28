@@ -388,14 +388,25 @@ Both halves can change later, and they change separately.
   way a proposal sitting in the wrong queue reaches the right one. Anyone standing above
   the Ticket can do it.
 
-When a parked review moves to another holder, Panels attempts one courtesy notice to
-the previous holder. The notice names the Ticket and the new holder. Automatic returns
-to the user after reassignment follow the same rule. No parked proposal or no final
+When a parked review moves to an agent holder, Panels attempts one courtesy notice
+to that agent. The notice names the Ticket and the mover, when known. Khushal receives
+no arrival notice when a review moves to him. Panels starts no conversation solely
+for that arrival notice. Approval attention and proposal delivery keep their current behavior.
+
+If a third party moves the review, Panels also attempts a courtesy notice to the
+previous holder. The notice names the Ticket, the mover, and the new holder. Neither
+the mover nor the new holder receives a previous-holder notice. Automatic returns to
+Khushal after reassignment follow the same rules. No parked proposal or no final
 holder change means no notice. A combined edit names only the final holder.
 
 The Chief, a Manager, or a holder Ticket receives the notice in its conversation.
-The user receives a Panels message in the affected Ticket conversation. This message
-starts no worker turn and does not answer an unrelated request for a worker reply.
+If Khushal is the previous holder, he still receives the departure notice as a Panels
+message in the affected Ticket conversation. This message starts no worker turn and
+does not answer an unrelated request for a worker reply.
+
+Khushal keeps the departure notice because he asked only to remove arrival notices.
+His review queue shows what he holds now, rather than what left it. A move by
+someone else can be unexpected, so the departure notice explains that change.
 
 The transfer commits before the notice attempt. A failed notice logs the failure and leaves
 the transfer successful. Panels does not retry the notice. A process failure before send,
