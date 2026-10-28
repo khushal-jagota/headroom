@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.unit.test_db import _migration_tree_through
 
 from planner.conversation.lifecycle_storage import (
     ConversationRuntimeAlreadyOwned,
@@ -77,6 +78,8 @@ def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         "_require_no_backend_activity",
         lambda database, **options: scanner(database, proc=proc, **options),
     )
+    # The offline writer deliberately refuses later, unreviewed schema revisions.
+    _migration_tree_through(tmp_path, monkeypatch, "owner_message_preview")
     database = tmp_path / "archive.db"
     seed_archive(database)
     yield database
