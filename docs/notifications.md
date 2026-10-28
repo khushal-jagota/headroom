@@ -89,6 +89,10 @@ the affected Ticket conversation. The notice requests no reply and grants no cre
 for a worker reply. Existing approval attention and proposal delivery to the new
 holder keep their current behavior.
 
+Khushal keeps the departure notice because he asked only to remove arrival notices.
+His review queue shows what he holds now, rather than what left it. A move by
+someone else can be unexpected, so the departure notice explains that change.
+
 This notice uses one best-effort send after the transfer commits. A failed send does not
 fail or repeat the transfer. A process failure before send or before a queued notice
 reaches the agent can lose it. A recorded conversation event persists through ordinary

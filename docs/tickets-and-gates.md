@@ -404,6 +404,10 @@ If Khushal is the previous holder, he still receives the departure notice as a P
 message in the affected Ticket conversation. This message starts no worker turn and
 does not answer an unrelated request for a worker reply.
 
+Khushal keeps the departure notice because he asked only to remove arrival notices.
+His review queue shows what he holds now, rather than what left it. A move by
+someone else can be unexpected, so the departure notice explains that change.
+
 The transfer commits before the notice attempt. A failed notice logs the failure and leaves
 the transfer successful. Panels does not retry the notice. A process failure before send,
 a refused send, or a restart before a queued message reaches the agent can lose the line.
