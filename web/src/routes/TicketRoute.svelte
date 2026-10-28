@@ -124,7 +124,7 @@
   let section=$state.raw<TicketSection | undefined>(undefined);
   $effect(()=>{if(admittedSection) section=admittedSection;});
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
-  let setupChoices = $state(initialTicketSetupChoicesState());
+  let setupChoices = $state.raw(initialTicketSetupChoicesState());
   const setupModelChoices = createTicketSetupModelChoices({
     read: readDestinationModelChoices,
     save: (_ticketId, configuration) => saveEmployeeConfiguration(configuration),

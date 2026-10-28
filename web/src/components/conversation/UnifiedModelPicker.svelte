@@ -75,7 +75,7 @@
 
   let showing = $state<"models" | "efforts">("models");
   let whyOpen = $state(false);
-  let pendingCanonicalRow = $state<PickerRow | null>(null);
+  let pendingCanonicalRow = $state.raw<PickerRow | null>(null);
   let pendingModel = $state<string | null>(null);
   let feedback = $state<string | null>(null);
   let refreshing = $state(false);
