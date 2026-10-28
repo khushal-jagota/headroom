@@ -13,9 +13,9 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import ClassVar, Literal, Protocol, TypedDict
+from typing import Annotated, ClassVar, Literal, Protocol, TypedDict
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import MoveRetirementResult
@@ -88,6 +88,39 @@ class FileTransfer:
     transfer_id: str
     direction: Literal["upload", "download"]
     manifest: FileManifest
+
+
+@dataclass(frozen=True, slots=True)
+class InputTransferRequest:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    command_id: str
+    slot: FileTransfer
+
+
+@dataclass(frozen=True, slots=True)
+class InputTransferProgress:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    command_id: str
+    transfer_id: str
+    phase: Literal["download", "finalization"]
+    byte_count: Annotated[int, Field(strict=True)]
+
+
+@dataclass(frozen=True, slots=True)
+class InputTransferCancel:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    command_id: str
+    transfer_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class InputTransferCancelled(InputTransferCancel):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class InputTransferFailed(InputTransferCancel):
+    message: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,6 +534,10 @@ class WireMessageKind(StrEnum):
     preview_bound = "preview_bound"
     preview_release = "preview_release"
     file_slot = "file_slot"
+    input_progress = "input_progress"
+    input_cancel = "input_cancel"
+    input_cancelled = "input_cancelled"
+    input_failed = "input_failed"
     protocol_refused = "protocol_refused"
     reconcile_inventory = "reconcile_inventory"
     reconcile_result = "reconcile_result"
@@ -651,3 +688,7 @@ class PreviewPeer(Protocol):
 class FrameWriter(ByteWriter, Protocol):
     async def wait_closed(self) -> None: ...
     def is_closing(self) -> bool: ...
+
+
+class RemoteInputTransferFailed(RuntimeError):
+    """Local input failure before any native command emission."""

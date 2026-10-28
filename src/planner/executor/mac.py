@@ -8,7 +8,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import aiohttp
@@ -53,6 +53,11 @@ from planner.executor.contracts import (
     FileTransfer,
     FrameReader,
     FrameWriter,
+    InputTransferCancel,
+    InputTransferCancelled,
+    InputTransferFailed,
+    InputTransferProgress,
+    InputTransferRequest,
     IpcOperation,
     IpcRequest,
     IpcResponse,
@@ -71,8 +76,10 @@ from planner.executor.contracts import (
 )
 from planner.executor.diagnostics import connection_diagnostics
 from planner.executor.files import IncomingFiles, safe_component, snapshot_ticket
+from planner.executor.input_transfers import InputTransferDeadline
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry, now_ms
+from planner.executor.transfers import settled_io, wait_for_settlement
 from planner.executor.wire import (
     ProtocolRefused,
     encode_frame,
@@ -125,6 +132,8 @@ class MacExecutor:
             paths.root / "artifacts" / "files", paths.run / "input-quarantine"
         )
         self._command_tasks: set[asyncio.Task[None]] = set()
+        self._input_transfers: dict[str, InputTransferDeadline] = {}
+        self._input_workers: dict[str, asyncio.Task[None]] = {}
         self._transfer_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
         self.registry = registry or NativeChildRegistry(
@@ -235,13 +244,59 @@ class MacExecutor:
                 self._command_tasks.add(task)
                 task.add_done_callback(self._command_tasks.discard)
                 continue
+            if message.kind is WireMessageKind.input_cancel:
+                cancellation = TypeAdapter(InputTransferCancel).validate_python(message.payload)
+                state = self._input_transfers.get(message.request_id)
+                if state is not None:
+                    if (
+                        state.request.command_id != cancellation.command_id
+                        or state.request.slot.transfer_id != cancellation.transfer_id
+                    ):
+                        raise ProtocolRefused("input cancellation identity mismatch")
+                    state.revoked = True
+                    worker = self._input_workers.get(message.request_id)
+                    if worker is not None:
+                        worker.cancel()
+                # Admission is revoked before ACK; physical cleanup remains owned.
+                await self._send(
+                    WireMessage(
+                        WireMessageKind.input_cancelled,
+                        message.request_id,
+                        as_object(
+                            InputTransferCancelled(
+                                cancellation.command_id, cancellation.transfer_id
+                            )
+                        ),
+                    )
+                )
+                continue
             if (
                 message.kind == WireMessageKind.file_slot
                 and message.request_id not in self._pending
             ):
-                if len(self._transfer_tasks) >= MAX_TRANSFERS:
-                    raise ProtocolRefused("input transfer capacity exceeded")
-                task = asyncio.create_task(self._input(message))
+                request = TypeAdapter(InputTransferRequest).validate_python(message.payload)
+                if not self._handshake_accepted or self._transport_admission_stopped:
+                    raise ProtocolRefused("input before validated handshake")
+                if message.request_id in self._input_transfers:
+                    raise ProtocolRefused("duplicate input exchange")
+                if len(self._input_transfers) >= MAX_TRANSFERS:
+                    await self._send(
+                        WireMessage(
+                            WireMessageKind.input_failed,
+                            message.request_id,
+                            as_object(
+                                InputTransferFailed(
+                                    request.command_id,
+                                    request.slot.transfer_id,
+                                    "input transfer capacity exceeded",
+                                )
+                            ),
+                        )
+                    )
+                    continue
+                state = InputTransferDeadline(request)
+                self._input_transfers[message.request_id] = state
+                task = asyncio.create_task(self._input(message, state))
                 self._transfer_tasks.add(task)
                 task.add_done_callback(self._transfer_tasks.discard)
                 continue
@@ -325,60 +380,97 @@ class MacExecutor:
                 WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
             )
 
-    async def _input(self, message: WireMessage) -> None:
-        client = self._app_client
-        if not self._handshake_accepted or client is None or self._transport_admission_stopped:
-            await self._send(
-                WireMessage(
-                    WireMessageKind.error,
-                    message.request_id,
-                    {"message": "input generation does not admit transfers"},
-                )
+    async def _input(
+        self, message: WireMessage, state: InputTransferDeadline | None = None
+    ) -> None:
+        # State is installed by the reader before scheduling, so an immediate
+        # cancellation cannot miss an input whose worker has not started.
+        if state is None:
+            state = InputTransferDeadline(
+                TypeAdapter(InputTransferRequest).validate_python(message.payload)
             )
-            return
-        try:
-            slot = TypeAdapter(FileTransfer).validate_python(message.payload)
-            if slot.direction != "download" or self._transfers >= MAX_TRANSFERS:
-                raise ValueError("invalid input slot or transfer capacity")
-        except ValueError as error:
-            await self._send(
-                WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
-            )
-            return
-        identity = self.identity
-        self._transfers += 1
-        self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._input_transfers[message.request_id] = state
+        client, writer, identity = self._app_client, self._writer, self.identity
+        request, slot = state.request, state.request.slot
         temporary = self.paths.run / ("input-" + uuid4().hex)
-        try:
+        self._transfers += 1
+
+        async def send(kind: WireMessageKind, payload: JsonObject) -> None:
+            async with self._write_lock:
+                if writer is None or self._writer is not writer or self.identity != identity:
+                    raise ConnectionError("input generation changed")
+                if kind is WireMessageKind.file_accepted and not state.active():
+                    return
+                try:
+                    writer.write(encode_frame(WireMessage(kind, message.request_id, payload)))
+                    await writer.drain()
+                except OSError as error:
+                    writer.close()
+                    raise ConnectionError("input control connection failed") from error
+
+        async def progress(phase: str, count: int) -> None:
+            if not state.active():
+                raise asyncio.CancelledError()
+            update = InputTransferProgress(
+                request.command_id, slot.transfer_id, cast(Any, phase), count
+            )
+            state.advance(update)
+            await send(WireMessageKind.input_progress, as_object(update))
+
+        async def receive() -> None:
+            if not state.active():
+                return
+            if client is None or not self._handshake_accepted or slot.direction != "download":
+                raise ValueError("input generation or slot unavailable")
+            self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # Capacity covers download, verification, installation and deferred I/O.
             async with self._transfer_capacity:
-                assert client is not None
-                await client.download(slot, temporary)
-            if identity != self.identity or not self._handshake_accepted:
-                raise ConnectionError("input generation changed")
-            # Cancellation cannot stop disk work. Drain it before deleting its source.
-            installation = asyncio.create_task(
-                asyncio.to_thread(self.inputs.receive_path, slot.manifest, temporary)
-            )
-            try:
-                await asyncio.shield(installation)
-            except BaseException:
-                await asyncio.gather(installation, return_exceptions=True)
-                raise
-            if identity != self.identity or not self._handshake_accepted:
-                raise ConnectionError("input generation changed")
-            await self._send(
-                WireMessage(
-                    WireMessageKind.file_accepted, message.request_id, as_object(slot.manifest)
+                await client.download(slot, temporary, progress)
+                if not state.active() or identity != self.identity or not self._handshake_accepted:
+                    return
+                await settled_io(self.inputs.receive_path, slot.manifest, temporary)
+                if not state.active() or identity != self.identity or not self._handshake_accepted:
+                    return
+                await send(WireMessageKind.file_accepted, as_object(slot.manifest))
+
+        worker = asyncio.create_task(receive())
+        self._input_workers[message.request_id] = worker
+        timer = asyncio.create_task(state.expired())
+        try:
+            done, _ = await asyncio.wait((worker, timer), return_when=asyncio.FIRST_COMPLETED)
+            if worker not in done:
+                state.revoked = True
+                worker.cancel()
+                await send(
+                    WireMessageKind.input_failed,
+                    as_object(
+                        InputTransferFailed(
+                            request.command_id, slot.transfer_id, "input transfer deadline expired"
+                        )
+                    ),
                 )
-            )
+            else:
+                await worker
         except (OSError, ValueError, ConnectionError, aiohttp.ClientError) as error:
-            with contextlib.suppress(ConnectionError):
-                await self._send(
-                    WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
+            state.revoked = True
+            with contextlib.suppress(ConnectionError, OSError):
+                await send(
+                    WireMessageKind.input_failed,
+                    as_object(
+                        InputTransferFailed(request.command_id, slot.transfer_id, str(error))
+                    ),
                 )
         finally:
-            self._transfers -= 1
+            state.revoked = True
+            timer.cancel()
+            worker.cancel()
+            # Never abandon an admitted thread or release its capacity/source early.
+            await wait_for_settlement(worker)
+            await wait_for_settlement(timer)
             temporary.unlink(missing_ok=True)
+            self._input_workers.pop(message.request_id, None)
+            self._input_transfers.pop(message.request_id, None)
+            self._transfers -= 1
 
     async def _replay(self) -> None:
         # Drain the pending prefix captured for this pass, not newly produced work.

@@ -574,7 +574,7 @@ On failure, recovery restores the prior configuration before the fallback servic
 The Mac launch names the intended HTTPS origin and the same logical executor ID.
 Version-1 descriptors remain readable for exact backup and restoration. A remote version-1 descriptor refuses candidate launch until an explicit compatible application replaces it. No automatic conversion occurs.
 
-The combined Mac and VPS release requires peer protocol 8 and journal format 2. Update both peers from the reviewed combined source. A VPS restart adopts surviving native children without a new bootstrap.
+The combined Mac and VPS release requires peer protocol 9 and journal format 2. Update both peers from the reviewed combined source. A VPS restart adopts surviving native children without a new bootstrap.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 `src/planner/environments/deployment.py`, `src/planner/environments/vps_launch.py`,

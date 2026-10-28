@@ -36,7 +36,11 @@ from planner.executor.capture import (
     safe_call,
 )
 from planner.executor.codec import encode_value
-from planner.executor.configuration import REQUEST_TIMEOUT_SECONDS
+from planner.executor.configuration import (
+    INPUT_CANCEL_TIMEOUT_SECONDS,
+    INPUT_PROGRESS_TIMEOUT_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+)
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AnswerApplication,
@@ -63,17 +67,24 @@ from planner.executor.contracts import (
     FileScope,
     FrameReader,
     FrameWriter,
+    InputTransferCancel,
+    InputTransferCancelled,
+    InputTransferFailed,
+    InputTransferProgress,
+    InputTransferRequest,
     JsonObject,
     LiveReadRequest,
     QueuedEnvelope,
     ReconciliationInventory,
     ReconciliationResult,
+    RemoteInputTransferFailed,
     SourceRetirementReceipt,
     SourceRetirementRequest,
     WireMessage,
     WireMessageKind,
 )
 from planner.executor.files import snapshot_file
+from planner.executor.input_transfers import InputTransferDeadline, InputTransferExchange
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import (
     RemoteBackendChild,
@@ -82,7 +93,7 @@ from planner.executor.remote import (
 )
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
-from planner.executor.transfers import GenerationTransfers
+from planner.executor.transfers import GenerationTransfers, wait_for_settlement
 from planner.executor.wire import (
     parse_identity,
     read_frame,
@@ -188,6 +199,7 @@ class ExecutorEndpoint:
         self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
         self._cancelled_initial_children: set[ChildReference] = set()
         self._possibly_emitted_commands: set[str] = set()
+        self._revoked_input_commands: set[str] = set()
         self._prompt_command_ids: set[str] = set()
         self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
         self._input_tasks: dict[str, set[asyncio.Task[None]]] = {}
@@ -205,6 +217,7 @@ class ExecutorEndpoint:
             self.retire_child,
         )
         self.file_receiver: Any = None
+        self._input_exchanges: dict[str, InputTransferExchange] = {}
         self._responses: dict[str, asyncio.Future[WireMessage]] = {}
         self.clock_sample: ClockSample | None = None
         self.process_id: int | None = None
@@ -236,6 +249,9 @@ class ExecutorEndpoint:
         if writer is not None:
             safe_call(getattr(self, "_capture", None), "close_attempt", writer, "endpoint_shutdown")
             writer.close()
+        for exchange in self._input_exchanges.values():
+            if not exchange.response.done():
+                exchange.response.set_exception(ConnectionError("executor app stopped"))
         for future in self._responses.values():
             if not future.done():
                 future.set_exception(ConnectionError("executor app stopped"))
@@ -339,8 +355,9 @@ class ExecutorEndpoint:
         ) or self.store.has_accepted_command_outcome(outcome)
 
     def _initial_command_cancelled(self, command: ChildCommand) -> bool:
-        return command.operation in (ChildOperation.start, ChildOperation.write_prompt) and (
-            command.child in self._cancelled_initial_children
+        return command.command_id in self._revoked_input_commands or (
+            command.operation in (ChildOperation.start, ChildOperation.write_prompt)
+            and command.child in self._cancelled_initial_children
         )
 
     def cancel_initial_delivery(self, child: ChildReference, command_ids: tuple[str, ...]) -> bool:
@@ -360,7 +377,7 @@ class ExecutorEndpoint:
                 task.cancel()
             for emission in self._emission_tasks.get(command.command_id, ()):
                 emission.cancel()
-            if not future.done():
+            if not future.done() and command.command_id not in self._possibly_emitted_commands:
                 future.set_exception(RemoteInitialDeliveryCancelled())
         return prompt_may_have_sent
 
@@ -428,6 +445,155 @@ class ExecutorEndpoint:
             self._responses.pop(request_id, None)
             safe_call(observer, "request_done")
 
+    async def _input_exchange(self, request: InputTransferRequest) -> None:
+        identity, writer = self.identity, self.writer
+        if identity is None or writer is None:
+            raise ConnectionError("input generation unavailable")
+        request_id = str(uuid4())
+        state = InputTransferExchange(
+            InputTransferDeadline(request),
+            identity,
+            writer,
+            asyncio.get_running_loop().create_future(),
+        )
+        self._input_exchanges[request_id] = state
+        timer = None
+        try:
+            # Only slot admission retains the ordinary control timeout behavior.
+            try:
+                async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                    if not await self._send_reconciliation(
+                        WireMessage(WireMessageKind.file_slot, request_id, _object(request)),
+                        identity,
+                        writer,
+                    ):
+                        raise ConnectionError("input generation changed")
+            except TimeoutError:
+                writer.close()
+                raise
+            if state.deadline.phase == "download" and state.deadline.byte_count == 0:
+                state.deadline.deadline = (
+                    asyncio.get_running_loop().time() + INPUT_PROGRESS_TIMEOUT_SECONDS
+                )
+            timer = asyncio.create_task(state.deadline.expired())
+            done, _ = await asyncio.wait(
+                (state.response, timer), return_when=asyncio.FIRST_COMPLETED
+            )
+            if state.response not in done:
+                raise RemoteInputTransferFailed("input transfer deadline expired")
+            response = state.response.result()
+            if not state.deadline.active():
+                raise RemoteInputTransferFailed("input transfer deadline expired")
+            if response.kind is not WireMessageKind.file_accepted or response.payload != _object(
+                request.slot.manifest
+            ):
+                raise RemoteInputTransferFailed("Mac did not confirm complete input bytes")
+        except (RemoteInputTransferFailed, asyncio.CancelledError) as error:
+            state.deadline.revoked = True
+            self._revoked_input_commands.add(request.command_id)
+            if isinstance(error, asyncio.CancelledError):
+                self._revoke_command_input(request.command_id)
+            try:
+                async with asyncio.timeout(INPUT_CANCEL_TIMEOUT_SECONDS):
+                    await self._send_reconciliation(
+                        WireMessage(
+                            WireMessageKind.input_cancel,
+                            request_id,
+                            _object(
+                                InputTransferCancel(request.command_id, request.slot.transfer_id)
+                            ),
+                        ),
+                        identity,
+                        writer,
+                    )
+                    await state.cancelled.wait()
+            except TimeoutError:
+                pass  # Logical revocation stands; remote cleanup is unconfirmed.
+            except OSError as error:
+                writer.close()
+                raise ConnectionError("input cancellation connection failed") from error
+            raise
+        except OSError as error:
+            writer.close()
+            raise ConnectionError("input exchange connection failed") from error
+        finally:
+            state.deadline.revoked = True
+            self._input_exchanges.pop(request_id, None)
+            if state.response.done() and not state.response.cancelled():
+                state.response.exception()
+            else:
+                state.response.cancel()
+            if timer is not None:
+                timer.cancel()
+                await asyncio.gather(timer, return_exceptions=True)
+
+    def _receive_input_frame(
+        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
+    ) -> bool:
+        state = self._input_exchanges.get(message.request_id)
+        kinds = (
+            WireMessageKind.input_progress,
+            WireMessageKind.input_cancelled,
+            WireMessageKind.input_failed,
+        )
+        if state is None:
+            return message.kind in kinds
+        if state.identity != identity or state.writer is not writer:
+            return True
+        if message.kind is WireMessageKind.input_progress:
+            state.deadline.advance(
+                TypeAdapter(InputTransferProgress).validate_python(message.payload)
+            )
+        elif message.kind in (WireMessageKind.input_cancelled, WireMessageKind.input_failed):
+            payload = (
+                TypeAdapter(InputTransferCancelled).validate_python(message.payload)
+                if message.kind is WireMessageKind.input_cancelled
+                else TypeAdapter(InputTransferFailed).validate_python(message.payload)
+            )
+            request = state.deadline.request
+            if (
+                payload.command_id != request.command_id
+                or payload.transfer_id != request.slot.transfer_id
+            ):
+                raise ValueError("input response identity mismatch")
+            if message.kind is WireMessageKind.input_cancelled:
+                state.cancelled.set()
+            elif not state.response.done():
+                state.response.set_exception(
+                    RemoteInputTransferFailed(cast(InputTransferFailed, payload).message)
+                )
+        elif message.kind in (WireMessageKind.file_accepted, WireMessageKind.error):
+            if state.deadline.active() and not state.response.done():
+                if (
+                    message.kind is WireMessageKind.file_accepted
+                    and state.deadline.phase != "finalization"
+                ):
+                    state.response.set_exception(
+                        RemoteInputTransferFailed("acceptance before finalization")
+                    )
+                else:
+                    state.response.set_result(message)
+        else:
+            raise ValueError("unexpected input exchange frame")
+        return True
+
+    def _revoke_command_input(self, command_id: str) -> None:
+        self._revoked_input_commands.add(command_id)
+        if command_id in self._possibly_emitted_commands:
+            return
+        pending = self.pending_commands.pop(command_id, None)
+        if pending is not None and not pending[1].done():
+            pending[1].cancel()
+
+    def _fail_command_input(
+        self, command: ChildCommand, future: asyncio.Future[CommandOutcome], error: Exception
+    ) -> None:
+        self._revoked_input_commands.add(command.command_id)
+        if command.command_id not in self._possibly_emitted_commands:
+            self.pending_commands.pop(command.command_id, None)
+            if not future.done():
+                future.set_exception(RemoteInputTransferFailed(str(error)))
+
     async def _transfer_command_inputs(self, command: ChildCommand) -> None:
         if self._initial_command_cancelled(command):
             return
@@ -444,9 +610,14 @@ class ExecutorEndpoint:
         tasks = self._input_tasks.setdefault(command.command_id, set())
         tasks.add(task)
         try:
-            await task
+            await asyncio.shield(task)
         except asyncio.CancelledError:
-            if not self._initial_command_cancelled(command):
+            caller = asyncio.current_task()
+            caller_cancelled = caller is not None and caller.cancelling() > 0
+            self._revoke_command_input(command.command_id)
+            task.cancel()
+            await wait_for_settlement(task)
+            if caller_cancelled or not self._initial_command_cancelled(command):
                 raise
         finally:
             tasks.discard(task)
@@ -475,31 +646,42 @@ class ExecutorEndpoint:
                     command.child.conversation_id,
                     stored_file_id,
                 )
-                snapshot = await asyncio.to_thread(
-                    snapshot_file,
-                    root=path.parent,
-                    relative_path=path.name,
-                    scope=FileScope.conversation,
-                    owner_id=command.child.conversation_id,
+                preparation = asyncio.create_task(
+                    asyncio.to_thread(
+                        snapshot_file,
+                        root=path.parent,
+                        relative_path=path.name,
+                        scope=FileScope.conversation,
+                        owner_id=command.child.conversation_id,
+                    )
                 )
+                try:
+                    snapshot = await asyncio.shield(preparation)
+                except BaseException:
+                    await wait_for_settlement(preparation)
+                    if not preparation.cancelled() and preparation.exception() is None:
+                        preparation.result().local_path.unlink(missing_ok=True)
+                    raise
                 slot = None
                 try:
                     self.store.verify_connection(identity)
                     slot = await service.create_download_async(snapshot)
-                    response = await self._request(WireMessageKind.file_slot, _object(slot))
-                    if (
-                        response.kind is not WireMessageKind.file_accepted
-                        or response.payload != _object(snapshot.manifest)
-                    ):
-                        raise ValueError("Mac did not confirm complete input bytes")
+                    await self._input_exchange(InputTransferRequest(command.command_id, slot))
                     self.store.verify_connection(identity)
                 finally:
                     if slot is not None:
                         service.release(slot.transfer_id)
                     snapshot.local_path.unlink(missing_ok=True)
 
-    async def _emit_command(self, command: ChildCommand) -> bool:
-        task = asyncio.create_task(self._emit_command_unsettled(command))
+    async def _emit_command(
+        self,
+        command: ChildCommand,
+        identity: ExecutorIdentity | None = None,
+        writer: FrameWriter | None = None,
+    ) -> bool:
+        identity = self.identity if identity is None else identity
+        writer = self.writer if writer is None else writer
+        task = asyncio.create_task(self._emit_command_unsettled(command, identity, writer))
         tasks = self._emission_tasks.setdefault(command.command_id, set())
         tasks.add(task)
         try:
@@ -513,7 +695,12 @@ class ExecutorEndpoint:
             if not tasks:
                 self._emission_tasks.pop(command.command_id, None)
 
-    async def _emit_command_unsettled(self, command: ChildCommand) -> bool:
+    async def _emit_command_unsettled(
+        self,
+        command: ChildCommand,
+        expected_identity: ExecutorIdentity | None = None,
+        expected_writer: FrameWriter | None = None,
+    ) -> bool:
         """The final guard is shared by immediate sends and reconnect replay."""
         if command.operation not in (
             ChildOperation.answer_permission_ask,
@@ -522,6 +709,11 @@ class ExecutorEndpoint:
             async with self._send_lock:
                 if self._initial_command_cancelled(command):
                     return False
+                pending = self.pending_commands.get(command.command_id)
+                if pending is not None and pending[1].done():
+                    return False
+                if expected_identity != self.identity or expected_writer is not self.writer:
+                    raise ConnectionError("command input generation changed")
                 writer = self.writer
                 if writer is None or not self.ready:
                     raise ConnectionError("executor link unavailable")
@@ -629,22 +821,18 @@ class ExecutorEndpoint:
         self.pending_commands[command.command_id] = (command, future)
         try:
             if self.ready and self.writer is not None:
+                identity, writer = self.identity, self.writer
                 try:
                     try:
                         await self._transfer_command_inputs(command)
-                    except (ConnectionError, ValueError):
-                        # Keep the original waiting caller and stable command. A
-                        # new connection retries its inputs before native dispatch.
-                        if self.writer is not None:
-                            safe_call(
-                                getattr(self, "_capture", None),
-                                "close_attempt",
-                                self.writer,
-                                "command_input_failure",
-                            )
-                            self.writer.close()
+                    except (ConnectionError, TimeoutError):
+                        raise
+                    except (RemoteInputTransferFailed, ValueError, OSError) as error:
+                        self._fail_command_input(command, future, error)
                     else:
-                        if not await self._emit_command(command):
+                        if not future.done() and not await self._emit_command(
+                            command, identity, writer
+                        ):
                             self._release_closed_answer(command, future)
                 except (OSError, ConnectionError):
                     pass  # The exact command remains pending across a link loss.
@@ -1249,6 +1437,9 @@ class ExecutorEndpoint:
                 self.writer = None
                 self.lost_at_ms = now_ms()
                 self.store.mark_lost(identity, now_ms())
+                for exchange in self._input_exchanges.values():
+                    if exchange.writer is writer and not exchange.response.done():
+                        exchange.response.set_exception(ConnectionError("executor link lost"))
                 for response_future in self._responses.values():
                     if not response_future.done():
                         response_future.set_exception(ConnectionError("executor link lost"))
@@ -1333,6 +1524,8 @@ class ExecutorEndpoint:
         if self.writer is not writer or self.identity != identity:
             return
         try:
+            if self._receive_input_frame(message, identity, writer):
+                return
             pending_response = self._responses.get(message.request_id)
             if pending_response is not None:
                 if not pending_response.done():
@@ -1517,8 +1710,16 @@ class ExecutorEndpoint:
                             not future.done()
                             and command.child.executor_incarnation == identity.executor_incarnation
                         ):
-                            await self._transfer_command_inputs(command)
-                            if not await self._emit_command(command):
+                            try:
+                                await self._transfer_command_inputs(command)
+                            except (ConnectionError, TimeoutError):
+                                raise
+                            except (RemoteInputTransferFailed, ValueError, OSError) as error:
+                                self._fail_command_input(command, future, error)
+                                continue
+                            if not future.done() and not await self._emit_command(
+                                command, identity, writer
+                            ):
                                 self._release_closed_answer(command, future)
                 return
             elif message.kind is WireMessageKind.envelope:
@@ -1714,7 +1915,7 @@ class ExecutorEndpoint:
         try:
             await asyncio.shield(task)
         except BaseException:
-            await asyncio.gather(task, return_exceptions=True)
+            await wait_for_settlement(task)
             raise
         finally:
             pending.discard(task)
@@ -1730,8 +1931,8 @@ class ExecutorEndpoint:
 
         async def cleanup() -> None:
             try:
-                if work:
-                    await asyncio.gather(*work, return_exceptions=True)
+                for task in work:
+                    await wait_for_settlement(task)
                 if service is not None:
                     await service.close()
             finally:
@@ -1745,7 +1946,7 @@ class ExecutorEndpoint:
         try:
             await asyncio.shield(closing)
         except BaseException:
-            await asyncio.gather(closing, return_exceptions=True)
+            await wait_for_settlement(closing)
             raise
 
 
