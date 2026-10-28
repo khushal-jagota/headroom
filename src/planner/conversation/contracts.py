@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
@@ -694,6 +695,21 @@ class ConversationSystem(Protocol):
     can report its fate, and interrupting and reading run through the same internal
     locking, so all four are awaited.
     """
+
+    @property
+    def workspace_admission(self) -> WorkspaceAdmission:
+        """Shared admission for background starts and conversation operations."""
+        ...
+
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        """Return complete workspace activity without admitting new work."""
+        ...
+
+    async def run_with_workspace_admission(
+        self, operation: Callable[[], None], *, require_idle: bool,
+    ) -> bool:
+        """Atomically recheck activity, claim adoption, and close start/send admission."""
+        ...
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         """Run a synchronous canonical write under the conversation admission lock.

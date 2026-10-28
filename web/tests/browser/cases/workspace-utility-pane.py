@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import expect
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "support"))
+from owner_updates_fixture import OwnerUpdatesFixture  # noqa: E402
 from vps_metrics_fixture import MetricsFixture  # noqa: E402
 
 _state_barriers = runpy.run_path(str(Path(__file__).resolve().parents[1] / "support/state_barriers.py"))
@@ -27,6 +28,7 @@ refresh_projection = _state_barriers["refresh_projection"]
 
 def run(browser, urls):
     url = urls[0]
+    verify_owner_updates(browser, url)
     verify_conversation_overlay(browser, url)
     # Enough Worker types that the Config index is taller than the pane.
     worker_types = [
@@ -108,6 +110,9 @@ def run(browser, urls):
                 route.fulfill(status=503, json={"error": {"code": "fixture", "message": key}})
                 return
             route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": inner})
+            return
+        if path == "/api/updates":
+            route.fulfill(json={"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None})
             return
         if path == "/api/workers":
             result = {"workers": workers, "chief_of_staff": {"employee_id": "chief", "label": "Chief", "skill": skill, "launch_defaults": launch}}
@@ -316,6 +321,7 @@ def run(browser, urls):
     capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
+    fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
 
     assert not errors, errors
@@ -1107,6 +1113,7 @@ def verify_conversation_overlay(browser, url):
             "/api/worker-types": manifest,
             "/api/feedback/count": {"open_count": 0},
             "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
+            "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
             "/api/meta": {"test_mode": True, "app_sha": None},
             "/api/review": {"items": [], "running_worker_count": 0},
         }
@@ -1441,7 +1448,7 @@ def verify_rail_overflow(page, fixture, evidence):
     fixture["release_sha"] = "fixture-next"
     page.evaluate("dispatchEvent(new Event('pageshow'))")
     status_samples = []
-    for state, word in [("ready", "New version ready"), ("held", "Update applies when this message is safe")]:
+    for state, word in [("ready", "New version ready"), ("held", "Page refresh waits until this message is safe")]:
         if state == "held":
             page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
             page.locator("button.status-card:visible").click()
@@ -1483,6 +1490,239 @@ def verify_rail_overflow(page, fixture, evidence):
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
     }, indent=2))
+
+
+def verify_owner_updates(browser, url, *, problem_only=False):
+    """Browser clicks cross real owner routes and durable receipts on the existing host.
+
+    The provider records external dispatch only. The Problem composition must keep
+    confirmation, retry, and cancellation usable beside the failure explanation.
+    The narrow problem_only path skips unrelated recovery and cutover checks.
+    A synthetic SHA change proves refresh hold, not deployment or database migration.
+    """
+    from dataclasses import replace
+
+    started = time.perf_counter()
+    backend = OwnerUpdatesFixture()
+    navigation = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
+    source = navigation["navigation_response"]({}, {"chief_of_staff": {"label": "Chief", "conversation_id": "bounded-reader"}})
+    deployment = {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None, "success_display_until": None}
+    posts = []
+    documents = []
+    errors = []
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce")
+    page = context.new_page()
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    evidence = Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-owner-updates")) / "owner-updates"
+    evidence.mkdir(parents=True, exist_ok=True)
+
+    def respond(route):
+        parts = urlsplit(route.request.url)
+        path = parts.path
+        if path.startswith("/api/updates") or path == "/api/meta":
+            if route.request.method != "GET":
+                posts.append({"path": path, "body": route.request.post_data_json,
+                              "boot_sha": route.request.headers.get("x-panels-app-sha")})
+            response = backend.client.request(route.request.method, path,
+                                              content=route.request.post_data,
+                                              headers={"Content-Type": "application/json"})
+            route.fulfill(status=response.status_code, content_type="application/json", body=response.content)
+            return
+        if path == "/api/navigation/view/snapshot":
+            view = json.loads(parse_qs(parts.query)["view"][0])
+            route.fulfill(json=navigation["scoped_navigation_response"](source, view))
+            return
+        key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
+        values = {
+            "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
+            "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
+            "/api/worker-types?supported=true": {"worker_types": []},
+            "/api/feedback/count": {"open_count": 0},
+            "/api/deployment-status": deployment,
+            "/api/review": {"items": [], "running_worker_count": 0},
+        }
+        body = values.get(key, {})
+        route.fulfill(json={"key": key, "epoch": "owner-updates", "revision": "1", "body": body} if path == "/api/resource-body" else body)
+
+    def host_with_boot_sha(route):
+        documents.append(backend.current_sha)
+        response = route.fetch()
+        route.fulfill(response=response, body=response.text().replace(
+            "<head>", f'<head><meta name="panels-app-sha" content="{backend.current_sha}">', 1))
+
+    page.route("**/api/**", respond)
+    page.route(url + "?*", host_with_boot_sha)
+    card = page.locator(".status-card:visible")
+    box = page.locator("[data-conversation-input]")
+
+    def signal():
+        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/updates" and response.status == 200):
+            page.evaluate("window.__ownerUpdatesSignal()")
+
+    try:
+        page.goto(url + "?overlay=1&owner-updates=1#/workspace/chief-of-staff", wait_until="domcontentloaded")
+        expect(box).to_be_visible()
+        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "update-available.png"))
+        if not problem_only:
+            # A live connection must still disclose an expired runner record. Then the
+            # normal update controls return through the existing contentless change signal.
+            recovery = "Recovery required: the candidate did not complete its commit."
+            deployment.update(state="unknown", detail=recovery)
+            signal()
+            expect(card.get_by_text(recovery, exact=True)).to_be_visible()
+            expect(card.get_by_text("Reconnecting", exact=True)).to_be_visible()
+            page.screenshot(path=str(evidence / "recovery-required.png"))
+            deployment.update(state="idle", detail=None)
+            signal()
+            expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+
+        # The actual ShellStatus composition must retain controls under a permanent
+        # deployment failure. Opening confirmation before the transition also proves
+        # that the shared UpdateActions instance keeps its local decision state.
+        failure = "The previous update failed. The installed application remains available."
+        card.get_by_role("button", name="Update now", exact=True).click()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="problem", outcome="failed", detail=failure)
+        signal()
+        expect(card.get_by_text("Problem", exact=True)).to_be_visible()
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="idle", outcome=None, detail=None)
+        signal()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="problem", outcome="failed", detail=failure)
+        signal()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        card.get_by_role("button", name="Go back", exact=True).click()
+        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "problem-with-update-actions.png"))
+
+        for activity, warning in (("unknown", "Activity is unknown."), ("busy", "Work is active.")):
+            backend.activity.activity = activity
+            signal()
+            expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", activity)
+            before_posts, before_dispatches = len(posts), len(backend.provider.dispatched)
+            card.get_by_role("button", name="Update now", exact=True).click()
+            expect(card.get_by_text(warning, exact=False)).to_be_visible()
+            assert len(posts) == before_posts and len(backend.provider.dispatched) == before_dispatches
+            if activity == "unknown":
+                page.screenshot(path=str(evidence / "confirmation.png"))
+            card.get_by_role("button", name="Proceed with update", exact=True).click()
+            expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+            receipt = backend.store.read()
+            assert receipt is not None and receipt.state == "dispatched" and receipt.confirm_activity
+            assert len(backend.provider.dispatched) == before_dispatches + 1
+            body = posts[-1]["body"]
+            selected = backend.provider.offered
+            assert body == {"publication_run_id": selected.publication_run_id, "artifact_id": selected.artifact_id,
+                            "proof_artifact_id": selected.proof_artifact_id, "app_sha": selected.manifest.app_sha,
+                            "artifact_digest": selected.manifest.artifact_digest, "archive_sha256": selected.archive_sha256,
+                            "mode": "now", "confirm_activity": True}
+            assert posts[-1]["boot_sha"] == "a" * 40
+            assert backend.provider.dispatched[-1].request_id == receipt.request_id
+            expect(card.get_by_text("Problem", exact=True)).to_be_visible()
+            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            if activity == "busy":
+                # A failed request leaves an available publication usable for retry.
+                # Its failure and the deployment failure remain visible at each step.
+                failed_request = "The runner refused the previous attempt."
+                backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail=failed_request)
+                signal()
+                expect(card.get_by_text(failed_request, exact=True)).to_be_visible()
+                card.get_by_role("button", name="Update now", exact=True).click()
+                expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
+                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+                expect(card.get_by_text(failed_request, exact=True)).to_be_visible()
+                assert len(backend.provider.dispatched) == before_dispatches + 1
+                page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
+                card.get_by_role("button", name="Proceed with update", exact=True).click()
+                expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+                assert len(backend.provider.dispatched) == before_dispatches + 2
+                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            card.get_by_role("button", name="Cancel update", exact=True).click()
+            expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
+            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            assert backend.store.read().state == "cancelled"
+
+        backend.activity.activity = "unknown"
+        signal()
+        expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "unknown")
+        card.get_by_role("button", name="Update when idle", exact=True).click()
+        expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
+        assert backend.store.read().state == "pending"
+        assert len(backend.provider.dispatched) == 3
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "problem-with-pending-cancel.png"))
+        pinned = backend.store.read().release
+        backend.provider.offered = replace(pinned, artifact_id=201, manifest=replace(pinned.manifest, app_sha="f" * 40))
+        backend.service.refresh_available(force=True)
+        signal()
+        expect(card.get_by_text("Update waits for idle · bbbbbbb", exact=True)).to_be_visible()
+        assert backend.store.read().release == pinned
+        card.get_by_role("button", name="Cancel update", exact=True).click()
+        expect(card.get_by_text("Update available · fffffff", exact=True)).to_be_visible()
+        assert backend.store.read().state == "cancelled"
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        if problem_only:
+            assert errors == [], errors
+            (evidence / "problem-composition-proof.json").write_text(json.dumps({
+                "seconds": round(time.perf_counter() - started, 3), "newHosts": 0,
+                "dispatchCount": len(backend.provider.dispatched), "requests": posts,
+                "boundary": "Mounted ShellStatus preserves Problem explanation and UpdateActions through confirmation, failed retry, and pending cancellation",
+            }, indent=2))
+            return
+
+        deployment.update(state="idle", outcome=None, detail=None)
+        backend.provider.offered = pinned
+        backend.service.refresh_available(force=True)
+        backend.activity.activity = "idle"
+        signal()
+        expect(card.get_by_text("Update available · bbbbbbb", exact=True)).to_be_visible()
+        expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "idle")
+        card.get_by_role("button", name="Update now", exact=True).click()
+        expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+        receipt = backend.store.read()
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "applying")
+        signal()
+        expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
+        expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
+        assert len(backend.provider.dispatched) == 4
+
+        # The application version changes synthetically. The retained App and its
+        # actual composer keep the unsent draft until the owner clears it.
+        draft = "Keep this unsent draft across the installed revision change."
+        box.fill(draft)
+        page.evaluate("window.__beforeUpdateDocument = document")
+        backend.store.transition(receipt.request_id, frozenset({"applying"}), "applied")
+        backend.current_sha = pinned.manifest.app_sha
+        backend.service.current_app_sha = backend.current_sha
+        signal()
+        page.evaluate("dispatchEvent(new Event('pageshow'))")
+        expect(card.get_by_text("Refresh page", exact=True)).to_be_visible()
+        expect(box).to_have_value(draft)
+        assert len(documents) == 1
+        card.click()
+        expect(card.get_by_text("Page refresh waits until this message is safe", exact=True)).to_be_visible()
+        expect(box).to_have_value(draft)
+        assert page.evaluate("document === window.__beforeUpdateDocument")
+        assert len(documents) == 1
+        page.screenshot(path=str(evidence / "refresh-keeps-draft.png"))
+        box.fill("")
+        page.wait_for_function("document !== window.__beforeUpdateDocument")
+        expect(box).to_be_visible()
+        assert documents == ["a" * 40, "b" * 40]
+        expect(page.get_by_text("Refresh page", exact=True)).to_have_count(0)
+        assert errors == [], errors
+        (evidence / "proof.json").write_text(json.dumps({
+            "seconds": round(time.perf_counter() - started, 3), "newHosts": 0,
+            "dispatchCount": len(backend.provider.dispatched), "requests": posts, "documentVersions": documents,
+            "boundary": "Browser actions -> actual FastAPI owner routes -> UpdateService -> file receipt -> fake external dispatcher",
+            "cutover": "Synthetic installed SHA; no service replacement, hosted ingress, or database migration proof",
+        }, indent=2))
+    finally:
+        context.close()
+        backend.close()
 
 
 def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):

@@ -232,6 +232,7 @@ def deploy_app(
     lifecycle_transition: LifecycleTransition | None = None,
     gate_evidence: GateEvidence | None = None,
     deployment_id: str | None = None,
+    before_stop: Callable[[], None] | None = None,
 ) -> DeploymentResult:
     """Replace only ``current/app`` and recover the prior app on post-move failure."""
     if health_timeout_seconds <= 0:
@@ -305,6 +306,10 @@ def deploy_app(
                 and staged_manifest.artifact_digest != gate_evidence["artifact_digest"]
             ):
                 raise DeploymentError("copied candidate differs from checked artifact")
+            # Admission closes only after staging succeeds. A refused claim exits
+            # through staging cleanup without entering stop/recovery handling.
+            if before_stop is not None:
+                before_stop()
             try:
                 _publish_lifecycle(lifecycle_transition, "restarting")
                 service.stop()
@@ -410,11 +415,6 @@ def deploy_app(
                     deadline=now() + health_timeout_seconds,
                 ):
                     raise DeploymentError("candidate app did not become healthy before cutoff")
-                _publish_lifecycle(
-                    lifecycle_transition,
-                    "app_healthy",
-                    serving_sha=candidate_manifest.app_sha,
-                )
             except BaseException as exc:
                 detail = _restore_fallback(
                     current_app=current_app,
@@ -439,6 +439,13 @@ def deploy_app(
                     prior_manifest.app_sha,
                     str(exc),
                 )
+            # This publication can expose admission before its directory fsync fails.
+            # No database restoration is allowed after this boundary.
+            _publish_lifecycle(
+                lifecycle_transition,
+                "app_healthy",
+                serving_sha=candidate_manifest.app_sha,
+            )
             try:
                 shutil.rmtree(fallback)
             except OSError as exc:
@@ -495,11 +502,6 @@ def _install_first_app(
                 candidate_manifest.app_sha, deadline=now() + health_timeout_seconds
             ):
                 raise DeploymentError("initial app did not become healthy before cutoff")
-            _publish_lifecycle(
-                lifecycle_transition,
-                "app_healthy",
-                serving_sha=candidate_manifest.app_sha,
-            )
         except BaseException as exc:
             if current_app.exists() and not current_app.is_symlink():
                 shutil.rmtree(current_app)
@@ -515,6 +517,9 @@ def _install_first_app(
                 None,
                 f"{exc}; validated candidate remains at: {candidate_app}",
             )
+        _publish_lifecycle(
+            lifecycle_transition, "app_healthy", serving_sha=candidate_manifest.app_sha
+        )
         return DeploymentResult("succeeded", candidate_manifest.app_sha, None, None)
     finally:
         if staged.exists() and not staged.is_symlink():

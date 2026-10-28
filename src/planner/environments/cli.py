@@ -266,8 +266,9 @@ def app_deploy(
         from planner.environments.deployment_gate import read_gate_evidence
 
         evidence = read_gate_evidence(gate_evidence)
-        if evidence["observation"]["health_url"] != health_url:
-            raise ValueError("gate evidence health URL differs from deployment health URL")
+        if "publication_run_id" not in evidence:
+            if evidence["observation"]["health_url"] != health_url:
+                raise ValueError("gate evidence health URL differs from deployment health URL")
         result = deploy_app(
             gate_evidence=evidence,
             deployment_id=deployment_id,
