@@ -1,0 +1,27 @@
+{
+  "assertion": "consecutive entry height difference < 8px",
+  "before": {
+    "ms": 210,
+    "height": 21.19,
+    "slotBottom": 800,
+    "utilitiesTop": 800,
+    "footTop": 770.81,
+    "closing": false,
+    "effects": 2,
+    "heightEffects": 1
+  },
+  "after": {
+    "ms": 226,
+    "height": 32.16,
+    "slotBottom": 800,
+    "utilitiesTop": 800,
+    "footTop": 759.84,
+    "closing": false,
+    "effects": 2,
+    "heightEffects": 1
+  },
+  "jump_pixels": 10.969999999999995,
+  "case_unchanged": true,
+  "source": "web/tests/browser/cases/feedback-inbox.py:432",
+  "no_retry": true
+}

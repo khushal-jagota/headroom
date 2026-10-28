@@ -15,11 +15,14 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "support"))
 from vps_metrics_fixture import MetricsFixture  # noqa: E402
+
+_state_barriers = runpy.run_path(str(Path(__file__).resolve().parents[1] / "support/state_barriers.py"))
+establish_scrollback = _state_barriers["establish_scrollback"]
+refresh_projection = _state_barriers["refresh_projection"]
 
 
 def run(browser, urls):
@@ -1191,40 +1194,10 @@ def verify_conversation_overlay(browser, url):
         highwater = document.evaluate('e=>e.scrollHeight')
         # A scrollback reader keeps the same content while the composer changes.
         # Reader input releases an older exact-text destination before scrollback.
-        try:
-            page.wait_for_function('''() => {
-              const e=document.querySelector('[data-conversation-thread]'),region=e?.closest('.conversation-transcript-region');
-              const rect=e?.getBoundingClientRect();
-              return e?.dataset.conversationPlacementReady==='true' && region?.getAttribute('aria-busy')==='false'
-                && !['loading','placing','error'].includes(region.dataset.conversationEntry)
-                && rect.width>0 && rect.height>0 && getComputedStyle(e).visibility==='visible'
-                && !e.closest('[data-conversation-pane]').hasAttribute('data-conversation-motion');
-            }''', timeout=5000)
-            thread.focus()
-            thread.evaluate('''e=>{
-              const state={before:e.scrollTop,ended:false,lastGeometry:null,stableFrames:0};
-              e.__overlayScrollback=state;
-              e.addEventListener('scrollend',()=>{state.ended=true;},{once:true});
-            }''')
-            page.keyboard.press('PageUp')
-            page.wait_for_function('''() => {
-              const e=document.querySelector('[data-conversation-thread]'),state=e.__overlayScrollback;
-              const gap=e.scrollHeight-e.clientHeight-e.scrollTop;
-              if(!state.ended || e.scrollTop>=state.before-1 || gap<=1){state.stableFrames=0;return false;}
-              const rect=e.getBoundingClientRect();
-              const geometry=[e.scrollTop,e.scrollHeight,e.clientHeight,rect.top,rect.width,rect.height].join(':');
-              state.stableFrames=geometry===state.lastGeometry?state.stableFrames+1:0;
-              state.lastGeometry=geometry;
-              return state.stableFrames>=2;
-            }''', timeout=5000)
-        except PlaywrightTimeoutError as error:
-            state = thread.evaluate('''e=>({...e.__overlayScrollback,
-              placementReady:e.dataset.conversationPlacementReady,owner:e.dataset.conversationPositionOwner,
-              entry:e.closest('.conversation-transcript-region')?.dataset.conversationEntry,
-              busy:e.closest('.conversation-transcript-region')?.getAttribute('aria-busy'),
-              visibility:getComputedStyle(e).visibility,
-              motion:e.closest('[data-conversation-pane]').hasAttribute('data-conversation-motion')})''')
-            raise AssertionError((name, 'scrollback setup failed', transcript_bounds(), state)) from error
+        thread.focus()
+        growth = box.evaluate("e=>parseFloat(getComputedStyle(e.closest('.ticket-page,.manager-page')??e.closest('[data-conversation-pane]')).getPropertyValue('--composer-growth'))||0")
+        establish_scrollback(page, lambda page=page: page.keyboard.press('PageUp'),
+                             min_clearance=growth + 2, input_kind='keydown', key='PageUp')
         anchor = thread.evaluate('''e=>{const r=e.getBoundingClientRect();const row=[...e.querySelectorAll('[data-conversation-row]')].find(n=>n.getBoundingClientRect().bottom>r.top+10);return row?{key:row.closest('[data-conversation-view-key]')?.getAttribute('data-conversation-view-key'),text:row.textContent,top:row.getBoundingClientRect().top-r.top,bottomOffset:row.getBoundingClientRect().top-r.bottom}:null;}''')
         assert anchor and anchor['key'], (name, anchor)
         anchor_proof = []
@@ -1530,8 +1503,24 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     text = panel.locator('[data-recap-text]')
     row = page.locator('[data-ticket-id="recap_floor"]')
 
+    def mounted_projection(target_page=page):
+        # Initial rail-parent delivery discovers each manager's ticket window.
+        # Wait for that intended subscription before the single explicit refresh.
+        target_page.wait_for_function("""() => {
+          const sources=window.__navigationSources?.();
+          if(sources?.length!==1)return false;
+          const request=JSON.parse(new URL(sources[0].url,location.href).searchParams.get('view'));
+          const managers=request.windows.filter(w=>w.section==='rail_tickets'&&w.owner?.kind==='manager');
+          return managers.length===1&&managers[0].owner.id==='recap_manager';
+        }""", timeout=5000)
+
     def refresh(target_page=page):
-        target_page.evaluate("() => window.__refreshNavigation()")
+        required = []
+        if target_page.locator('[data-rail-hover-panel][aria-hidden="false"]').count():
+            required.append({"selector": '[data-rail-hover-panel][aria-hidden="false"] [data-recap-text]',
+                             "text": worker["recap"]})
+        refresh_projection(target_page, required_content=required,
+                           required_recaps=[{"id": worker["id"], "text": worker["recap"]}])
 
     def open_panel():
         row.hover()
@@ -1617,6 +1606,9 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         worker["recap"] = "Initial recap"
         page.mouse.move(1200, 650)
         page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
+        # A hash-only goto can retain the preceding case's navigation scope.
+        page.reload(wait_until='domcontentloaded')
+        mounted_projection()
         refresh()
         expect(row).to_be_visible()
         row.evaluate("node => node.style.marginTop=''")
@@ -1752,6 +1744,8 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     touch_page.route('**/api/**', respond)
     worker["recap"] = three
     touch_page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
+    mounted_projection(touch_page)
+    refresh(touch_page)
     touch_row = touch_page.locator('[data-ticket-id="recap_floor"]')
     expect(touch_row).to_be_visible()
     bounds = touch_row.bounding_box()
