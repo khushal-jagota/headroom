@@ -268,7 +268,7 @@ stream refresh as the individual marks.
 
 A message is not a piece of text. It is a run of pieces, in the order they were
 put in, and there are three kinds of piece: written words, a picture, and an
-attached document or data file.
+attached document, data file, or video.
 
 There is deliberately no sound. A voice note becomes words by speech-to-text
 before anything reaches a message, so nothing here ever sees one.
@@ -297,7 +297,7 @@ opens a conversation, so large bytes there would be read again every time. The b
 stay in a managed file under their conversation, and the row names that file.
 
 The same managed value serves the notebook, browser, and backend. Images retain their
-native routes. Hermes receives an ACP resource link for a document or data file. Codex
+native routes. Hermes receives an ACP resource link for a document, data file, or video. Codex
 and Claude receive explicit attachment context with the managed local path.
 
 A message's pictures total at most 3 MiB of raw bytes and each is a structurally
@@ -317,6 +317,38 @@ Documents and data files have a separate 10 MiB raw-byte limit per message. Pane
 accepts PDF, UTF-8 plain text, Markdown, CSV, TSV, JSON, and JSONL. The server derives
 the type from the safe file name and validates the content before it keeps any bytes.
 Archives, executables, unknown formats, and audio are refused.
+
+Videos use a separate upload beneath the same attachment interaction. Selecting an MP4,
+MOV, or WebM starts transfer while the person types. One message can carry one video,
+up to 250 MiB. Progress appears on the attachment. An early Send captures the message
+locally and shows it as pending until transfer and validation finish. Completion sends
+that requested message once. Selecting a video without Send never submits a draft.
+
+Failure preserves the text and offers Retry or Remove video. Retry restarts the transfer.
+For a pending message, it also completes the requested send after validation. Cancel
+returns the message for edits. Closing the tab interrupts transfer. Reload restores text,
+but an interrupted upload requires file selection and Send again. Video bytes do not
+enter browser session storage.
+
+The server reserves video capacity before transfer and checks actual bytes during it.
+The initial video budget is 10 GiB, including temporary files and concurrent reservations.
+It also preserves a 5 GiB free-disk reserve. At capacity, new video uploads fail rather
+than delete older attachments. These limits live in the video configuration module.
+
+Unlike images and documents, video bytes can arrive before their message. A completed,
+validated upload stays bound to its destination. Send claims it before delivery, so
+cleanup cannot remove a message's video. Unused uploads expire after 24 hours. A reset
+or competing first conversation can invalidate an attachment rather than redirect it.
+Uncertain send outcomes retain their files until safe recovery establishes the outcome.
+
+Local validation requires `ffprobe`. It checks the container and a video stream with
+bounded runtime and output. It does not prove that every frame decodes. Playback uses
+native controls and byte-range responses, with a download link for unsupported codecs.
+Panels does not convert videos or promise that an agent understands their contents.
+Normal Panels backups exclude uploads, including videos. See [backups](backups.md).
+
+_Code paths:_ `src/planner/conversation/video_uploads/`, the shared intake in
+`src/planner/conversation/api.py`, and the composer and video helpers under `web/src/`.
 
 Those files last as long as the notebook does, which is forever. Nothing in
 Panels deletes a conversation. Reset stops the active conversation and clears its active
@@ -471,8 +503,9 @@ started by a failure notice cannot create another failure notice.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
-travel with words or form the whole message. There is no separate upload conversation
-or attachment record.
+travel with words or form the whole message. Video transfer uses a temporary upload
+record before Send, without a separate upload conversation. Other attachments keep
+their existing bytes-with-message intake.
 
 The command accepts `--mode steer|queue|send_now`. Steer is the default for command sends.
 Steer asks the current turn to admit the message. Queue holds behind active work. Send now

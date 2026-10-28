@@ -22,6 +22,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.managers import data as managers_data
 from planner.managers import service as managers_service
 from planner.message_delivery.contracts import (
+    MessageAdmission,
     MessageDeliveryMode,
     MessageDeliveryResult,
     MessageRecordedToOwner,
@@ -159,6 +160,7 @@ async def send_message(
     retain_created_conversation: bool = False,
     expects_reply: bool = True,
     system_message: bool = False,
+    admission: MessageAdmission | None = None,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner.
 
@@ -225,83 +227,26 @@ async def send_message(
             )
         return MessageDeliveryResult(recipient, sending_into, MessageRecordedToOwner())
 
-    if recipient.kind is PrincipalKind.ticket:
-        ticket_id = recipient.id
-        async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-            ticket = tickets_data.read_ticket(conn, ticket_id)
-            delivered = await conversation_start.send_to_ticket_conversation(
-                conversations,
-                conn,
-                ticket_id,
-                content,
-                conversation_id=(
-                    conversation_id
-                    if conversation_id is not None and caller.kind is PrincipalKind.owner
-                    else ticket.conversation_id
-                ),
-                created_conversation_id=created_conversation_id
-                or conversation_start.new_conversation_id(),
-                runs_under=runs_under,
-                sender_label=label,
-                mode=prompt_mode,
-                owner_read_through_sequence=owner_read_through_sequence,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
-                reply_requested=not system_message and expects_reply and not is_reply,
-                now=clock.now_unix(),
-            )
-    elif recipient.kind is PrincipalKind.chief:
-        async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
-            delivered = await conversation_start.send_to_agent_conversation(
-                conversations,
-                conn,
-                CHIEF_SETTINGS_KEY,
-                content,
-                (
-                    conversation_start.agent_resolve(conn)
-                    if runs_under is NO_CONVERSATION_START_OVERRIDES
-                    else conversation_start.agent_resolve(conn, runs_under)
-                ),
-                conversation_id=(
-                    conversation_id
-                    if conversation_id is not None and caller.kind is PrincipalKind.owner
-                    else conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
-                ),
-                created_conversation_id=created_conversation_id
-                or conversation_start.new_conversation_id(),
-                runs_under=runs_under,
-                sender_label=label,
-                mode=prompt_mode,
-                owner_read_through_sequence=owner_read_through_sequence,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
-                reply_requested=not system_message and expects_reply and not is_reply,
-            )
-    elif recipient.kind is PrincipalKind.manager:
-        item_id = recipient.id
-        async with managers_service.manager_lifecycle_lock(item_id):
-            item = managers_data.read_manager(conn, item_id).item
-            async with conversation_start.conversation_link_lock(f"agent:{item.manager_agent_key}"):
-                current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
-                resolved = (
-                    conversation_start.manager_resolve(item)
-                    if runs_under is NO_CONVERSATION_START_OVERRIDES
-                    else conversation_start.manager_resolve(item, runs_under)
-                )
-                delivered = await conversation_start.send_to_agent_conversation(
+    try:
+        if recipient.kind is PrincipalKind.ticket:
+            ticket_id = recipient.id
+            async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+                ticket = tickets_data.read_ticket(conn, ticket_id)
+                if admission is not None:
+                    prior = await admission.preflight(
+                        tickets_data.read_ticket(conn, ticket_id).conversation_id
+                    )
+                    if prior is not None:
+                        return prior
+                delivered = await conversation_start.send_to_ticket_conversation(
                     conversations,
                     conn,
-                    item.manager_agent_key,
+                    ticket_id,
                     content,
-                    resolved,
                     conversation_id=(
                         conversation_id
                         if conversation_id is not None and caller.kind is PrincipalKind.owner
-                        else current
+                        else ticket.conversation_id
                     ),
                     created_conversation_id=created_conversation_id
                     or conversation_start.new_conversation_id(),
@@ -314,38 +259,123 @@ async def send_message(
                     sender=sender,
                     recipient=recipient,
                     reply_requested=not system_message and expects_reply and not is_reply,
-                    required_manager_id=item_id,
-                    retain_created_conversation=retain_created_conversation,
+                    now=clock.now_unix(),
                 )
-                if caller.kind is PrincipalKind.owner and (
-                    (current is None and delivered.conversation_id is not None)
-                    or (
-                        isinstance(delivered.fate, PromptDeliveryStarted)
-                        and (
-                            runs_under.backend_key is not None
-                            or runs_under.model is not None
-                            or runs_under.reasoning_effort is not None
-                        )
+        elif recipient.kind is PrincipalKind.chief:
+            async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
+                if admission is not None:
+                    prior = await admission.preflight(
+                        conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
                     )
+                    if prior is not None:
+                        return prior
+                delivered = await conversation_start.send_to_agent_conversation(
+                    conversations,
+                    conn,
+                    CHIEF_SETTINGS_KEY,
+                    content,
+                    (
+                        conversation_start.agent_resolve(conn)
+                        if runs_under is NO_CONVERSATION_START_OVERRIDES
+                        else conversation_start.agent_resolve(conn, runs_under)
+                    ),
+                    conversation_id=(
+                        conversation_id
+                        if conversation_id is not None and caller.kind is PrincipalKind.owner
+                        else conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
+                    ),
+                    created_conversation_id=created_conversation_id
+                    or conversation_start.new_conversation_id(),
+                    runs_under=runs_under,
+                    sender_label=label,
+                    mode=prompt_mode,
+                    owner_read_through_sequence=owner_read_through_sequence,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
+                    reply_requested=not system_message and expects_reply and not is_reply,
+                )
+        elif recipient.kind is PrincipalKind.manager:
+            item_id = recipient.id
+            async with managers_service.manager_lifecycle_lock(item_id):
+                item = managers_data.read_manager(conn, item_id).item
+                async with conversation_start.conversation_link_lock(
+                    f"agent:{item.manager_agent_key}"
                 ):
-                    managers_data.update_manager_launch_configuration(
-                        conn,
-                        item_id,
-                        item.manager_launch_configuration.__class__(
-                            employee_backend=resolved.backend_key,
-                            employee_launch_model=resolved.model,
-                            employee_launch_reasoning_effort=resolved.reasoning_effort,
-                        ),
-                        principal=caller,
-                        clock=clock,
-                        expected_configuration=item.manager_launch_configuration,
+                    current = conversation_start.read_agent_conversation(
+                        conn, item.manager_agent_key
                     )
-    else:
-        raise PlannerError(
-            ErrorCode.validation,
-            "the owner does not have a deliverable conversation",
-            {"kind": recipient.kind.value, "id": recipient.id},
-        )
+                    if admission is not None:
+                        prior = await admission.preflight(current)
+                        if prior is not None:
+                            return prior
+                    resolved = (
+                        conversation_start.manager_resolve(item)
+                        if runs_under is NO_CONVERSATION_START_OVERRIDES
+                        else conversation_start.manager_resolve(item, runs_under)
+                    )
+                    delivered = await conversation_start.send_to_agent_conversation(
+                        conversations,
+                        conn,
+                        item.manager_agent_key,
+                        content,
+                        resolved,
+                        conversation_id=(
+                            conversation_id
+                            if conversation_id is not None and caller.kind is PrincipalKind.owner
+                            else current
+                        ),
+                        created_conversation_id=created_conversation_id
+                        or conversation_start.new_conversation_id(),
+                        runs_under=runs_under,
+                        sender_label=label,
+                        mode=prompt_mode,
+                        owner_read_through_sequence=owner_read_through_sequence,
+                        sender_message_id=sender_message_id,
+                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        sender=sender,
+                        recipient=recipient,
+                        reply_requested=not system_message and expects_reply and not is_reply,
+                        required_manager_id=item_id,
+                        retain_created_conversation=retain_created_conversation,
+                    )
+                    if caller.kind is PrincipalKind.owner and (
+                        (current is None and delivered.conversation_id is not None)
+                        or (
+                            isinstance(delivered.fate, PromptDeliveryStarted)
+                            and (
+                                runs_under.backend_key is not None
+                                or runs_under.model is not None
+                                or runs_under.reasoning_effort is not None
+                            )
+                        )
+                    ):
+                        managers_data.update_manager_launch_configuration(
+                            conn,
+                            item_id,
+                            item.manager_launch_configuration.__class__(
+                                employee_backend=resolved.backend_key,
+                                employee_launch_model=resolved.model,
+                                employee_launch_reasoning_effort=resolved.reasoning_effort,
+                            ),
+                            principal=caller,
+                            clock=clock,
+                            expected_configuration=item.manager_launch_configuration,
+                        )
+        else:
+            raise PlannerError(
+                ErrorCode.validation,
+                "the owner does not have a deliverable conversation",
+                {"kind": recipient.kind.value, "id": recipient.id},
+            )
+    except BaseException:
+        if admission is not None:
+            admission.abort_before_dispatch()
+        raise
+
+    if admission is not None:
+        admission.finish(delivered.fate)
 
     result = MessageDeliveryResult(
         recipient=recipient,

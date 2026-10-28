@@ -464,7 +464,8 @@ export type BackendModelEnablementResult = {
 export type SentMessagePiece =
   | { piece: "text"; text: string }
   | { piece: "image"; data: string; media_type: string; file_name?: string }
-  | { piece: "file"; data: string; media_type: string; file_name: string };
+  | { piece: "file"; data: string; media_type: string; file_name: string }
+  | { piece: "video_upload"; upload_id: string };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];

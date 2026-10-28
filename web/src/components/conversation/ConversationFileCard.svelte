@@ -15,6 +15,8 @@
   } = $props();
 
   let target = $derived(conversationFileTarget(href, fileName));
+  let playbackFailed = $state(false);
+  let isVideo = $derived(mediaType.startsWith("video/"));
 
   function formattedBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
@@ -30,7 +32,15 @@
       <span class="conversation-file-card__meta">{mediaType} · {formattedBytes(byteCount)}</span>
       <a class="conversation-file-card__download" {href} download={fileName}>Download</a>
     </div>
-    <FilePreview {target} mode="embedded" />
+    {#if isVideo}
+      <video controls preload="metadata" src={href} aria-label={fileName}
+        onerror={() => (playbackFailed = true)} style="max-width: 100%; max-height: 65vh;">
+        <track kind="captions" />
+      </video>
+      {#if playbackFailed}<p role="status">This video cannot play in this browser. Use Download to open it.</p>{/if}
+    {:else}
+      <FilePreview {target} mode="embedded" />
+    {/if}
   </article>
 {/if}
 
