@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Final
+from urllib.parse import urlsplit
 
 from planner.core.authctx import (
     PLAN_ACTOR_SCOPE_KEY,
@@ -22,6 +23,7 @@ from planner.core.authctx import (
     X_PLAN_TICKET_ID,
 )
 from planner.core.config import Config
+from planner.core.errors import ErrorCode, PlannerError
 
 TAILSCALE_USER_LOGIN_HEADER: Final = "tailscale-user-login"
 ORIGIN_HEADER: Final = "origin"
@@ -148,3 +150,33 @@ def _without_header(scope: dict[str, Any], header_name: str) -> dict[str, Any]:
         (name, value) for name, value in scope.get("headers", ()) if name.lower() != lowered
     ]
     return copied
+
+
+def require_preview_ingress(scope: dict[str, Any], config: TrustedIngressConfig) -> None:
+    """Require the configured tailnet gate, including reads and socket upgrades.
+
+    Tailscale Serve enforces network membership. These headers are not authentication
+    against same-user local processes, which can forge them at the loopback listener.
+    """
+    message: str | None = None
+    headers = _header_map(scope)
+    names = [name.decode("latin1").lower() for name, _ in scope.get("headers", ())]
+    if (
+        config.provider != "tailscale"
+        or not config.allowed_login
+        or not config.canonical_origin
+        or not config.canonical_origin.startswith("https://")
+    ):
+        message = "application previews require configured Tailscale HTTPS ingress"
+    elif any(
+        names.count(name) > 1 for name in (TAILSCALE_USER_LOGIN_HEADER, "host", ORIGIN_HEADER)
+    ):
+        message = "duplicate preview security header is not allowed"
+    elif headers.get(TAILSCALE_USER_LOGIN_HEADER) != config.allowed_login:
+        message = "application previews require the configured Tailscale login"
+    elif headers.get("host") != urlsplit(config.canonical_origin).netloc:
+        message = "preview host is not the configured public origin"
+    elif ORIGIN_HEADER in headers and headers[ORIGIN_HEADER] != config.canonical_origin:
+        message = "preview origin is not allowed"
+    if message is not None:
+        raise PlannerError(ErrorCode.agent_forbidden, message, {})

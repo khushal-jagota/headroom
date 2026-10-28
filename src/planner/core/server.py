@@ -77,6 +77,12 @@ from planner.navigation.delivery import create_delivery_runtime
 from planner.navigation.middleware import NavigationCommandFenceMiddleware
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
+from planner.previews.api import handle_preview_error
+from planner.previews.api import router as previews_router
+from planner.previews.contracts import PreviewError
+from planner.previews.runtime import PreviewRuntime
+from planner.previews.service import PreviewService
+from planner.previews.transport import PreviewTransport
 from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
@@ -188,6 +194,7 @@ def create_app(
         release_task: asyncio.Task[None] | None = None
 
         async def shutdown_dependents() -> None:
+            await preview_runtime.close()
             if release_task is not None and not release_task.done():
                 release_task.cancel()
                 try:
@@ -351,6 +358,7 @@ def create_app(
             )
             # Close the read/observer-install race without a second watcher.
             lifecycle_changed()
+            await preview_runtime.start()
             yield
 
     video_uploads = VideoUploadService(config.db_path)
@@ -367,6 +375,13 @@ def create_app(
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
+    preview_service = PreviewService(
+        config.db_path, config.trusted_ingress_canonical_origin or "", panels_port=config.port
+    )
+    preview_transport = PreviewTransport(preview_service)
+    preview_runtime = PreviewRuntime(preview_service, preview_transport)
+    app.state.previews = preview_service
+    app.state.preview_transport = preview_transport
     app.state.video_uploads = video_uploads
     app.add_middleware(
         NavigationCommandFenceMiddleware,
@@ -476,6 +491,7 @@ def create_app(
     app.state.resource_version_epoch = str(uuid4())
 
     app.add_exception_handler(PlannerError, handle_planner_error)
+    app.add_exception_handler(PreviewError, handle_preview_error)
 
     # Every router the application serves is included through here, so this is where the
     # live streams among them are collected. The compression below has to know them.
@@ -505,6 +521,7 @@ def create_app(
         vps_metrics_router,
     ):
         include_router(domain_router, prefix="/api")
+    include_router(previews_router)
     include_router(navigation_delivery.router)
     include_router(scoped_navigation.router)
     include_router(files_router)
