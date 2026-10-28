@@ -33,7 +33,12 @@ from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliv
 from planner.tickets import data as tickets_data
 from planner.worker_settings import service as worker_settings_service
 
-RECAP_REQUEST_MESSAGE = "Owner has requested a recap. Remember to keep it short and top level."
+RECAP_REQUEST_MESSAGE = (
+    "File a short, top-level recap with your recap tool. "
+    "Do not send the user a message. "
+    "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
+    "Chief: `PUT /api/workers/chief-of-staff/recap`."
+)
 
 # Every agent Panels runs keeps a recap, so every agent can be asked for a fresh one. The
 # owner is not an agent and has no recap, so the owner is the only principal left out.

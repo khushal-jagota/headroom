@@ -38,7 +38,7 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
   };
   let started = false;
   let reloadStarted = false;
-  let checkInFlight: Promise<void> | null = null;
+  let checkInFlight: Promise<boolean> | null = null;
   const subscribers = new Set<(value: ReleaseSnapshot) => void>();
 
   function publish(update: Partial<ReleaseSnapshot>): void {
@@ -58,12 +58,12 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     }
   }
 
-  function check(): Promise<void> {
+  function check(): Promise<boolean> {
     if (checkInFlight) return checkInFlight;
     checkInFlight = (async () => {
       try {
         const response = await fetchMeta("/api/meta", { cache: "no-store" });
-        if (!response.ok) return;
+        if (!response.ok) return false;
         const meta = (await response.json()) as MetaResponse;
         if (options.bootSha && typeof meta.app_sha === "string") {
           const updateAvailable = meta.app_sha !== options.bootSha;
@@ -72,9 +72,12 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
             updateAvailable,
             reloadRequested: updateAvailable ? snapshot.reloadRequested : false
           });
+          return !updateAvailable;
         }
+        return options.bootSha === null;
       } catch {
-        // A failed release check must not disturb the current app. Resume retries it.
+        // A failed check cannot authorize a mutation or disturb the current app.
+        return false;
       } finally {
         checkInFlight = null;
       }
@@ -150,11 +153,13 @@ export const releaseState = writable<ReleaseSnapshot>({
 });
 
 let sharedMonitor: ReturnType<typeof createReleaseMonitor> | null = null;
+let sharedBootSha: string | null = null;
 let unsubscribeShared: (() => void) | null = null;
 
 export function startReleaseMonitor(): void {
   if (sharedMonitor) return;
-  const monitor = createReleaseMonitor({ bootSha: readBootAppSha(document), document, window });
+  sharedBootSha = readBootAppSha(document);
+  const monitor = createReleaseMonitor({ bootSha: sharedBootSha, document, window });
   sharedMonitor = monitor;
   unsubscribeShared = monitor.subscribe((value) => releaseState.set(value));
   monitor.start();
@@ -166,8 +171,26 @@ export function stopReleaseMonitor(): void {
   unsubscribeShared?.();
   unsubscribeShared = null;
   sharedMonitor = null;
+  sharedBootSha = null;
 }
 
 export function requestReleaseReload(): void {
   sharedMonitor?.requestReload();
+}
+
+/** Recheck on the write path. Never reload or discard the current page. */
+export async function checkReleaseBeforeMutation(): Promise<string | null> {
+  if (!sharedMonitor || !sharedBootSha) return null;
+  if (!await sharedMonitor.check()) {
+    throw new Error("Cannot confirm this page is current. Refresh page before making changes.");
+  }
+  return sharedBootSha;
+}
+
+/** One write preflight and version header for JSON, voice, and upload transports. */
+export async function mutationHeaders(headers?: HeadersInit): Promise<Record<string, string>> {
+  const result = Object.fromEntries(new Headers(headers).entries());
+  const bootSha = await checkReleaseBeforeMutation();
+  if (bootSha) result["X-Panels-App-SHA"] = bootSha;
+  return result;
 }

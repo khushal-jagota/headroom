@@ -2211,64 +2211,6 @@ select {
   margin-right: var(--space-1);
 }
 
-.review-empty-state {
-  min-height: calc(100dvh - (var(--space-7) * 4));
-  max-width: calc(var(--space-7) * 8);
-  margin: 0 auto;
-  padding: var(--space-7) var(--space-4);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  text-align: center;
-}
-
-.review-empty-mark {
-  position: relative;
-  width: calc(var(--space-7) * 3);
-  height: var(--space-7);
-  overflow: hidden;
-}
-
-.review-empty-mark::before {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: var(--space-3);
-  left: 0;
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-.review-empty-mark span {
-  position: absolute;
-  bottom: var(--space-3);
-  left: 50%;
-  width: var(--space-6);
-  height: var(--space-6);
-  background: var(--accent-surface);
-  border: var(--border-hairline) solid var(--accent-bright);
-  border-radius: var(--radius-pill);
-  transform: translateX(-50%) translateY(50%);
-  opacity: 0.72;
-}
-
-/* The empty state re-set in the system's voice: the rising-disc mark, then a
- * quiet line and a faint agents-in-progress count. */
-.review-empty-text {
-  color: var(--text-strong);
-  font-family: var(--font-ui);
-  font-size: var(--type-lg);
-  font-weight: 500;
-  line-height: 1.3;
-}
-
-.review-empty-meta {
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-  font-variant-numeric: tabular-nums;
-}
-
 /* Display title, brand-accent hover, still the ticket link. */
 .review-ticket-title {
   font-family: var(--font-ui);

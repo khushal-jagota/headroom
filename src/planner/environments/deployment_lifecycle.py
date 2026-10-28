@@ -330,7 +330,9 @@ class DeploymentLifecycleStore:
                 deployed_sha=deployed_sha,
                 target_sha=lifecycle.requested_sha,
                 outcome=None,
-                detail="Deployment progress expired before completion was confirmed.",
+                detail=("Recovery required: deployment progress expired. The owner must use the "
+                        "deployment runner and explicitly select the recorded snapshot or "
+                        "fallback when necessary."),
             )
         if lifecycle.phase == "preparing":
             state = "preparing"

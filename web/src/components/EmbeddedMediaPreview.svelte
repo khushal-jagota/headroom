@@ -32,7 +32,9 @@
     if (kind === "video" && keyboard) player.focus();
     try {
       if (firstPlay || player.paused) await player.play(); else player.pause();
-    } catch { if (!disposed && attempt === generation) failed(); }
+    } catch (error) {
+      if (!disposed && attempt === generation && !(error instanceof DOMException && error.name === "AbortError")) failed();
+    }
   }
   function update() {
     if (!player) return;

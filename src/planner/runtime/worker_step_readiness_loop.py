@@ -23,6 +23,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from time import monotonic as _monotonic
 from typing import Any, Final, Literal
@@ -107,6 +108,27 @@ class WorkerStepStartResult:
 
 
 async def start_ready_worker_step(
+    ticket_id: str,
+    *,
+    connect_database: Callable[[], sqlite3.Connection],
+    conversation_system: ConversationSystem,
+    worker_type_registry: WorkerTypeRegistry,
+    now: Callable[[], int],
+) -> WorkerStepStartResult:
+    admission = getattr(conversation_system, "workspace_admission", None)
+    with admission.operation() if admission is not None else nullcontext(True) as admitted:
+        if not admitted:
+            return WorkerStepStartResult(started=False)
+        return await _admitted_start_ready_worker_step(
+            ticket_id,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            worker_type_registry=worker_type_registry,
+            now=now,
+        )
+
+
+async def _admitted_start_ready_worker_step(
     ticket_id: str,
     *,
     connect_database: Callable[[], sqlite3.Connection],
@@ -295,6 +317,27 @@ async def tell_a_worker_it_lost_its_memory(
     worker_type_registry: WorkerTypeRegistry,
     now: Callable[[], int],
 ) -> bool:
+    admission = getattr(conversation_system, "workspace_admission", None)
+    with admission.operation() if admission is not None else nullcontext(True) as admitted:
+        if not admitted:
+            return False
+        return await _admitted_tell_a_worker_it_lost_its_memory(
+            ticket_id,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            worker_type_registry=worker_type_registry,
+            now=now,
+        )
+
+
+async def _admitted_tell_a_worker_it_lost_its_memory(
+    ticket_id: str,
+    *,
+    connect_database: Callable[[], sqlite3.Connection],
+    conversation_system: ConversationSystem,
+    worker_type_registry: WorkerTypeRegistry,
+    now: Callable[[], int],
+) -> bool:
     """Say the one thing a Worker compacted part-way through a step cannot find out.
 
     A wake would say it too, but a Ticket already part-way through a step is not waiting
@@ -370,7 +413,9 @@ class WorkerStepReadinessLoop:
         conversation_system: ConversationSystem,
         asyncio_loop: asyncio.AbstractEventLoop,
         busy_timeout_ms: int = 5000,
+        before_poll: Callable[[], bool] | None = None,
     ) -> None:
+        self._before_poll = before_poll
         self._db_path = db_path
         self._clock = clock
         self._conversation_system = conversation_system
@@ -416,6 +461,8 @@ class WorkerStepReadinessLoop:
 
     def poll_once(self) -> list[str]:
         """Start a worker step for every ready Ticket. Returns the ids it set going."""
+        if self._before_poll is not None and self._before_poll():
+            return []
         started = [ticket_id for ticket_id in self._ready_ticket_ids() if self._schedule(ticket_id)]
         try:
             self.tell_every_worker_that_lost_its_memory()

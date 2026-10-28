@@ -73,14 +73,25 @@ notifications coalesce at the operating system.
 
 ## Review transfer notices
 
-When a parked review changes holder, Panels attempts a courtesy message to the previous
-holder. The message identifies the Ticket and names the new holder. A holder change
-without a parked proposal sends no message. An unchanged final holder sends no message.
+When a parked review changes holder, Panels attempts a courtesy message to the new
+holder if that holder is an agent. The message identifies the Ticket and names the
+mover, when known. Khushal receives no arrival message when a review moves to him.
+That transfer starts no conversation solely for an arrival notice.
 
-The Chief and managers receive the message through their existing conversation
-routes. The user receives it in the Ticket conversation as a Panels message. The notice
-requests no reply and grants no credit for a worker reply. Existing approval attention
-and proposal delivery to the new holder keep their current behavior.
+If a third party moves the review, Panels also attempts a message to the previous
+holder. This message names the Ticket, the mover, and the new holder. The mover and
+the new holder receive no previous-holder message. A holder change without a parked
+proposal sends no message. An unchanged final holder sends no message.
+
+The Chief, Managers, and holder Tickets receive notices through their conversation
+routes. If Khushal is the previous holder, he still receives the departure notice in
+the affected Ticket conversation. The notice requests no reply and grants no credit
+for a worker reply. Existing approval attention and proposal delivery to the new
+holder keep their current behavior.
+
+Khushal keeps the departure notice because he asked only to remove arrival notices.
+His review queue shows what he holds now, rather than what left it. A move by
+someone else can be unexpected, so the departure notice explains that change.
 
 This notice uses one best-effort send after the transfer commits. A failed send does not
 fail or repeat the transfer. A process failure before send or before a queued notice

@@ -465,11 +465,14 @@ reply requirement and agent conversations cannot form an acknowledgement loop.
 
 The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
 manager, or Chief principal. It empties the recap being replaced and steers the same
-fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
-keep it short and top level." Only the owner may ask, and the owner is the only principal
-it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
-the agent writes rather than words it sends back. This system message carries no reply
-requirement and leaves no missing-reply marker.
+fixed text into that agent's conversation:
+
+> File a short, top-level recap with your recap tool. Do not send the user a message.
+> Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. Chief: `PUT /api/workers/chief-of-staff/recap`.
+
+Only the owner can ask for a recap. The owner keeps no recap, so the request cannot address
+the owner. The answer is the recap that the agent writes. This system message carries no
+reply requirement and leaves no missing-reply marker.
 
 Automatic manager startup sends the exact saved goal as a queued Panels message.
 Its answer is the work the manager does. It requires no explicit reply to its

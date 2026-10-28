@@ -45,6 +45,17 @@ One screen per part of the system:
   Open conversation names the exact conversation. Approval and send-back act only on the proposal.
   Each action leaves the card's other pending parts intact.
   Other proposal controls, keyboard shortcuts, and approval routing retain their existing behavior.
+  When the queue ends, Review shows the Settled final screen and the existing reply input for Chief.
+  This screen stays in place after a send or an arrival, even with no draft.
+  New work changes the status to the current count of items that await review.
+  Skip postpones a card for this visit. The final screen counts only skipped cards that still await review.
+  If only skipped cards remain, the return control says Back to skipped items. Otherwise it says Back to review.
+  Return starts a fresh pass: new cards come first, then previously skipped cards, across every page.
+  A failed return keeps the final screen and Chief draft. If the accumulated skip history exceeds the request limit,
+  Review shows that refusal on the final screen and retains the complete history and Chief draft. It does not retry automatically.
+  A fresh visit starts the normal queue order.
+  The return action uses the existing Approve style when work waits and the quiet Mark read style at zero.
+  The Chief form sends through the normal Chief endpoint. It never loads a transcript or advances a read watermark.
 - **Workspace** — an adjustable rail of manager cards beside the selected conversation
   or Worker. Chief leads, keeps its portrait, and never settles. Ordinary managers
   have Project and Settle above the title. Only the owner settles or reopens one.
@@ -101,9 +112,14 @@ One screen per part of the system:
   stage stay visible. Dense list rows retain their concise recap preview.
 
   The recessed recap also holds the ask for a fresh one, under the line it replaces.
-  Pressing it empties that line, so the popup closes the space and the agent's working
-  mark is what says a new recap is coming. Where there is no room for a recap at all,
-  only the ask remains.
+  Pressing it empties that line. While a fine pointer rests on the panel, the recap
+  space retains its largest height for that visit. A shorter reply leaves empty space.
+  A taller reply grows the space. The floor survives the animation's 260 millisecond
+  settle and releases on pointer exit, panel closure, or a change of target.
+  The next visit starts from the current content. Keyboard focus and touch alone do
+  not hold the height. Other recap surfaces retain their ordinary resize animation.
+  The agent's working mark says that a new recap is coming. Where there is no room
+  for a recap at all, only the ask remains.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
   moves without a card size change take 360–560 milliseconds according to distance. A new row opens space before
@@ -327,6 +343,9 @@ One screen per part of the system:
 The workspace keeps its resize handle within its own visual layer. Open shell menus
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
+The handle shows no painted line at rest. A short, rounded neutral bar appears at its
+center on hover and keyboard focus, then strengthens during a drag. Reduced motion removes
+the reveal animation. The full-height hit area stays intact.
 
 Every destination shares one persistent Workspace rail and one pane. The rail keeps its
 scroll, width preference, Settled section, and running conversations while the pane changes.
@@ -681,6 +700,10 @@ hand-rolling the same shapes per screen. Each does one job:
   durable watermark. It reuses message rendering, file previews, voice capture, and durable
   composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
   Navigation publications carry identity and recap facts, never message bodies.
+- **ReviewReplyInput** — the existing Review input, shared by message cards and the final-screen Chief form.
+  It keeps the attachment, microphone, and send controls. Each parent retains its own delivery and acknowledgement behavior.
+- **ReviewFinalState** — the shared Settled screen at the end of Review, with a stable Chief form and an explicit queue return.
+- **ReviewChiefMessage** — the final-screen Chief send adapter. It retains drafts and correlated attempts without a transcript or read acknowledgement.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
@@ -915,7 +938,7 @@ unhashed assets revalidate so the next load sees the current deployment.
 
 ---
 
-_Last verified: 2026-10-21._
+_Last verified: 2026-10-28._
 
 
 ## Frontend test commands

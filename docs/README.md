@@ -81,8 +81,10 @@ path. The Manager reads canonical Item and Ticket state before it acts on a noti
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
 - **Notifications** (`notifications.md`) — installable Panels, notification choices,
   and the durable Web Push path from a system fact to a phone.
-- **Production deployment** (`deployment.md`) — exact-commit building, single-app replacement,
-  and automatic recovery.
+- **Owner-controlled updates** ([updates.md](updates.md)) — retained releases, owner requests,
+  idle admission, and operator recovery limits.
+- **Production deployment** (`deployment.md`) — checked publication, exact-archive replacement,
+  and the existing recovery boundary.
 
 **The surfaces you plan on**
 

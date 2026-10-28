@@ -18,11 +18,17 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import expect
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "support"))
+from owner_updates_fixture import OwnerUpdatesFixture  # noqa: E402
 from vps_metrics_fixture import MetricsFixture  # noqa: E402
+
+_state_barriers = runpy.run_path(str(Path(__file__).resolve().parents[1] / "support/state_barriers.py"))
+establish_scrollback = _state_barriers["establish_scrollback"]
+refresh_projection = _state_barriers["refresh_projection"]
 
 
 def run(browser, urls):
     url = urls[0]
+    verify_owner_updates(browser, url)
     verify_conversation_overlay(browser, url)
     # Enough Worker types that the Config index is taller than the pane.
     worker_types = [
@@ -79,6 +85,12 @@ def run(browser, urls):
             view = json.loads(parse_qs(parts.query)["view"][0])
             route.fulfill(json=fixture["scoped_navigation_response"](source, view))
             return
+        if path == "/api/recap-requests" and card_fixture.get("recap_worker"):
+            assert route.request.post_data_json == {"target": {"kind": "ticket", "id": card_fixture["recap_worker"]["id"]}}
+            card_fixture["recap_worker"]["recap"] = ""
+            card_fixture["recap_requests"] = card_fixture.get("recap_requests", 0) + 1
+            route.fulfill(json={"fate": "started"})
+            return
         if path.startswith("/api/vps-metrics/"):
             metrics_calls.append(path)
             response = metrics.client.request(route.request.method, path + ("?" + parts.query if parts.query else ""))
@@ -98,6 +110,9 @@ def run(browser, urls):
                 route.fulfill(status=503, json={"error": {"code": "fixture", "message": key}})
                 return
             route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": inner})
+            return
+        if path == "/api/updates":
+            route.fulfill(json={"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None})
             return
         if path == "/api/workers":
             result = {"workers": workers, "chief_of_staff": {"employee_id": "chief", "label": "Chief", "skill": skill, "launch_defaults": launch}}
@@ -306,6 +321,8 @@ def run(browser, urls):
     capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
+    fold["release_sha"] = "fixture-boot"
+    verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
@@ -1096,6 +1113,7 @@ def verify_conversation_overlay(browser, url):
             "/api/worker-types": manifest,
             "/api/feedback/count": {"open_count": 0},
             "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
+            "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
             "/api/meta": {"test_mode": True, "app_sha": None},
             "/api/review": {"items": [], "running_worker_count": 0},
         }
@@ -1183,9 +1201,10 @@ def verify_conversation_overlay(browser, url):
         highwater = document.evaluate('e=>e.scrollHeight')
         # A scrollback reader keeps the same content while the composer changes.
         # Reader input releases an older exact-text destination before scrollback.
-        thread.hover()
-        page.mouse.wheel(0, -500)
-        page.wait_for_timeout(100)
+        thread.focus()
+        growth = box.evaluate("e=>parseFloat(getComputedStyle(e.closest('.ticket-page,.manager-page')??e.closest('[data-conversation-pane]')).getPropertyValue('--composer-growth'))||0")
+        establish_scrollback(page, lambda page=page: page.keyboard.press('PageUp'),
+                             min_clearance=growth + 2, input_kind='keydown', key='PageUp')
         anchor = thread.evaluate('''e=>{const r=e.getBoundingClientRect();const row=[...e.querySelectorAll('[data-conversation-row]')].find(n=>n.getBoundingClientRect().bottom>r.top+10);return row?{key:row.closest('[data-conversation-view-key]')?.getAttribute('data-conversation-view-key'),text:row.textContent,top:row.getBoundingClientRect().top-r.top,bottomOffset:row.getBoundingClientRect().top-r.bottom}:null;}''')
         assert anchor and anchor['key'], (name, anchor)
         anchor_proof = []
@@ -1429,7 +1448,7 @@ def verify_rail_overflow(page, fixture, evidence):
     fixture["release_sha"] = "fixture-next"
     page.evaluate("dispatchEvent(new Event('pageshow'))")
     status_samples = []
-    for state, word in [("ready", "New version ready"), ("held", "Update applies when this message is safe")]:
+    for state, word in [("ready", "New version ready"), ("held", "Page refresh waits until this message is safe")]:
         if state == "held":
             page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
             page.locator("button.status-card:visible").click()
@@ -1471,3 +1490,524 @@ def verify_rail_overflow(page, fixture, evidence):
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
     }, indent=2))
+
+
+def verify_owner_updates(browser, url, *, problem_only=False):
+    """Browser clicks cross real owner routes and durable receipts on the existing host.
+
+    The provider records external dispatch only. The Problem composition must keep
+    confirmation, retry, and cancellation usable beside the failure explanation.
+    The narrow problem_only path skips unrelated recovery and cutover checks.
+    A synthetic SHA change proves refresh hold, not deployment or database migration.
+    """
+    from dataclasses import replace
+
+    started = time.perf_counter()
+    backend = OwnerUpdatesFixture()
+    navigation = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
+    source = navigation["navigation_response"]({}, {"chief_of_staff": {"label": "Chief", "conversation_id": "bounded-reader"}})
+    deployment = {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None, "success_display_until": None}
+    posts = []
+    documents = []
+    errors = []
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce")
+    page = context.new_page()
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    evidence = Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-owner-updates")) / "owner-updates"
+    evidence.mkdir(parents=True, exist_ok=True)
+
+    def respond(route):
+        parts = urlsplit(route.request.url)
+        path = parts.path
+        if path.startswith("/api/updates") or path == "/api/meta":
+            if route.request.method != "GET":
+                posts.append({"path": path, "body": route.request.post_data_json,
+                              "boot_sha": route.request.headers.get("x-panels-app-sha")})
+            response = backend.client.request(route.request.method, path,
+                                              content=route.request.post_data,
+                                              headers={"Content-Type": "application/json"})
+            route.fulfill(status=response.status_code, content_type="application/json", body=response.content)
+            return
+        if path == "/api/navigation/view/snapshot":
+            view = json.loads(parse_qs(parts.query)["view"][0])
+            route.fulfill(json=navigation["scoped_navigation_response"](source, view))
+            return
+        key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
+        values = {
+            "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
+            "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
+            "/api/worker-types?supported=true": {"worker_types": []},
+            "/api/feedback/count": {"open_count": 0},
+            "/api/deployment-status": deployment,
+            "/api/review": {"items": [], "running_worker_count": 0},
+        }
+        body = values.get(key, {})
+        route.fulfill(json={"key": key, "epoch": "owner-updates", "revision": "1", "body": body} if path == "/api/resource-body" else body)
+
+    def host_with_boot_sha(route):
+        documents.append(backend.current_sha)
+        response = route.fetch()
+        route.fulfill(response=response, body=response.text().replace(
+            "<head>", f'<head><meta name="panels-app-sha" content="{backend.current_sha}">', 1))
+
+    page.route("**/api/**", respond)
+    page.route(url + "?*", host_with_boot_sha)
+    card = page.locator(".status-card:visible")
+    box = page.locator("[data-conversation-input]")
+
+    def signal():
+        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/updates" and response.status == 200):
+            page.evaluate("window.__ownerUpdatesSignal()")
+
+    try:
+        page.goto(url + "?overlay=1&owner-updates=1#/workspace/chief-of-staff", wait_until="domcontentloaded")
+        expect(box).to_be_visible()
+        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "update-available.png"))
+        if not problem_only:
+            # A live connection must still disclose an expired runner record. Then the
+            # normal update controls return through the existing contentless change signal.
+            recovery = "Recovery required: the candidate did not complete its commit."
+            deployment.update(state="unknown", detail=recovery)
+            signal()
+            expect(card.get_by_text(recovery, exact=True)).to_be_visible()
+            expect(card.get_by_text("Reconnecting", exact=True)).to_be_visible()
+            page.screenshot(path=str(evidence / "recovery-required.png"))
+            deployment.update(state="idle", detail=None)
+            signal()
+            expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+
+        # The actual ShellStatus composition must retain controls under a permanent
+        # deployment failure. Opening confirmation before the transition also proves
+        # that the shared UpdateActions instance keeps its local decision state.
+        failure = "The previous update failed. The installed application remains available."
+        card.get_by_role("button", name="Update now", exact=True).click()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="problem", outcome="failed", detail=failure)
+        signal()
+        expect(card.get_by_text("Problem", exact=True)).to_be_visible()
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="idle", outcome=None, detail=None)
+        signal()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="problem", outcome="failed", detail=failure)
+        signal()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        card.get_by_role("button", name="Go back", exact=True).click()
+        expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "problem-with-update-actions.png"))
+
+        for activity, warning in (("unknown", "Activity is unknown."), ("busy", "Work is active.")):
+            backend.activity.activity = activity
+            signal()
+            expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", activity)
+            before_posts, before_dispatches = len(posts), len(backend.provider.dispatched)
+            card.get_by_role("button", name="Update now", exact=True).click()
+            expect(card.get_by_text(warning, exact=False)).to_be_visible()
+            assert len(posts) == before_posts and len(backend.provider.dispatched) == before_dispatches
+            if activity == "unknown":
+                page.screenshot(path=str(evidence / "confirmation.png"))
+            card.get_by_role("button", name="Proceed with update", exact=True).click()
+            expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+            receipt = backend.store.read()
+            assert receipt is not None and receipt.state == "dispatched" and receipt.confirm_activity
+            assert len(backend.provider.dispatched) == before_dispatches + 1
+            body = posts[-1]["body"]
+            selected = backend.provider.offered
+            assert body == {"publication_run_id": selected.publication_run_id, "artifact_id": selected.artifact_id,
+                            "proof_artifact_id": selected.proof_artifact_id, "app_sha": selected.manifest.app_sha,
+                            "artifact_digest": selected.manifest.artifact_digest, "archive_sha256": selected.archive_sha256,
+                            "mode": "now", "confirm_activity": True}
+            assert posts[-1]["boot_sha"] == "a" * 40
+            assert backend.provider.dispatched[-1].request_id == receipt.request_id
+            expect(card.get_by_text("Problem", exact=True)).to_be_visible()
+            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            if activity == "busy":
+                # A failed request leaves an available publication usable for retry.
+                # Its failure and the deployment failure remain visible at each step.
+                failed_request = "The runner refused the previous attempt."
+                backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail=failed_request)
+                signal()
+                expect(card.get_by_text(failed_request, exact=True)).to_be_visible()
+                card.get_by_role("button", name="Update now", exact=True).click()
+                expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
+                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+                expect(card.get_by_text(failed_request, exact=True)).to_be_visible()
+                assert len(backend.provider.dispatched) == before_dispatches + 1
+                page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
+                card.get_by_role("button", name="Proceed with update", exact=True).click()
+                expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+                assert len(backend.provider.dispatched) == before_dispatches + 2
+                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            card.get_by_role("button", name="Cancel update", exact=True).click()
+            expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
+            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            assert backend.store.read().state == "cancelled"
+
+        backend.activity.activity = "unknown"
+        signal()
+        expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "unknown")
+        card.get_by_role("button", name="Update when idle", exact=True).click()
+        expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
+        assert backend.store.read().state == "pending"
+        assert len(backend.provider.dispatched) == 3
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "problem-with-pending-cancel.png"))
+        pinned = backend.store.read().release
+        backend.provider.offered = replace(pinned, artifact_id=201, manifest=replace(pinned.manifest, app_sha="f" * 40))
+        backend.service.refresh_available(force=True)
+        signal()
+        expect(card.get_by_text("Update waits for idle · bbbbbbb", exact=True)).to_be_visible()
+        assert backend.store.read().release == pinned
+        card.get_by_role("button", name="Cancel update", exact=True).click()
+        expect(card.get_by_text("Update available · fffffff", exact=True)).to_be_visible()
+        assert backend.store.read().state == "cancelled"
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        if problem_only:
+            assert errors == [], errors
+            (evidence / "problem-composition-proof.json").write_text(json.dumps({
+                "seconds": round(time.perf_counter() - started, 3), "newHosts": 0,
+                "dispatchCount": len(backend.provider.dispatched), "requests": posts,
+                "boundary": "Mounted ShellStatus preserves Problem explanation and UpdateActions through confirmation, failed retry, and pending cancellation",
+            }, indent=2))
+            return
+
+        deployment.update(state="idle", outcome=None, detail=None)
+        backend.provider.offered = pinned
+        backend.service.refresh_available(force=True)
+        backend.activity.activity = "idle"
+        signal()
+        expect(card.get_by_text("Update available · bbbbbbb", exact=True)).to_be_visible()
+        expect(card.locator("[data-update-activity]")).to_have_attribute("data-update-activity", "idle")
+        card.get_by_role("button", name="Update now", exact=True).click()
+        expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+        receipt = backend.store.read()
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "applying")
+        signal()
+        expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
+        expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
+        assert len(backend.provider.dispatched) == 4
+
+        # The application version changes synthetically. The retained App and its
+        # actual composer keep the unsent draft until the owner clears it.
+        draft = "Keep this unsent draft across the installed revision change."
+        box.fill(draft)
+        page.evaluate("window.__beforeUpdateDocument = document")
+        backend.store.transition(receipt.request_id, frozenset({"applying"}), "applied")
+        backend.current_sha = pinned.manifest.app_sha
+        backend.service.current_app_sha = backend.current_sha
+        signal()
+        page.evaluate("dispatchEvent(new Event('pageshow'))")
+        expect(card.get_by_text("Refresh page", exact=True)).to_be_visible()
+        expect(box).to_have_value(draft)
+        assert len(documents) == 1
+        card.click()
+        expect(card.get_by_text("Page refresh waits until this message is safe", exact=True)).to_be_visible()
+        expect(box).to_have_value(draft)
+        assert page.evaluate("document === window.__beforeUpdateDocument")
+        assert len(documents) == 1
+        page.screenshot(path=str(evidence / "refresh-keeps-draft.png"))
+        box.fill("")
+        page.wait_for_function("document !== window.__beforeUpdateDocument")
+        expect(box).to_be_visible()
+        assert documents == ["a" * 40, "b" * 40]
+        expect(page.get_by_text("Refresh page", exact=True)).to_have_count(0)
+        assert errors == [], errors
+        (evidence / "proof.json").write_text(json.dumps({
+            "seconds": round(time.perf_counter() - started, 3), "newHosts": 0,
+            "dispatchCount": len(backend.provider.dispatched), "requests": posts, "documentVersions": documents,
+            "boundary": "Browser actions -> actual FastAPI owner routes -> UpdateService -> file receipt -> fake external dispatcher",
+            "cutover": "Synthetic installed SHA; no service replacement, hosted ingress, or database migration proof",
+        }, indent=2))
+    finally:
+        context.close()
+        backend.close()
+
+
+def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
+    """Prove layout and stationary hit testing through the real request and projection.
+
+    Unit hover tests cannot prove a ResizeObserver-driven panel stays under a pointer.
+    Reuse the App host and navigation transport, with no live backend or new host.
+    """
+    started = time.perf_counter()
+    worker = {"id": "recap_floor", "title": "Recap floor", "worker_type": "coding",
+              "stage": "needs_implementation", "ticket_status": "agent", "recap": "Initial recap"}
+    neighbor = {**worker, "id": "recap_neighbor", "title": "Other recap", "recap": "Short recap"}
+    fixture.update(enabled=True, recap_worker=worker, board={"managers": [
+        {"id": "recap_manager", "title": "Recap manager", "created_at": 1, "tickets": [worker, neighbor]},
+    ]}, chief={"label": "Chief"})
+    proof = {"newHosts": 0, "samples": [], "sessions": []}
+    panel = page.locator('[data-rail-hover-panel]')
+    text = panel.locator('[data-recap-text]')
+    row = page.locator('[data-ticket-id="recap_floor"]')
+
+    def mounted_projection(target_page=page):
+        # Initial rail-parent delivery discovers each manager's ticket window.
+        # Wait for that intended subscription before the single explicit refresh.
+        target_page.wait_for_function("""() => {
+          const sources=window.__navigationSources?.();
+          if(sources?.length!==1)return false;
+          const request=JSON.parse(new URL(sources[0].url,location.href).searchParams.get('view'));
+          const managers=request.windows.filter(w=>w.section==='rail_tickets'&&w.owner?.kind==='manager');
+          return managers.length===1&&managers[0].owner.id==='recap_manager';
+        }""", timeout=5000)
+
+    def refresh(target_page=page):
+        required = []
+        if target_page.locator('[data-rail-hover-panel][aria-hidden="false"]').count():
+            required.append({"selector": '[data-rail-hover-panel][aria-hidden="false"] [data-recap-text]',
+                             "text": worker["recap"]})
+        refresh_projection(target_page, required_content=required,
+                           required_recaps=[{"id": worker["id"], "text": worker["recap"]}])
+
+    def open_panel():
+        row.hover()
+        expect(panel).to_have_attribute("aria-hidden", "false")
+        page.wait_for_timeout(300)
+        panel.hover()
+
+    def leave():
+        page.mouse.move(1200, 650)
+        page.get_by_role("separator", name="Resize workspace panel").focus()
+        expect(panel).to_have_attribute("aria-hidden", "true")
+
+    def set_lines(lines):
+        # Use real font metrics to create exactly the requested number of wrapped
+        # lines. A long token wraps by the production overflow-wrap rule.
+        count = panel.locator("[data-recap-slot]").evaluate("""(node, lines) => {
+          const css=getComputedStyle(node), canvas=document.createElement('canvas');
+          const ctx=canvas.getContext('2d'); ctx.font=css.font;
+          return Math.floor(node.getBoundingClientRect().width/ctx.measureText('W').width)*(lines-1)+1;
+        }""", lines)
+        worker["recap"] = "W" * count
+        refresh()
+        expect(text).to_have_text(worker["recap"])
+        assert text.evaluate("node => Math.round(node.getBoundingClientRect().height/parseFloat(getComputedStyle(node).lineHeight))") == lines
+        return worker["recap"]
+
+    def sample_change(label, mutate, floor=None, point=None):
+        # Start before publication, so every animation frame includes actual panel
+        # bounds and hit testing at a pointer that never moves during the change.
+        page.evaluate("""({point}) => {
+          window.__recapFrames=[];
+          window.__recapSampleUntil=null;
+          const start=performance.now();
+          window.__recapSampling=new Promise(resolve=>{
+            function sample(){
+              const panel=document.querySelector('[data-rail-hover-panel]'), r=panel.getBoundingClientRect();
+              window.__recapFrames.push({ms:performance.now()-start,x:r.x,y:r.y,width:r.width,height:r.height,
+                visible:panel.getAttribute('aria-hidden')==='false',
+                hit:point ? Boolean(document.elementFromPoint(point.x,point.y)?.closest('[data-rail-hover-panel]')) : null});
+              if(window.__recapSampleUntil===null || performance.now()<window.__recapSampleUntil) requestAnimationFrame(sample); else resolve();
+            } requestAnimationFrame(sample);
+          });
+        }""", {"point": point})
+        mutate()
+        page.evaluate("window.__recapSampleUntil=performance.now()+380")
+        page.evaluate("() => window.__recapSampling")
+        frames = page.evaluate("window.__recapFrames")
+        proof["samples"].append({"label": label, "point": point, "floor": floor, "frames": frames})
+        (evidence / "recap-floor-geometry.json").write_text(json.dumps(proof, indent=2))
+        assert frames[-1]["ms"] >= 380, (label, frames[-1])
+        if floor is not None:
+            assert all(frame["height"] >= floor - 1 for frame in frames), (label, floor, frames)
+        if point:
+            assert all(frame["visible"] and frame["hit"] for frame in frames), (label, point, frames)
+        return panel.bounding_box()["height"]
+
+    def request():
+        before = fixture.get("recap_requests", 0)
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True)
+        expect(ask).to_have_attribute('aria-disabled', 'false')
+        with page.expect_response('**/api/recap-requests'):
+            ask.click()
+        assert fixture["recap_requests"] == before + 1
+        refresh()
+        expect(text).to_have_count(0)
+
+    def keyboard_request(before_request=None):
+        expect(panel.locator('[data-request-recap]')).to_have_attribute('data-request-recap', 'ticket:recap_floor')
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True)
+        # HTTP delivery precedes mutateJson's query invalidations. The action stays
+        # busy until those finish, so a second Enter must wait for its public state.
+        expect(ask).to_have_attribute('aria-disabled', 'false')
+        ask.focus()
+        expect(ask).to_be_focused()
+        if before_request:
+            before_request()
+        with page.expect_response('**/api/recap-requests'):
+            page.keyboard.press('Enter')
+
+    for reduced, lower in [(False, False), (False, True), (True, False)]:
+        page.set_viewport_size({"width": 1280, "height": 700})
+        page.emulate_media(reduced_motion="reduce" if reduced else "no-preference")
+        worker["recap"] = "Initial recap"
+        page.mouse.move(1200, 650)
+        page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
+        # A hash-only goto can retain the preceding case's navigation scope.
+        page.reload(wait_until='domcontentloaded')
+        mounted_projection()
+        refresh()
+        expect(row).to_be_visible()
+        row.evaluate("node => node.style.marginTop=''")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        if lower:
+            # Place the real row near the viewport bottom without a second host.
+            # This exercises production viewport clamping and upward growth.
+            row.evaluate("node => node.style.marginTop='390px'")
+            row.scroll_into_view_if_needed()
+            assert row.bounding_box()["y"] > 450
+        open_panel()
+        three = set_lines(3)
+        page.wait_for_timeout(300)
+        if not reduced and not lower:
+            page.screenshot(path=str(evidence / "recap-floor-initial-three-lines.png"))
+        floor = panel.bounding_box()["height"]
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True).bounding_box()
+        point = {"x": ask["x"] + ask["width"] / 2, "y": ask["y"] + ask["height"] / 2}
+        page.mouse.move(point["x"], point["y"])
+        tag = f'{"lower" if lower else "upper"}-{"reduced" if reduced else "normal"}'
+        sample_change(tag + '-request-clears', request, floor, point)
+        sample_change(tag + '-short-reply', lambda: set_lines(2), floor, point)
+        page.screenshot(path=str(evidence / f'recap-floor-{tag}-two-lines.png'))
+        grown = sample_change(tag + '-growth', lambda: set_lines(5), floor, point)
+        assert grown > floor + 20, (tag, floor, grown, panel.inner_html())
+        # The real Ask action can move on growth. Move to it once, then hold the
+        # new stationary point for the repeated request and shorter response.
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True).bounding_box()
+        point = {"x": ask["x"] + ask["width"] / 2, "y": ask["y"] + ask["height"] / 2}
+        page.mouse.move(point["x"], point["y"])
+        sample_change(tag + '-repeat-request', request, grown, point)
+        sample_change(tag + '-repeat-short-reply', lambda: set_lines(2), grown, point)
+        leave()
+        open_panel()
+        natural = panel.bounding_box()["height"]
+        if not reduced and not lower:
+            page.screenshot(path=str(evidence / "recap-floor-returned-two-lines.png"))
+        assert natural < floor - 10, (natural, floor)
+        # A delayed response or no response cannot retain the old floor after exit.
+        worker["recap"] = three
+        refresh()
+        page.wait_for_timeout(300)
+        panel.hover()
+        sample_change(tag + '-no-reply', request, floor)
+        leave()
+        open_panel()
+        empty = panel.bounding_box()["height"]
+        assert empty < natural - 10, (empty, natural)
+        sample_change(tag + '-late-reply', lambda: set_lines(2))
+        assert panel.bounding_box()["height"] < floor - 10
+        # Retarget while the shared panel is already open. Its old floor must not
+        # leak into the next Worker, even without an intervening hide.
+        set_lines(5)
+        page.wait_for_timeout(300)
+        page.keyboard.press('Tab')
+        page.locator('[data-ticket-id="recap_neighbor"]').focus()
+        expect(panel.locator('.title')).to_contain_text('Other recap')
+        page.wait_for_timeout(300)
+        assert panel.bounding_box()["height"] < floor - 10
+        proof["sessions"].append({"name": tag, "threeLines": floor, "largest": grown,
+                                  "twoLinesAfterExit": natural, "emptyAfterExit": empty})
+        leave()
+
+    # Keyboard focus opens the same panel without pointer entry. It must shrink.
+    page.emulate_media(reduced_motion="no-preference")
+    worker["recap"] = "Initial recap"
+    refresh()
+    page.keyboard.press('Tab')
+    row.focus()
+    expect(panel).to_have_attribute('aria-hidden', 'false')
+    set_lines(3)
+    page.wait_for_timeout(300)
+    before = panel.bounding_box()["height"]
+    keyboard_request()
+    refresh()
+    expect(text).to_have_count(0)
+    sample_change('keyboard-no-pointer', lambda: None)
+    after = panel.bounding_box()["height"]
+    assert after < before - 20
+    assert any(after + 1 < frame["height"] < before - 1 for frame in proof["samples"][-1]["frames"]), proof["samples"][-1]
+    proof["sessions"].append({"name": "keyboard", "before": before, "after": panel.bounding_box()["height"]})
+    leave()
+
+    # Enter during an ordinary shrink. The new pointer visit must hold the
+    # visible intermediate height, rather than the smaller animation target.
+    page.keyboard.press('Tab')
+    row.focus()
+    expect(panel).to_have_attribute('aria-hidden', 'false')
+    set_lines(3)
+    page.wait_for_timeout(300)
+    full = panel.bounding_box()["height"]
+    def pause_shrink():
+        # Pause the browser-owned CSS transition at a known intermediate time.
+        # A fixed delay can miss a short transition on a loaded machine.
+        page.evaluate("""() => {
+          window.__recapShrinkReady = new Promise((resolve, reject) => {
+            const slot=document.querySelector('[data-rail-hover-panel] [data-recap-slot]');
+            const started=performance.now();
+            function sample(){
+              const animation=slot.getAnimations().find(animation=>animation.transitionProperty==='height');
+              if(animation && slot.style.height==='0px') {
+                animation.pause();
+                animation.currentTime=animation.effect.getTiming().duration/2;
+                requestAnimationFrame(()=>resolve(slot.getBoundingClientRect().height));
+              } else if(performance.now()-started>2000) reject(new Error('No ordinary recap shrink transition'));
+              else requestAnimationFrame(sample);
+            } requestAnimationFrame(sample);
+          });
+        }""")
+
+    keyboard_request(pause_shrink)
+    refresh()
+    expect(text).to_have_count(0)
+    page.evaluate('() => window.__recapShrinkReady')
+    bounds = panel.bounding_box()
+    point = {"x": bounds["x"] + 20, "y": bounds["y"] + 20}
+    page.mouse.move(point["x"], point["y"])
+    entered = panel.bounding_box()["height"]
+    assert after + 1 < entered < full - 1, (after, entered, full)
+    sample_change('enter-during-shrink', lambda: None, entered, point)
+    proof["sessions"].append({"name": "enter-during-shrink", "full": full, "entered": entered})
+    # The scroll dismissal hides the panel while the pointer remains on it.
+    # Reopening must size to the empty recap, even when no reply ever arrives.
+    page.locator('[data-active-work-scroll]').dispatch_event('scroll')
+    expect(panel).to_have_attribute('aria-hidden', 'true')
+    open_panel()
+    assert panel.bounding_box()["height"] < entered - 1
+    leave()
+
+    # Real touch input (including its implicit pointerenter) must not acquire a floor.
+    touch_context = browser.new_context(viewport={"width": 1280, "height": 700}, has_touch=True)
+    touch_page = touch_context.new_page()
+    touch_page.route('**/api/**', respond)
+    worker["recap"] = three
+    touch_page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
+    mounted_projection(touch_page)
+    refresh(touch_page)
+    touch_row = touch_page.locator('[data-ticket-id="recap_floor"]')
+    expect(touch_row).to_be_visible()
+    bounds = touch_row.bounding_box()
+    session = touch_context.new_cdp_session(touch_page)
+    session.send('Input.dispatchTouchEvent', {"type": "touchStart", "touchPoints": [{"x": bounds["x"] + 20, "y": bounds["y"] + 10}]})
+    touch_panel = touch_page.locator('[data-rail-hover-panel]')
+    expect(touch_panel).to_have_attribute('aria-hidden', 'false')
+    expect(touch_panel.locator('.title')).to_contain_text('Recap floor')
+    before = touch_panel.bounding_box()["height"]
+    expect(touch_panel.get_by_role('button', name='Ask for a recap', exact=True)).to_have_attribute('aria-disabled', 'false')
+    session.send('Input.dispatchTouchEvent', {"type": "touchEnd", "touchPoints": []})
+    with touch_page.expect_response('**/api/recap-requests'):
+        touch_panel.get_by_role('button', name='Ask for a recap', exact=True).tap()
+    refresh(touch_page)
+    expect(touch_panel.locator('[data-recap-text]')).to_have_count(0)
+    touch_page.wait_for_timeout(380)
+    after = touch_panel.bounding_box()["height"]
+    assert after < before - 20, (before, after)
+    proof["sessions"].append({"name": "touch", "before": before, "after": after})
+    touch_page.screenshot(path=str(evidence / 'recap-floor-touch.png'))
+    touch_context.close()
+    fixture.pop("recap_worker")
+    proof["seconds"] = round(time.perf_counter() - started, 3)
+    (evidence / 'recap-floor-geometry.json').write_text(json.dumps(proof, indent=2))
+    print('RECAP_FLOOR_PROOF ' + json.dumps({"seconds": proof["seconds"], "sessions": proof["sessions"]}), flush=True)

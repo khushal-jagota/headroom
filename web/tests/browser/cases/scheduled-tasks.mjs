@@ -107,6 +107,7 @@ const indexPath = join(scratchRoot, `scheduled-tasks-index-${process.pid}.html`)
     const method = init.method || "GET";
     const body = init.body ? JSON.parse(String(init.body)) : null;
     requests.push({ path, method, body });
+    if (path === "/api/updates") return json({configured:false, available:null, request:null, activity:"unknown", detail:null});
     if (path === "/api/review") {
       return json({ items: [], running_worker_count: 0, awaiting_approval_count: 0 });
     }

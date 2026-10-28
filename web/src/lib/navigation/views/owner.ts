@@ -9,7 +9,7 @@ import {applyFrame,sameDomain} from './validation';
 import {createViewTransport,type ViewTransport} from './transport';
 import {NavigationRequestError} from '../transport';
 
-export type ViewDemand={selected?:ViewOwner|null;selected_conversation_id?:string|null;review_conversation_ids?:readonly string[];windows:readonly ViewWindowRequest[]};
+export type ViewDemand={review_skipped_keys?:readonly import("../contracts").ReviewHistoryKey[];review_priority_keys?:readonly import("../contracts").ReviewHistoryKey[];selected?:ViewOwner|null;selected_conversation_id?:string|null;review_conversation_ids?:readonly string[];windows:readonly ViewWindowRequest[]};
 export function viewWindow(section:ViewWindowRequest['section'],owner:ViewOwner|null=null,options:Partial<Omit<ViewWindowRequest,'section'|'owner'>>={}):ViewWindowRequest {
   return {section,owner,group:'all',child_filter:'all',anchor:null,direction:'after',limit:30,...options};
 }
@@ -17,7 +17,7 @@ export function windowIdentity(window:ViewWindowRequest):string {
   return JSON.stringify([window.section,window.owner,window.group,window.child_filter]);
 }
 export function defaultViewRequest(locale='en-US'):ViewRequest {
-  return {projection_version:VIEW_PROJECTION_VERSION,scope_generation:0,locale,selected:null,selected_conversation_id:null,review_conversation_ids:[],windows:[
+  return {projection_version:VIEW_PROJECTION_VERSION,scope_generation:0,locale,selected:null,selected_conversation_id:null,review_conversation_ids:[],review_skipped_keys:[],review_priority_keys:[],windows:[
     viewWindow('rail_parents',null,{limit:60}),
     viewWindow('rail_tickets',{kind:'chief',id:'chief'}),
     viewWindow('unread',null,{limit:20}),
@@ -49,7 +49,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   function emit(){for(const listener of listeners)listener(state);}
   function canCertify(){return state.effective?.runtimeCurrent===true && [...state.effective.conversations.values()].every(v=>v.message_for_owner.state==='fresh' && v.last_turn_failed.state==='fresh');}
   function publication(value:ViewSnapshot):NavigationPublication {
-    return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context)})});
+    return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context),reviewSummary:Object.freeze(value.content.review_summary)})});
   }
   function admit(value:ViewFrame,generation:number,scope=activeRequest):NavigationPublication|undefined {
     if(disposed || generation!==state.generation) return;
@@ -169,20 +169,28 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     }catch(error){failure(generation);throw error;}
   }
   function setDemand(name:string,demand:ViewDemand|undefined) {
+    const previous=demands.get(name);
     if(demand)demands.set(name,demand);else demands.delete(name);
-    refreshDemand();
+    try {refreshDemand();} catch(error) {if(previous)demands.set(name,previous);else demands.delete(name);throw error;}
   }
   function refreshDemand() {
     const base=defaultViewRequest(request.locale);
     const reviewConversationIds=new Set<string>();
+    const skippedKeys=new Map<string,import("../contracts").ReviewHistoryKey>();
+    const priorityKeys=new Map<string,import("../contracts").ReviewHistoryKey>();
     const windows=new Map(base.windows.map(window=>[windowIdentity(window),window]));
     for(const entry of demands.values()) {
       if(entry.selected!==undefined){base.selected=entry.selected;base.selected_conversation_id=entry.selected_conversation_id??null;}
       for(const id of entry.review_conversation_ids ?? [])reviewConversationIds.add(id);
+      for(const key of entry.review_skipped_keys ?? [])skippedKeys.set(JSON.stringify(key),key);
+      for(const key of entry.review_priority_keys ?? [])priorityKeys.set(JSON.stringify(key),key);
       for(const window of entry.windows)windows.set(windowIdentity(window),{...window});
     }
     if(reviewConversationIds.size>256)throw new Error('Review conversation context exceeds its budget');
     base.review_conversation_ids=[...reviewConversationIds].sort();
+    const compareKey=(a:import("../contracts").ReviewHistoryKey,b:import("../contracts").ReviewHistoryKey)=>a.kind.localeCompare(b.kind)||a.id.localeCompare(b.id);
+    base.review_skipped_keys=[...skippedKeys.values()].sort(compareKey);
+    base.review_priority_keys=[...priorityKeys.values()].sort(compareKey);
     base.windows=[...windows.values()];
     // Parent pages define the visible child surfaces. Shrinking these in response
     // to child demand would repeatedly mount/unmount that same demand. Keep them
@@ -212,7 +220,9 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     if(priorityWindow)base.windows.sort((a,b)=>Number(windowIdentity(b)===priorityWindow)-Number(windowIdentity(a)===priorityWindow));
     // Demand is metadata only. Pages never accumulate when a surface replaces its window.
     if(JSON.stringify({...base,scope_generation:0})===JSON.stringify({...request,scope_generation:0}))return;
-    request={...base,scope_generation:request.scope_generation+1};
+    const next={...base,scope_generation:request.scope_generation+1};
+    if(new TextEncoder().encode(JSON.stringify(next)).byteLength>128*1024)throw new Error('Navigation view request is too large');
+    request=next;
     if(started&&!demandScheduled){demandScheduled=true;queueMicrotask(()=>{demandScheduled=false;if(!disposed)void replaceScope().catch(()=>undefined);});}
   }
   return {

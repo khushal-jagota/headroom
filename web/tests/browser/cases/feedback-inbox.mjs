@@ -60,6 +60,7 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
       if (key === "/api/deployment-status") return json({ key, epoch: "fixture", revision: "1", body: deployment });
       if (key === "/api/feedback/count") return json({ key, epoch: "fixture", revision: String(response().open_count), body: { open_count: response().open_count } });
     }
+    if (path === "/api/updates") return json({configured:false, available:null, request:null, activity:"unknown", detail:null});
     if (path.startsWith("/api/meta")) return json({ app_sha: servedSha });
     if (path === "/api/review") return json({ items: [], running_worker_count: 0 });
     if (path === "/api/feedback/count" && method === "GET") return json({ open_count: response().open_count });

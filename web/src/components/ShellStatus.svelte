@@ -5,27 +5,34 @@
   import { deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard, type StatusCardKey } from "../lib/deploymentStatus";
   import { queries } from "../lib/queryCatalogue";
   import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
+  import UpdateActions from "./UpdateActions.svelte";
+  import { activeUpdateRequest, usableUpdate } from "../lib/updates/logic/actions";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
   // The deploy this card narrates is what produces the release the monitor finds, so
   // both ends of that one event share this slot. One card occupies it at a time.
   type Card = { word: string; state: "changing" | "settled" | "wrong"; action: string | null; sentence?: true };
   const CARDS: Record<StatusCardKey, Card> = {
+    "owner-update": { word: "Software update", state: "settled", action: null },
     Deploying: { word: "Deploying", state: "changing", action: null },
     Deployed: { word: "Deployed", state: "settled", action: null },
     Reconnecting: { word: "Reconnecting", state: "changing", action: null },
     Problem: { word: "Problem", state: "wrong", action: null },
-    "update-ready": { word: "New version ready", state: "settled", action: "Update" },
+    "update-ready": { word: "New version ready", state: "settled", action: "Refresh page" },
     // A held update states its own reason, so it carries no control. The sentence
     // wraps, because a truncated one cannot be read.
-    "update-held": { word: "Update applies when this message is safe", state: "changing", action: null, sentence: true }
+    "update-held": { word: "Page refresh waits until this message is safe", state: "changing", action: null, sentence: true }
   };
 
   let { connectionState }: { connectionState: ConnectionStatus } = $props();
   let clock = $state(Date.now());
+  const updates = createQuery(() => queries.updates());
   const deployment = createQuery(() => queries.deploymentStatus());
   const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
-  const statusWord = $derived(resolveStatusCard(statusState, $releaseState));
+  const baseStatusWord = $derived(resolveStatusCard(statusState, $releaseState));
+  const hasOwnerUpdate = $derived(activeUpdateRequest(updates.data?.request) ||
+    (updates.data?.configured && usableUpdate(updates.data.available, clock)) || updates.data?.request?.state === "failed");
+  const statusWord = $derived(baseStatusWord ?? (hasOwnerUpdate ? "owner-update" : null));
   let displayedWord = $state<StatusCardKey | null>(null);
   const card = $derived(displayedWord === null ? null : CARDS[displayedWord]);
   let open = $state(false);
@@ -104,6 +111,15 @@
   });
 
   $effect(() => {
+    const now = Date.now();
+    clock = now;
+    const expiry = Date.parse(updates.data?.available?.expires_at ?? "");
+    if (!Number.isFinite(expiry) || expiry <= now) return;
+    const timer = window.setTimeout(() => { clock = Date.now(); }, expiry - now + 1);
+    return () => window.clearTimeout(timer);
+  });
+
+  $effect(() => {
     const word = statusWord;
     let obsolete = false;
     let frame: number | undefined;
@@ -153,6 +169,9 @@
   <span class="status-mark" aria-hidden="true"></span>
   <span class={entry.sentence ? "status-sentence" : "status-word"}>{entry.word}</span>
   {#if entry.action}<span class="status-action">{entry.action}</span>{/if}
+  {#if deployment.data?.detail && (statusState === "problem" || statusState === "preparing" || statusState === "restarting" || deployment.data.state === "unknown")}
+    <span class="status-detail">{deployment.data.detail}</span>
+  {/if}
 {/snippet}
 
 <div bind:this={slot} class="status-slot" data-shell-status
@@ -168,8 +187,14 @@
         </button>
       {:else}
         <div class="status-card" data-state={card.state}
+          class:with-update-actions={displayedWord === "owner-update" || displayedWord === "Problem"}
           data-connection-status data-connection-state={connectionState} data-status-state={statusState}>
-          {@render cardBody(card)}
+          {#if displayedWord !== "owner-update"}
+            {@render cardBody(card)}
+          {/if}
+          {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
+            <UpdateActions status={updates.data} now={clock} />
+          {/if}
         </div>
       {/if}
     {/if}
@@ -194,6 +219,8 @@
     transition: opacity var(--glide-exit) var(--glide-leave), transform var(--glide-exit) var(--glide-leave);
   }
   .status-card[data-state="wrong"] { background: var(--error-surface); color: var(--text-strong); }
+  .status-detail { flex-basis: 100%; }
+  .status-card:has(.status-detail), .status-card.with-update-actions { flex-wrap: wrap; }
   .status-mark { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent-bright); }
   .status-card[data-state="wrong"] .status-mark { background: var(--accent-error); }
   .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }
