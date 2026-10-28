@@ -32,7 +32,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect
-from planner.core.errors import PlannerError
+from planner.core.errors import ErrorCode, PlannerError
 from planner.executor.contracts import (
     ChildCommand,
     CommandOutcome,
@@ -393,7 +393,9 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
 
 
 @pytest.mark.parametrize("failure", ["hash", "authority", "compatibility", "claim", "same_locale"])
-def test_preflight_has_no_native_effects(tmp_db: Connection, failure: str) -> None:
+def test_preflight_has_no_native_effects(
+    tmp_db: Connection, failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def run() -> None:
         from tests.support.principals import ticket_principal
 
@@ -411,11 +413,18 @@ def test_preflight_has_no_native_effects(tmp_db: Connection, failure: str) -> No
         backend = h.backend("c_preflight")
         before = await h.store.read_conversation("c_preflight")
         if failure == "compatibility":
-            tmp_db.execute("UPDATE tickets SET employee_backend='claude' WHERE id=?", (t.id,))
-            tmp_db.commit()
+            def refuse_compatibility(locale: TicketLocale, backend: str) -> None:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "injected compatibility refusal",
+                    {"locale": locale.value, "employee_backend": backend},
+                )
+
+            monkeypatch.setattr(data, "require_locale_backend_compatibility", refuse_compatibility)
         elif failure == "claim":
             tmp_db.execute("UPDATE tickets SET worker_step_claim='out' WHERE id=?", (t.id,))
             tmp_db.commit()
+        ticket_before = data.read_ticket(tmp_db, t.id)
         locale = TicketLocale.vps if failure == "same_locale" else TicketLocale.macos
         principal = ticket_principal(t.id) if failure == "authority" else OWNER_PRINCIPAL
         expected_hash = "stale" if failure == "hash" else None
@@ -430,7 +439,10 @@ def test_preflight_has_no_native_effects(tmp_db: Connection, failure: str) -> No
                 expected_record_sha256=expected_hash,
             )
         else:
-            with pytest.raises(PlannerError):
+            expected_reason = (
+                "injected compatibility refusal" if failure == "compatibility" else None
+            )
+            with pytest.raises(PlannerError, match=expected_reason):
                 await move_ticket_locale(
                     h.system,
                     tmp_db,
@@ -441,7 +453,8 @@ def test_preflight_has_no_native_effects(tmp_db: Connection, failure: str) -> No
                     expected_record_sha256=expected_hash,
                 )
         assert backend.stops == 0 and backend.live_children == 1
-        assert data.read_ticket(tmp_db, t.id).locale is TicketLocale.vps
+        assert data.read_ticket(tmp_db, t.id) == ticket_before
+        assert ticket_before.locale is TicketLocale.vps
         assert await h.store.read_conversation("c_preflight") == before
         await h.system.shutdown()
 

@@ -237,7 +237,7 @@ def test_draft_inherits_project_matches_write_and_never_writes(
     assert created.employee_backend == result["employee_backend"]
 
 
-def test_draft_incompatible_choice_explains_canonical_create_refusal(tmp_db: Connection) -> None:
+def test_claude_mac_draft_matches_canonical_create(tmp_db: Connection) -> None:
     result = asyncio.run(
         read_ticket_creation_context(
             {
@@ -252,20 +252,22 @@ def test_draft_incompatible_choice_explains_canonical_create_refusal(tmp_db: Con
     )
     choice = next(choice for choice in result["locale_choices"] if choice["locale"] == "macos")
     assert result["resolved_locale"] == "macos"
-    assert not choice["compatible"]
-    with pytest.raises(PlannerError) as error:
-        data.create_ticket(
-            tmp_db,
-            title="Actual",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=TITLE_MAX_CHARS,
-            employee_backend="claude",
-            employee_launch_model="claude-model",
-            locale="macos",
-        )
-    assert choice["reason"] == error.value.message
+    assert choice["compatible"]
+    assert choice["reason"] is None
+    created = data.create_ticket(
+        tmp_db,
+        title="Actual",
+        worker_type="coding",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        employee_backend="claude",
+        employee_launch_model="claude-model",
+        locale="macos",
+    )
+    assert created.locale.value == result["resolved_locale"]
+    assert created.employee_backend == result["employee_backend"] == "claude"
+    assert created.employee_launch_model == "claude-model"
 
 
 @pytest.mark.parametrize(
