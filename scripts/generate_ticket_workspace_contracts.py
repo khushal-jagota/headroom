@@ -37,14 +37,15 @@ def generate() -> str:
             if name not in declarations:
                 declarations[name] = ""
                 fields = get_type_hints(value, include_extras=True)
-                declarations[name] = (
-                    f"export interface {name} {{\n"
-                    + "".join(
-                        f"  {field}{'?' if get_origin(kind) is NotRequired else ''}: "
-                        f"{describe(get_args(kind)[0] if get_origin(kind) is NotRequired else kind)};\n"
-                        for field, kind in fields.items()
+                field_lines = []
+                for field, kind in fields.items():
+                    optional = get_origin(kind) is NotRequired
+                    field_type = get_args(kind)[0] if optional else kind
+                    field_lines.append(
+                        f"  {field}{'?' if optional else ''}: {describe(field_type)};\n"
                     )
-                    + "}\n"
+                declarations[name] = (
+                    f"export interface {name} {{\n" + "".join(field_lines) + "}\n"
                 )
             return name
         if isinstance(value, type) and issubclass(value, enum.Enum):

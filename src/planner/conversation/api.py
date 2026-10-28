@@ -887,6 +887,8 @@ async def read_destination_model_choices(
             }
             if set(raw) - allowed:
                 raise PlannerError(ErrorCode.validation, "unknown model choices field", {})
+            if not isinstance(ticket_id, str) or not ticket_id.strip():
+                raise PlannerError(ErrorCode.validation, "invalid ticket_id", {})
             for key, value in raw.items():
                 if key == "employee_launch_reasoning_effort" and value is None:
                     continue
