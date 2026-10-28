@@ -1917,3 +1917,216 @@ def test_recorded_remote_policy_guard_preserves_delivery_certainty(
         asyncio.run(exercise())
     finally:
         conn.close()
+
+
+def _known_effort_mismatch_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[_Harness, ScopedCatalogue, Path]:
+    from planner.runtime import conversation_start
+
+    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
+    source = ScopedCatalogue(
+        observation(
+            (row(efforts=("low",)),),
+            launch=context(workspace=binding, localized_workspace_folder=tmp_path),
+        )
+    )
+    service, _, path = setup(tmp_path, source)
+    harness = _Harness(path)
+    harness.clock.now = 1000
+    harness.system._model_resolver = service
+    harness.system.configure_destination_validation(source)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+    return harness, source, path
+
+
+def test_known_effort_mismatch_refuses_move_before_source_retirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real Mac-to-VPS move must preserve its source on proven bad target effort."""
+    from planner.conversation.contracts import MoveRetirementResult
+    from planner.core.contracts import OWNER_PRINCIPAL
+    from planner.core.errors import PlannerError
+    from planner.tickets import data as tickets
+    from planner.tickets.locale_move import move_ticket_locale
+    from planner.tickets.validation.data import read_launch_validation
+
+    harness, catalogue, path = _known_effort_mismatch_harness(tmp_path, monkeypatch)
+
+    class SourceRetirementSpy:
+        retire_calls = 0
+        validation_calls = 0
+
+        async def retire(self) -> MoveRetirementResult:
+            self.retire_calls += 1
+            raise AssertionError("Known incompatible effort must precede source retirement")
+
+        def validate_current(self) -> None:
+            self.validation_calls += 1
+            raise AssertionError("Refused move cannot enter its source writer")
+
+    source = SourceRetirementSpy()
+
+    async def exercise() -> None:
+        conn = connect(str(path))
+        try:
+            ticket = tickets.create_ticket(
+                conn,
+                worker_type="coding",
+                title="Preserve Mac source",
+                principal=OWNER_PRINCIPAL,
+                now=1000,
+                title_max_chars=200,
+                locale="macos",
+                employee_backend="codex",
+                employee_launch_model="gpt-6-sol",
+                employee_launch_reasoning_effort="high",
+                selection_kind=SelectionKind.concrete,
+            )
+            await harness.system.start_conversation(
+                ConversationStartRequest(
+                    "mac-source",
+                    "gpt-6-sol",
+                    Backend.codex,
+                    reasoning_effort="high",
+                    workspace_folder=tmp_path,
+                )
+            )
+            tickets.write_ticket_conversation_start(
+                conn,
+                ticket.id,
+                conversation_id="mac-source",
+                backend="codex",
+                model="gpt-6-sol",
+                reasoning_effort="high",
+                now=1000,
+            )
+            before = tickets.read_ticket(conn, ticket.id)
+            source_record = await harness.store.read_conversation("mac-source")
+            previous_validation = read_launch_validation(conn, ticket.id)
+            with pytest.raises(PlannerError) as refused:
+                await move_ticket_locale(
+                    harness.system,
+                    conn,
+                    ticket.id,
+                    locale=TicketLocale.vps,
+                    principal=OWNER_PRINCIPAL,
+                    now=1000,
+                    source=source,
+                )
+            assert refused.value.detail == {
+                "state": "incompatible",
+                "reason": "effort_incompatible",
+                "corrective_action": "choose_effort",
+            }
+            assert len(catalogue.calls) == 1
+            assert source.retire_calls == source.validation_calls == 0
+            assert tickets.read_ticket(conn, ticket.id) == before
+            assert await harness.store.read_conversation("mac-source") == source_record
+            assert read_launch_validation(conn, ticket.id) == previous_validation
+            assert harness.spawned_conversation_ids == []
+        finally:
+            conn.close()
+            await harness.system.shutdown()
+
+    asyncio.run(exercise())
+
+
+def test_known_effort_mismatch_refuses_restart_before_killing_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead-worker restart cannot retire its source to probe an incompatible effort."""
+    from planner.core.contracts import OWNER_PRINCIPAL
+    from planner.core.errors import PlannerError
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
+    from planner.tickets import data as tickets
+    from planner.tickets import worker_restart
+    from planner.tickets.contracts import WorkerStepClaim
+    from planner.tickets.validation.data import read_launch_validation
+
+    harness, catalogue, path = _known_effort_mismatch_harness(tmp_path, monkeypatch)
+    killed: list[str] = []
+
+    async def kill_source(conversation_id: str) -> None:
+        killed.append(conversation_id)
+        raise AssertionError("Known incompatible effort must precede source kill")
+
+    async def start_worker_step() -> WorkerStepStartResult:
+        raise AssertionError("An incompatible restart must not start another worker")
+
+    async def exercise() -> None:
+        conn = connect(str(path))
+        try:
+            ticket = tickets.create_ticket(
+                conn,
+                worker_type="coding",
+                title="Preserve restart source",
+                brief="Work",
+                principal=OWNER_PRINCIPAL,
+                now=1000,
+                title_max_chars=200,
+                employee_backend="codex",
+                employee_launch_model="gpt-6-sol",
+                employee_launch_reasoning_effort="high",
+                selection_kind=SelectionKind.concrete,
+            )
+            tickets.accept_proposal(
+                conn,
+                ticket.id,
+                field="brief",
+                principal=OWNER_PRINCIPAL,
+                now=1000,
+                next_ceiling="none",
+                next_holder=OWNER_PRINCIPAL,
+            )
+            await harness.system.start_conversation(
+                ConversationStartRequest(
+                    "restart-source",
+                    "gpt-6-sol",
+                    Backend.codex,
+                    reasoning_effort="high",
+                    workspace_folder=tmp_path,
+                )
+            )
+            conn.execute(
+                "UPDATE tickets SET conversation_id='restart-source',worker_step_claim='errored' "
+                "WHERE id=?",
+                (ticket.id,),
+            )
+            conn.commit()
+            before = tickets.read_ticket(conn, ticket.id)
+            assert before.worker_step_claim is WorkerStepClaim.errored
+            source_record = await harness.store.read_conversation("restart-source")
+            monkeypatch.setattr(harness.system, "kill", kill_source)
+            with pytest.raises(PlannerError) as refused:
+                await worker_restart.restart_worker(
+                    harness.system,
+                    conn,
+                    OWNER_PRINCIPAL,
+                    ticket.id,
+                    write_employee_configuration=None,
+                    start_worker_step=start_worker_step,
+                    now=lambda: 1000,
+                )
+            assert refused.value.detail == {
+                "state": "incompatible",
+                "reason": "effort_incompatible",
+                "corrective_action": "choose_effort",
+            }
+            assert len(catalogue.calls) == 1 and killed == []
+            assert tickets.read_ticket(conn, ticket.id) == before
+            assert await harness.store.read_conversation("restart-source") == source_record
+            validation = read_launch_validation(conn, ticket.id)
+            assert validation is not None and validation.current
+            assert validation.validation.reason is ValidationReason.effort_incompatible
+            assert validation.validation.corrective_action is CorrectiveAction.choose_effort
+            assert harness.spawned_conversation_ids == []
+        finally:
+            monkeypatch.undo()
+            conn.close()
+            await harness.system.shutdown()
+
+    asyncio.run(exercise())
