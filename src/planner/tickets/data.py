@@ -945,13 +945,15 @@ def write_explicit_ticket_launch_intent_in_transaction(
             (backend, model, reasoning_effort, now, ticket_id),
         )
         selected = launch_validation.read_launch_selection(conn, ticket_id)
-        launch_validation.set_selection_kind(
+        launch_validation.set_selection_kind_in_transaction(
             conn, ticket_id, kind, expected_selection_revision=selected.selection_revision
         )
         if validation is None:
-            launch_validation.initialize_unresolved_validation(conn, ticket_id, now=now)
+            launch_validation.initialize_unresolved_validation_in_transaction(
+                conn, ticket_id, now=now
+            )
         else:
-            launch_validation.store_written_configuration_validation(
+            launch_validation.store_written_configuration_validation_in_transaction(
                 conn, ticket_id, validation, now=now
             )
     return True

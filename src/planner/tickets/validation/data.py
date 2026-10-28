@@ -93,12 +93,26 @@ def set_selection_kind(
     *,
     expected_selection_revision: str,
 ) -> ModelSelection:
-    """Explicit ingress classification; observations never invent historical intent."""
+    """Explicit ingress classification with the caller's usual rollback boundary."""
     kind = SelectionKind(kind)
-    with (
-        tickets._txn(conn),
-        launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",)),
-    ):
+    with tickets._txn(conn):
+        return set_selection_kind_in_transaction(
+            conn, ticket_id, kind, expected_selection_revision=expected_selection_revision
+        )
+
+
+def set_selection_kind_in_transaction(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    kind: SelectionKind | str,
+    *,
+    expected_selection_revision: str,
+) -> ModelSelection:
+    """Classify within an admitted transaction, without opening a nested savepoint."""
+    kind = SelectionKind(kind)
+    if not conn.in_transaction:
+        raise RuntimeError("selection classification requires an owned transaction")
+    with launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",)):
         before = read_launch_selection(conn, ticket_id)
         if before.selection_revision != expected_selection_revision:
             raise PlannerError(
@@ -152,81 +166,97 @@ def record_launch_validation(
     now: int,
     notify: bool = False,
 ) -> bool:
-    """Save fresh attribution; notify only a changed semantic failure boundary.
+    """Save fresh attribution under the caller's usual transaction or savepoint."""
+    with tickets._txn(conn):
+        return record_launch_validation_in_transaction(
+            conn,
+            ticket_id,
+            validation,
+            expected_workspace=expected_workspace,
+            now=now,
+            notify=notify,
+        )
 
-    Metadata never grants execution authority. The caller still performs final
-    context and native admission checks; this write only accepts its exact snapshot.
-    """
+
+def record_launch_validation_in_transaction(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    validation: CanonicalModelValidation,
+    *,
+    expected_workspace: CatalogWorkspaceBinding,
+    now: int,
+    notify: bool = False,
+) -> bool:
+    """Save the exact snapshot within an already admitted source transaction."""
     from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
 
-    with tickets._txn(conn):
-        if read_launch_selection(conn, ticket_id) != validation.selection:
-            return False
-        ticket = tickets.read_ticket(conn, ticket_id)
-        current_workspace = workspace_binding_from_start(
-            worker_resolve(conn, ticket), ticket.locale
+    if not conn.in_transaction:
+        raise RuntimeError("launch validation requires an owned transaction")
+    if read_launch_selection(conn, ticket_id) != validation.selection:
+        return False
+    ticket = tickets.read_ticket(conn, ticket_id)
+    current_workspace = workspace_binding_from_start(worker_resolve(conn, ticket), ticket.locale)
+    if current_workspace != expected_workspace:
+        return False
+    evidence_context = (
+        validation.evidence.context
+        if validation.evidence
+        else validation.unavailable.attempted_context
+        if validation.unavailable
+        else None
+    )
+    if evidence_context is not None and evidence_context.workspace != expected_workspace:
+        return False
+    row = conn.execute(
+        "SELECT transition_revision,notification_fingerprint "
+        "FROM ticket_launch_validation WHERE ticket_id=?",
+        (ticket_id,),
+    ).fetchone()
+    fingerprint = notification_fingerprint(validation)
+    changed = row[1] != fingerprint
+    transition = int(row[0]) + int(changed)
+    conn.execute(
+        "UPDATE ticket_launch_validation SET validation_json=?,workspace_json=?,"
+        "checked_at=?,transition_revision=?,notification_fingerprint=? WHERE ticket_id=?",
+        (
+            _validation.dump_json(validation).decode(),
+            _workspace.dump_json(expected_workspace).decode(),
+            now,
+            transition,
+            fingerprint,
+            ticket_id,
+        ),
+    )
+    if notify and validation.state is not ValidationState.compatible:
+        target = (
+            Principal(PrincipalKind.manager, ticket.manager_id)
+            if ticket.manager_id
+            else CHIEF_PRINCIPAL
         )
-        if current_workspace != expected_workspace:
-            return False
-        evidence_context = (
-            validation.evidence.context
-            if validation.evidence
-            else validation.unavailable.attempted_context
-            if validation.unavailable
-            else None
-        )
-        if evidence_context is not None and evidence_context.workspace != expected_workspace:
-            return False
-        row = conn.execute(
-            "SELECT transition_revision,notification_fingerprint "
-            "FROM ticket_launch_validation WHERE ticket_id=?",
-            (ticket_id,),
-        ).fetchone()
-        fingerprint = notification_fingerprint(validation)
-        changed = row[1] != fingerprint
-        transition = int(row[0]) + int(changed)
-        conn.execute(
-            "UPDATE ticket_launch_validation SET validation_json=?,workspace_json=?,"
-            "checked_at=?,transition_revision=?,notification_fingerprint=? WHERE ticket_id=?",
-            (
-                _validation.dump_json(validation).decode(),
-                _workspace.dump_json(expected_workspace).decode(),
-                now,
-                transition,
-                fingerprint,
-                ticket_id,
+        wakes.create_wake(
+            conn,
+            manager_id=ticket.manager_id or "",
+            ticket_id=ticket_id,
+            source_kind=WakeSourceKind.launch_validation,
+            source_revision=transition,
+            target=target,
+            summary=(
+                f"Ticket `{ticket_id}` ({ticket.title}) cannot execute: "
+                f"{validation.reason.value}. Corrective action: "
+                f"{validation.corrective_action.value}. Requested "
+                f"{validation.selection.backend_key.value}/"
+                f"{validation.selection.submitted_token}; effort "
+                f"{validation.selection.reasoning_effort or 'provider default'}."
             ),
+            now=now,
         )
-        if notify and validation.state is not ValidationState.compatible:
-            target = (
-                Principal(PrincipalKind.manager, ticket.manager_id)
-                if ticket.manager_id
-                else CHIEF_PRINCIPAL
-            )
-            wakes.create_wake(
-                conn,
-                manager_id=ticket.manager_id or "",
-                ticket_id=ticket_id,
-                source_kind=WakeSourceKind.launch_validation,
-                source_revision=transition,
-                target=target,
-                summary=(
-                    f"Ticket `{ticket_id}` ({ticket.title}) cannot execute: "
-                    f"{validation.reason.value}. Corrective action: "
-                    f"{validation.corrective_action.value}. Requested "
-                    f"{validation.selection.backend_key.value}/"
-                    f"{validation.selection.submitted_token}; effort "
-                    f"{validation.selection.reasoning_effort or 'provider default'}."
-                ),
-                now=now,
-            )
-        return True
+    return True
 
 
-def store_written_configuration_validation(
+def _prepare_written_configuration_validation(
     conn: sqlite3.Connection, ticket_id: str, validation: CanonicalModelValidation, *, now: int
-) -> None:
-    """A canonical configuration write may rebind only its identical intent facts."""
+) -> tuple[CanonicalModelValidation, CatalogWorkspaceBinding]:
+    """Preserve the canonical identity, evidence and policy checks for both owners."""
     selection = read_launch_selection(conn, ticket_id)
     if replace(validation.selection, selection_revision=selection.selection_revision) != selection:
         raise PlannerError(
@@ -297,10 +327,45 @@ def store_written_configuration_validation(
         workspace = workspace_binding_from_start(worker_resolve(conn, ticket), ticket.locale)
     else:
         workspace = context.workspace
+    return replace(validation, selection=selection), workspace
+
+
+def store_written_configuration_validation(
+    conn: sqlite3.Connection, ticket_id: str, validation: CanonicalModelValidation, *, now: int
+) -> None:
+    """A canonical configuration write may rebind only its identical intent facts."""
+    validation, workspace = _prepare_written_configuration_validation(
+        conn,
+        ticket_id,
+        validation,
+        now=now,
+    )
     if not record_launch_validation(
         conn,
         ticket_id,
-        replace(validation, selection=selection),
+        validation,
+        expected_workspace=workspace,
+        now=now,
+    ):
+        raise PlannerError(ErrorCode.already_running, "launch context changed during configuration")
+
+
+def store_written_configuration_validation_in_transaction(
+    conn: sqlite3.Connection, ticket_id: str, validation: CanonicalModelValidation, *, now: int
+) -> None:
+    """Join the departed prompt's transaction through validation persistence."""
+    if not conn.in_transaction:
+        raise RuntimeError("written launch validation requires an owned transaction")
+    validation, workspace = _prepare_written_configuration_validation(
+        conn,
+        ticket_id,
+        validation,
+        now=now,
+    )
+    if not record_launch_validation_in_transaction(
+        conn,
+        ticket_id,
+        validation,
         expected_workspace=workspace,
         now=now,
     ):
@@ -311,6 +376,21 @@ def initialize_unresolved_validation(conn: sqlite3.Connection, ticket_id: str, *
     """Canonical offline writes keep a visible result without inventing evidence."""
     selection = read_launch_selection(conn, ticket_id)
     store_written_configuration_validation(
+        conn,
+        ticket_id,
+        unresolved_validation(selection, ValidationReason.catalog_unavailable),
+        now=now,
+    )
+
+
+def initialize_unresolved_validation_in_transaction(
+    conn: sqlite3.Connection, ticket_id: str, *, now: int
+) -> None:
+    """Keep offline departure attribution within the owning prompt transaction."""
+    if not conn.in_transaction:
+        raise RuntimeError("unresolved launch validation requires an owned transaction")
+    selection = read_launch_selection(conn, ticket_id)
+    store_written_configuration_validation_in_transaction(
         conn,
         ticket_id,
         unresolved_validation(selection, ValidationReason.catalog_unavailable),

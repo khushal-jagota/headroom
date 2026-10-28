@@ -470,14 +470,16 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
     from planner.conversation.contracts import PromptDeliveryMode
     from planner.conversation.events import PromptEventPayload
     from planner.conversation.lifecycle import LifecycleTransition
-    from planner.conversation.model_resolution.contracts import SelectionKind
+    from planner.conversation.model_resolution.contracts import CatalogObservation, SelectionKind
     from planner.conversation.model_resolution.data import ModelResolutionStore
     from planner.conversation.model_resolution.logic.validation import validate_model_selection
     from planner.core.contracts import OWNER_PRINCIPAL
+    from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
     from planner.tickets import data as tickets
     from planner.tickets.validation.data import read_launch_selection
 
     ticket_ids: list[str] = []
+    receipts: list[CatalogObservation] = []
 
     def seed(path: Path) -> None:
         connection = connect(str(path))
@@ -496,11 +498,14 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
             connection.execute("UPDATE tickets SET conversation_id='c' WHERE id=?", (ticket.id,))
             connection.commit()
             ticket_ids.append(ticket.id)
+            binding = workspace_binding_from_start(
+                worker_resolve(connection, ticket), ticket.locale
+            )
+            scoped = context(workspace=binding, localized_workspace_folder=binding.workspace_folder)
+            receipts.append(observation((row("new-exact", efforts=()),), launch=scoped))
         finally:
             connection.close()
-        ModelResolutionStore(str(path)).keep_observation(
-            observation((row("new-exact", efforts=()),))
-        )
+        ModelResolutionStore(str(path)).keep_observation(receipts[0])
 
     with _enabled_runtime(tmp_path, monkeypatch, seed=seed) as (
         runtime,
@@ -522,8 +527,8 @@ def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
             requested = replace(original, submitted_token="new-exact", reasoning_effort=None)
             validation = validate_model_selection(
                 requested,
-                context(),
-                observation((row("new-exact", efforts=()),)),
+                receipts[0].evidence.context,
+                receipts[0],
                 now=1000,
                 attempt_id="attempt-1",
             )
