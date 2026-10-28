@@ -569,7 +569,8 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                         recipient=Principal(
                             PrincipalKind.ticket, old.options.env["PLAN_TICKET_ID"]
                         ),
-                        **changes,
+                        model_change=changes.get("model_change"),
+                        reasoning_effort_change=changes.get("reasoning_effort_change"),
                     )
                 )
                 await asyncio.wait_for(cleanup_entered.wait(), 5)

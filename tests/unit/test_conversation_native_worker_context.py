@@ -64,7 +64,7 @@ from planner.executor.contracts import (
     CommandOutcome,
 )
 from planner.executor.journal import FilesystemSpool
-from planner.executor.remote import RemoteBackendChildFactory
+from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.runtime import NativeChildRegistry
 
 
@@ -465,7 +465,8 @@ def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
                 state = system._conversations["c"]
                 assert state.reserved_turn is not None
                 assert not state.reserved_turn.resolved.is_set()
-                assert state.child is not None and state.child.reference == command.child
+                assert isinstance(state.child, RemoteBackendChild)
+                assert state.child.reference == command.child
                 assert state.child_is_quarantined
                 cleanup_entered.set()
                 await release_cleanup.wait()

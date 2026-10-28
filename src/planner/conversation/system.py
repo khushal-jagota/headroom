@@ -1448,12 +1448,13 @@ class SqliteProcessConversationSystem:
         nonadmitted_turn: TurnToken | None = None,
     ) -> asyncio.Task[bool]:
         """Fence the captured identity before its cleanup owner yields the lock."""
+        reference: ChildReference = child.reference
         if nonadmitted_turn is not None:
             # Only the owner of this exact refused write may remove its circular
             # reservation dependency. The reservation itself remains unresolved.
             if (
                 state.child is not child
-                or state.executor_child_reference != child.reference
+                or state.executor_child_reference != reference
                 or state.reserved_turn is not reservation
                 or (
                     reservation is not None
