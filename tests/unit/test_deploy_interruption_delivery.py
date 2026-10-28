@@ -926,8 +926,13 @@ def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
         await original.system.shutdown()
         restarted = _Harness(path)
 
-        async def cancel_after_restore(*args, **kwargs):  # type: ignore[no-untyped-def]
-            with connect(str(path)) as conn:
+        def inspect_and_replace_claim() -> None:
+            conn = connect(str(path))
+            try:
+                # The backend session cursor can commit in another thread. Acquire
+                # the writer before reading, so this fixture cannot upgrade a stale
+                # WAL snapshot instead of installing the newer claim.
+                conn.execute("BEGIN IMMEDIATE")
                 assert tuple(conn.execute(
                     "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
                 ).fetchone()) == ("out", 9)
@@ -935,7 +940,13 @@ def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
                     conn.execute(
                         "UPDATE tickets SET worker_step_claim_revision=11 WHERE id='t'"
                     )
-                    conn.commit()
+                conn.commit()
+            finally:
+                conn.close()
+
+        async def cancel_after_restore(*args, **kwargs):  # type: ignore[no-untyped-def]
+            # Keep the event loop free while the fixture waits for a real writer.
+            await asyncio.to_thread(inspect_and_replace_claim)
             raise asyncio.CancelledError
 
         monkeypatch.setattr(restarted.system, "_compose_prompt_content", cancel_after_restore)
