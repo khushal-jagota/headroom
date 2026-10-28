@@ -20,9 +20,14 @@ TREE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TREE / "scripts"))
 
 import tree_environment  # noqa: E402  # reached via sys.path.insert above
+from tests.support.skill_tree_protection.pytest_plugin import bootstrap  # noqa: E402
+from tests.support.synthetic_homes import synthetic_homes as synthetic_homes  # noqa: E402
+
+_SKILL_TREE_PROTECTION = bootstrap()
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(_SKILL_TREE_PROTECTION, "skill-tree-protection")
     diagnosis = tree_environment.preflight(TREE, ask_planner=True)
     if diagnosis:
         raise pytest.UsageError(diagnosis)

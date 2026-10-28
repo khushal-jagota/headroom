@@ -148,6 +148,43 @@ Live, staging, and Ticket repository and state paths may not share or nest acros
 environment boundaries. Credential contents are never written to a manifest or
 printed by inspection.
 
+## Synthetic test homes and account skill protection
+
+The root pytest configuration freezes account skill paths before test collection.
+It discovers default homes, initial provider overrides, configured managed skills,
+and the initial external targets of skill links. Later environment changes do not
+replace this inventory. The dependency preflight still runs before collection.
+
+Synthetic tests receive fresh private `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
+`HERMES_HOME`, and `PLAN_HERMES_HOME` values. Both Hermes values name the same
+profile. Tests can explicitly replace or remove a value to exercise fallback rules.
+Server fixtures establish these homes before parent database setup and apply the
+same values after child environment scrubbing. CLI fixtures use the same helper.
+Credentials and real native profiles are never copied.
+
+The `real_provider_homes` marker preserves provider home routing for explicitly
+classified provider cases. Their existing opt-in gates remain. The marker does not
+exempt a test from the audit hook or the before/after manifests.
+
+The interpreter audit hook refuses supported mutations under protected skill paths,
+including destructive operations on ancestors. A refusal records the path, operation,
+and active test node before it raises an exception. A caught refusal still fails the
+session. Relative low-level write opens fail when CPython omits their directory base.
+The summary prints every receipt, including an explicit empty list on a clean run.
+
+Manifests record entry types, raw link targets, and SHA-256 hashes of regular files.
+The session compares its final manifest after fixture teardown with the immutable
+baseline. It reports traversal time, entry counts, file counts, and hashed bytes.
+A persistent difference fails the session without repair. Without a refusal receipt,
+the source is unknown. An unaudited child or a legitimate owner change can cause the
+difference. The suite reports evidence without accusation or automatic repair.
+
+This is interpreter protection and persistent-change detection, not containment.
+Native code, separate processes, existing descriptors, writable memory maps, and
+concurrent path changes can bypass the hook. A restored transient change escapes
+the manifest. An abrupt process exit can prevent the final comparison. New external
+link targets are recorded but are not traversed into unrelated account files.
+
 ## Host status and maintenance
 
 `panels environment status --json` reads the full local filesystem and process

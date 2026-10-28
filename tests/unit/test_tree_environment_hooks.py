@@ -28,13 +28,26 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
     )
     shutil.copyfile(source_tree / "tests/conftest.py", tree / "tests/conftest.py")
 
+    shutil.copytree(
+        source_tree / "tests/support/skill_tree_protection",
+        tree / "tests/support/skill_tree_protection",
+    )
+    shutil.copyfile(
+        source_tree / "tests/support/synthetic_homes.py", tree / "tests/support/synthetic_homes.py"
+    )
+    (tree / "tests/support/__init__.py").touch()
+
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     env["PYTHONNOUSERSITE"] = "1"
     created = subprocess.run(
         [
-            sys.executable, "-m", "venv", "--system-site-packages", "--without-pip",
+            sys.executable,
+            "-m",
+            "venv",
+            "--system-site-packages",
+            "--without-pip",
             str(tree / ".venv"),
         ],
         cwd=outside,
@@ -64,12 +77,11 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
         "Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: 0.2.128\n"
     )
     (tree / "requirements.txt").write_text(
-        "claude-agent-sdk==0.2.128\n"
-        f"packaging=={importlib.metadata.version('packaging')}\n"
+        f"claude-agent-sdk==0.2.128\npackaging=={importlib.metadata.version('packaging')}\n"
     )
     (tree / "pyproject.toml").write_text(
         '[tool.mypy]\nplugins = ["scripts/tree_environment.py"]\n'
-        '[tool.pytest.ini_options]\naddopts = "-q"\n'
+        '[tool.pytest.ini_options]\naddopts = "-q"\npythonpath = ["."]\n'
     )
     imported = tree / "planner-imported"
     collected = tree / "pytest-collected"
@@ -88,8 +100,11 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
             ["pytest", str(tree / "tests")]
             if tool == "pytest"
             else [
-                "mypy", "--config-file", str(tree / "pyproject.toml"),
-                "--no-incremental", str(sentinel),
+                "mypy",
+                "--config-file",
+                str(tree / "pyproject.toml"),
+                "--no-incremental",
+                str(sentinel),
             ]
         )
         return subprocess.run(
@@ -114,9 +129,7 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
 
     # A repository pin bump deliberately makes the unchanged environment stale.
     requirements = tree / "requirements.txt"
-    requirements.write_text(
-        requirements.read_text().replace("==0.2.128", "==0.2.152")
-    )
+    requirements.write_text(requirements.read_text().replace("==0.2.128", "==0.2.152"))
     for tool in ("pytest", "mypy"):
         refused = run_tool(tool)
         output = refused.stdout + refused.stderr
