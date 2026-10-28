@@ -207,10 +207,11 @@ def test_actual_migration_and_explicit_install_converge_preserving_ranges(
         db.upgrade_schema_connection(migration, "open_work_group_index")
     with sqlite3.connect(archive) as source, closing(connect(str(copied))) as target:
         target.execute("BEGIN IMMEDIATE")
-        # These generic rows have the same columns at the historical boundary.
+        # Transfer only columns that existed at this historical boundary.
+        # The approved workspace policy is a later additive conversation column.
         for table in ("conversations", "conversation_events"):
-            cursor = source.execute(f"SELECT * FROM {table}")
-            columns = [column[0] for column in cursor.description]
+            columns = [row[1] for row in target.execute(f"PRAGMA table_info({table})")]
+            cursor = source.execute(f"SELECT {','.join(columns)} FROM {table}")
             placeholders = ",".join("?" for _ in columns)
             target.executemany(
                 f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",

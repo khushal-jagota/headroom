@@ -368,6 +368,13 @@ class ConversationRoleMaterials:
     identity_environment_variables: tuple[tuple[str, str], ...] = ()
 
 
+class WorkspacePathPolicy(StrEnum):
+    """How a remote executor interprets the stored absolute workspace path."""
+
+    legacy_home_mapping = "legacy_home_mapping"
+    native_absolute = "native_absolute"
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationStartRequest:
     """The concrete, already-resolved values a conversation is created from.
@@ -394,6 +401,7 @@ class ConversationStartRequest:
     role_materials: ConversationRoleMaterials | None = None
     workspace_folder: Path | None = None
     access: ConversationAccess | None = None
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,6 +423,7 @@ class ResolvedConversationStart:
     role_materials: ConversationRoleMaterials | None
     workspace_folder: Path
     access: ConversationAccess
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
 
 
 class PromptDeliveryMode(StrEnum):
@@ -660,6 +669,7 @@ class HeldPrompt:
     sender: Principal | None = None
     recipient: Principal | None = None
     queue_reason: PromptQueueReason = PromptQueueReason.requested
+    delivery_uncertain: bool = False
 
 
 class ConversationAlreadyStarted(Exception):
@@ -669,6 +679,28 @@ class ConversationAlreadyStarted(Exception):
     Quietly ignoring a second start would silently discard the second request's role
     materials and configuration, so it is an error instead.
     """
+
+
+class MoveRetirementDisposition(StrEnum):
+    refused = "refused"
+    retired = "retired"
+    uncertain = "uncertain"
+
+
+@dataclass(frozen=True, slots=True)
+class MoveRetirementResult:
+    """Refused precedes effects; retired proves absence; uncertain cannot prove absence."""
+
+    disposition: MoveRetirementDisposition
+    reason: str | None = None
+
+
+class MoveSourceRetirement(Protocol):
+    """Injected remote source proof; final validation is synchronous through commit."""
+
+    async def retire(self) -> MoveRetirementResult: ...
+
+    def validate_current(self) -> None: ...
 
 
 class ConversationSystem(Protocol):
@@ -701,6 +733,21 @@ class ConversationSystem(Protocol):
         Refuse immediately when any turn, held prompt, or delivery is outstanding.
         The callback must do no backend I/O and cannot await. A missing conversation
         counts as idle; callers serialize its association when creating or unlinking it.
+        """
+        ...
+
+    async def retire_idle_for_move(
+        self,
+        conversation_id: str | None,
+        operation: Callable[[], None],
+        *,
+        source: MoveSourceRetirement | None = None,
+    ) -> MoveRetirementResult:
+        """Hold admission through source retirement and a synchronous canonical write.
+
+        Admission refusal starts no retirement. Uncertain retirement preserves its
+        handle and quarantine. A failed write after retirement reports source state
+        honestly. No database transaction spans an awaited backend operation.
         """
         ...
 
@@ -894,6 +941,13 @@ class ConversationSystem(Protocol):
 
         There is nothing to return. If the conversation is idle with nothing held, or
         the id names no conversation, nothing happens.
+
+        An initial remote delivery is also cancellable while its start or prompt lacks
+        an outcome. Shutdown suppresses a provably untransmitted prompt; possible
+        transmission retains uncertain delivery. The local operation can finish before
+        native termination is confirmed. The original child remains quarantined until
+        its ordinary stop succeeds; no later prompt runs beside uncertain native work.
+        Cancellation does not undo effects that an accepted operation already produced.
         """
         ...
 

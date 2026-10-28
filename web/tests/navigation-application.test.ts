@@ -10,7 +10,7 @@ import { workspaceHoverImpact,managerChildrenImpact,workspaceRailImpact } from '
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 import { runtimeCountImpact,reviewBadgeImpact } from '../src/lib/reviewNavigationImpact';
 
-const ticket:TicketRecord={kind:'ticket',id:'a',value:{title:'A',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,deadline:null,project_id:'p',manager_kind:'manager',manager_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'test'}};
+const ticket:TicketRecord={kind:'ticket',id:'a',value:{title:'A',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,deadline:null,project_id:'p',manager_kind:'manager',manager_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'macos'}};
 const records:NavigationRecord[]=[ticket,conversation('a-conversation'),{kind:'manager',id:'parent',value:{title:'Parent',recap:'',recap_preview:'',created_at:1,updated_at:1,project_id:'p',settled:false,conversation_id:null}},{kind:'project',id:'p',value:{name:'Project'}}];
 const titleImpact:RecordImpact={kind:'ticket',id:'a',fields:['title','updated_at']};
 const fence={...continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic'};
@@ -50,6 +50,9 @@ describe('application presentation and command evidence',()=>{
       expect(first.managersById.get('parent')?.tickets[0]).toBe(first.ticketsById.get('a'));
       expect(first.ticketsByParent.get('manager:parent')?.[0]).toBe(first.ticketsById.get('a'));
       expect(first.ticketMastheadsById.get('a')?.project).toBe('Project');
+      expect(first.ticketsById.get('a')?.locale).toBe('macos');
+      expect(first.managersById.get('parent')?.tickets[0].locale).toBe('macos');
+      expect(first.ticketMastheadsById.get('a')?.locale).toBe('macos');
       const missingParent={...view,publication:{...view.publication,records:view.publication.records.filter(record=>record.kind!=='manager')}};
       expect(presentationFor(missingParent).ticketMastheadsById.has('a')).toBe(false);
       expect(createNavigationPresentationCache()(view)).not.toBe(first);

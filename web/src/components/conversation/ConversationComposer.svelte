@@ -105,6 +105,9 @@
     ask = null,
     userInput = null,
     askNote = null,
+    userInputNote = null,
+    permissionAvailable = true,
+    userInputAvailable = true,
     current = { model: null, reasoningEffort: null },
     models = [],
     backends = $bindable([]),
@@ -152,6 +155,9 @@
       questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
+    userInputNote?: string | null;
+    permissionAvailable?: boolean;
+    userInputAvailable?: boolean;
     current?: RunValues;
     /** What this conversation's own backend offers. */
     models?: readonly BackendModel[];
@@ -1113,13 +1119,15 @@
         <UserInputQuestionPanel
           request={userInput}
           busy={disabled}
-          note={askNote}
+          answerAvailable={userInputAvailable}
+          note={userInputNote}
           onSubmit={(answers) => onSubmitUserInput?.(answers)}
           onCancelTurn={() => onCancelTurn?.()}
         />
       {:else if takenOver && ask}
         <PermissionAskCard
           ask={ask}
+          answerAvailable={permissionAvailable}
           busy={disabled}
           note={askNote}
           onAnswer={(optionId) => onAnswer?.(optionId)}
@@ -1243,6 +1251,7 @@
         {#if takenOver && ask}
           <PermissionAskActions
             ask={ask}
+            answerAvailable={permissionAvailable}
             busy={disabled}
             onAnswer={(optionId) => onAnswer?.(optionId)}
             onCancelTurn={() => onCancelTurn?.()}

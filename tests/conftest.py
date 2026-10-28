@@ -12,6 +12,8 @@ property. ``tests/unit/test_instrument.py`` reaches ``scripts`` the same way.
 from __future__ import annotations
 
 import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,13 @@ TREE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TREE / "scripts"))
 
 import tree_environment  # noqa: E402  # reached via sys.path.insert above
+
+
+@pytest.fixture
+def executor_transport_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Retained fixture for synthetic executor test storage."""
+    with tempfile.TemporaryDirectory(prefix="executor-test-", dir="/tmp") as temporary:
+        yield Path(temporary)
 
 
 def pytest_configure(config: pytest.Config) -> None:

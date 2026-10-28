@@ -98,8 +98,10 @@ from planner.tickets.contracts import (
     RejectionBody,
     ReviewTransferNotice,
     Ticket,
+    TicketCreationContextRead,
     TicketEdit,
     TicketListFilters,
+    TicketLocaleChoice,
     TicketStatus,
 )
 from planner.tickets.logic import admission
@@ -349,7 +351,7 @@ def _marshal_settled_field_values(
     return values
 
 
-def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
+def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicketBody:
     raw = normalize_assignment(raw)
     obsolete = set(raw) & {"sprint_id", "manager_id", "sprint_item_id", "day", "day_id"}
     if obsolete:
@@ -361,8 +363,8 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
-        title=body_str(raw, "title"),
-        brief=body_str(raw, "brief"),
+        title="" if draft else body_str(raw, "title"),
+        brief="" if draft else body_str(raw, "brief"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
@@ -533,24 +535,9 @@ async def warm_ticket_creation_model(
         pass
 
 
-@router.post("/tickets")
-async def create_ticket(
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-    model_resolver: ModelResolver,
-) -> JsonDict:
+def write_create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    """Apply creation through the same writer inside HTTP or executor transactions."""
     body = _marshal_create_ticket(raw)
-    await warm_ticket_creation_model(
-        conn,
-        model_resolver,
-        worker_type=body["worker_type"],
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
-    )
     now = clk.now_unix()
     manager = (
         _parse_manager(body["manager"])
@@ -583,6 +570,76 @@ async def create_ticket(
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
     return tickets_views.ticket_creation_json(conn, ticket, now)
+
+
+@router.post("/tickets/creation-context")
+async def read_ticket_creation_context(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx
+) -> TicketCreationContextRead:
+    """Resolve a partial draft without creating state or requiring final text."""
+    from planner.tickets.contracts import TicketLocale
+    from planner.tickets.locale_configuration import require_locale_backend_compatibility
+
+    # The existing marshaller owns draft input validation as well as final creation.
+    # Text is irrelevant to this projection and is never passed to its resolver.
+    body = _marshal_create_ticket(raw, draft=True)
+    manager = (
+        _parse_manager(body["manager"])
+        if "manager" in raw or "orchestrator" in raw
+        else Principal(PrincipalKind.chief, "chief")
+    )
+    project = projects_data.resolve_project(
+        conn, project_id=body["project_id"], project_name=body["project"]
+    )
+    context = tickets_data.resolve_ticket_draft_context(
+        conn,
+        worker_type=body["worker_type"],
+        locale=body.get("locale"),
+        employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+        project_id=project.id if project is not None else None,
+        manager_id=manager.id if manager.kind is PrincipalKind.manager else None,
+        deadline=body["deadline"],
+        blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
+    )
+    choices: list[TicketLocaleChoice] = []
+    for locale in TicketLocale:
+        reason = None
+        try:
+            require_locale_backend_compatibility(
+                locale, context.launch_configuration.employee_backend
+            )
+        except PlannerError as error:
+            reason = error.message
+        choices.append({"locale": locale.value, "compatible": reason is None, "reason": reason})
+    return {
+        "resolved_locale": context.locale.value,
+        "employee_backend": context.launch_configuration.employee_backend,
+        "project_id": context.project_id,
+        "locale_choices": choices,
+    }
+
+
+@router.post("/tickets")
+async def create_ticket(
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    model_resolver: ModelResolver,
+) -> JsonDict:
+    body = _marshal_create_ticket(raw)
+    await warm_ticket_creation_model(
+        conn,
+        model_resolver,
+        worker_type=body["worker_type"],
+        employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+    )
+    return write_create_ticket(raw, conn, ctx, clk)
 
 
 @router.get("/tickets")
@@ -985,15 +1042,14 @@ async def delete_ticket(
     }
 
 
-@router.patch("/tickets/{ticket_id}")
-async def patch_ticket(
+def write_patch_ticket(
     ticket_id: str,
     body: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
-    cfg: Cfg,
     clk: Clk,
-    conversations: Conversations,
+    *,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> JsonDict:
     body = normalize_assignment(body)
     recognized = (
@@ -1051,8 +1107,25 @@ async def patch_ticket(
         now=now,
         review_transfer_notices=notices,
     )
-    await notify_review_transfers(conversations, conn, notices, now=now)
+    if review_transfer_notices is not None:
+        review_transfer_notices.extend(notices)
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.patch("/tickets/{ticket_id}")
+async def patch_ticket(
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    notices: list[ReviewTransferNotice] = []
+    result = write_patch_ticket(ticket_id, body, conn, ctx, clk, review_transfer_notices=notices)
+    await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
+    return result
 
 
 @router.post("/tickets/{ticket_id}/propose")
@@ -1518,6 +1591,7 @@ async def resume_ticket(
 @router.post("/tickets/{ticket_id}/move")
 async def move_ticket_locale(
     ticket_id: str,
+    request: Request,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
@@ -1531,6 +1605,7 @@ async def move_ticket_locale(
     if "locale" not in raw or set(raw) - {"locale", "expected_record_sha256"}:
         raise PlannerError(ErrorCode.validation, "move requires a locale", {})
     now = clk.now_unix()
+    endpoint = getattr(request.app.state, "executor_endpoint", None)
     ticket = await move(
         conversations,
         conn,
@@ -1539,5 +1614,10 @@ async def move_ticket_locale(
         principal=ctx.principal,
         now=now,
         expected_record_sha256=_record_precondition(raw),
+        source_factory=(
+            (lambda ticket: endpoint.source_for_move(ticket.id, ticket.conversation_id))
+            if endpoint is not None
+            else None
+        ),
     )
     return tickets_views.ticket_json(ticket, now)

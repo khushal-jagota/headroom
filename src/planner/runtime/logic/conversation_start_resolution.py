@@ -35,6 +35,7 @@ from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
+    WorkspacePathPolicy,
 )
 from planner.core.contracts import ErrorCode, PlannerError
 
@@ -105,6 +106,7 @@ class ConversationStartValues:
     role_materials: ConversationRoleMaterials
     workspace_folder: Path
     access: ConversationAccess
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
 
 
 def worker_conversation_role_materials(ticket_id: str) -> ConversationRoleMaterials:
@@ -194,6 +196,7 @@ def resolve_worker_conversation_start(
     ticket_last_chosen: ConversationStartConfiguration | None,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     workspace_folder: Path,
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping,
 ) -> ConversationStartValues:
     """Resolve what a Ticket's worker conversation starts on.
 
@@ -212,6 +215,7 @@ def resolve_worker_conversation_start(
         reasoning_effort=resolved.reasoning_effort,
         role_materials=worker_conversation_role_materials(ticket_id),
         workspace_folder=workspace_folder,
+        workspace_path_policy=workspace_path_policy,
         access=FLOOR_DEFAULT_ACCESS,
     )
 

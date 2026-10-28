@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
+from time import time as _wall_time
 from typing import Any, cast
 from uuid import uuid4
 
@@ -72,6 +73,7 @@ from planner.navigation.delivery import create_delivery_runtime
 from planner.navigation.middleware import NavigationCommandFenceMiddleware
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
+from planner.previews.api import build_preview_router
 from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
@@ -180,6 +182,7 @@ def create_app(
         video_cleanup_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
+        executor_endpoint = None
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
@@ -211,34 +214,59 @@ def create_app(
                         if loops is not None:
                             await _stop_runtime_with_deadline(loops, deadline)
             finally:
-                if lifecycle_observer is not None:
-                    lifecycle_observer.cancel()
-                    try:
-                        await lifecycle_observer
-                    except asyncio.CancelledError:
-                        pass
+                try:
+                    if executor_endpoint is not None:
+                        await executor_endpoint.close()
+                finally:
+                    if lifecycle_observer is not None:
+                        lifecycle_observer.cancel()
+                        try:
+                            await lifecycle_observer
+                        except asyncio.CancelledError:
+                            pass
 
         remembered_codex_login_rejection = DurableCodexLoginRejection(
             config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
         )
+        backend_factories = (
+            backend_child_factories_for_test
+            if backend_child_factories_for_test is not None
+            else production_backend_child_factories(
+                panels_server_url=f"http://{HOST}:{config.port}",
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
+            )
+        )
+        if os.environ.get("PLAN_EXECUTOR_MODE") == "remote":
+            from planner.executor.routing import LocaleBackendChildFactory
+            from planner.executor.vps import ExecutorEndpoint
+
+            executor_endpoint = ExecutorEndpoint(config.db_path, clock)
+            backend_factories = {
+                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.factory)
+                for key, local in backend_factories.items()
+            }
+        app.state.executor_endpoint = executor_endpoint
         async with application_runtime(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
             sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=(
-                backend_child_factories_for_test
-                if backend_child_factories_for_test is not None
-                else production_backend_child_factories(
-                    panels_server_url=f"http://{HOST}:{config.port}",
-                    remembered_codex_login_rejection=remembered_codex_login_rejection,
-                )
-            ),
+            backend_child_factories=backend_factories,
             remembered_codex_login_rejection=remembered_codex_login_rejection,
             navigation_delivery=navigation_delivery,
             shutdown_dependents=shutdown_dependents,
         ) as conversation:
             audit_conn = conn_factory()
             try:
+                audit_conn.execute(
+                    "UPDATE executor_connections SET connection_state='disconnected',lost_at_ms=? "
+                    "WHERE active=1",
+                    (int(_wall_time() * 1000),),
+                )
+                audit_conn.execute(
+                    "UPDATE executor_asks SET reachability='uncertain' "
+                    "WHERE reachability='reachable'"
+                )
+                audit_conn.commit()
                 tickets_data.audit_ticket_registry_integrity(audit_conn)
                 reconcile_managed_skill_versions(audit_conn)
                 reconcile_provisional_worker_step_bindings(audit_conn)
@@ -250,6 +278,13 @@ def create_app(
             recovery_task = asyncio.create_task(
                 run_automatic_recovery(conversation.system, conversation.store)
             )
+            if executor_endpoint is not None:
+                from dataclasses import replace
+
+                conversation = replace(conversation, executor_endpoint=executor_endpoint)
+                executor_endpoint.runtime = conversation
+                executor_endpoint.app = app
+                await executor_endpoint.start()
             app.state.conversation = conversation
             await asyncio.to_thread(video_uploads.recover_and_cleanup)
             video_cleanup_task = asyncio.create_task(_clean_video_uploads())
@@ -260,6 +295,7 @@ def create_app(
                 if conversation_system_for_test is None
                 else conversation_system_for_test
             )
+            await conversation.system.resume_executor_held_prompts()
             if not config.test_mode:
                 from planner.core.loops import prepare_background_loops
 
@@ -312,6 +348,10 @@ def create_app(
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
+    from planner.executor.app_transport import build_executor_router
+
+    app.include_router(build_executor_router())
+    app.state.executor_id = config.executor_id
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
@@ -373,6 +413,7 @@ def create_app(
         include_router(domain_router, prefix="/api")
     include_router(navigation_delivery.router)
     include_router(scoped_navigation.router)
+    include_router(build_preview_router())
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
     include_router(
@@ -392,6 +433,19 @@ def create_app(
             "test_mode": config.test_mode,
             "app_sha": config.app_sha,
         }
+
+    @app.get("/api/executor/health")
+    async def executor_health() -> dict[str, object]:
+        endpoint = getattr(app.state, "executor_endpoint", None)
+        if endpoint is None:
+            return {
+                "mode": "local",
+                "last_contact_at_ms": None,
+                "last_contact_source": "vps_received_valid_executor_frame",
+                "connection_state": "disconnected",
+                "reconciliation_ready": False,
+            }
+        return {"mode": "remote", **endpoint.health()}
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:

@@ -350,7 +350,7 @@ class CodexAppServerBackendChild:
         self._standard_error_the_next_turn_starts_from = 0
         self._asks_raised = 0
         self._catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
-        self._published_catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
+        self._published_catalog_entries: tuple[ComposerCatalogEntry, ...] | None = None
         self._catalog_publish_lock = asyncio.Lock()
         self._catalog_coordinator = CatalogCoordinator(
             read_skills=lambda: self._read_skills(str(self._resolved_start.workspace_folder)),
@@ -752,11 +752,14 @@ class CodexAppServerBackendChild:
                 tuple(app for _, app in coordinator.metadata.values() if app is not None),
                 coordinator.plugins,
             )
-            self._catalog_snapshot = snapshot
-            if snapshot == self._published_catalog_snapshot:
+            if snapshot.entries == self._published_catalog_entries:
+                # Invocation paths can change without any visible catalogue change.
+                self._catalog_snapshot = snapshot
                 return
+            # Admission failure retains the last published snapshot and retries later.
             await self._sink.composer_catalog_reported(snapshot.entries)
-            self._published_catalog_snapshot = snapshot
+            self._catalog_snapshot = snapshot
+            self._published_catalog_entries = snapshot.entries
 
     async def _read_skills(self, workspace: str) -> bindings.SkillsListResponse:
         result = await self._catalog_request(

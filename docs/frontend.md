@@ -50,6 +50,20 @@ One screen per part of the system:
   have Project and Settle above the title. Only the owner settles or reopens one.
   Existing managers start active. Settlement does not change Worker eligibility.
 
+  Ticket rows and the persistent Ticket header show the same Mac or VPS symbol.
+  The visible key names both machines. Machine details open before the explicit move action.
+  Move review states destination limits and shows authoritative refusal reasons.
+  Creation uses current Manager assignment and the Brief field. The server resolves the machine before creation.
+
+  One notice covers visible Mac rows and the selected Mac Ticket when current activity is unknown.
+  Hidden history rows do not count. Mac symbols retain their identity during an outage.
+  Current conversation turns and tools show uncertainty instead of a working animation.
+  Exact ask identity and owner authority govern durable answer acceptance while the Mac is unreachable.
+  Reachability controls delivery. It does not disable an otherwise authorized answer.
+  Answer requests carry the public request identity and the exact native callback reference.
+  Current turn receipts distinguish an answer saved on VPS from an answer applied on Mac.
+  Historical transcript rows do not infer delivery from a reused provider request identifier.
+
   Each active card shows attention and ongoing work in the shared group order: Needs your
   approval, Needs your answer, Yours, Errored, Agent, Waiting on Consequences,
   Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty

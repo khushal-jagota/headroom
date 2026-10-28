@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, closing
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from planner import database_modules
 from planner.conversation.backend_state import BackendStateStore
@@ -176,6 +176,7 @@ class ConversationRuntime:
     message_files: ConversationMessageFiles
     database_path: str
     sse_heartbeat_ms: int
+    executor_endpoint: Any = None
     model_resolution: ModelResolutionService | None = None
     backend_state: BackendStateStore | None = None
     # Absent when this process has no backend that can start a sign-in. The routes say

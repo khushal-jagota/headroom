@@ -42,6 +42,7 @@
     models,
     ownSenderLabel,
     livenessPulse,
+    activityUncertain = false,
     conversationState,
     emptyState,
     reader = null,
@@ -64,6 +65,7 @@
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
     livenessPulse: number;
+    activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
   } = $props();
@@ -1113,7 +1115,7 @@
       {@render emptyState()}
     {/if}
     {#if reader!==null}
-      <ProjectedTranscript {reader} {models} {ownSenderLabel} {livenessPulse} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
+      <ProjectedTranscript {activityUncertain} {reader} {models} {ownSenderLabel} {livenessPulse} {outgoingMessages} {withdrawnDisplayIds} {acknowledgedMessageIds} {onStopDrawingMessage} {onSendAgain}/>
     {:else}
     <ConversationTranscript
       {rows}
@@ -1122,6 +1124,7 @@
       {models}
       {ownSenderLabel}
       {livenessPulse}
+      {activityUncertain}
       {conversationId}
       {outgoingMessages}
       {acknowledgedMessageIds}

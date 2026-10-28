@@ -37,6 +37,7 @@
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
   let {
+    activityUncertain = false,
     rows,
     visibleRows,
     lens,
@@ -52,6 +53,7 @@
     onSendAgain?: (id: string) => Promise<void> | void;
     acknowledgedMessageIds?: ReadonlySet<string>;
     projectedItems?: readonly ThreadItem[] | null;
+    activityUncertain?: boolean;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
     lens: ConversationLens;
@@ -133,12 +135,14 @@
   }
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
+    if (activityUncertain && row.state === "live") return "pending · availability on Mac unknown";
     if (row.state === "answered") return `answered · ${row.answeredOptionLabel ?? ""}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
     return "waiting for you";
   }
 
   function userInputStateLine(row: Extract<TranscriptRow, { kind: "user_input" }>): string {
+    if (activityUncertain && row.state === "live") return "pending · availability on Mac unknown";
     if (row.state === "answered") return "answered";
     if (row.state === "failed") return `failed · ${row.failureDetail ?? "the answer could not be delivered"}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
@@ -155,7 +159,7 @@
       </ViewItem>
     {:else if item !== null}
     {#if item.kind === "turn"}
-      <TurnAnchor
+      <TurnAnchor {activityUncertain}
         settled={item.settled}
         stopped={item.stopped}
         startedAtUnixMilliseconds={item.startedAtUnixMilliseconds}
@@ -169,7 +173,7 @@
       />
     {:else if item.kind === "work_group"}
       {#if lens === "full"}
-      <WorkGroup
+      <WorkGroup {activityUncertain}
         openRows={openToolCallRows}
         wholeDetails={wholeToolCallDetails}
         entries={item.entries}

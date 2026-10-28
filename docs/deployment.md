@@ -512,7 +512,9 @@ snapshot; a later intentional rollback deploy does not independently rewind data
 
 The operator-owned deployment path now invokes a supervised capture helper after a replacement or rollback stop. This adds a read-only database capture and an atomic diagnostic write to each stop window.
 
-The helper takes the existing conversation ownership lease without a wait. It captures exact unresolved turn occurrences and their current associations. It never initializes the application or migrates the stopped database. An unchanged-commit deployment does not stop Panels and does not invoke capture.
+The helper takes the existing conversation ownership lease without a wait. It captures exact unresolved turn occurrences and their current associations. It never initializes the application or migrates the stopped database. An unchanged-commit deployment without a configuration change does not stop Panels or invoke capture.
+
+A VPS stop does not prove that a Mac child ended. Persisted native child identity and unresolved Mac work stay outside interruption capture. Connection loss, missing inventory, and incomplete metadata cannot authorize a replacement prompt. Native inventory reconciliation owns the surviving child.
 
 The helper has a two-second budget per stop. Timeout cleanup targets only that helper process. The deployment log reports capture duration and cleanup duration separately. Measurements must test this budget before a review accepts the added stop duration.
 
@@ -534,11 +536,50 @@ The operator must establish the single-user filesystem layout, user units, runne
 persistent paths before enabling automatic deployment. Repository deployment does not
 perform that host setup or change the existing Tailscale Serve route.
 
+## Mac executor installation
+
+The VPS workflow deploys only the VPS application. Mac installation and updates use
+ordinary pip, npm, and launchctl commands in the signed-in owner's GUI session.
+The [Mac operator runbook](mac-executor-installation.md) owns that procedure.
+The workflow has no Mac delivery, packaging, preflight, or aggregate deployment report.
+A VPS deployment result supplies no evidence about the installed Mac revision.
+
+## Explicit VPS executor configuration
+
+The managed VPS launcher reads `current/data/executor-launch.json`.
+Version 2 of this owner-only file accepts only version, mode, and executor_id fields.
+An absent file keeps the local default. Invalid explicit configuration refuses launch.
+The launcher scrubs ambient settings before it applies the validated
+`PLAN_EXECUTOR_MODE` and `PLAN_EXECUTOR_ID`.
+Ambient flags cannot enable the remote endpoint.
+
+Prepare an explicit remote configuration with the current environment CLI:
+
+```sh
+panels environment configure-vps-launch \
+  --path /absolute/private/executor-launch.json \
+  --mode remote \
+  --executor-id mac
+```
+
+Use `--mode local` without `--executor-id` for an explicit local configuration.
+The `app-deploy --executor-launch-config /absolute/private/executor-launch.json`
+input applies a prepared file during deployment.
+An ordinary deployment without that input preserves the existing configuration.
+The workflow does not infer a mode from a Mac deployment flag.
+
+The deployment transaction validates the requested configuration before downtime.
+It saves the previous bytes or absence before disruption. After service stop, it applies the requested settings.
+On failure, recovery restores the prior configuration before the fallback service starts.
+The Mac launch names the intended HTTPS origin and the same logical executor ID.
+Version-1 descriptors remain readable for exact backup and restoration. A remote version-1 descriptor refuses candidate launch until an explicit compatible application replaces it. No automatic conversion occurs.
+
+The combined Mac and VPS release requires peer protocol 8 and journal format 2. Update both peers from the reviewed combined source. A VPS restart adopts surviving native children without a new bootstrap.
+
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
-`src/planner/environments/deployment.py`,
+`src/planner/environments/deployment.py`, `src/planner/environments/vps_launch.py`,
+`src/planner/environments/executor_launch_contracts.py`,
 `src/planner/environments/deployment_lifecycle.py`,
 `src/planner/environments/cli.py`, and `src/planner/skill_sources.py`.
 
----
-
-_Last verified: 2026-10-18 (local gate implementation; main activation remains separate)._
+_Last verified: 2026-10-25._

@@ -28,6 +28,7 @@ its own prompt.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections import deque
@@ -67,6 +68,9 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
+    MoveRetirementDisposition,
+    MoveRetirementResult,
+    MoveSourceRetirement,
     PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -147,6 +151,7 @@ from planner.conversation.storage import (
 from planner.core import change_signal
 from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
+from planner.executor.contracts import ChildCommand, ChildOperation, ChildReference
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -246,6 +251,10 @@ class _ReservedTurn:
     resolved: asyncio.Event
     automatic_compaction: bool = False
     automatic_notice: bool = False
+    shutdown_owned: bool = False
+    shutdown_fate: PromptDeliveryFate | None = None
+    messages: tuple[_HeldPrompt, ...] = ()
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue
 
 
 @dataclass(slots=True)
@@ -263,6 +272,7 @@ class _RunningTurn:
     explicit_reply_recipients: set[Principal] = field(default_factory=set)
     automatic_notice: bool = False
     ended: bool = False
+    callbacks_revoked: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a
     # send-now killing the incumbent. The cancel goes out with the lock let go, and the
     # backend reports the ending it was just asked for while that is happening. Only one
@@ -316,6 +326,7 @@ class _HeldPrompt:
     owner_read_through_sequence: int | None
     acknowledge_owner_on_failure: bool = True
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
+    delivery_uncertain: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,6 +367,7 @@ class _ConversationState:
     sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
+    backend_event_in_progress: bool = False
     settlement_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     steer_settlements: set[asyncio.Event] = field(default_factory=set)
     reserved_turn: _ReservedTurn | None = None
@@ -364,6 +376,12 @@ class _ConversationState:
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
     child_is_quarantined: bool = False
+    executor_child_reference: Any = None
+    executor_initial_commands: tuple[ChildCommand, ...] = ()
+    executor_delivery_uncertain: bool = False
+    initial_shutdown_task: asyncio.Task[bool] | None = None
+    initial_shutdown_child: BackendChild | None = None
+    next_turn_number: int = 1
     has_delivered_prompt: bool = False
     last_touched_monotonic: float = 0.0
     # When this conversation last said its model was thinking. Kept per conversation
@@ -378,9 +396,9 @@ class SqliteProcessConversationSystem:
     """The conversation system Panels runs on.
 
     It is handed the store its record lives in and one child factory per backend key. It
-    spawns nothing until a conversation has something to send, and it re-attaches to
-    nothing when the process starts: after a restart no turn is running anywhere, and
-    ``is_running`` says so.
+    spawns nothing until a conversation has something to send. Local capabilities
+    do not survive a restart. Durable native turn knowledge survives the VPS process,
+    while exact native child and callback attachment still requires executor inventory.
     """
 
     def __init__(
@@ -416,6 +434,25 @@ class SqliteProcessConversationSystem:
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
         self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
+        try:
+            from pydantic import TypeAdapter
+
+            for record, metadata in store.read_executor_runtime_snapshots():
+                state = _ConversationState(record=record)
+                for payload, delivery_state in store.read_executor_held_prompts_sync(
+                    record.conversation_id
+                ):
+                    held = TypeAdapter(_HeldPrompt).validate_json(payload)
+                    if delivery_state == "dispatching":
+                        held = replace(held, delivery_uncertain=True)
+                        state.child_is_quarantined = True
+                    state.held_prompts.append(held)
+                if metadata is not None:
+                    self._restore_executor_turn_metadata(state, metadata)
+                self._conversations[record.conversation_id] = state
+        except BaseException:
+            self._runtime_ownership.close()
+            raise
         if self._signal is not None:
             self._signal.bind_runtime(self._runtime_turn)
         self._shutting_down = False
@@ -444,6 +481,87 @@ class SqliteProcessConversationSystem:
                 return False
             operation()
             return True
+
+    async def retire_idle_for_move(
+        self,
+        conversation_id: str | None,
+        operation: Callable[[], None],
+        *,
+        source: MoveSourceRetirement | None = None,
+    ) -> MoveRetirementResult:
+        from planner.core.errors import ErrorCode, PlannerError
+
+        state = None if conversation_id is None else await self._conversation_state(conversation_id)
+        refused = MoveRetirementResult(
+            MoveRetirementDisposition.refused,
+            "activity or waiting messages, or unknown conversation",
+        )
+        if conversation_id is not None and state is None:
+            return refused
+        if state is not None and state.lock.locked():
+            return refused
+
+        async def retire_and_commit() -> MoveRetirementResult:
+            if state is not None and (
+                state.phase is not _ConversationPhase.idle
+                or state.reserved_turn is not None
+                or state.running_turn is not None
+                or state.held_prompts
+                or state.admitted_sender_messages
+                or state.sender_messages_being_delivered
+                or state.steer_settlements
+                or state.child_is_quarantined
+                or not state.backend_event_queue.empty()
+                or state.backend_event_in_progress
+                or any(not task.done() for task in state.settlement_tasks)
+            ):
+                return refused
+            if source is not None:
+                result = await source.retire()
+                if result.disposition is not MoveRetirementDisposition.retired:
+                    if (
+                        state is not None
+                        and result.disposition is MoveRetirementDisposition.uncertain
+                    ):
+                        state.child_is_quarantined = True
+                        await self._store.save_move_retirement(
+                            state.record.conversation_id, uncertain=True
+                        )
+                    return result
+            elif state is not None and state.child is not None:
+                try:
+                    await state.child.stop()
+                except Exception:
+                    state.child_is_quarantined = True
+                    return MoveRetirementResult(
+                        MoveRetirementDisposition.uncertain, "source stop could not be confirmed"
+                    )
+            if state is not None:
+                state.child = None
+                state.executor_child_reference = None
+                state.child_is_quarantined = False
+            try:
+                if state is not None:
+                    await self._store.save_move_retirement(
+                        state.record.conversation_id, uncertain=False
+                    )
+                if source is not None:
+                    source.validate_current()
+                operation()
+            except Exception as error:
+                detail = dict(error.detail) if isinstance(error, PlannerError) else {}
+                detail.update(retirement_started=True, source_retired=True)
+                raise PlannerError(
+                    ErrorCode.validation,
+                    f"source retired but locale was not changed: {error}",
+                    detail,
+                ) from error
+            return MoveRetirementResult(MoveRetirementDisposition.retired)
+
+        if state is None:
+            return await retire_and_commit()
+        async with state.lock:
+            return await retire_and_commit()
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self._require_runtime_ownership()
@@ -958,6 +1076,10 @@ class SqliteProcessConversationSystem:
         self, turn: ConversationTurnReference, recipient: Principal
     ) -> None:
         """Credit an accepted explicit send to the source turn, without another row."""
+        from planner.executor.native_messages import native_reply_was_composed
+
+        if native_reply_was_composed() is False:
+            return
         state = await self._conversation_state(turn.conversation_id)
         if state is None:
             return
@@ -991,25 +1113,55 @@ class SqliteProcessConversationSystem:
         to again — it would sit there until the idle sweep noticed. Whether a turn was
         running makes no difference to that.
 
-        The whole of it happens under the conversation's lock, including the cancel — the
-        one place wire I/O is held under it, because being one act is the point. A queue
-        that could take on a message between the turn dying and the queue emptying would
-        leave something running after a kill, which is what a kill is for stopping.
+        Queue disposition and local ending hold the conversation lock. The ending
+        phase owns remote cancellation while the lock is free, so final native events
+        can commit before cancellation settles. Local cancellation retains the lock.
+        Remote retirement has its own task and quarantine fence, and its caller joins
+        after it releases the lock.
         """
         state = await self._conversation_state(conversation_id)
         if state is None:
             return
         state.last_touched_monotonic = self._monotonic_now()
+        if await self._kill_initial_delivery(state):
+            return
         await self._acquire_settled(state)
         try:
             await self._discard_held_prompts(state)
             running = state.running_turn
+            if running is not None:
+                await self._revoke_executor_turn_asks(state, running)
             try:
                 cancel_fact = None
                 child = state.child
+                if child is None and state.executor_child_reference is not None:
+                    from planner.executor.remote import RemoteBackendChildFactory
+                    from planner.executor.routing import LocaleBackendChildFactory
+                    from planner.executor.store import ExecutorStore
+
+                    reference = state.executor_child_reference
+                    factory = self._backend_child_factories[state.record.backend_key]
+                    if ExecutorStore(self._store._db_path).child_assignment(reference) is not None:
+                        if isinstance(factory, LocaleBackendChildFactory):
+                            child = factory.recover_remote_child(reference)
+                        elif isinstance(factory, RemoteBackendChildFactory):
+                            child = factory.recover(reference)
+                        if child is not None:
+                            state.child = child
                 if child is not None:
+                    from planner.executor.remote import RemoteBackendChild
+
                     if running is not None:
-                        cancel_fact = await self._cancel_child_turn(state, child)
+                        if isinstance(child, RemoteBackendChild):
+                            self._set_phase(state, _ConversationPhase.ending)
+                            running.ending_is_the_cores = True
+                            state.lock.release()
+                            try:
+                                cancel_fact = await self._cancel_child_turn(state, child)
+                            finally:
+                                await state.lock.acquire()
+                        else:
+                            cancel_fact = await self._cancel_child_turn(state, child)
                     if state.child is child:
                         await self._discard_child(state, child)
                 if running is not None:
@@ -1024,6 +1176,423 @@ class SqliteProcessConversationSystem:
                 self._settle_phase(state)
         finally:
             state.lock.release()
+        cleanup = state.initial_shutdown_task
+        if cleanup is not None and not cleanup.done():
+            await asyncio.shield(cleanup)
+
+    async def _kill_initial_delivery(self, state: _ConversationState) -> bool:
+        """Own local disposition without waiting for an unacknowledged native operation."""
+        from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
+        from planner.executor.routing import LocaleBackendChildFactory
+        from planner.executor.store import ExecutorStore
+
+        async with state.lock:
+            reservation = state.reserved_turn
+            if reservation is None and state.running_turn is not None:
+                return False
+            if reservation is None:
+                # Older VPS state retained intent and assignment, but no runtime row.
+                facts = await self._store.lifecycle_facts(state.record.conversation_id)
+                intents = [
+                    fact
+                    for fact in facts
+                    if fact.kind is LifecycleKind.turn and fact.status is LifecycleStatus.intent
+                ]
+                if (
+                    state.child_is_quarantined
+                    and state.executor_child_reference is not None
+                    and state.last_ended_turn_token is not None
+                ):
+                    if (
+                        state.initial_shutdown_task is not None
+                        and not state.initial_shutdown_task.done()
+                    ):
+                        return True
+                    child = state.child
+                    factory = self._backend_child_factories[state.record.backend_key]
+                    reference = state.executor_child_reference
+                    if (
+                        child is None
+                        and ExecutorStore(self._store._db_path).child_assignment(reference)
+                        is not None
+                    ):
+                        if isinstance(factory, LocaleBackendChildFactory):
+                            child = factory.recover_remote_child(reference)
+                        elif isinstance(factory, RemoteBackendChildFactory):
+                            child = factory.recover(reference)
+                        if child is not None:
+                            state.child = child
+                    await self._discard_held_prompts(state)
+                    if isinstance(child, RemoteBackendChild):
+                        self._schedule_remote_retirement(state, child)
+                    return True
+                if not intents:
+                    if reservation is None:
+                        if (
+                            state.initial_shutdown_task is not None
+                            and not state.initial_shutdown_task.done()
+                            and state.child_is_quarantined
+                        ):
+                            await self._discard_held_prompts(state)
+                            return True
+                        return False
+                if reservation is not None:
+                    assignments: tuple[ChildReference, ...]
+                    assignments = (state.executor_child_reference,)
+                else:
+                    assignments = ExecutorStore(self._store._db_path).open_conversation_children(
+                        state.record.conversation_id
+                    )
+                if not assignments:
+                    return False
+                state.child_is_quarantined = True
+                if len(assignments) != 1 or (reservation is None and len(intents) != 1):
+                    # Conflicting old identities authorize no stop and no new execution.
+                    await self._discard_held_prompts(state)
+                    return True
+                state.executor_child_reference = assignments[0]
+                if reservation is None:
+                    reservation = _ReservedTurn(
+                        TurnToken(state.record.conversation_id, intents[0].turn_number),
+                        asyncio.Event(),
+                    )
+                state.reserved_turn = reservation
+            if reservation.shutdown_owned and reservation.shutdown_fate is not None:
+                await self._discard_held_prompts(state)
+                return True
+            child = state.child
+            if not isinstance(child, RemoteBackendChild):
+                factory = self._backend_child_factories[state.record.backend_key]
+                if not isinstance(factory, (RemoteBackendChildFactory, LocaleBackendChildFactory)):
+                    return False
+                if state.executor_child_reference is not None:
+                    reference = state.executor_child_reference
+                    if ExecutorStore(self._store._db_path).child_assignment(reference) is None:
+                        return True
+                    child = (
+                        factory.recover_remote_child(reference)
+                        if isinstance(factory, LocaleBackendChildFactory)
+                        else factory.recover(reference)
+                    )
+                    state.child = child
+            # Prompt acceptance can finish through the ordinary factual delivery path.
+            if (
+                not reservation.shutdown_owned
+                and isinstance(child, RemoteBackendChild)
+                and child.prompt_accepted
+            ):
+                return False
+            reservation.shutdown_owned = True
+            suppressed = (
+                child.cancel_initial_delivery() if isinstance(child, RemoteBackendChild) else True
+            )
+            old_facts = await self._store.lifecycle_facts(state.record.conversation_id)
+            previous_prompt = next(
+                (
+                    fact
+                    for fact in old_facts
+                    if fact.kind is LifecycleKind.attempt
+                    and fact.identity == f"prompt:{reservation.token.turn_number}"
+                ),
+                None,
+            )
+            if previous_prompt is not None and previous_prompt.status is LifecycleStatus.suppressed:
+                suppressed = True
+            state.child_is_quarantined = child is not None
+            state.executor_delivery_uncertain = not suppressed
+            self._set_phase(state, _ConversationPhase.ending)
+            await self._discard_held_prompts(state)
+            lifecycle = (
+                _turn_fact(reservation.token, LifecycleStatus.unavailable),
+                _prompt_fact(
+                    reservation.token,
+                    LifecycleStatus.suppressed if suppressed else LifecycleStatus.unknown,
+                ),
+            )
+            metadata = self._initial_shutdown_metadata(state, reservation)
+            payloads: list[ConversationEventPayload] = []
+            if reservation.messages:
+                for message in reservation.messages:
+                    payload: ConversationEventPayload
+                    if suppressed:
+                        payload = PromptDiscardedEventPayload(
+                            content=message.content,
+                            sender_label=message.sender_label,
+                            sender_message_id=message.sender_message_id,
+                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                            sender=message.sender,
+                            recipient=message.recipient,
+                            recovery_references=message.recovery_references,
+                            suppression_reason="conversation_killed",
+                        )
+                    else:
+                        payload = PromptDeliveryUncertainEventPayload(
+                            content=message.content,
+                            sender_label=message.sender_label,
+                            mode=reservation.mode,
+                            sender_message_id=message.sender_message_id,
+                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                            sender=message.sender,
+                            recipient=message.recipient,
+                            recovery_references=message.recovery_references,
+                        )
+                    existing = (
+                        await self._store.sender_message_outcome(
+                            state.record.conversation_id, message.sender_message_id
+                        )
+                        if message.sender_message_id is not None
+                        else None
+                    )
+                    if existing is None:
+                        payloads.append(payload)
+            # One commit contains every sender envelope, including envelopes without IDs.
+            written = await self._persist(
+                state,
+                partial(
+                    self._store.append_initial_shutdown_disposition,
+                    state.record.conversation_id,
+                    tuple(payloads),
+                    lifecycle,
+                    metadata,
+                ),
+            )
+            self._take_in_written_rows(state, written)
+            reservation.shutdown_fate = (
+                PromptDeliverySuppressed("conversation_killed")
+                if suppressed
+                else PromptDeliveryUncertain()
+            )
+            state.last_ended_turn_token = reservation.token
+            state.running_turn = None
+            state.reserved_turn = None
+            self._set_phase(state, _ConversationPhase.idle)
+            reservation.resolved.set()
+            if child is not None:
+                self._configure_initial_command_recording(state, child, reservation)
+                self._schedule_remote_retirement(state, child, reservation=reservation)
+            return True
+
+    def _initial_shutdown_metadata(
+        self,
+        state: _ConversationState,
+        reservation: _ReservedTurn,
+        *,
+        source_retired: bool = False,
+    ) -> tuple[str, str, str] | None:
+        metadata = self._executor_turn_metadata(
+            state, _RunningTurn(token=reservation.token, ended=True, callbacks_revoked=True)
+        )
+        if metadata is None:
+            return None
+        runtime = json.loads(metadata[2])
+        runtime["source_retired"] = source_retired
+        return metadata[0], metadata[1], json.dumps(runtime)
+
+    def _configure_initial_command_recording(
+        self, state: _ConversationState, child: Any, reservation: _ReservedTurn
+    ) -> None:
+        from planner.executor.remote import RemoteInitialDeliveryCancelled
+
+        async def record(command: ChildCommand) -> None:
+            async with state.lock:
+                if reservation.shutdown_owned and command.operation is not ChildOperation.stop:
+                    raise RemoteInitialDeliveryCancelled()
+                if state.executor_child_reference != child.reference:
+                    raise RemoteInitialDeliveryCancelled()
+                if command.operation is ChildOperation.write_prompt:
+                    if (
+                        state.reserved_turn is not reservation
+                        or command.turn != reservation.token
+                        or (
+                            state.last_ended_turn_token is not None
+                            and state.last_ended_turn_token.turn_number
+                            >= reservation.token.turn_number
+                        )
+                    ):
+                        raise RemoteInitialDeliveryCancelled()
+                    state.executor_initial_commands = tuple(
+                        earlier
+                        for earlier in state.executor_initial_commands
+                        if earlier.operation is ChildOperation.start
+                    )
+                state.executor_initial_commands += (command,)
+                metadata = (
+                    self._initial_shutdown_metadata(state, reservation)
+                    if reservation.shutdown_owned
+                    else self._executor_turn_metadata(state, _RunningTurn(token=reservation.token))
+                )
+                if not reservation.shutdown_owned and metadata is not None:
+                    runtime = json.loads(metadata[2])
+                    # Intent is not native acceptance. A crash at any preparation or
+                    # frame boundary restores uncertainty, never a fabricated run.
+                    runtime["delivery_uncertain"] = True
+                    metadata = metadata[0], metadata[1], json.dumps(runtime)
+                await self._persist(
+                    state,
+                    partial(
+                        self._store.transition_lifecycle,
+                        state.record.conversation_id,
+                        (),
+                        executor_turn=metadata,
+                    ),
+                )
+
+        child.record_command = record
+
+    def _schedule_remote_retirement(
+        self,
+        state: _ConversationState,
+        child: Any,
+        *,
+        reservation: _ReservedTurn | None = None,
+        nonadmitted_turn: TurnToken | None = None,
+    ) -> asyncio.Task[bool]:
+        """Fence the captured identity before its cleanup owner yields the lock."""
+        reference: ChildReference = child.reference
+        if nonadmitted_turn is not None:
+            # Only the owner of this exact refused write may remove its circular
+            # reservation dependency. The reservation itself remains unresolved.
+            if (
+                state.child is not child
+                or state.executor_child_reference != reference
+                or state.reserved_turn is not reservation
+                or (
+                    reservation is not None
+                    and (reservation.token != nonadmitted_turn or reservation.shutdown_owned)
+                )
+                or (
+                    state.last_ended_turn_token is not None
+                    and state.last_ended_turn_token.turn_number >= nonadmitted_turn.turn_number
+                )
+            ):
+                raise ValueError("Nonadmission does not own this child and turn")
+        existing = state.initial_shutdown_task
+        if existing is not None and not existing.done():
+            if state.initial_shutdown_child is not child:
+                raise ValueError("Pending retirement belongs to another child")
+            return existing
+        state.child_is_quarantined = True
+        token = next(
+            (
+                command.turn
+                for command in reversed(
+                    state.executor_initial_commands + tuple(child.initial_commands)
+                )
+                if command.child == child.reference and command.turn is not None
+            ),
+            None,
+        )
+        if token is None:
+            token = (
+                reservation.token
+                if reservation is not None
+                else state.reserved_turn.token
+                if state.reserved_turn is not None and child.initial_commands
+                else state.running_turn.token
+                if state.running_turn is not None
+                else state.last_ended_turn_token
+            )
+        pending = state.reserved_turn
+        dependency = pending if pending is not None and pending.token == token else None
+        if dependency is not None and dependency.token == nonadmitted_turn:
+            dependency = None
+        if token is None:
+            # Without original metadata there is no identity-safe retirement commit.
+            async def unconfirmed() -> bool:
+                return False
+
+            task = asyncio.create_task(unconfirmed())
+        else:
+            snapshot = self._executor_turn_metadata(
+                state, _RunningTurn(token=token, ended=True, callbacks_revoked=True)
+            )
+            if snapshot is not None:
+                cleanup_runtime = json.loads(snapshot[2])
+                cleanup_runtime["source_retired"] = False
+                snapshot = (snapshot[0], snapshot[1], json.dumps(cleanup_runtime))
+
+            async def record_stop(command: ChildCommand) -> None:
+                async with state.lock:
+                    if snapshot is None or command.child != child.reference:
+                        raise ValueError("Retirement lacks exact child metadata")
+                    from planner.executor.codec import encode_value
+
+                    runtime = json.loads(snapshot[2])
+                    commands = tuple(
+                        earlier
+                        for earlier in state.executor_initial_commands
+                        if earlier.child == child.reference
+                    ) + (command,)
+                    runtime["initial_commands"] = encode_value(commands)
+                    if state.executor_child_reference == child.reference:
+                        state.executor_initial_commands = commands
+                    await self._persist(
+                        state,
+                        partial(
+                            self._store.transition_lifecycle,
+                            state.record.conversation_id,
+                            (),
+                            executor_turn=(snapshot[0], snapshot[1], json.dumps(runtime)),
+                        ),
+                    )
+
+            child.record_command = record_stop
+            task = asyncio.create_task(self._stop_initial_child(state, child, dependency, snapshot))
+        state.initial_shutdown_task = task
+        state.initial_shutdown_child = child
+        state.settlement_tasks.add(task)
+        task.add_done_callback(state.settlement_tasks.discard)
+        return task
+
+    async def _stop_initial_child(
+        self,
+        state: _ConversationState,
+        child: Any,
+        dependency: _ReservedTurn | None,
+        metadata: tuple[str, str, str] | None,
+    ) -> bool:
+        from planner.executor.store import ExecutorStore
+
+        reference = child.reference
+        if dependency is not None:
+            await dependency.resolved.wait()
+        try:
+            await child.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("Remote child termination remains unconfirmed")
+            return False
+        async with state.lock:
+            if metadata is None or ExecutorStore(self._store._db_path).cleanup_evidence_uncertain(
+                reference
+            ):
+                return False
+            runtime = json.loads(metadata[2])
+            if state.executor_child_reference == reference:
+                from planner.executor.codec import encode_value
+
+                runtime["initial_commands"] = encode_value(state.executor_initial_commands)
+            runtime["source_retired"] = True
+            retired = await self._persist(
+                state,
+                partial(
+                    self._store.transition_lifecycle,
+                    state.record.conversation_id,
+                    (),
+                    executor_turn=(metadata[0], metadata[1], json.dumps(runtime)),
+                    retired_child=reference,
+                ),
+            )
+            if retired is False:
+                return False
+            child.retire_local_reference()
+            if state.child is child:
+                state.child = None
+            if state.executor_child_reference == reference:
+                state.executor_child_reference = None
+                state.child_is_quarantined = False
+            return True
 
     async def is_running(self, conversation_id: str) -> bool:
         """Whether a turn is running right now.
@@ -1085,6 +1654,7 @@ class SqliteProcessConversationSystem:
                     sender=held.sender,
                     recipient=held.recipient,
                     queue_reason=held.queue_reason,
+                    delivery_uncertain=held.delivery_uncertain,
                 )
                 for held in state.held_prompts
             )
@@ -1122,6 +1692,7 @@ class SqliteProcessConversationSystem:
         steer_turn_token: TurnToken | None = None
         immediate_refusal: PromptDeliveryRefusalReason | None = None
         immediate_fate: HeldPromptPromotionFate | None = None
+        durable_held = False
         try:
             position = next(
                 (
@@ -1134,7 +1705,11 @@ class SqliteProcessConversationSystem:
             if position is None:
                 return None
             held = state.held_prompts[position]
-            if state.child_is_quarantined:
+            if held.delivery_uncertain:
+                return PromptDeliveryUncertain()
+            if state.child_is_quarantined or any(
+                candidate.delivery_uncertain for candidate in state.held_prompts
+            ):
                 return PromptDeliveryQueued(queue_position=position + 1)
 
             if mode is HeldPromptPromotionMode.send_now:
@@ -1147,13 +1722,13 @@ class SqliteProcessConversationSystem:
                     except BaseException:
                         self._settle_phase(state)
                         raise
+                durable_held = await self._begin_held_deliveries(state, (held,))
                 del state.held_prompts[position]
-                self._begin_held_deliveries(state, (held,))
                 self._publish_held_prompts_changed(state)
                 reservation = await self._reserve_turn(state)
             else:
+                durable_held = await self._begin_held_deliveries(state, (held,))
                 del state.held_prompts[position]
-                self._begin_held_deliveries(state, (held,))
                 self._publish_held_prompts_changed(state)
                 if not backend_supports_steer(state.record.backend_key):
                     immediate_refusal = PromptDeliveryRefusalReason.backend_cannot_steer
@@ -1226,9 +1801,12 @@ class SqliteProcessConversationSystem:
                     reply_senders=reply_senders,
                 )
             except BaseException:
-                self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
                 async with state.lock:
-                    self._settle_held_deliveries(state, (held,))
+                    if durable_held:
+                        self._quarantine_uncertain_held_batch(state, (held,))
+                    else:
+                        self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+                        self._settle_held_deliveries(state, (held,))
                 raise
             if delivery.suppression_reason is not None:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -1300,7 +1878,7 @@ class SqliteProcessConversationSystem:
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
-                held.content,
+                self._with_native_worker_context(state, steer_child, held.content),
                 (
                     (held.sender,)
                     if held.reply_requested
@@ -1321,6 +1899,9 @@ class SqliteProcessConversationSystem:
             assert barrier is not None
             state.steer_settlements.discard(barrier)
             barrier.set()
+            if durable_held:
+                async with state.lock:
+                    self._quarantine_uncertain_held_batch(state, (held,))
             raise
         except Exception as error:
             # An unexpected adapter fault proves neither acceptance nor refusal.
@@ -1348,22 +1929,23 @@ class SqliteProcessConversationSystem:
             barrier.set()
             async with state.lock:
                 self._settle_held_deliveries(state, (held,))
-            return await self._queue(
-                state,
-                held.content,
-                held.sender_label,
-                held.model_change,
-                held.reasoning_effort_change,
-                held.sender_message_id,
-                held.sent_at_unix_milliseconds,
-                held.sender,
-                held.recipient,
-                held.reply_requested,
-                held.recovery_references,
-                held.owner_read_through_sequence,
-                queue_reason=PromptQueueReason.command_needs_its_own_turn,
-                acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
-            )
+                return self._hold_prompt(
+                    state,
+                    content=held.content,
+                    sender_label=held.sender_label,
+                    model_change=held.model_change,
+                    reasoning_effort_change=held.reasoning_effort_change,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                    sender=held.sender,
+                    recipient=held.recipient,
+                    reply_requested=held.reply_requested,
+                    recovery_references=held.recovery_references,
+                    owner_read_through_sequence=held.owner_read_through_sequence,
+                    queue_reason=PromptQueueReason.command_needs_its_own_turn,
+                    acknowledge_owner_on_failure=held.acknowledge_owner_on_failure,
+                    known_safe_requeue=True,
+                )
 
         async with state.lock:
             fate = await self._record_steer_outcome(
@@ -1415,6 +1997,8 @@ class SqliteProcessConversationSystem:
             for position, held in enumerate(state.held_prompts):
                 if held.held_prompt_id != held_prompt_id:
                     continue
+                if held.delivery_uncertain:
+                    return False
                 # Out of the queue before its row is written, so a write that falls over
                 # leaves the message discarded rather than delivered.
                 del state.held_prompts[position]
@@ -1590,28 +2174,10 @@ class SqliteProcessConversationSystem:
             questions = running.pending_user_input_questions.get(request_id)
             if questions is None:
                 return False
-            question_ids = tuple(question.question_id for question in questions)
-            answers_by_question_id = {answer.question_id: answer for answer in answers}
-            if len(answers_by_question_id) != len(answers) or set(answers_by_question_id) != set(
-                question_ids
-            ):
-                return False
-            ordered_answers = tuple(
-                answers_by_question_id[question_id] for question_id in question_ids
-            )
-            if any(
-                not answer.answers
-                or any(not value for value in answer.answers)
-                or (not question.multi_select and len(answer.answers) != 1)
-                or (
-                    not question.allow_other
-                    and any(
-                        value not in {option.label for option in question.options}
-                        for value in answer.answers
-                    )
-                )
-                for question, answer in zip(questions, ordered_answers, strict=True)
-            ):
+            from planner.conversation.logic.user_input import ordered_user_input_answers
+
+            ordered_answers = ordered_user_input_answers(questions, answers)
+            if ordered_answers is None:
                 return False
             provider_id = running.user_input_provider_ids[request_id]
             request_fact = LifecycleFact(
@@ -1748,10 +2314,16 @@ class SqliteProcessConversationSystem:
             for state in states:
                 child = state.child
                 state.child = None
-                if child is not None:
+                from planner.executor.remote import RemoteBackendChild
+
+                if child is not None and not isinstance(child, RemoteBackendChild):
                     try:
-                        await self._stop_child(state, child)
+                        if not await self._stop_child(state, child):
+                            state.child = child
+                            state.child_is_quarantined = True
                     except asyncio.CancelledError:
+                        state.child = child
+                        state.child_is_quarantined = True
                         # An adapter can abort its own stop. No local callback or writer
                         # survives this cleanup, but provider termination is unproven.
                         LOGGER.error(
@@ -1904,39 +2476,70 @@ class SqliteProcessConversationSystem:
         owner_read_through_sequence: int | None,
         acknowledge_owner_on_failure: bool = True,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
+        known_safe_requeue: bool = False,
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
-        state.held_prompts.append(
-            _HeldPrompt(
-                held_prompt_id=f"held_{uuid4().hex}",
-                content=content,
-                sender_label=sender_label,
-                model_change=model_change,
-                reasoning_effort_change=reasoning_effort_change,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                snapshot_sent_at_unix_milliseconds=(
-                    sent_at_unix_milliseconds
-                    if sent_at_unix_milliseconds is not None
-                    else int(self._unix_time_now() * 1000)
-                ),
-                sender=sender,
-                recipient=recipient,
-                reply_requested=reply_requested,
-                recovery_references=recovery_references,
-                queue_reason=queue_reason,
-                owner_read_through_sequence=owner_read_through_sequence,
-                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
-            )
+        held = _HeldPrompt(
+            held_prompt_id=f"held_{uuid4().hex}",
+            content=content,
+            sender_label=sender_label,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            snapshot_sent_at_unix_milliseconds=(
+                sent_at_unix_milliseconds
+                if sent_at_unix_milliseconds is not None
+                else int(self._unix_time_now() * 1000)
+            ),
+            sender=sender,
+            recipient=recipient,
+            reply_requested=reply_requested,
+            recovery_references=recovery_references,
+            queue_reason=queue_reason,
+            owner_read_through_sequence=owner_read_through_sequence,
+            acknowledge_owner_on_failure=acknowledge_owner_on_failure,
         )
+        from planner.executor.native_messages import record_native_held_prompt
+
+        if known_safe_requeue:
+            self._store.requeue_executor_held_prompt(state.record.conversation_id, held)
+        else:
+            record_native_held_prompt(
+                state.record.conversation_id, held, len(state.held_prompts) + 1
+            )
+        state.held_prompts.append(held)
         self._publish_held_prompts_changed(state)
         return PromptDeliveryQueued(queue_position=len(state.held_prompts))
 
-    @staticmethod
-    def _begin_held_deliveries(
-        state: _ConversationState, held_prompts: tuple[_HeldPrompt, ...]
-    ) -> None:
+    async def _begin_held_deliveries(
+        self, state: _ConversationState, held_prompts: tuple[_HeldPrompt, ...]
+    ) -> bool:
         """Keep sender identities visible after dequeue and before their durable outcome."""
+        try:
+            durable = await self._persist(
+                state,
+                partial(
+                    self._store.mark_executor_held_dispatching,
+                    state.record.conversation_id,
+                    tuple(
+                        held.sender_message_id
+                        for held in held_prompts
+                        if held.sender_message_id is not None
+                    ),
+                ),
+            )
+        except BaseException:
+            # Cancellation can outlive the shielded marker write. No native call
+            # starts here; retain the still-visible batch behind an honest barrier.
+            ids = {held.held_prompt_id for held in held_prompts}
+            for position, held in enumerate(state.held_prompts):
+                if held.held_prompt_id in ids:
+                    state.held_prompts[position] = replace(held, delivery_uncertain=True)
+            state.child_is_quarantined = True
+            self._settle_phase(state)
+            self._publish_held_prompts_changed(state)
+            raise
         for held in held_prompts:
             sender_message_id = held.sender_message_id
             if sender_message_id is None:
@@ -1950,6 +2553,8 @@ class SqliteProcessConversationSystem:
                 sender=held.sender,
                 recipient=held.recipient,
             )
+
+        return durable
 
     @staticmethod
     def _settle_held_deliveries(
@@ -1999,7 +2604,9 @@ class SqliteProcessConversationSystem:
         try:
             try:
                 running = state.running_turn
-                if state.child_is_quarantined:
+                if state.child_is_quarantined or any(
+                    held.delivery_uncertain for held in state.held_prompts
+                ):
                     return self._hold_prompt(
                         state,
                         content=content,
@@ -2162,6 +2769,7 @@ class SqliteProcessConversationSystem:
                 )
             elif (
                 state.child_is_quarantined
+                or any(held.delivery_uncertain for held in state.held_prompts)
                 or running is None
                 or child is None
                 or not backend_supports_steer(state.record.backend_key)
@@ -2255,7 +2863,7 @@ class SqliteProcessConversationSystem:
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
-                content,
+                self._with_native_worker_context(state, child, content),
                 (
                     (sender,)
                     if reply_requested and sender is not None and recipient is not None
@@ -2371,8 +2979,14 @@ class SqliteProcessConversationSystem:
             async with state.lock:
                 child = state.child
                 if child is not None:
-                    state.child = None
-                    termination_confirmed = await self._stop_child(state, child)
+                    from planner.executor.remote import RemoteBackendChild
+
+                    if isinstance(child, RemoteBackendChild):
+                        self._schedule_remote_retirement(state, child)
+                        termination_confirmed = False
+                    else:
+                        state.child = None
+                        termination_confirmed = await self._stop_child(state, child)
                     if not termination_confirmed:
                         # Keep the uncertain process attached so no replacement can run
                         # beside it. The held line stays intact until an operator or a
@@ -2415,6 +3029,25 @@ class SqliteProcessConversationSystem:
         owner_read_through_sequence: int | None = None,
         acknowledge_owner_on_failure: bool = True,
     ) -> PromptDeliveryFate:
+        reservation.messages = (
+            _HeldPrompt(
+                held_prompt_id="",
+                content=content,
+                sender_label=sender_label,
+                model_change=model_change,
+                reasoning_effort_change=reasoning_effort_change,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                snapshot_sent_at_unix_milliseconds=0,
+                sender=sender,
+                recipient=recipient,
+                reply_requested=reply_requested,
+                recovery_references=recovery_references,
+                queue_reason=PromptQueueReason.steer_refused,
+                owner_read_through_sequence=owner_read_through_sequence,
+                acknowledge_owner_on_failure=acknowledge_owner_on_failure,
+            ),
+        )
         try:
             reservation.automatic_notice = await self._persist(
                 state,
@@ -2460,7 +3093,50 @@ class SqliteProcessConversationSystem:
                 ),
             )
         except asyncio.CancelledError:
+            if reservation.shutdown_owned:
+                raise
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+            raise
+        except Exception as delivery_error:
+            from planner.executor.remote import RemoteCommandUncertain
+
+            if reservation.shutdown_owned:
+                await reservation.resolved.wait()
+                assert reservation.shutdown_fate is not None
+                return reservation.shutdown_fate
+            if isinstance(delivery_error, RemoteCommandUncertain):
+                async with state.lock:
+                    state.child_is_quarantined = True
+                    state.executor_delivery_uncertain = True
+                    pending = _RunningTurn(
+                        token=reservation.token,
+                        automatic_compaction=reservation.automatic_compaction,
+                        automatic_notice=reservation.automatic_notice,
+                    )
+                    metadata = self._executor_turn_metadata(state, pending)
+                    if metadata is not None:
+                        runtime = json.loads(metadata[2])
+                        runtime["delivery_uncertain"] = True
+                        metadata = (metadata[0], metadata[1], json.dumps(runtime))
+                    await self._append_event(
+                        state,
+                        PromptDeliveryUncertainEventPayload(
+                            content=content,
+                            sender_label=sender_label,
+                            mode=mode,
+                            sender_message_id=sender_message_id,
+                            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                            sender=sender,
+                            recipient=recipient,
+                        ),
+                        executor_turn=metadata,
+                    )
+                # Preserve the unresolved reservation and quarantine; record the
+                # unknown delivery without inventing refusal or native execution.
+                return PromptDeliveryUncertain()
+            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+            if drain_after_delivery_exception:
+                await self._drain_held_prompts(state)
             raise
         except BaseException:
             # The text reached no backend and this send is over, so the conversation is
@@ -2471,11 +3147,19 @@ class SqliteProcessConversationSystem:
                 await self._drain_held_prompts(state)
             raise
 
+        if reservation.shutdown_owned:
+            await reservation.resolved.wait()
+            assert reservation.shutdown_fate is not None
+            return reservation.shutdown_fate
         if delivery.suppression_reason is not None:
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
             await self._drain_held_prompts(state)
             return PromptDeliverySuppressed(delivery.suppression_reason)
         reservation.automatic_notice = delivery.automatic_notice
+        if reservation.shutdown_owned:
+            await reservation.resolved.wait()
+            assert reservation.shutdown_fate is not None
+            return reservation.shutdown_fate
         started = await self._finalize_delivery(
             state,
             reservation,
@@ -2501,6 +3185,10 @@ class SqliteProcessConversationSystem:
         )
         if started:
             return PromptDeliveryStarted()
+        if reservation.shutdown_owned:
+            await reservation.resolved.wait()
+            assert reservation.shutdown_fate is not None
+            return reservation.shutdown_fate
         refusal = delivery.refusal_reason
         assert refusal is not None
         # The agent is free and this message is not going anywhere, so whatever was waiting
@@ -2565,9 +3253,53 @@ class SqliteProcessConversationSystem:
     async def _deliver_prompt(
         self, state: _ConversationState, turn_token: TurnToken, **kwargs: Any
     ) -> _PromptDeliveryAttempt:
+        reservation = state.reserved_turn
+        if reservation is not None and reservation.token == turn_token:
+            reservation.messages = kwargs.get("messages", ())
+            reservation.mode = kwargs["mode"]
+            if reservation.shutdown_owned:
+                from planner.executor.remote import RemoteInitialDeliveryCancelled
+
+                raise RemoteInitialDeliveryCancelled()
         try:
-            return await self._deliver_prompt_unsettled(state, turn_token, **kwargs)
+            if reservation is None:
+                return await self._deliver_prompt_unsettled(state, turn_token, **kwargs)
+
+            async def deliver_reserved_prompt() -> _PromptDeliveryAttempt:
+                from planner.executor.remote import RemoteInitialDeliveryCancelled
+
+                try:
+                    return await self._deliver_prompt_unsettled(state, turn_token, **kwargs)
+                except RemoteInitialDeliveryCancelled:
+                    if not reservation.shutdown_owned:
+                        raise
+                    # The exact reservation already owns its durable disposition.
+                    # Its old preparation can finish without failing cleanup.
+                    return _PromptDeliveryAttempt(suppression_reason="conversation_killed")
+
+            delivery = asyncio.create_task(deliver_reserved_prompt())
+            state.settlement_tasks.add(delivery)
+
+            def settled(task: asyncio.Task[_PromptDeliveryAttempt]) -> None:
+                state.settlement_tasks.discard(task)
+                if not task.cancelled():
+                    task.exception()
+
+            delivery.add_done_callback(settled)
+            shutdown = asyncio.create_task(reservation.resolved.wait())
+            try:
+                await asyncio.wait((delivery, shutdown), return_when=asyncio.FIRST_COMPLETED)
+                if reservation.shutdown_owned:
+                    from planner.executor.remote import RemoteInitialDeliveryCancelled
+
+                    raise RemoteInitialDeliveryCancelled()
+                return await delivery
+            finally:
+                shutdown.cancel()
+                await asyncio.gather(shutdown, return_exceptions=True)
         except BaseException:
+            if reservation is not None and reservation.shutdown_owned:
+                raise
 
             async def settle_recovery_exception() -> None:
                 messages = tuple(
@@ -2672,6 +3404,13 @@ class SqliteProcessConversationSystem:
                     resolution.catalogue_warning,
                 )
         try:
+            if (
+                state.last_ended_turn_token is not None
+                and state.last_ended_turn_token.turn_number >= turn_token.turn_number
+            ):
+                from planner.executor.remote import RemoteInitialDeliveryCancelled
+
+                raise RemoteInitialDeliveryCancelled()
             child = await self._ensure_child(
                 state, model=model_change, reasoning_effort=reasoning_effort_change
             )
@@ -2680,6 +3419,10 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
+        from planner.executor.remote import RemoteBackendChild
+
+        if isinstance(child, RemoteBackendChild) and state.reserved_turn is not None:
+            self._configure_initial_command_recording(state, child, state.reserved_turn)
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -2703,9 +3446,20 @@ class SqliteProcessConversationSystem:
             composed_content = prefix_message_content_text(
                 composed_content, interruption_notice, "\n\n"
             )
-        composed = with_authenticated_reply_directive(composed_content, reply_senders)
+        composed = with_authenticated_reply_directive(
+            self._with_native_worker_context(state, child, composed_content), reply_senders
+        )
+        if (
+            state.last_ended_turn_token is not None
+            and state.last_ended_turn_token.turn_number >= turn_token.turn_number
+        ):
+            from planner.executor.remote import RemoteInitialDeliveryCancelled
+
+            raise RemoteInitialDeliveryCancelled()
+        attempted_child = child
+        attempted_reservation = state.reserved_turn
         try:
-            accepted = await child.write_prompt(
+            accepted = await attempted_child.write_prompt(
                 turn_token,
                 composed,
                 sender_content=content,
@@ -2722,6 +3476,8 @@ class SqliteProcessConversationSystem:
             rebound = await self._rebind_and_write_prompt(
                 state,
                 turn_token,
+                refused_child=attempted_child,
+                reservation=attempted_reservation,
                 content=composed,
                 sender_content=content,
                 sender_label=sender_label,
@@ -2752,6 +3508,8 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         turn_token: TurnToken,
         *,
+        refused_child: BackendChild,
+        reservation: _ReservedTurn | None,
         content: MessageContent,
         sender_content: MessageContent,
         sender_label: str,
@@ -2776,12 +3534,50 @@ class SqliteProcessConversationSystem:
         saying two different things about what it is running on. Dropping it costs one
         lazy respawn and keeps the record the only answer.
         """
-        old_child = state.child
-        state.child = None
-        if old_child is not None:
-            if not await self._stop_child(state, old_child):
-                state.child = old_child
+        from planner.executor.remote import RemoteBackendChild, RemoteInitialDeliveryCancelled
+
+        def check_delivery_owner() -> None:
+            if (
+                self._shutting_down
+                or state.reserved_turn is not reservation
+                or (
+                    reservation is not None
+                    and (reservation.token != turn_token or reservation.shutdown_owned)
+                )
+                or (
+                    state.last_ended_turn_token is not None
+                    and state.last_ended_turn_token.turn_number >= turn_token.turn_number
+                )
+            ):
+                raise RemoteInitialDeliveryCancelled()
+
+        old_child = refused_child
+        async with state.lock:
+            check_delivery_owner()
+            if state.child is not old_child:
+                raise RemoteInitialDeliveryCancelled()
+            if isinstance(old_child, RemoteBackendChild):
+                if state.executor_child_reference != old_child.reference:
+                    raise RemoteInitialDeliveryCancelled()
+                cleanup = self._schedule_remote_retirement(
+                    state, old_child, reservation=reservation, nonadmitted_turn=turn_token
+                )
+            else:
                 state.child_is_quarantined = True
+                cleanup = None
+        if cleanup is not None:
+            if not await asyncio.shield(cleanup):
+                return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
+        else:
+            if not await self._stop_child(state, old_child):
+                return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
+            async with state.lock:
+                if state.child is old_child:
+                    state.child = None
+                    state.child_is_quarantined = False
+        async with state.lock:
+            check_delivery_owner()
+            if state.child is not None or state.child_is_quarantined:
                 return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
         try:
             child = await self._ensure_child(
@@ -2791,6 +3587,10 @@ class SqliteProcessConversationSystem:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
+        async with state.lock:
+            check_delivery_owner()
+            if isinstance(child, RemoteBackendChild) and reservation is not None:
+                self._configure_initial_command_recording(state, child, reservation)
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -2813,8 +3613,13 @@ class SqliteProcessConversationSystem:
                     composed_content, interruption_notice, "\n\n"
                 )
             content = with_authenticated_reply_directive(
-                composed_content, self._reply_senders(messages)
+                self._with_native_worker_context(state, child, composed_content),
+                self._reply_senders(messages),
             )
+        async with state.lock:
+            check_delivery_owner()
+            if state.child is not child:
+                raise RemoteInitialDeliveryCancelled()
         try:
             accepted = await child.write_prompt(
                 turn_token,
@@ -2875,6 +3680,8 @@ class SqliteProcessConversationSystem:
             reasoning_effort_change = model_resolution.reasoning_effort
         async with state.lock:
             try:
+                if reservation.shutdown_owned:
+                    return False
                 if refusal is not None:
                     # A write error cannot prove non-admission. Preserve the public
                     # receipt mapping pending its separate contract decision.
@@ -2977,6 +3784,15 @@ class SqliteProcessConversationSystem:
                 # One transaction: the change, the conversation's new values and the
                 # prompt are one fact about one delivery, and a half-written one would
                 # leave the record saying something that never happened.
+                accepted_metadata = self._executor_turn_metadata(state, accepted_turn)
+                if accepted_metadata is not None:
+                    accepted_runtime = json.loads(accepted_metadata[2])
+                    accepted_runtime["delivery_uncertain"] = False
+                    accepted_metadata = (
+                        accepted_metadata[0],
+                        accepted_metadata[1],
+                        json.dumps(accepted_runtime),
+                    )
                 written = await self._persist(
                     state,
                     partial(
@@ -2996,6 +3812,7 @@ class SqliteProcessConversationSystem:
                             _turn_fact(reservation.token, LifecycleStatus.running),
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
+                        executor_turn=accepted_metadata,
                         composed_content_delivered=composed_content_delivered,
                         model_change=carried_change,
                         extra_prompts=tuple(
@@ -3045,6 +3862,7 @@ class SqliteProcessConversationSystem:
                         reasoning_effort=carried_change.reasoning_effort,
                     )
                 state.has_delivered_prompt = True
+                state.executor_delivery_uncertain = False
                 if self._signal is None:
                     state.running_turn = accepted_turn
                 self._set_phase(state, _ConversationPhase.running)
@@ -3144,6 +3962,7 @@ class SqliteProcessConversationSystem:
                 state.child_is_quarantined
                 or state.phase is not _ConversationPhase.idle
                 or not state.held_prompts
+                or any(held.delivery_uncertain for held in state.held_prompts)
             ):
                 return
             self._set_phase(state, _ConversationPhase.draining)
@@ -3166,13 +3985,14 @@ class SqliteProcessConversationSystem:
                         ),
                     ),
                 )
+                durable_batch = await self._begin_held_deliveries(state, batch)
                 for _ in batch:
                     state.held_prompts.popleft()
-                self._begin_held_deliveries(state, batch)
                 held = batch[0]
                 rest = batch[1:]
                 self._publish_held_prompts_changed(state)
                 reservation = await self._reserve_turn(state)
+                reservation.messages = batch
 
             try:
                 reservation.automatic_notice = await self._persist(
@@ -3205,9 +4025,20 @@ class SqliteProcessConversationSystem:
                     ),
                 )
             except asyncio.CancelledError:
+                if durable_batch:
+                    self._quarantine_uncertain_held_batch(state, batch)
+                    raise
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
                 raise
             except Exception:
+                if reservation.shutdown_owned:
+                    await reservation.resolved.wait()
+                    self._settle_held_deliveries(state, batch)
+                    return
+                if durable_batch:
+                    async with state.lock:
+                        self._quarantine_uncertain_held_batch(state, batch)
+                    return
                 # Nothing named this failure and the text reached no backend, so this one
                 # message is written down as thrown away and the drain carries on. One
                 # message nobody can deliver must not take the line down with it: before
@@ -3288,14 +4119,30 @@ class SqliteProcessConversationSystem:
             if started:
                 return
 
+    def _quarantine_uncertain_held_batch(
+        self, state: _ConversationState, batch: tuple[_HeldPrompt, ...]
+    ) -> None:
+        # The canonical dispatching marker predates the native attempt. Preserve
+        # its bytes and identity; transport loss supplies no terminal outcome.
+        state.child_is_quarantined = True
+        reservation = state.reserved_turn
+        if reservation is not None:
+            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+        self._settle_held_deliveries(state, batch)
+        for held in reversed(batch):
+            state.held_prompts.appendleft(replace(held, delivery_uncertain=True))
+        self._publish_held_prompts_changed(state)
+
     async def _discard_held_prompts(self, state: _ConversationState) -> None:
         """Throw away everything waiting, writing each one down. The lock must be held.
 
         Each message leaves the queue before its row is written, so a write that falls
         over part-way leaves the rest of the queue discarded rather than delivered.
         """
-        while state.held_prompts:
-            discarded = state.held_prompts.popleft()
+        for discarded in tuple(state.held_prompts):
+            if discarded.delivery_uncertain:
+                continue
+            state.held_prompts.remove(discarded)
             self._publish_held_prompts_changed(state)
             await self._append_event(
                 state,
@@ -3329,55 +4176,113 @@ class SqliteProcessConversationSystem:
         automatic_notice: bool = False,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
         """Record and map one steering outcome while the conversation lock is held."""
+        from planner.executor.native_messages import native_message_admission
+
+        fate: PromptDeliveryFate
         if isinstance(outcome, BackendSteerAccepted):
-            await self._append_event(
-                state,
-                PromptEventPayload(
-                    recovery_references=recovery_references,
-                    content=content,
-                    sender_label=sender_label,
-                    mode=PromptDeliveryMode.steer,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
-                ),
-                lifecycle=(
-                    () if attempt is None else (replace(attempt, status=LifecycleStatus.injected),)
-                ),
-                owner_read_through_sequence=(
-                    owner_read_through_sequence
-                    if sender is not None and sender.kind is PrincipalKind.owner
-                    else None
-                ),
-            )
-            if (
-                outcome.composed_content_delivered
-                and state.running_turn is not None
-                and state.running_turn.token == turn_token
-            ):
-                state.running_turn.automatic_notice = (
-                    state.running_turn.automatic_notice and automatic_notice
+            fate = PromptDeliveryInjected()
+        elif isinstance(outcome, BackendSteerRefused):
+            fate = PromptDeliveryRefused(outcome.refusal_reason)
+        else:
+            fate = PromptDeliveryUncertain()
+        with native_message_admission(
+            fate,
+            composed_content_delivered=getattr(outcome, "composed_content_delivered", False)
+            is True,
+        ):
+            executor_turn = None
+            current = state.running_turn
+            if current is not None and current.token == turn_token:
+                predicted = replace(current, prompt_senders=dict(current.prompt_senders))
+                if (
+                    isinstance(outcome, (BackendSteerAccepted, BackendSteerUncertain))
+                    and outcome.composed_content_delivered
+                ):
+                    predicted.automatic_notice = predicted.automatic_notice and automatic_notice
+                    if reply_requested and sender is not None:
+                        predicted.prompt_senders.setdefault(sender, None)
+                executor_turn = self._executor_turn_metadata(state, predicted)
+            if isinstance(outcome, BackendSteerAccepted):
+                await self._append_event(
+                    state,
+                    PromptEventPayload(
+                        recovery_references=recovery_references,
+                        content=content,
+                        sender_label=sender_label,
+                        mode=PromptDeliveryMode.steer,
+                        sender_message_id=sender_message_id,
+                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        sender=sender,
+                        recipient=recipient,
+                    ),
+                    executor_turn=executor_turn,
+                    lifecycle=(
+                        ()
+                        if attempt is None
+                        else (replace(attempt, status=LifecycleStatus.injected),)
+                    ),
+                    owner_read_through_sequence=(
+                        owner_read_through_sequence
+                        if sender is not None and sender.kind is PrincipalKind.owner
+                        else None
+                    ),
                 )
-                if reply_requested and sender is not None:
-                    state.running_turn.prompt_senders.setdefault(sender, None)
-            return PromptDeliveryInjected()
-        if isinstance(outcome, BackendSteerRefused):
+                if (
+                    outcome.composed_content_delivered
+                    and state.running_turn is not None
+                    and state.running_turn.token == turn_token
+                ):
+                    state.running_turn.automatic_notice = (
+                        state.running_turn.automatic_notice and automatic_notice
+                    )
+                    if reply_requested and sender is not None:
+                        state.running_turn.prompt_senders.setdefault(sender, None)
+                return PromptDeliveryInjected()
+            if isinstance(outcome, BackendSteerRefused):
+                await self._append_event(
+                    state,
+                    PromptDeliveryRefusedEventPayload(
+                        recovery_references=recovery_references,
+                        content=content,
+                        sender_label=sender_label,
+                        mode=PromptDeliveryMode.steer,
+                        refusal_reason=outcome.refusal_reason,
+                        sender_message_id=sender_message_id,
+                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        sender=sender,
+                        recipient=recipient,
+                    ),
+                    lifecycle=(
+                        ()
+                        if attempt is None
+                        else (replace(attempt, status=LifecycleStatus.refused),)
+                    ),
+                    executor_turn=executor_turn,
+                    owner_read_through_sequence=(
+                        owner_read_through_sequence
+                        if acknowledge_owner_on_failure
+                        and sender is not None
+                        and sender.kind is PrincipalKind.owner
+                        else None
+                    ),
+                )
+                return PromptDeliveryRefused(refusal_reason=outcome.refusal_reason)
+            assert isinstance(outcome, BackendSteerUncertain)
             await self._append_event(
                 state,
-                PromptDeliveryRefusedEventPayload(
+                PromptDeliveryUncertainEventPayload(
                     recovery_references=recovery_references,
                     content=content,
                     sender_label=sender_label,
                     mode=PromptDeliveryMode.steer,
-                    refusal_reason=outcome.refusal_reason,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
                 ),
+                executor_turn=executor_turn,
                 lifecycle=(
-                    () if attempt is None else (replace(attempt, status=LifecycleStatus.refused),)
+                    () if attempt is None else (replace(attempt, status=LifecycleStatus.unknown),)
                 ),
                 owner_read_through_sequence=(
                     owner_read_through_sequence
@@ -3387,44 +4292,19 @@ class SqliteProcessConversationSystem:
                     else None
                 ),
             )
-            return PromptDeliveryRefused(refusal_reason=outcome.refusal_reason)
-        assert isinstance(outcome, BackendSteerUncertain)
-        await self._append_event(
-            state,
-            PromptDeliveryUncertainEventPayload(
-                recovery_references=recovery_references,
-                content=content,
-                sender_label=sender_label,
-                mode=PromptDeliveryMode.steer,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
-            ),
-            lifecycle=(
-                () if attempt is None else (replace(attempt, status=LifecycleStatus.unknown),)
-            ),
-            owner_read_through_sequence=(
-                owner_read_through_sequence
-                if acknowledge_owner_on_failure
-                and sender is not None
-                and sender.kind is PrincipalKind.owner
-                else None
-            ),
-        )
-        if (
-            outcome.composed_content_delivered
-            and state.running_turn is not None
-            and state.running_turn.token == turn_token
-        ):
-            # The backend may have accepted the text. Treating it as part of this turn
-            # avoids a false silence marker and matches the delivery's non-retry fate.
-            state.running_turn.automatic_notice = (
-                state.running_turn.automatic_notice and automatic_notice
-            )
-            if reply_requested and sender is not None:
-                state.running_turn.prompt_senders.setdefault(sender, None)
-        return PromptDeliveryUncertain()
+            if (
+                outcome.composed_content_delivered
+                and state.running_turn is not None
+                and state.running_turn.token == turn_token
+            ):
+                # The backend may have accepted the text. Treating it as part of this turn
+                # avoids a false silence marker and matches the delivery's non-retry fate.
+                state.running_turn.automatic_notice = (
+                    state.running_turn.automatic_notice and automatic_notice
+                )
+                if reply_requested and sender is not None:
+                    state.running_turn.prompt_senders.setdefault(sender, None)
+            return PromptDeliveryUncertain()
 
     # --- turns --------------------------------------------------------------------------
 
@@ -3446,6 +4326,11 @@ class SqliteProcessConversationSystem:
         # exists for: a turn that has started and has nothing to show yet.
         state.model_thinking_shown_at_monotonic = 0.0
         state.reserved_turn = reservation
+        from planner.executor.remote import RemoteBackendChild
+
+        if isinstance(state.child, RemoteBackendChild):
+            state.child.initial_commands = []
+            state.child.prompt_accepted = False
         self._set_phase(state, _ConversationPhase.starting)
         return reservation
 
@@ -3462,10 +4347,35 @@ class SqliteProcessConversationSystem:
         when something has gone wrong in an adapter, because a reservation that is never
         resolved is a conversation nothing can use again.
         """
+        if reservation.shutdown_owned:
+            return
         if state.reserved_turn is reservation:
             state.reserved_turn = None
         self._set_phase(state, phase)
         reservation.resolved.set()
+
+    async def emit_executor_answer(
+        self, conversation_id: str, emit: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
+        """Order the bounded answer frame with durable local callback revocation.
+
+        This lock covers emission only, never a native result or application wait.
+        The emitter rechecks durable identity after its asynchronous preparation.
+        """
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return
+        async with state.lock:
+            await emit()
+
+    async def _revoke_executor_turn_asks(
+        self, state: _ConversationState, running: _RunningTurn
+    ) -> None:
+        if state.executor_child_reference is not None:
+            await self._store.revoke_executor_turn_asks(
+                state.executor_child_reference, running.token
+            )
+            running.callbacks_revoked = True
 
     async def _cancel_and_end_running_turn(
         self, state: _ConversationState, running: _RunningTurn
@@ -3480,6 +4390,7 @@ class SqliteProcessConversationSystem:
         """
         self._set_phase(state, _ConversationPhase.ending)
         running.ending_is_the_cores = True
+        await self._revoke_executor_turn_asks(state, running)
         child = state.child
         cancel_fact = None
         state.lock.release()
@@ -3513,6 +4424,7 @@ class SqliteProcessConversationSystem:
         """
         if running.ended:
             return None
+        await self._revoke_executor_turn_asks(state, running)
         automatic_compaction_result = (
             AutomaticCompactionResult.not_compacted
             if running.automatic_compaction
@@ -3559,6 +4471,15 @@ class SqliteProcessConversationSystem:
                 automatic_compaction_result=automatic_compaction_result,
                 create_failure_notice=(
                     ending is ConversationTurnEnding.failed and not running.automatic_notice
+                ),
+                executor_turn=self._executor_turn_metadata(
+                    state,
+                    replace(
+                        running,
+                        ended=True,
+                        pending_permission_ask_ids=set(),
+                        pending_user_input_questions={},
+                    ),
                 ),
             ),
             runtime_mutation=self._runtime_mutation(
@@ -3633,6 +4554,12 @@ class SqliteProcessConversationSystem:
             raise BackendSpawnFailed(state.record.conversation_id)
         child = state.child
         if child is not None:
+            from planner.executor.remote import RemoteBackendChild
+
+            if isinstance(child, RemoteBackendChild) and state.reserved_turn is not None:
+                child.initial_commands = []
+                child.prompt_accepted = False
+                self._configure_initial_command_recording(state, child, state.reserved_turn)
             return child
 
         resolved_start = state.record.resolved_start()
@@ -3646,16 +4573,67 @@ class SqliteProcessConversationSystem:
                     else reasoning_effort
                 ),
             )
+        if resolved_start.role_materials is not None:
+            identity = dict(resolved_start.role_materials.identity_environment_variables)
+            ticket_id = identity.get("PLAN_TICKET_ID")
+            if ticket_id:
+                from planner.files.logic.paths import ticket_files_root
+
+                artifact_root = (ticket_files_root(self._store._db_path) / ticket_id).resolve()
+                resolved_start = replace(
+                    resolved_start,
+                    role_materials=replace(
+                        resolved_start.role_materials,
+                        identity_environment_variables=tuple(
+                            (key, value)
+                            for key, value in (
+                                resolved_start.role_materials.identity_environment_variables
+                            )
+                            if key != "PLAN_TICKET_FILES_DIR"
+                        )
+                        + (("PLAN_TICKET_FILES_DIR", str(artifact_root)),),
+                    ),
+                )
         factory = self._backend_child_factories[state.record.backend_key]
         child = factory(
             resolved_start=resolved_start,
             event_sink=_CoreBackendEventSink(self, state),
             message_files=self._message_files,
         )
+        from planner.executor.remote import RemoteBackendChild
+
+        if isinstance(child, RemoteBackendChild):
+            state.executor_child_reference = child.reference
+            state.executor_initial_commands = ()
+            state.executor_delivery_uncertain = False
+            if state.initial_shutdown_task is not None and state.initial_shutdown_task.done():
+                state.initial_shutdown_task = None
+                state.initial_shutdown_child = None
+            # Retain the original identity even while native start is unacknowledged.
+            state.child = child
+            if state.reserved_turn is not None:
+                self._configure_initial_command_recording(state, child, state.reserved_turn)
         # The pump is running before the child is, so news the child makes while it starts
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
+        start_reservation = state.reserved_turn
         await child.start(resolved_start, vendor_session_cursor=state.record.vendor_session_cursor)
+        if (
+            isinstance(child, RemoteBackendChild)
+            and (
+                self._shutting_down
+                or (
+                    start_reservation is not None
+                    and (
+                        state.reserved_turn is not start_reservation
+                        or start_reservation.shutdown_owned
+                    )
+                )
+            )
+        ) or (state.reserved_turn is not None and state.reserved_turn.shutdown_owned):
+            from planner.executor.remote import RemoteInitialDeliveryCancelled
+
+            raise RemoteInitialDeliveryCancelled()
         state.child = child
         return child
 
@@ -3665,6 +4643,11 @@ class SqliteProcessConversationSystem:
         The new one resumes from the stored session cursor on the values the record
         holds, which is how a conversation gets back to one answer about itself.
         """
+        from planner.executor.remote import RemoteBackendChild
+
+        if isinstance(child, RemoteBackendChild):
+            self._schedule_remote_retirement(state, child)
+            return
         if state.child is child:
             state.child = None
         stopped = await self._stop_child(state, child)
@@ -3718,6 +4701,23 @@ class SqliteProcessConversationSystem:
         await self._discard_child(state, child)
         return None if attempt is None else replace(attempt, status=LifecycleStatus.unknown)
 
+    @staticmethod
+    def _with_native_worker_context(
+        state: _ConversationState, child: BackendChild, content: MessageContent
+    ) -> MessageContent:
+        """Tell native Workers where their localized skills and Ticket files live."""
+        from planner.executor.configuration import NATIVE_WORKER_CONTEXT
+        from planner.executor.remote import RemoteBackendChild
+
+        identity = dict(state.record.identity_environment_variables)
+        if (
+            isinstance(child, RemoteBackendChild)
+            and identity.get("PLAN_ACTOR") == "worker"
+            and identity.get("PLAN_TICKET_ID")
+        ):
+            return prefix_message_content_text(content, NATIVE_WORKER_CONTEXT, "\n\n")
+        return content
+
     async def _compose_prompt_content(
         self, state: _ConversationState, content: MessageContent
     ) -> MessageContent:
@@ -3755,6 +4755,7 @@ class SqliteProcessConversationSystem:
         queue = state.backend_event_queue
         while True:
             handle = await queue.get()
+            state.backend_event_in_progress = True
             try:
                 await handle()
             except asyncio.CancelledError:
@@ -3769,6 +4770,7 @@ class SqliteProcessConversationSystem:
                     state.record.conversation_id,
                 )
             finally:
+                state.backend_event_in_progress = False
                 queue.task_done()
 
     async def _hold_for_the_live_turn(
@@ -4141,11 +5143,10 @@ class SqliteProcessConversationSystem:
         A conversation whose lock is held is in the middle of something and is not idle, so
         it is left for the next sweep rather than waited on.
 
-        Stopping happens under the conversation's lock, wire call and all — the same
-        reasoning as a kill, and for the same reason: forgetting the child and stopping it
-        are one act. Done separately, a message arriving in between spawns its own child
-        while the one being stopped is still alive, and the conversation briefly has two
-        agents in it.
+        Remote cleanup registers quarantine under the lock, then awaits retirement
+        outside it. The fence prevents another child before confirmation. A failed
+        owned attempt requires explicit shutdown to retry. Local stops retain their
+        existing lock ownership.
         """
         due_ids = await self._store.conversations_due_for_automatic_compaction(
             due_at_or_before=(int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS),
@@ -4166,29 +5167,692 @@ class SqliteProcessConversationSystem:
         async with self._conversations_lock:
             states = list(self._conversations.values())
         recovered_quarantines: list[_ConversationState] = []
+        from planner.executor.remote import RemoteBackendChild
+
         for state in states:
             if state.child is None or state.lock.locked():
                 continue
+            cleanup: asyncio.Task[bool] | None = None
             async with state.lock:
                 child = state.child
                 if child is None or state.phase is not _ConversationPhase.idle:
                     continue
                 was_quarantined = state.child_is_quarantined
-                if not was_quarantined:
-                    idle_for = self._monotonic_now() - state.last_touched_monotonic
-                    if idle_for < self._idle_child_stop_after_seconds:
+                if isinstance(child, RemoteBackendChild):
+                    # Only an explicit operation retries failed remote cleanup.
+                    if was_quarantined and (
+                        state.initial_shutdown_task is not None
+                        or any(
+                            command.operation is ChildOperation.stop
+                            for command in state.executor_initial_commands
+                        )
+                    ):
                         continue
-                state.child = None
-                stopped = await self._stop_child(state, child)
-                if not stopped:
-                    state.child = child
-                    state.child_is_quarantined = True
-                    continue
-                state.child_is_quarantined = False
-                if was_quarantined and state.held_prompts:
-                    recovered_quarantines.append(state)
+                    if not was_quarantined and (
+                        self._monotonic_now() - state.last_touched_monotonic
+                        < self._idle_child_stop_after_seconds
+                    ):
+                        continue
+                    cleanup = self._schedule_remote_retirement(state, child)
+                else:
+                    if not was_quarantined:
+                        idle_for = self._monotonic_now() - state.last_touched_monotonic
+                        if idle_for < self._idle_child_stop_after_seconds:
+                            continue
+                    state.child = None
+                    if not await self._stop_child(state, child):
+                        state.child = child
+                        state.child_is_quarantined = True
+                        continue
+                    state.child_is_quarantined = False
+                    if was_quarantined and state.held_prompts:
+                        recovered_quarantines.append(state)
+            if cleanup is not None and await asyncio.shield(cleanup) and state.held_prompts:
+                recovered_quarantines.append(state)
         for state in recovered_quarantines:
             await self._drain_held_prompts(state)
+
+    @staticmethod
+    def _executor_turn_metadata(
+        state: _ConversationState, running: _RunningTurn
+    ) -> tuple[str, str, str] | None:
+        from planner.executor.codec import encode_value
+        from planner.executor.remote import RemoteBackendChild
+
+        child = state.child
+        reference = (
+            child.reference
+            if isinstance(child, RemoteBackendChild)
+            else state.executor_child_reference
+        )
+        if reference is None:
+            return None
+        runtime = {
+            "automatic_compaction": running.automatic_compaction,
+            "compaction_confirmed": running.compaction_confirmed,
+            "automatic_notice": running.automatic_notice,
+            "ended": running.ended,
+            "callbacks_revoked": running.callbacks_revoked,
+            "permission_provider_ids": running.permission_provider_ids,
+            "user_input_provider_ids": running.user_input_provider_ids,
+            "pending_permission_ask_ids": list(running.pending_permission_ask_ids),
+            "pending_user_input_questions": encode_value(running.pending_user_input_questions),
+            "prompt_senders": encode_value(tuple(running.prompt_senders)),
+            "explicit_reply_recipients": encode_value(tuple(running.explicit_reply_recipients)),
+            "initial_commands": encode_value(state.executor_initial_commands),
+            "delivery_uncertain": state.executor_delivery_uncertain,
+        }
+        return (
+            json.dumps(encode_value(reference)),
+            json.dumps(encode_value(running.token)),
+            json.dumps(runtime),
+        )
+
+    async def _restore_executor_turn(self, state: _ConversationState) -> None:
+        metadata = await self._store.read_executor_turn(state.record.conversation_id)
+        if metadata is not None:
+            self._restore_executor_turn_metadata(state, metadata)
+
+    def _restore_executor_turn_metadata(
+        self, state: _ConversationState, metadata: tuple[str, str, str]
+    ) -> None:
+        from pydantic import TypeAdapter
+
+        from planner.executor.contracts import ChildReference
+
+        child = TypeAdapter(ChildReference).validate_json(metadata[0])
+        token = TypeAdapter(TurnToken).validate_json(metadata[1])
+        runtime = json.loads(metadata[2])
+        state.executor_initial_commands = tuple(
+            TypeAdapter(ChildCommand).validate_python(raw)
+            for raw in runtime.get("initial_commands", ())
+        )
+        state.executor_delivery_uncertain = runtime.get("delivery_uncertain", False)
+        state.executor_child_reference = None if runtime.get("source_retired") else child
+        state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
+        state.has_delivered_prompt = True
+        if runtime.get("move_retirement_uncertain"):
+            state.child_is_quarantined = True
+            return
+        if runtime.get("source_retired"):
+            state.last_ended_turn_token = token
+            state.last_ended_turn_was_automatic_compaction = runtime.get(
+                "automatic_compaction", False
+            )
+            return
+        if runtime.get("ended", False):
+            state.last_ended_turn_token = token
+            state.child_is_quarantined = (
+                state.child_is_quarantined
+                or bool(runtime.get("delivery_uncertain"))
+                or runtime.get("source_retired") is False
+            )
+            return
+        if runtime.get("delivery_uncertain"):
+            state.child_is_quarantined = True
+            if any(held.delivery_uncertain for held in state.held_prompts):
+                # The durable held envelope already represents this unresolved dispatch.
+                # It has no live delivery owner that can resolve a new reservation.
+                return
+            state.reserved_turn = _ReservedTurn(
+                token=token,
+                resolved=asyncio.Event(),
+                automatic_compaction=runtime.get("automatic_compaction", False),
+                automatic_notice=runtime.get("automatic_notice", False),
+            )
+            self._set_phase(state, _ConversationPhase.starting)
+            return
+        if runtime.get("ended", False):
+            state.last_ended_turn_token = token
+            state.last_ended_turn_was_automatic_compaction = runtime.get(
+                "automatic_compaction", False
+            )
+            return
+        running = _RunningTurn(
+            token=token,
+            automatic_compaction=runtime.get("automatic_compaction", False),
+            compaction_confirmed=runtime.get("compaction_confirmed", False),
+            automatic_notice=runtime.get("automatic_notice", False),
+            callbacks_revoked=runtime.get("callbacks_revoked", False),
+            pending_permission_ask_ids=set(runtime["pending_permission_ask_ids"]),
+            permission_provider_ids=runtime.get(
+                "permission_provider_ids",
+                {identity: identity for identity in runtime["pending_permission_ask_ids"]},
+            ),
+            user_input_provider_ids=runtime.get(
+                "user_input_provider_ids",
+                {identity: identity for identity in runtime["pending_user_input_questions"]},
+            ),
+            pending_user_input_questions=TypeAdapter(
+                dict[str, tuple[UserInputQuestion, ...]]
+            ).validate_python(runtime["pending_user_input_questions"]),
+            prompt_senders=dict.fromkeys(
+                TypeAdapter(tuple[Principal, ...]).validate_python(
+                    runtime.get("prompt_senders", [])
+                )
+            ),
+            explicit_reply_recipients=set(
+                TypeAdapter(tuple[Principal, ...]).validate_python(
+                    runtime.get("explicit_reply_recipients", [])
+                )
+            ),
+        )
+        state.running_turn = running
+        self._set_phase(state, _ConversationPhase.running)
+        # Child restoration comes only from inventory; historical events can still
+        # commit with this turn metadata when its native child no longer exists.
+
+    async def resume_executor_held_prompts(self, *, remote_ready: bool = False) -> None:
+        for conversation_id in await self._store.executor_held_targets():
+            state = await self._conversation_state(conversation_id)
+            if state is None or state.child_is_quarantined:
+                continue
+            if state.executor_child_reference is not None and not remote_ready:
+                continue
+            if state.phase is _ConversationPhase.idle and state.held_prompts:
+                asyncio.create_task(self._drain_held_prompts(state))
+
+    async def adopt_remote_child(self, inventory: Any, child: BackendChild) -> bool:
+        """Reattach only the exact Mac child and callbacks confirmed by inventory."""
+        state = await self._conversation_state(inventory.child.conversation_id)
+        if state is None:
+            raise ValueError("remote inventory names an unknown conversation")
+        from planner.executor.store import ExecutorStore
+
+        async with state.lock:
+            if ExecutorStore(self._store._db_path).child_assignment(inventory.child) is None:
+                return False
+            if state.reserved_turn is not None:
+                # Its original adapter owns command history and finalization. Inventory
+                # is evidence, never authority to replace the pending delivery owner.
+                return False
+            if state.child_is_quarantined and state.last_ended_turn_token is not None:
+                return False
+            if (
+                state.executor_child_reference is not None
+                and state.executor_child_reference != inventory.child
+            ):
+                return False
+            token = inventory.active_turn
+            if token is not None and (
+                (
+                    state.last_ended_turn_token is not None
+                    and token.turn_number <= state.last_ended_turn_token.turn_number
+                )
+                or (state.running_turn is not None and state.running_turn.token != token)
+            ):
+                return False
+            from planner.executor.contracts import AskKind
+
+            state.child = child
+            state.executor_child_reference = inventory.child
+            if token is not None:
+                running = state.running_turn
+                predicted = _RunningTurn(token=token) if running is None else replace(running)
+                permission_ids = {}
+                for ask in inventory.pending_asks:
+                    if ask.kind is AskKind.permission:
+                        public = self._store.executor_public_request_id(ask)
+                        if public is None:
+                            providers = predicted.permission_provider_ids.items()
+                            public = next(
+                                (
+                                    identity
+                                    for identity, provider in providers
+                                    if provider == ask.ask_id
+                                ),
+                                f"{token.turn_number}:permission:{ask.ask_id}",
+                            )
+                        permission_ids[public] = ask.ask_id
+                predicted.pending_permission_ask_ids = set(permission_ids)
+                predicted.permission_provider_ids = permission_ids
+                input_ids = {}
+                from planner.executor.contracts import AskReference
+
+                for provider in inventory.pending_user_input_ids:
+                    ask = AskReference(inventory.child, token, provider, AskKind.user_input)
+                    public = self._store.executor_public_request_id(ask)
+                    if public is None:
+                        public = next(
+                            (
+                                identity
+                                for identity, native in predicted.user_input_provider_ids.items()
+                                if native == provider
+                            ),
+                            f"{token.turn_number}:user_input:{provider}",
+                        )
+                    input_ids[public] = provider
+                predicted.user_input_provider_ids = input_ids
+                predicted.pending_user_input_questions = {
+                    key: value
+                    for key, value in predicted.pending_user_input_questions.items()
+                    if key in input_ids
+                }
+                await self._persist(
+                    state,
+                    partial(
+                        self._store.transition_lifecycle,
+                        state.record.conversation_id,
+                        (),
+                        executor_turn=self._executor_turn_metadata(state, predicted),
+                    ),
+                    runtime_mutation=self._runtime_mutation(
+                        state, PlainFieldMutation(state, "running_turn", predicted)
+                    ),
+                )
+                if self._signal is None:
+                    state.running_turn = predicted
+                state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
+                state.has_delivered_prompt = True
+                self._set_phase(state, _ConversationPhase.running)
+            # Absent inventory liveness is not proof of native termination. Retain
+            # saved callbacks and expose uncertain delivery through executor evidence.
+
+            return True
+
+    async def receive_remote_answer_application(
+        self, application: Any, envelope: Any, acceptor: Any, record_application: Any
+    ) -> Any:
+        """Commit native application, lifecycle, answer row, and receipt together."""
+        from pydantic import TypeAdapter
+
+        from planner.executor.contracts import AskKind, ReceiptDisposition
+
+        state = await self._conversation_state(application.ask.child.conversation_id)
+        if state is None:
+            raise ValueError("answer application names unknown conversation")
+        written: tuple[StoredConversationEvent, ...] = ()
+        fresh = False
+        async with state.lock:
+            ask = application.ask
+            user_input = ask.kind is AskKind.user_input
+            operation = (
+                LifecycleOperation.user_input if user_input else LifecycleOperation.permission
+            )
+            lifecycle_id = f"{ask.turn.turn_number}:{operation.value}:{ask.ask_id}"
+            public_id = self._store.executor_public_request_id(ask)
+            if public_id is None:
+                raise ValueError("answer application lacks an original public request identity")
+            running = state.running_turn
+            predicted = None
+            if running is not None and running.token == ask.turn:
+                predicted = replace(
+                    running,
+                    pending_permission_ask_ids=(
+                        set(running.pending_permission_ask_ids)
+                        if user_input
+                        else running.pending_permission_ask_ids - {public_id}
+                    ),
+                    pending_user_input_questions={
+                        key: value
+                        for key, value in running.pending_user_input_questions.items()
+                        if not user_input or key != public_id
+                    },
+                )
+            mutation = (
+                self._runtime_mutation(state, PlainFieldMutation(state, "running_turn", predicted))
+                if predicted is not None
+                else None
+            )
+
+            def write(connection: Any, accepted: Any) -> Any:
+                nonlocal written, fresh
+                del accepted
+                answer = connection.execute(
+                    "SELECT option_id,user_input_answers_json,applied_at_mac_ms "
+                    "FROM executor_asks WHERE answer_id=?",
+                    (application.answer_id,),
+                ).fetchone()
+                if answer is None:
+                    raise ValueError("answer application lacks authoritative choice")
+                first_application = answer[2] is None
+                record_application(connection, application)
+                if first_application:
+                    payload: ConversationEventPayload = (
+                        UserInputAnsweredEventPayload(
+                            request_id=public_id,
+                            answers=TypeAdapter(tuple[UserInputAnswer, ...]).validate_json(
+                                str(answer[1])
+                            ),
+                        )
+                        if user_input
+                        else PermissionAnsweredEventPayload(
+                            ask_id=public_id, option_id=str(answer[0])
+                        )
+                    )
+                    previous = next(
+                        (
+                            fact
+                            for fact in self._store.lifecycle_facts_in_transaction(
+                                connection, state.record.conversation_id
+                            )
+                            if fact.kind is LifecycleKind.request and fact.identity == lifecycle_id
+                        ),
+                        None,
+                    )
+                    lifecycle = (
+                        ()
+                        if previous is not None and previous.status is LifecycleStatus.unavailable
+                        else (
+                            LifecycleFact(
+                                LifecycleKind.request,
+                                lifecycle_id,
+                                ask.turn.turn_number,
+                                operation,
+                                LifecycleStatus.answered,
+                                ask.ask_id,
+                            ),
+                        )
+                    )
+                    written = self._store.append_in_transaction(
+                        connection,
+                        state.record.conversation_id,
+                        (payload,),
+                        lifecycle=lifecycle,
+                    )
+                fresh = True
+                if predicted is not None:
+                    metadata = self._executor_turn_metadata(state, predicted)
+                    if metadata is not None:
+                        self._store.save_executor_turn_in_transaction(
+                            connection, state.record.conversation_id, metadata
+                        )
+                return {"recorded": True}
+
+            receipt = self._store.accept_executor_effect(envelope, acceptor, write, mutation)
+            if fresh and receipt.disposition is ReceiptDisposition.accepted:
+                if self._signal is None and predicted is not None:
+                    state.running_turn = predicted
+                self._take_in_written_rows(state, written)
+            return receipt
+
+    async def receive_remote_backend_event(
+        self, event: Any, envelope: Any, acceptor: Any, observer: Any = None
+    ) -> Any:
+        """Apply native events through lifecycle publication and executor acceptance."""
+        from planner.executor.capture import observe, safe_call
+        from planner.executor.codec import decode_event_arguments
+        from planner.executor.contracts import BackendEventMethod, ReceiptDisposition
+
+        with observe(observer, "state_lookup"):
+            state = await self._conversation_state(event.child.conversation_id)
+        if state is None:
+            raise ValueError("remote event names an unknown conversation")
+        reservation = state.reserved_turn
+        if reservation is not None and event.turn == reservation.token:
+            with observe(observer, "reservation_wait"):
+                await reservation.resolved.wait()
+        with observe(observer, "event_decode"):
+            args = decode_event_arguments(event)
+        written: tuple[StoredConversationEvent, ...] = ()
+        fresh = False
+        method, token = event.method, event.turn
+        should_drain = False
+        safe_call(observer, "enter", "state_lock_wait")
+        async with state.lock:
+            safe_call(observer, "complete", "state_lock_wait")
+            running = state.running_turn
+            live = token is None or (
+                running is not None
+                and running.token == token
+                and not running.ended
+                and not running.ending_is_the_cores
+            )
+            if (
+                running is not None
+                and running.callbacks_revoked
+                and method
+                in (
+                    BackendEventMethod.permission_ask_raised,
+                    BackendEventMethod.user_input_requested,
+                )
+            ):
+                live = False
+            payloads: tuple[ConversationEventPayload, ...] = ()
+            lifecycle: tuple[LifecycleFact, ...] = ()
+            compacted = live and method is BackendEventMethod.context_compacted
+            compaction_result = None
+            failure_notice = False
+            predicted = (
+                replace(
+                    running,
+                    pending_permission_ask_ids=set(running.pending_permission_ask_ids),
+                    pending_user_input_questions=dict(running.pending_user_input_questions),
+                    permission_provider_ids=dict(running.permission_provider_ids),
+                    user_input_provider_ids=dict(running.user_input_provider_ids),
+                )
+                if live and running is not None
+                else None
+            )
+            if live:
+                if method is BackendEventMethod.tool_call_started:
+                    payloads = (ToolCallStartedEventPayload(**args),)
+                elif method is BackendEventMethod.tool_call_finished:
+                    payloads = (ToolCallFinishedEventPayload(**args),)
+                elif method is BackendEventMethod.plan_updated:
+                    payloads = (PlanUpdatedEventPayload(**args),)
+                elif method is BackendEventMethod.token_usage_reported:
+                    payloads = (TokenUsageEventPayload(**args),)
+                elif compacted:
+                    payloads = (ContextCompactedEventPayload(),)
+                    if predicted is not None:
+                        predicted.compaction_confirmed = True
+                elif method is BackendEventMethod.permission_ask_raised and token is not None:
+                    ask = args["ask"]
+                    identity = f"{token.turn_number}:permission:{ask.ask_id}"
+                    payloads = (
+                        PermissionAskedEventPayload(
+                            ask_id=identity, title=ask.title, detail=ask.detail, options=ask.options
+                        ),
+                    )
+                    lifecycle = (
+                        LifecycleFact(
+                            LifecycleKind.request,
+                            identity,
+                            token.turn_number,
+                            LifecycleOperation.permission,
+                            LifecycleStatus.pending,
+                            ask.ask_id,
+                        ),
+                    )
+                    if predicted is not None:
+                        predicted.pending_permission_ask_ids.add(identity)
+                        predicted.permission_provider_ids[identity] = ask.ask_id
+                elif method is BackendEventMethod.user_input_requested and token is not None:
+                    request = args["request"]
+                    identity = f"{token.turn_number}:user_input:{request.request_id}"
+                    payloads = (
+                        UserInputRequestedEventPayload(
+                            request_id=identity, questions=request.questions
+                        ),
+                    )
+                    lifecycle = (
+                        LifecycleFact(
+                            LifecycleKind.request,
+                            identity,
+                            token.turn_number,
+                            LifecycleOperation.user_input,
+                            LifecycleStatus.pending,
+                            request.request_id,
+                        ),
+                    )
+                    if predicted is not None:
+                        predicted.pending_user_input_questions[identity] = request.questions
+                        predicted.user_input_provider_ids[identity] = request.request_id
+                elif method is BackendEventMethod.user_input_failed and token is not None:
+                    payloads = (
+                        UserInputFailedEventPayload(
+                            request_id=f"{token.turn_number}:user_input:{args['request_id']}",
+                            detail=args["detail"],
+                        ),
+                    )
+                elif method is BackendEventMethod.turn_ended and running is not None:
+                    ending = args["ending"]
+                    compaction_result = (
+                        AutomaticCompactionResult.not_compacted
+                        if running.automatic_compaction
+                        and ending is ConversationTurnEnding.completed
+                        and not running.compaction_confirmed
+                        else None
+                    )
+                    payloads = tuple(
+                        ExplicitReplyMissingEventPayload(prompt_sender=sender)
+                        for sender in running.prompt_senders
+                        if sender not in running.explicit_reply_recipients
+                    ) + (
+                        TurnEndedEventPayload(
+                            ending=ending,
+                            error_summary=normalized_failure_summary(args.get("error_summary"))
+                            if ending is ConversationTurnEnding.failed
+                            else None,
+                            automatic_compaction_result=compaction_result,
+                        ),
+                    )
+                    lifecycle = (
+                        _turn_fact(running.token, LifecycleStatus(ending.value)),
+                        *(
+                            replace(fact, status=LifecycleStatus.unavailable)
+                            for fact in await self._store.lifecycle_facts(
+                                state.record.conversation_id
+                            )
+                            if fact.kind is LifecycleKind.request
+                            and fact.turn_number == running.token.turn_number
+                            and fact.status in (LifecycleStatus.pending, LifecycleStatus.answering)
+                        ),
+                    )
+                    failure_notice = (
+                        ending is ConversationTurnEnding.failed and not running.automatic_notice
+                    )
+                    if predicted is not None:
+                        predicted.ended = True
+                        predicted.pending_permission_ask_ids.clear()
+                        predicted.pending_user_input_questions.clear()
+                        predicted.permission_provider_ids.clear()
+                        predicted.user_input_provider_ids.clear()
+
+            operations: list[PlainFieldMutation] = []
+            if predicted is not None:
+                operations.append(
+                    PlainFieldMutation(
+                        state, "running_turn", None if predicted.ended else predicted
+                    )
+                )
+                if predicted.ended:
+                    operations.extend(
+                        (
+                            PlainFieldMutation(state, "last_ended_turn_token", predicted.token),
+                            PlainFieldMutation(
+                                state,
+                                "last_ended_turn_was_automatic_compaction",
+                                predicted.automatic_compaction,
+                            ),
+                        )
+                    )
+            mutation = self._runtime_mutation(state, *operations)
+
+            def write(conn: Any, accepted: Any) -> Any:
+                nonlocal written, fresh
+                del accepted
+                with observe(observer, "conversation_append"):
+                    written = self._store.append_in_transaction(
+                        conn,
+                        state.record.conversation_id,
+                        payloads,
+                        lifecycle=lifecycle,
+                        agent_activity=bool(payloads)
+                        and not compacted
+                        and running is not None
+                        and not running.automatic_compaction,
+                        automatic_compaction_confirmed=compacted
+                        or (
+                            live
+                            and method is BackendEventMethod.turn_ended
+                            and running is not None
+                            and running.compaction_confirmed
+                        ),
+                        automatic_compaction_result=compaction_result,
+                        create_failure_notice=failure_notice,
+                    )
+                if method is BackendEventMethod.vendor_session_cursor_rebound:
+                    self._store.update_remote_identity_in_transaction(
+                        conn,
+                        state.record.conversation_id,
+                        vendor_session_cursor=args["vendor_session_cursor"],
+                    )
+                elif method is BackendEventMethod.composer_catalog_reported:
+                    self._store.update_remote_identity_in_transaction(
+                        conn,
+                        state.record.conversation_id,
+                        composer_catalog=args["composer_catalog"],
+                    )
+                if predicted is not None:
+                    metadata = self._executor_turn_metadata(state, predicted)
+                    if metadata is not None:
+                        self._store.save_executor_turn_in_transaction(
+                            conn, state.record.conversation_id, metadata
+                        )
+                fresh = True
+                return {"applied": live}
+
+            with observe(observer, "acceptor"):
+                receipt = self._store.accept_executor_effect(envelope, acceptor, write, mutation)
+            safe_call(observer, "receipt", receipt)
+            with observe(observer, "publication_finalize"):
+                if fresh and receipt.disposition is ReceiptDisposition.accepted:
+                    if self._signal is None:
+                        for operation in operations:
+                            setattr(operation.target, operation.attribute, operation.value)
+                    self._take_in_written_rows(state, written)
+                    if (
+                        written
+                        and running is not None
+                        and not running.automatic_compaction
+                        and not compacted
+                    ):
+                        last = written[-1]
+                        state.record = replace(
+                            state.record,
+                            latest_agent_activity_at=last.created_at,
+                            latest_agent_activity_sequence=last.sequence,
+                        )
+                    if compacted:
+                        state.record = replace(
+                            state.record,
+                            automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
+                            automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+                        )
+                    elif compaction_result is AutomaticCompactionResult.not_compacted:
+                        state.record = replace(
+                            state.record,
+                            automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+                        )
+                    if method is BackendEventMethod.vendor_session_cursor_rebound:
+                        state.record = replace(
+                            state.record, vendor_session_cursor=args["vendor_session_cursor"]
+                        )
+                    elif method is BackendEventMethod.composer_catalog_reported:
+                        state.record = replace(
+                            state.record, composer_catalog=args["composer_catalog"]
+                        )
+                    if predicted is not None and predicted.ended:
+                        self._settle_phase(state)
+                        should_drain = True
+                    if live and token is not None:
+                        if method is BackendEventMethod.agent_message_delta:
+                            self._publish_live_tail_frame(
+                                state, token, AgentMessageDeltaFrame(**args)
+                            )
+                        elif method is BackendEventMethod.tool_call_progress:
+                            self._publish_live_tail_frame(
+                                state, token, ToolCallProgressFrame(**args)
+                            )
+                        elif method is BackendEventMethod.model_thinking_happened:
+                            self._publish_model_thinking(state, token)
+                        elif method is BackendEventMethod.agent_message_completed:
+                            completed_backend_text_event(args["content"])
+        if should_drain:
+            asyncio.create_task(self._drain_held_prompts(state))
+        return receipt
 
     # --- shared internals ---------------------------------------------------------------
 
@@ -4221,6 +5885,17 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
+            from pydantic import TypeAdapter
+
+            for payload, delivery_state in await self._store.read_executor_held_prompts(
+                conversation_id
+            ):
+                held = TypeAdapter(_HeldPrompt).validate_json(payload)
+                if delivery_state == "dispatching":
+                    held = replace(held, delivery_uncertain=True)
+                    state.child_is_quarantined = True
+                state.held_prompts.append(held)
+            await self._restore_executor_turn(state)
             with nullcontext() if self._signal is None else self._signal.runtime_registry():
                 self._conversations[conversation_id] = state
             return state
@@ -4233,6 +5908,7 @@ class SqliteProcessConversationSystem:
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
+        executor_turn: tuple[str, str, str] | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> StoredConversationEvent:
@@ -4253,6 +5929,16 @@ class SqliteProcessConversationSystem:
                 recipient=payload.recipient,
                 recovery_references=payload.recovery_references,
             )
+        running = state.running_turn
+        if executor_turn is None and running is not None:
+            predicted = running
+            if isinstance(payload, MessageToOwnerEventPayload):
+                predicted = replace(
+                    running,
+                    explicit_reply_recipients=running.explicit_reply_recipients
+                    | {payload.recipient},
+                )
+            executor_turn = self._executor_turn_metadata(state, predicted)
         stored = await self._persist(
             state,
             partial(
@@ -4263,6 +5949,7 @@ class SqliteProcessConversationSystem:
                 agent_activity=agent_activity,
                 automatic_compaction_confirmed=automatic_compaction_confirmed,
                 owner_read_through_sequence=owner_read_through_sequence,
+                executor_turn=executor_turn,
             ),
             runtime_mutation=runtime_mutation,
         )

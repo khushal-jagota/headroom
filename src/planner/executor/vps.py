@@ -1,0 +1,1756 @@
+"""The executor endpoint attached directly to the app WebSocket service."""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import tempfile
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, cast
+from uuid import uuid4
+
+from pydantic import TypeAdapter
+
+from planner.conversation.backends.contracts import BackendEventSink, BackendSpawnFailed
+from planner.conversation.contracts import (
+    MoveRetirementDisposition,
+    MoveRetirementResult,
+    MoveSourceRetirement,
+    ResolvedConversationStart,
+)
+from planner.conversation.events import UserInputAnswer
+from planner.core import db
+from planner.core.clock import Clock
+from planner.core.contracts import Principal, PrincipalKind
+from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
+from planner.executor.capture import (
+    capture_hello,
+    capture_request,
+    get_capture,
+    observe,
+    safe_call,
+)
+from planner.executor.codec import encode_value
+from planner.executor.configuration import REQUEST_TIMEOUT_SECONDS
+from planner.executor.contracts import (
+    AcceptanceReceipt,
+    AnswerApplication,
+    AskKind,
+    AskReference,
+    AuthorizedAction,
+    BackendEvent,
+    BackendEventMethod,
+    CanonicalSkillSnapshot,
+    ChildCommand,
+    ChildInventory,
+    ChildOperation,
+    ChildReference,
+    CliWrite,
+    ClockSample,
+    CommandDisposition,
+    CommandOutcome,
+    DurableAnswer,
+    EnvelopeKind,
+    ExecutorHealth,
+    ExecutorHealthRead,
+    ExecutorIdentity,
+    FilePublicationRequest,
+    FileScope,
+    FrameReader,
+    FrameWriter,
+    JsonObject,
+    LiveReadRequest,
+    QueuedEnvelope,
+    ReconciliationInventory,
+    ReconciliationResult,
+    SourceRetirementReceipt,
+    SourceRetirementRequest,
+    WireMessage,
+    WireMessageKind,
+)
+from planner.executor.files import snapshot_file
+from planner.executor.mutations import write_ticket_mutation
+from planner.executor.remote import (
+    RemoteBackendChild,
+    RemoteBackendChildFactory,
+    RemoteInitialDeliveryCancelled,
+)
+from planner.executor.skills import read_canonical_skill_snapshot
+from planner.executor.store import ExecutorStore
+from planner.executor.transfers import GenerationTransfers
+from planner.executor.wire import (
+    parse_identity,
+    read_frame,
+    write_frame,
+)
+from planner.previews.forward import PreviewForwards
+
+
+def _generation_root() -> tempfile.TemporaryDirectory[str]:
+    return tempfile.TemporaryDirectory(prefix="panels-executor-")
+
+
+def now_ms() -> int:
+    return time.time_ns() // 1_000_000
+
+
+class _MoveSource:
+    def __init__(
+        self, endpoint: ExecutorEndpoint, ticket_id: str, conversation_id: str | None
+    ) -> None:
+        self.endpoint = endpoint
+        self.ticket_id = ticket_id
+        self.conversation_id = conversation_id
+        self.identity: ExecutorIdentity | None = None
+        self.writer: FrameWriter | None = None
+
+    def validate_current(self) -> None:
+        endpoint = self.endpoint
+        if (
+            self.identity is None
+            or not endpoint.ready
+            or endpoint.identity != self.identity
+            or endpoint.writer is not self.writer
+            or self.writer is None
+            or self.writer.is_closing()
+        ):
+            raise ConnectionError("Mac source connection changed during move")
+        endpoint.store.require_ready_connection(self.identity)
+
+    async def retire(self) -> MoveRetirementResult:
+        endpoint = self.endpoint
+        self.identity, self.writer = endpoint.identity, endpoint.writer
+        try:
+            self.validate_current()
+        except (ConnectionError, PlannerError):
+            return MoveRetirementResult(
+                MoveRetirementDisposition.refused, "current Mac source cannot be verified"
+            )
+        assert self.identity is not None
+        refs = endpoint.store.assigned_ticket_children(
+            self.ticket_id, self.identity.executor_incarnation
+        )
+        ids = {ref.child_id for ref in refs}
+        if any(
+            command.child.child_id in ids and not future.done()
+            for command, future in endpoint.pending_commands.values()
+        ):
+            return MoveRetirementResult(
+                MoveRetirementDisposition.refused, "source command or input transfer is pending"
+            )
+        request = SourceRetirementRequest(self.identity, self.ticket_id, self.conversation_id, refs)
+        try:
+            response = await endpoint._request(WireMessageKind.source_retire, _object(request))
+            if response.kind is not WireMessageKind.source_retired:
+                raise ValueError("unexpected source retirement response")
+            receipt = TypeAdapter(SourceRetirementReceipt).validate_python(response.payload)
+            if (
+                receipt.identity != request.expected_identity
+                or receipt.ticket_id != request.ticket_id
+                or receipt.conversation_id != request.conversation_id
+                or receipt.assigned_children != request.assigned_children
+            ):
+                raise ValueError("source retirement response conflicts with request")
+            # Keep a confirmed retirement distinct even when source replacement invalidates commit.
+            if receipt.result.disposition is MoveRetirementDisposition.retired:
+                for ref in refs:
+                    endpoint.store.close_child(ref, now_ms())
+                    endpoint.children.pop(ref.child_id, None)
+                    endpoint.sinks.pop(ref.child_id, None)
+            return receipt.result
+        except (ConnectionError, OSError, ValueError, PlannerError):
+            return MoveRetirementResult(
+                MoveRetirementDisposition.uncertain, "source retirement outcome is unknown"
+            )
+
+
+class ExecutorEndpoint:
+    """One active Mac connection; old generations are fenced before any writes."""
+
+    def __init__(self, db_path: str, clock: Clock) -> None:
+        self._capture = get_capture(db_path)
+        self.store = ExecutorStore(db_path)
+        self.clock = clock
+        self.db_path = db_path
+        self.runtime: Any = None
+        self.app: Any = None
+        self.identity: ExecutorIdentity | None = None
+        self.writer: FrameWriter | None = None
+        self.ready = False
+        self._preview_forwards: PreviewForwards | None = None
+        self.children: dict[str, RemoteBackendChild] = {}
+        self.sinks: dict[str, BackendEventSink] = {}
+        self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
+        self._cancelled_initial_children: set[ChildReference] = set()
+        self._possibly_emitted_commands: set[str] = set()
+        self._prompt_command_ids: set[str] = set()
+        self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
+        self._input_tasks: dict[str, set[asyncio.Task[None]]] = {}
+        self._tasks: set[asyncio.Task[Any]] = set()
+        self._inventory: dict[str, ChildInventory] = {}
+        self._retained_inventory: dict[str, CommandOutcome] = {}
+        self._send_lock = asyncio.Lock()
+        self._input_transfer_locks: dict[str, asyncio.Lock] = {}
+        self._conversation_locks: dict[str, asyncio.Lock] = {}
+        self.factory = RemoteBackendChildFactory(
+            self.assign_child,
+            self.send_command,
+            self._read_skill_snapshot,
+            self.cancel_initial_delivery,
+            self.retire_child,
+        )
+        self.file_receiver: Any = None
+        self._responses: dict[str, asyncio.Future[WireMessage]] = {}
+        self.clock_sample: ClockSample | None = None
+        self.process_id: int | None = None
+        self.observed_at_ms: int | None = None
+        self.last_contact_at_ms: int | None = None
+        self.lost_at_ms: int | None = None
+        self._file_assignments: dict[str, ChildReference] = {}
+        self._transports: dict[ExecutorIdentity, GenerationTransfers] = {}
+        self._transport_roots: dict[ExecutorIdentity, tempfile.TemporaryDirectory[str]] = {}
+        self._upload_transfers: dict[tuple[ExecutorIdentity, str], str] = {}
+        self._transport_lock = asyncio.Lock()
+        self._receiver_work: dict[ExecutorIdentity, set[asyncio.Task[Any]]] = {}
+
+    async def start(self) -> None:
+        """The app router owns the listener; no separate relay socket exists."""
+
+    @asynccontextmanager
+    async def preview_forward(self, port: int, ticket_id: str) -> AsyncIterator[int]:
+        forwards = self._preview_forwards
+        if not self.ready or forwards is None:
+            raise ConnectionError("Mac executor is unavailable")
+        async with forwards.lease(port, ticket_id) as local_port:
+            yield local_port
+
+    async def close(self) -> None:
+        # Revoke admission synchronously before any preview or file cleanup yields.
+        self.ready = False
+        writer, self.writer = self.writer, None
+        if writer is not None:
+            safe_call(getattr(self, "_capture", None), "close_attempt", writer, "endpoint_shutdown")
+            writer.close()
+        for future in self._responses.values():
+            if not future.done():
+                future.set_exception(ConnectionError("executor app stopped"))
+        previews, self._preview_forwards = self._preview_forwards, None
+        if previews is not None:
+            await previews.close()
+        for task in tuple(self._tasks):
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        for identity in tuple(self._transports):
+            await self._close_transport(identity)
+        if writer is not None:
+            await writer.wait_closed()
+
+    def source_for_move(self, ticket_id: str, conversation_id: str | None) -> MoveSourceRetirement:
+        return _MoveSource(self, ticket_id, conversation_id)
+
+    def _read_skill_snapshot(self, start: ResolvedConversationStart) -> CanonicalSkillSnapshot:
+        environment = dict(
+            start.role_materials.identity_environment_variables if start.role_materials else ()
+        )
+        ticket_id = environment.get("PLAN_TICKET_ID")
+        if environment.get("PLAN_ACTOR") != "worker" or not ticket_id:
+            raise BackendSpawnFailed("Canonical skill bootstrap requires a Worker Ticket identity")
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("BEGIN")
+            return read_canonical_skill_snapshot(conn, ticket_id)
+        finally:
+            conn.close()
+
+    def assign_child(
+        self, start: ResolvedConversationStart, sink: BackendEventSink
+    ) -> ChildReference:
+        if self.identity is None or not self.ready:
+            raise BackendSpawnFailed("The Mac executor has no reconciled connection")
+        child = ChildReference(
+            self.identity.executor_incarnation, str(uuid4()), start.conversation_id
+        )
+        env = (
+            {}
+            if start.role_materials is None
+            else dict(start.role_materials.identity_environment_variables)
+        )
+        actor = env.get("PLAN_ACTOR")
+        if actor == "worker":
+            principal = Principal(PrincipalKind.ticket, env["PLAN_TICKET_ID"])
+        elif actor == "chief":
+            principal = Principal(PrincipalKind.chief, "chief")
+        elif actor in {"manager", "sprint_item_supervisor"}:
+            from planner.core.authctx import normalize_manager_identity
+
+            manager_id = normalize_manager_identity(
+                env.get("PLAN_MANAGER_ID"), env.get("PLAN_SPRINT_ITEM_ID")
+            )
+            if manager_id is None:
+                raise BackendSpawnFailed("remote Manager needs its assigned identity")
+            principal = Principal(PrincipalKind.manager, manager_id)
+        else:
+            raise BackendSpawnFailed("remote children need a server-assigned Worker identity")
+        self.store.register_child(child, principal.kind.value, principal.id, now_ms())
+        self.sinks[child.child_id] = sink
+        proxy = self.recover_child(child, initial_history_complete=True)
+        self.children[child.child_id] = proxy
+        return child
+
+    def recover_child(
+        self, child: ChildReference, *, initial_history_complete: bool = False
+    ) -> RemoteBackendChild:
+        """Bind the retained identity without starting it or granting new authority."""
+        return RemoteBackendChild(
+            child,
+            self.send_command,
+            self._read_skill_snapshot,
+            self.cancel_initial_delivery,
+            initial_history_complete=initial_history_complete,
+            retire_reference=self.retire_child,
+        )
+
+    def retire_child(self, child: ChildReference) -> None:
+        """Drop only the exact retired proxy and its reconciliation material."""
+        proxy = self.children.get(child.child_id)
+        if proxy is not None and proxy.reference == child:
+            self.children.pop(child.child_id, None)
+            self.sinks.pop(child.child_id, None)
+        item = self._inventory.get(child.child_id)
+        if item is not None and item.child == child:
+            self._inventory.pop(child.child_id, None)
+
+    def _outcome_requires_receipt(self, outcome: CommandOutcome) -> bool:
+        pending = self.pending_commands.get(outcome.command_id)
+        return (
+            pending is not None
+            and pending[0].child == outcome.child
+            and pending[0].operation is ChildOperation.stop
+        ) or self.store.is_retirement_outcome(outcome)
+
+    def _outcome_hint_acknowledged(self, outcome: CommandOutcome) -> bool:
+        return not self._outcome_requires_receipt(
+            outcome
+        ) or self.store.has_accepted_command_outcome(outcome)
+
+    def _initial_command_cancelled(self, command: ChildCommand) -> bool:
+        return command.operation in (ChildOperation.start, ChildOperation.write_prompt) and (
+            command.child in self._cancelled_initial_children
+        )
+
+    def cancel_initial_delivery(self, child: ChildReference, command_ids: tuple[str, ...]) -> bool:
+        """Fence before cleanup; retained native outcomes remain untouched."""
+        self._cancelled_initial_children.add(child)
+        prompt_may_have_sent = any(
+            command_id in self._possibly_emitted_commands
+            for command_id in command_ids
+            if command_id in self._prompt_command_ids
+        )
+        for command, future in tuple(self.pending_commands.values()):
+            if command.child != child or not self._initial_command_cancelled(command):
+                continue
+            if command.operation is ChildOperation.write_prompt:
+                prompt_may_have_sent |= command.command_id in self._possibly_emitted_commands
+            for task in self._input_tasks.get(command.command_id, ()):
+                task.cancel()
+            for emission in self._emission_tasks.get(command.command_id, ()):
+                emission.cancel()
+            if not future.done():
+                future.set_exception(RemoteInitialDeliveryCancelled())
+        return prompt_may_have_sent
+
+    async def _send(self, message: WireMessage) -> None:
+        writer = self.writer
+        async with self._send_lock:
+            if writer is None or self.writer is not writer:
+                raise ConnectionError("executor link unavailable")
+            await write_frame(writer, message)
+
+    def _reconciliation_current(self, identity: ExecutorIdentity, writer: FrameWriter) -> bool:
+        if self.writer is not writer or self.identity != identity:
+            return False
+        try:
+            self.store.verify_connection(identity)
+        except PlannerError:
+            return False
+        return True
+
+    async def _send_reconciliation(
+        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
+    ) -> bool:
+        # This handler owns a particular connection, including while waiting for
+        # another sender or draining an already written frame.
+        async with self._send_lock:
+            if not self._reconciliation_current(identity, writer):
+                return False
+            await write_frame(writer, message)
+            return self._reconciliation_current(identity, writer)
+
+    async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+        request_id = str(uuid4())
+        future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
+        self._responses[request_id] = future
+        writer = self.writer
+        observer = safe_call(
+            getattr(self, "_capture", None),
+            "outgoing",
+            getattr(self, "identity", None),
+            writer,
+            request_id,
+            kind,
+        )
+        deadline: asyncio.Timeout | None = None
+        try:
+            deadline = asyncio.timeout(REQUEST_TIMEOUT_SECONDS)
+            async with deadline:
+                await self._send(WireMessage(kind, request_id, payload))
+                return await future
+        except TimeoutError as error:
+            safe_call(
+                observer, "request_timeout", error, deadline is not None and deadline.expired()
+            )
+            if writer is not None:
+                safe_call(
+                    getattr(self, "_capture", None),
+                    "close_attempt",
+                    writer,
+                    "request_timeout",
+                    observer,
+                )
+                writer.close()
+            raise
+        finally:
+            self._responses.pop(request_id, None)
+            safe_call(observer, "request_done")
+
+    async def _transfer_command_inputs(self, command: ChildCommand) -> None:
+        if self._initial_command_cancelled(command):
+            return
+
+        async def transfer() -> None:
+            lock = self._input_transfer_locks.setdefault(
+                command.child.conversation_id, asyncio.Lock()
+            )
+            async with lock:
+                if not self._initial_command_cancelled(command):
+                    await self._transfer_command_inputs_locked(command)
+
+        task = asyncio.create_task(transfer())
+        tasks = self._input_tasks.setdefault(command.command_id, set())
+        tasks.add(task)
+        try:
+            await task
+        except asyncio.CancelledError:
+            if not self._initial_command_cancelled(command):
+                raise
+        finally:
+            tasks.discard(task)
+            if not tasks:
+                self._input_tasks.pop(command.command_id, None)
+
+    async def _transfer_command_inputs_locked(self, command: ChildCommand) -> None:
+        identity = self.identity
+        if identity is None or identity not in self._transports:
+            raise ConnectionError("file generation unavailable")
+        service = self._transports[identity]
+        seen: set[str] = set()
+        for key in ("content", "sender_content"):
+            content = command.arguments.get(key)
+            if not isinstance(content, list):
+                continue
+            for piece in content:
+                if not isinstance(piece, dict) or not isinstance(piece.get("stored_file_id"), str):
+                    continue
+                stored_file_id = str(piece["stored_file_id"])
+                if stored_file_id in seen:
+                    continue
+                seen.add(stored_file_id)
+                path = await asyncio.to_thread(
+                    self.runtime.message_files.path_of,
+                    command.child.conversation_id,
+                    stored_file_id,
+                )
+                snapshot = await asyncio.to_thread(
+                    snapshot_file,
+                    root=path.parent,
+                    relative_path=path.name,
+                    scope=FileScope.conversation,
+                    owner_id=command.child.conversation_id,
+                )
+                slot = None
+                try:
+                    self.store.verify_connection(identity)
+                    slot = await service.create_download_async(snapshot)
+                    response = await self._request(WireMessageKind.file_slot, _object(slot))
+                    if (
+                        response.kind is not WireMessageKind.file_accepted
+                        or response.payload != _object(snapshot.manifest)
+                    ):
+                        raise ValueError("Mac did not confirm complete input bytes")
+                    self.store.verify_connection(identity)
+                finally:
+                    if slot is not None:
+                        service.release(slot.transfer_id)
+                    snapshot.local_path.unlink(missing_ok=True)
+
+    async def _emit_command(self, command: ChildCommand) -> bool:
+        task = asyncio.create_task(self._emit_command_unsettled(command))
+        tasks = self._emission_tasks.setdefault(command.command_id, set())
+        tasks.add(task)
+        try:
+            return await task
+        except asyncio.CancelledError:
+            if not self._initial_command_cancelled(command):
+                raise
+            return False
+        finally:
+            tasks.discard(task)
+            if not tasks:
+                self._emission_tasks.pop(command.command_id, None)
+
+    async def _emit_command_unsettled(self, command: ChildCommand) -> bool:
+        """The final guard is shared by immediate sends and reconnect replay."""
+        if command.operation not in (
+            ChildOperation.answer_permission_ask,
+            ChildOperation.answer_user_input,
+        ):
+            async with self._send_lock:
+                if self._initial_command_cancelled(command):
+                    return False
+                writer = self.writer
+                if writer is None or not self.ready:
+                    raise ConnectionError("executor link unavailable")
+                # From this point even a failed/partial write may have reached native.
+                self._possibly_emitted_commands.add(command.command_id)
+                if command.operation is ChildOperation.write_prompt:
+                    self._prompt_command_ids.add(command.command_id)
+                safe_call(
+                    self._capture,
+                    "command",
+                    command.command_id,
+                    command.operation,
+                    command.child.conversation_id,
+                )
+                await write_frame(
+                    writer,
+                    WireMessage(WireMessageKind.command, command.command_id, _object(command)),
+                )
+                return True
+        answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
+        identity, writer = self.identity, self.writer
+        emitted = False
+
+        async def emit() -> None:
+            nonlocal emitted
+            async with self._send_lock:
+                if (
+                    identity is None
+                    or writer is None
+                    or not self.ready
+                    or self.identity != identity
+                    or self.writer is not writer
+                    or command.operation
+                    != (
+                        ChildOperation.answer_user_input
+                        if answer.ask.kind is AskKind.user_input
+                        else ChildOperation.answer_permission_ask
+                    )
+                    or command.child != answer.ask.child
+                    or command.turn != answer.ask.turn
+                    or command.command_id != "apply_" + answer.answer_id
+                    or not self.store.answer_is_deliverable(answer, identity)
+                ):
+                    return
+                safe_call(
+                    self._capture,
+                    "command",
+                    command.command_id,
+                    command.operation,
+                    command.child.conversation_id,
+                )
+                await write_frame(
+                    writer,
+                    WireMessage(WireMessageKind.command, command.command_id, _object(command)),
+                )
+                emitted = True
+
+        await self.runtime.system.emit_executor_answer(command.child.conversation_id, emit)
+        return emitted
+
+    def _release_closed_answer(
+        self, command: ChildCommand, future: asyncio.Future[CommandOutcome]
+    ) -> None:
+        if command.operation in (
+            ChildOperation.answer_permission_ask,
+            ChildOperation.answer_user_input,
+        ):
+            answer = TypeAdapter(DurableAnswer).validate_python(command.arguments["answer"])
+            if not self.store.answer_target_is_open(answer.ask):
+                # No native result exists for an untransmitted closed callback.
+                # Cancel bookkeeping only; the durable choice remains unapplied.
+                future.cancel()
+
+    def _dispatch_answer(self, answer: DurableAnswer) -> None:
+        if (
+            not self.ready
+            or self.identity is None
+            or not self.store.answer_is_deliverable(answer, self.identity)
+        ):
+            return
+        command = ChildCommand(
+            "apply_" + answer.answer_id,
+            answer.ask.child,
+            ChildOperation.answer_user_input
+            if answer.ask.kind is AskKind.user_input
+            else ChildOperation.answer_permission_ask,
+            answer.ask.turn,
+            {"answer": _object(answer)},
+        )
+        if command.command_id in self.pending_commands:
+            return
+        task = asyncio.create_task(self.send_command(command))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def send_command(self, command: ChildCommand) -> CommandOutcome:
+        if self._initial_command_cancelled(command):
+            raise RemoteInitialDeliveryCancelled()
+        existing = self.pending_commands.get(command.command_id)
+        if existing is not None:
+            if existing[0] != command:
+                raise ValueError("command identity reused with different content")
+            return await asyncio.shield(existing[1])
+        future: asyncio.Future[CommandOutcome] = asyncio.get_running_loop().create_future()
+        self.pending_commands[command.command_id] = (command, future)
+        try:
+            if self.ready and self.writer is not None:
+                try:
+                    try:
+                        await self._transfer_command_inputs(command)
+                    except (ConnectionError, ValueError):
+                        # Keep the original waiting caller and stable command. A
+                        # new connection retries its inputs before native dispatch.
+                        if self.writer is not None:
+                            safe_call(
+                                getattr(self, "_capture", None),
+                                "close_attempt",
+                                self.writer,
+                                "command_input_failure",
+                            )
+                            self.writer.close()
+                    else:
+                        if not await self._emit_command(command):
+                            self._release_closed_answer(command, future)
+                except (OSError, ConnectionError):
+                    pass  # The exact command remains pending across a link loss.
+            return await asyncio.shield(future)
+        finally:
+            if future.done():
+                self.pending_commands.pop(command.command_id, None)
+
+    def _assignment(self, child: ChildReference) -> Principal:
+        binding = self.store.child_assignment(child)
+        if binding is None:
+            raise PlannerError(ErrorCode.agent_forbidden, "child has no VPS assignment", {})
+        return Principal(PrincipalKind(binding[0]), binding[1])
+
+    def _closed_reconciliation_child(
+        self, child: ChildReference, identity: ExecutorIdentity
+    ) -> bool:
+        # Historical assignment is evidence for settling original outcomes only.
+        # It never makes this child adoptable or restores its work authority.
+        if child.executor_incarnation != identity.executor_incarnation:
+            raise ValueError("reconciliation child incarnation conflicts with connection")
+        if self.store.has_closed_child_assignment(child):
+            return True
+        self._assignment(child)
+        return False
+
+    def _require_application_assignment(
+        self, application: AnswerApplication, identity: ExecutorIdentity, conversation_id: str
+    ) -> None:
+        child = application.ask.child
+        if (
+            child.executor_incarnation != identity.executor_incarnation
+            or child.conversation_id != conversation_id
+            or (
+                self.store.child_assignment(child) is None
+                and not self.store.has_closed_child_assignment(child)
+            )
+        ):
+            raise ValueError("application lacks the original authenticated child assignment")
+
+    async def accept_envelope(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, observer: Any = None
+    ) -> AcceptanceReceipt:
+        lock = self._conversation_locks.setdefault(envelope.conversation_id, asyncio.Lock())
+        safe_call(observer, "enter", "conversation_lock_wait")
+        async with lock:
+            safe_call(observer, "complete", "conversation_lock_wait")
+            with observe(observer, "accept_return"):
+                receipt = await self._accept_envelope(
+                    envelope, identity, **({"observer": observer} if observer is not None else {})
+                )
+            safe_call(observer, "receipt", receipt)
+            return receipt
+
+    async def _accept_envelope(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, observer: Any = None
+    ) -> AcceptanceReceipt:
+        with observe(observer, "preflight"):
+            previous = self.store.preflight(
+                envelope,
+                identity=identity,
+                **({"observer": observer} if observer is not None else {}),
+            )
+        if previous is not None:
+            if envelope.kind is EnvelopeKind.command_outcome:
+                self._resolve_command(TypeAdapter(CommandOutcome).validate_python(envelope.payload))
+            return previous
+        if envelope.kind is EnvelopeKind.backend_event:
+            event = TypeAdapter(BackendEvent).validate_python(envelope.payload)
+            with observe(observer, "assignment_check"):
+                self._assignment(event.child)
+            if event.child.conversation_id != envelope.conversation_id:
+                raise ValueError("event conversation conflicts with envelope")
+
+            def accept(row: QueuedEnvelope, write: Any, **publication: Any) -> AcceptanceReceipt:
+                def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+                    conn = connection
+                    accepted = envelope
+                    result = write(conn, accepted)
+                    if (
+                        event.method is BackendEventMethod.permission_ask_raised
+                        and event.turn is not None
+                        and result.get("applied") is True
+                    ):
+                        from planner.executor.codec import decode_event_arguments
+
+                        ask = decode_event_arguments(event)["ask"]
+                        self.store.publish_ask_in_transaction(
+                            conn,
+                            AskReference(event.child, event.turn, ask.ask_id),
+                            tuple(option.option_id for option in ask.options),
+                            now_ms(),
+                        )
+                    if (
+                        event.method is BackendEventMethod.user_input_requested
+                        and event.turn is not None
+                        and result.get("applied") is True
+                    ):
+                        from planner.executor.codec import decode_event_arguments
+
+                        request = decode_event_arguments(event)["request"]
+                        self.store.publish_user_input_request_in_transaction(
+                            conn,
+                            AskReference(
+                                event.child, event.turn, request.request_id, AskKind.user_input
+                            ),
+                            request.questions,
+                            now_ms(),
+                        )
+                    if event.method is BackendEventMethod.turn_ended and event.turn is not None:
+                        self.store.revoke_turn_callbacks_in_transaction(
+                            conn, event.child, event.turn, identity, now_ms()
+                        )
+                    return cast(JsonObject, result)
+
+                return self.store.accept(
+                    row,
+                    effect,
+                    now_ms(),
+                    identity=identity,
+                    **({"observer": observer} if observer is not None else {}),
+                    **publication,
+                )
+
+            with observe(observer, "event_publication"):
+                return cast(
+                    AcceptanceReceipt,
+                    await self.runtime.system.receive_remote_backend_event(
+                        event,
+                        envelope,
+                        accept,
+                        **({"observer": observer} if observer is not None else {}),
+                    ),
+                )
+        if envelope.kind is EnvelopeKind.cli_write:
+            write = TypeAdapter(CliWrite).validate_python(envelope.payload)
+            if write.child.conversation_id != envelope.conversation_id:
+                raise ValueError("CLI conversation conflicts with envelope")
+            if write.operation in ("message.send", "ticket.request_help"):
+                from planner.executor.native_messages import bound_native_principal
+
+                principal = bound_native_principal(self.store, envelope) or self._assignment(
+                    write.child
+                )
+                return await self._native_message(envelope, write, principal, identity)
+            principal = self._assignment(write.child)
+            preparation_error: PlannerError | None = None
+            if write.operation == "ticket.create":
+                from planner.tickets.api import _marshal_create_ticket, warm_ticket_creation_model
+
+                connection = connect(self.db_path)
+                try:
+                    body = write.arguments.get("body")
+                    if not isinstance(body, dict):
+                        raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
+                    parsed = _marshal_create_ticket(body)
+                    resolver = getattr(self.runtime, "model_resolution", None)
+                    if resolver is None:
+                        raise PlannerError(
+                            ErrorCode.gateway_offline, "the model resolver is unavailable", {}
+                        )
+                    await warm_ticket_creation_model(
+                        connection,
+                        resolver,
+                        worker_type=parsed["worker_type"],
+                        employee_backend=parsed.get("employee_backend"),
+                        employee_launch_model=parsed.get("employee_launch_model"),
+                        employee_launch_reasoning_effort=parsed.get(
+                            "employee_launch_reasoning_effort"
+                        ),
+                    )
+                except PlannerError as error:
+                    if error.code == ErrorCode.gateway_offline:
+                        raise
+                    preparation_error = error
+                finally:
+                    connection.close()
+            # Preparation can await. Recheck the assignment before the canonical transaction.
+            if self._assignment(write.child) != principal:
+                raise PlannerError(ErrorCode.agent_forbidden, "child assignment changed", {})
+            from planner.tickets.contracts import ReviewTransferNotice
+            from planner.tickets.review_transfer import notify_review_transfers
+
+            notices: list[ReviewTransferNotice] = []
+
+            def mutate(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+                if preparation_error is not None:
+                    raise preparation_error
+                return write_ticket_mutation(
+                    connection, write, principal, self.clock, review_transfer_notices=notices
+                )
+
+            receipt = self.store.accept(
+                envelope,
+                mutate,
+                now_ms(),
+                identity=identity,
+                **({"observer": observer} if observer is not None else {}),
+            )
+            if notices:
+                connection = connect(self.db_path)
+                try:
+                    await notify_review_transfers(
+                        self.runtime.system, connection, notices, now=self.clock.now_unix()
+                    )
+                finally:
+                    connection.close()
+            return receipt
+
+        if envelope.kind is EnvelopeKind.command_outcome:
+            outcome = TypeAdapter(CommandOutcome).validate_python(envelope.payload)
+            safe_call(observer, "command_outcome", outcome)
+            if outcome.child.conversation_id != envelope.conversation_id:
+                raise ValueError("command outcome conversation conflicts with envelope")
+            retired_refusal = (
+                outcome.disposition is CommandDisposition.refused
+                and outcome.result
+                == {
+                    "error_type": "BackendSpawnFailed",
+                    "error_message": "source child identity was retired",
+                }
+                and outcome.child.executor_incarnation == identity.executor_incarnation
+                and self.store.has_closed_child_assignment(outcome.child)
+            )
+            answer = self.store.answer_by_id(outcome.command_id.removeprefix("apply_"))
+            historical_answer_outcome = (
+                answer is not None
+                and answer.ask.child == outcome.child
+                and outcome.child.executor_incarnation == identity.executor_incarnation
+                and self.store.has_closed_child_assignment(outcome.child)
+            )
+            historical_initial_outcome = (
+                outcome.child.executor_incarnation == identity.executor_incarnation
+                and self.store.has_closed_child_assignment(outcome.child)
+                and self.store.has_retained_command(outcome)
+            )
+            if not (retired_refusal or historical_answer_outcome or historical_initial_outcome):
+                self._assignment(outcome.child)
+            application_payload = outcome.result.get("answer_application")
+            if not retired_refusal and isinstance(application_payload, dict):
+                application = TypeAdapter(AnswerApplication).validate_python(application_payload)
+                if application.ask.child != outcome.child or outcome.command_id not in (
+                    application.answer_id,
+                    "apply_" + application.answer_id,
+                ):
+                    raise ValueError("answer application conflicts with command child or identity")
+                self._require_application_assignment(
+                    application, identity, envelope.conversation_id
+                )
+
+                def record(connection: Any, applied: AnswerApplication) -> None:
+                    self.store.record_application_in_transaction(connection, applied)
+                    self.store.record_command_outcome_in_transaction(connection, outcome)
+
+                receipt = await self.runtime.system.receive_remote_answer_application(
+                    application,
+                    envelope,
+                    lambda row, write, **publication: self.store.accept(
+                        row,
+                        write,
+                        now_ms(),
+                        identity=identity,
+                        **({"observer": observer} if observer is not None else {}),
+                        **publication,
+                    ),
+                    record,
+                )
+                self._resolve_command(outcome)
+                return cast(AcceptanceReceipt, receipt)
+            receipt = self.store.accept(
+                envelope,
+                lambda conn, row: self._command_outcome(conn, outcome),
+                now_ms(),
+                identity=identity,
+                **({"observer": observer} if observer is not None else {}),
+            )
+            self._resolve_command(outcome)
+            return receipt
+        if envelope.kind is EnvelopeKind.answer_application:
+            application = TypeAdapter(AnswerApplication).validate_python(envelope.payload)
+            self._require_application_assignment(application, identity, envelope.conversation_id)
+            return cast(
+                AcceptanceReceipt,
+                await self.runtime.system.receive_remote_answer_application(
+                    application,
+                    envelope,
+                    lambda row, write, **publication: self.store.accept(
+                        row,
+                        write,
+                        now_ms(),
+                        identity=identity,
+                        **({"observer": observer} if observer is not None else {}),
+                        **publication,
+                    ),
+                    self.store.record_application_in_transaction,
+                ),
+            )
+        if envelope.kind is EnvelopeKind.authorized_action:
+            action = TypeAdapter(AuthorizedAction).validate_python(envelope.payload)
+            self._assignment(action.ask.child)
+            return self.store.accept(
+                envelope, lambda conn, row: self._action(conn, action), now_ms(), identity=identity
+            )
+        raise ValueError("unknown executor envelope")
+
+    def _command_outcome(self, conn: Any, outcome: CommandOutcome) -> JsonObject:
+        self.store.record_command_outcome_in_transaction(conn, outcome)
+        return {"recorded": True}
+
+    def _application(self, conn: Any, application: AnswerApplication) -> JsonObject:
+        self.store.record_application_in_transaction(conn, application)
+        return {"recorded": True}
+
+    def _action(self, conn: Any, action: AuthorizedAction) -> JsonObject:
+        self.store.record_action_in_transaction(conn, action, self.clock_sample)
+        return {"recorded": True}
+
+    def _resolve_command(self, outcome: CommandOutcome) -> None:
+        if not self._outcome_hint_acknowledged(outcome):
+            return
+        pending = self.pending_commands.get(outcome.command_id)
+        if pending is not None and pending[0].child == outcome.child and not pending[1].done():
+            pending[1].set_result(outcome)
+
+    async def _native_message(
+        self,
+        envelope: QueuedEnvelope,
+        write: CliWrite,
+        principal: Principal,
+        identity: ExecutorIdentity,
+    ) -> AcceptanceReceipt:
+        from planner.executor.native_messages import deliver_native_message
+
+        return await deliver_native_message(
+            store=self.store,
+            envelope=envelope,
+            write=write,
+            principal=principal,
+            identity=identity,
+            clock=self.clock,
+            conversations=self.runtime.system,
+            resolve_recipient=self._resolve_native_recipient,
+        )
+
+    def _resolve_native_recipient(
+        self, conn: sqlite3.Connection, write: CliWrite, principal: Principal
+    ) -> Principal:
+        from planner.message_delivery import api
+
+        body = write.arguments.get("body")
+        if not isinstance(body, dict):
+            raise PlannerError(ErrorCode.validation, "message body must be an object", {})
+        if write.operation == "message.send":
+            return api._principal(body.get("target"))
+        default = self._help_recipient(conn, write, principal)
+        if set(body) - {"message", "recipient"}:
+            raise PlannerError(ErrorCode.validation, "unknown help request field", {})
+        return api._principal(body["recipient"]) if body.get("recipient") else default
+
+    def _help_recipient(self, conn: Any, write: CliWrite, principal: Principal) -> Principal:
+        from planner.tickets import data
+
+        ticket_id = write.arguments.get("ticket_id")
+        if not isinstance(ticket_id, str) or principal != Principal(
+            PrincipalKind.ticket, ticket_id
+        ):
+            raise PlannerError(
+                ErrorCode.agent_forbidden, "only the Ticket Worker can request help", {}
+            )
+        return data.read_ticket(conn, ticket_id).ceiling_holder
+
+    def health(self) -> ExecutorHealthRead:
+        return {
+            "identity": None if self.identity is None else _object(self.identity),
+            "process_id": self.process_id,
+            "observed_at_ms": self.observed_at_ms,
+            "lost_at_ms": self.lost_at_ms,
+            "last_contact_at_ms": self.last_contact_at_ms,
+            "last_contact_source": "vps_received_valid_executor_frame",
+            "connection_state": "ready"
+            if self.ready
+            else "disconnected"
+            if self.writer is None
+            else "reconciling",
+            "reconciliation_ready": self.ready,
+        }
+
+    def owns_conversation(self, conversation_id: str) -> bool:
+        context = self.store.turn_context(conversation_id)
+        return (context is not None and not context.source_retired) or any(
+            child.reference.conversation_id == conversation_id for child in self.children.values()
+        )
+
+    def conversation_asks(self, conversation_id: str) -> list[JsonObject]:
+        result: list[JsonObject] = []
+        for evidence in self.store.evidence_for_conversation(conversation_id):
+            answer = self.store.recorded_answer(evidence.ask)
+            timing = self.store.action_timing(evidence.ask)
+            result.append(
+                {
+                    "evidence": _object(evidence),
+                    "answer": None if answer is None else _object(answer),
+                    "answer_action_timing": None if timing is None else _object(timing),
+                }
+            )
+        return result
+
+    def conversation_context(self, conversation_id: str) -> JsonObject | None:
+        context = self.store.turn_context(conversation_id)
+        if context is None or context.source_retired:
+            return None
+        return {"child": _object(context.child), "turn": _object(context.turn)}
+
+    def _current_ask_evidence(
+        self, conversation_id: str, ask_id: str, kind: AskKind = AskKind.permission
+    ) -> Any:
+        context = self.store.turn_context(conversation_id)
+        if context is None:
+            return None
+        for evidence in reversed(self.store.evidence_for_conversation(conversation_id)):
+            if (
+                self.store.public_request_id(evidence.ask) == ask_id
+                and evidence.ask.child == context.child
+                and evidence.ask.turn == context.turn
+                and evidence.ask.kind is kind
+            ):
+                return evidence
+        return None
+
+    def ask_status(
+        self, conversation_id: str, ask_id: str, kind: AskKind = AskKind.permission
+    ) -> JsonObject:
+        evidence = self._current_ask_evidence(conversation_id, ask_id, kind)
+        if evidence is None:
+            return {"answer_available": False, "executor_evidence": None}
+        return {
+            "executor_evidence": _object(evidence),
+            "answer_available": evidence.answer_id is None
+            and self.store.answer_target_is_open(evidence.ask),
+        }
+
+    async def answer_permission(
+        self,
+        conversation_id: str,
+        ask_id: str,
+        option_id: str,
+        executor_ask: AskReference | None = None,
+    ) -> bool:
+        if (
+            executor_ask is None
+            or executor_ask.child.conversation_id != conversation_id
+            or self.store.public_request_id(executor_ask) != ask_id
+            or executor_ask.kind is not AskKind.permission
+        ):
+            return False
+        previous = self.store.recorded_answer(executor_ask)
+        try:
+            answer = self.store.choose_answer(executor_ask, option_id, 0, now_ms())
+        except PlannerError:
+            return False
+        if previous is None:
+            self._dispatch_answer(answer)
+        return True
+
+    async def answer_user_input(
+        self,
+        conversation_id: str,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        executor_ask: AskReference | None = None,
+    ) -> bool:
+        if (
+            executor_ask is None
+            or executor_ask.child.conversation_id != conversation_id
+            or self.store.public_request_id(executor_ask) != request_id
+            or executor_ask.kind is not AskKind.user_input
+        ):
+            return False
+        previous = self.store.recorded_answer(executor_ask)
+        try:
+            answer = self.store.choose_user_input_answer(executor_ask, answers, 0, now_ms())
+        except PlannerError:
+            return False
+        if previous is None:
+            self._dispatch_answer(answer)
+        return True
+
+    async def _session(self, reader: FrameReader, writer: FrameWriter) -> None:
+        identity = None
+        forwards: PreviewForwards | None = None
+        observer = capture_hello(self._capture, None)
+        terminal_error: BaseException | None = None
+        try:
+            with observe(observer, "hello_decode"):
+                async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                    hello = await read_frame(reader)
+                if hello.kind is not WireMessageKind.hello:
+                    raise ValueError("executor handshake required")
+                parsed_identity = parse_identity(hello.payload.get("identity"))
+                health = TypeAdapter(ExecutorHealth).validate_python(hello.payload)
+                if health.identity != parsed_identity:
+                    raise ValueError("identity coercion refused")
+                if type(hello.payload.get("process_id")) is not int or health.process_id < 1:
+                    raise ValueError("invalid executor process identity")
+            old_identity = self.identity
+            old_writer = self.writer
+            self.store.begin_connection(health.identity, now_ms())
+            # Only an admitted writer owns generation cleanup. A duplicate hello
+            # must not revoke resources from the already accepted connection.
+            identity = health.identity
+            safe_call(observer, "hello_admitted", identity)
+            safe_call(self._capture, "session_writer", writer, observer)
+            self.process_id = health.process_id
+            self.observed_at_ms = now_ms()
+            self.lost_at_ms = None
+            old_previews = self._preview_forwards
+            self.identity, self.writer, self.ready = identity, writer, False
+            self.last_contact_at_ms = now_ms()
+
+            self._preview_forwards = None
+            if old_writer is not None and old_writer is not writer:
+                safe_call(self._capture, "close_attempt", old_writer, "session_replaced")
+                old_writer.close()
+            try:
+                if old_previews is not None:
+                    await old_previews.close()
+            finally:
+                if old_identity is not None:
+                    await self._close_transport(old_identity)
+            if self.writer is not writer or self.identity != identity:
+                return
+            self._inventory = {}
+            self._retained_inventory = {}
+            if (
+                old_identity is not None
+                and old_identity.executor_incarnation != identity.executor_incarnation
+            ):
+                for command, future in tuple(self.pending_commands.values()):
+                    if not future.done():
+                        future.set_result(
+                            CommandOutcome(
+                                command.command_id,
+                                command.child,
+                                CommandDisposition.uncertain,
+                                {"reason": "executor_process_replaced"},
+                            )
+                        )
+            async with self._send_lock:
+                if self.writer is not writer or self.identity != identity:
+                    return
+                await write_frame(
+                    writer,
+                    WireMessage(
+                        WireMessageKind.hello_accepted, hello.request_id, _object(identity)
+                    ),
+                )
+            if self.writer is not writer or self.identity != identity:
+                return
+            probe = asyncio.create_task(self._measure_clock())
+            self._tasks.add(probe)
+            probe.add_done_callback(self._tasks.discard)
+            while self.writer is writer and self.identity == identity:
+                with observe(observer, "frame_decode"):
+                    message = await read_frame(reader)
+                request_observer = capture_request(self._capture, identity, message)
+                # Decode and fence synchronously before domain work can yield.
+                # A valid frame proves receipt even when its operation is refused.
+                if self.writer is not writer or self.identity != identity:
+                    break
+                self.last_contact_at_ms = now_ms()
+                task = asyncio.create_task(
+                    self._handle(
+                        message,
+                        identity,
+                        writer,
+                        **({"observer": request_observer} if request_observer is not None else {}),
+                    )
+                )
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+        except (
+            asyncio.IncompleteReadError,
+            ConnectionError,
+            OSError,
+            ValueError,
+            TimeoutError,
+            PlannerError,
+        ) as error:
+            terminal_error = error
+            safe_call(observer, "fail", "generation_close", error)
+        except BaseException as error:
+            terminal_error = error
+            safe_call(observer, "fail", "generation_close", error)
+            raise
+        finally:
+            safe_call(observer, "generation_closed", identity, terminal_error)
+            if identity is not None and self.writer is writer and self.identity == identity:
+                # Detach this generation before cleanup yields to a replacement hello.
+                self.ready = False
+                forwards = self._preview_forwards
+                self._preview_forwards = None
+                self.writer = None
+                self.lost_at_ms = now_ms()
+                self.store.mark_lost(identity, now_ms())
+                for response_future in self._responses.values():
+                    if not response_future.done():
+                        response_future.set_exception(ConnectionError("executor link lost"))
+            safe_call(self._capture, "close_attempt", writer, "session_cleanup", observer)
+            writer.close()
+            safe_call(self._capture, "session_done", writer)
+            safe_call(observer, "request_done")
+            current_forwards = self._preview_forwards if self.identity == identity else None
+            try:
+                if forwards is not None:
+                    await forwards.close()
+            finally:
+                try:
+                    if current_forwards is not None:
+                        await current_forwards.close()
+                finally:
+                    if identity is not None:
+                        await self._close_transport(identity)
+
+    async def _measure_clock(self) -> None:
+        sent = now_ms()
+        response = await self._request(
+            WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": sent}}
+        )
+        self.clock_sample = ClockSample(
+            sent,
+            int(cast(int, response.payload["mac_received_at_ms"])),
+            int(cast(int, response.payload["mac_sent_at_ms"])),
+            now_ms(),
+        )
+
+    async def _handle(
+        self,
+        message: WireMessage,
+        identity: ExecutorIdentity,
+        writer: FrameWriter,
+        observer: Any = None,
+    ) -> None:
+        try:
+            with observe(observer, "handler_enter"):
+                await self._handle_message(
+                    message,
+                    identity,
+                    writer,
+                    **({"observer": observer} if observer is not None else {}),
+                )
+        except Exception as error:
+            safe_call(observer, "fail", "handler_failed", error)
+            # An unanswered operation may already have committed. Close only
+            # its original generation and recover through ordinary replay.
+            safe_call(
+                getattr(self, "_capture", None),
+                "close_attempt",
+                writer,
+                "handler_failure",
+                observer,
+            )
+            writer.close()
+        finally:
+            if observer is not None:
+                self._settle_capture(observer)
+
+    def _settle_capture(self, observer: Any) -> None:
+        # Diagnostics settle off-loop after domain work, without a shutdown wait.
+        try:
+            resolution = asyncio.create_task(
+                asyncio.to_thread(safe_call, observer, "settled", self.db_path)
+            )
+            resolution.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+        except BaseException:
+            safe_call(observer, "disable")
+
+    async def _handle_message(
+        self,
+        message: WireMessage,
+        identity: ExecutorIdentity,
+        writer: FrameWriter,
+        observer: Any = None,
+    ) -> None:
+        if self.writer is not writer or self.identity != identity:
+            return
+        try:
+            pending_response = self._responses.get(message.request_id)
+            if pending_response is not None:
+                if not pending_response.done():
+                    pending_response.set_result(message)
+                return
+            response_kind = WireMessageKind.error
+            result: JsonObject
+            if message.kind is WireMessageKind.transport_open:
+                async with self._transport_lock:
+                    if (
+                        identity in self._transports
+                        or parse_identity(message.payload.get("identity")) != identity
+                    ):
+                        raise ValueError("duplicate or stale transport generation")
+                    root = _generation_root()
+                    root_path = Path(root.name)
+                    service = GenerationTransfers(
+                        identity,
+                        root_path / "s",
+                        lambda: self.identity == identity and self.writer is writer,
+                    )
+                    try:
+                        self.store.verify_connection(identity)
+                    except BaseException:
+                        await service.close()
+                        root.cleanup()
+                        raise
+                    self._transports[identity] = service
+                    self._transport_roots[identity] = root
+
+                    async def preview_request(
+                        kind: WireMessageKind, payload: JsonObject
+                    ) -> WireMessage:
+                        if self.identity != identity or self.writer is not writer:
+                            raise ConnectionError("preview generation changed")
+                        return await self._request(kind, payload)
+
+                    self._preview_forwards = PreviewForwards(
+                        preview_request,
+                        lambda: self.identity == identity and self.writer is writer and self.ready,
+                    )
+                    result, response_kind = (
+                        {},
+                        WireMessageKind.transport_opened,
+                    )
+            elif message.kind is WireMessageKind.reconcile_inventory:
+                with observe(observer, "inventory_decode"):
+                    inventory = TypeAdapter(ReconciliationInventory).validate_python(
+                        message.payload
+                    )
+                if inventory.identity != identity:
+                    raise ValueError("stale reconciliation generation")
+                self.store.verify_connection(identity)
+                for item in inventory.children:
+                    if self._closed_reconciliation_child(item.child, identity):
+                        self.retire_child(item.child)
+                        continue
+                    previous = self._inventory.get(item.child.child_id)
+                    if previous is not None and previous.active_turn == item.active_turn:
+                        item = replace(
+                            item,
+                            pending_asks=tuple(
+                                dict.fromkeys((*previous.pending_asks, *item.pending_asks))
+                            ),
+                            pending_user_input_ids=tuple(
+                                dict.fromkeys(
+                                    (*previous.pending_user_input_ids, *item.pending_user_input_ids)
+                                )
+                            ),
+                        )
+                    self._inventory[item.child.child_id] = item
+                    proxy = self.children.get(item.child.child_id)
+                    if proxy is None:
+                        proxy = self.recover_child(item.child)
+                        self.children[item.child.child_id] = proxy
+                    with observe(observer, "inventory_adopt"):
+                        await self.runtime.system.adopt_remote_child(item, proxy)
+                    if not self._reconciliation_current(identity, writer):
+                        return
+                    # Adoption can wait behind shutdown. Its earlier assignment
+                    # precheck grants no authority after that await.
+                    if self._closed_reconciliation_child(item.child, identity):
+                        self.retire_child(item.child)
+                for outcome in inventory.retained_command_outcomes:
+                    previous_outcome = self._retained_inventory.get(outcome.command_id)
+                    if previous_outcome is not None and previous_outcome != outcome:
+                        raise ValueError(
+                            "conflicting retained command outcome across inventory chunks"
+                        )
+                    historical = outcome.child.executor_incarnation != identity.executor_incarnation
+                    if historical:
+                        if not self.store.has_retained_command(outcome):
+                            raise ValueError(
+                                "historical outcome lacks exact retained command metadata"
+                            )
+                        if not self.store.has_accepted_command_outcome(outcome):
+                            raise ValueError(
+                                "historical outcome lacks matching accepted canonical receipt"
+                            )
+                    else:
+                        self._closed_reconciliation_child(outcome.child, identity)
+                    if not self._reconciliation_current(identity, writer):
+                        return
+                    self._retained_inventory[outcome.command_id] = outcome
+                    safe_call(observer, "command_outcome", outcome)
+                    if not historical:
+                        self._resolve_command(outcome)
+                if not inventory.children and not inventory.retained_command_outcomes:
+                    if not self._reconciliation_current(identity, writer):
+                        return
+                    merged = replace(
+                        inventory,
+                        children=tuple(
+                            item
+                            for item in self._inventory.values()
+                            if not self._closed_reconciliation_child(item.child, identity)
+                        ),
+                        retained_command_outcomes=tuple(self._retained_inventory.values()),
+                    )
+                    with observe(observer, "inventory_finalize"):
+                        reconciliation = self.store.reconcile(merged, now_ms())
+                    # Detach synchronously: a replacement handler may populate
+                    # its own aggregates while any of the ACK writes awaits.
+                    retained_outcomes = self._retained_inventory
+                    self._inventory = {}
+                    self._retained_inventory = {}
+                    for command_id in reconciliation.acknowledged_command_ids:
+                        retained_outcome = retained_outcomes.get(command_id)
+                        if retained_outcome is not None and not self._outcome_hint_acknowledged(
+                            retained_outcome
+                        ):
+                            continue
+                        if not await self._send_reconciliation(
+                            WireMessage(
+                                WireMessageKind.command_outcome_ack,
+                                command_id,
+                                {"command_id": command_id},
+                            ),
+                            identity,
+                            writer,
+                        ):
+                            return
+                    result = _object(
+                        ReconciliationResult(identity, reconciliation.receipts, (), (), ())
+                    )
+                else:
+                    result = _object(ReconciliationResult(identity, (), (), (), ()))
+                response_kind = WireMessageKind.reconcile_result
+            elif message.kind is WireMessageKind.reconciliation_ready:
+                # FIFO puts the ready ACK before any newly admitted preview or
+                # command. The Mac rejects previews until it receives this ACK.
+                async with self._send_lock:
+                    if self.writer is not writer or self.identity != identity:
+                        return
+                    with observe(observer, "ready_ack_send"):
+                        await write_frame(
+                            writer,
+                            WireMessage(
+                                WireMessageKind.reconciliation_ready,
+                                message.request_id,
+                                {"ready": True},
+                            ),
+                        )
+                    if self.writer is not writer or self.identity != identity:
+                        return
+                    self.ready = True
+                if hasattr(self.store, "mark_ready"):
+                    with observe(observer, "mark_ready"):
+                        self.store.mark_ready(identity, now_ms())
+                with observe(observer, "held_resume"):
+                    await self.runtime.system.resume_executor_held_prompts(remote_ready=True)
+                if self.writer is not writer or self.identity != identity:
+                    return
+                for answer in self.store.unapplied_answers():
+                    with observe(observer, "answer_dispatch"):
+                        self._dispatch_answer(answer)
+                # Resending a stable command to the same live registry is safe:
+                # the registry retains its pending task and first outcome.
+                with observe(observer, "pending_command_replay"):
+                    for command, future in tuple(self.pending_commands.values()):
+                        if (
+                            not future.done()
+                            and command.child.executor_incarnation == identity.executor_incarnation
+                        ):
+                            await self._transfer_command_inputs(command)
+                            if not await self._emit_command(command):
+                                self._release_closed_answer(command, future)
+                return
+            elif message.kind is WireMessageKind.envelope:
+                with observe(observer, "envelope_decode"):
+                    envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
+                safe_call(observer, "bind_envelope", envelope)
+                result, response_kind = (
+                    _object(
+                        await self.accept_envelope(
+                            envelope,
+                            identity,
+                            **({"observer": observer} if observer is not None else {}),
+                        )
+                    ),
+                    WireMessageKind.receipt,
+                )
+            elif message.kind is WireMessageKind.command_outcome:
+                outcome = TypeAdapter(CommandOutcome).validate_python(message.payload)
+                safe_call(observer, "command_outcome", outcome)
+                self._resolve_command(outcome)
+                if not self._outcome_hint_acknowledged(outcome):
+                    return
+                result, response_kind = (
+                    {"command_id": outcome.command_id},
+                    WireMessageKind.command_outcome_ack,
+                )
+            elif message.kind is WireMessageKind.read_request:
+                read = TypeAdapter(LiveReadRequest).validate_python(message.payload)
+                result, response_kind = await self._read(read), WireMessageKind.read_response
+            elif message.kind in (
+                WireMessageKind.file_manifest,
+                WireMessageKind.file_complete,
+            ):
+                result, response_kind = await self._file(message, identity)
+            else:
+                raise ValueError("unsupported executor frame")
+            if self.writer is writer and self.identity == identity:
+                safe_call(observer, "enter", "response_send_enter")
+                try:
+                    response = WireMessage(response_kind, message.request_id, result)
+                    if message.kind is WireMessageKind.reconcile_inventory:
+                        if not await self._send_reconciliation(response, identity, writer):
+                            return
+                    else:
+                        await self._send(response)
+                except BaseException as error:
+                    safe_call(observer, "fail", "response_send_failed", error)
+                    raise
+                else:
+                    safe_call(observer, "complete", "response_send_done")
+        except (sqlite3.OperationalError, OSError) as error:
+            safe_call(observer, "fail", "handler_failed", error)
+            safe_call(
+                getattr(self, "_capture", None),
+                "close_attempt",
+                writer,
+                "handler_io_failure",
+                observer,
+            )
+            writer.close()
+        except (ValueError, PlannerError, KeyError, TypeError) as error:
+            safe_call(observer, "fail", "validation_response", error)
+            if self.writer is writer:
+                with observe(observer, "validation_response"):
+                    response = WireMessage(
+                        WireMessageKind.error,
+                        message.request_id,
+                        error.to_payload()
+                        if isinstance(error, PlannerError)
+                        else {"error": {"code": "validation", "message": str(error)}},
+                    )
+                    if message.kind is WireMessageKind.reconcile_inventory:
+                        await self._send_reconciliation(response, identity, writer)
+                    else:
+                        await self._send(response)
+
+    async def _read(self, read: LiveReadRequest) -> JsonObject:
+        self._assignment(read.child)
+        if not read.path.startswith(
+            (
+                "/api/tickets",
+                "/api/items",
+                "/api/managers",
+                "/api/sprint",
+                "/api/projects",
+                "/api/worker-types",
+                "/api/skills",
+                "/api/feedback",
+                "/files/sprint-items/",
+                "/files/managers/",
+            )
+        ):
+            raise ValueError("unsupported executor read")
+        import httpx
+
+        from planner.core.contracts import principal_legacy_actor
+
+        principal = self._assignment(read.child)
+        headers = {"X-Plan-Actor": principal_legacy_actor(principal)}
+        if principal.kind is PrincipalKind.ticket:
+            headers["X-Plan-Ticket-ID"] = principal.id
+        elif principal.kind is PrincipalKind.manager:
+            headers["X-Plan-Manager-ID"] = principal.id
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://executor"
+        ) as client:
+            response = await client.get(read.path, params=cast(Any, read.params), headers=headers)
+            try:
+                value = response.json()
+            except ValueError:
+                return {"text": response.text}
+            return value if isinstance(value, dict) else {"data": value}
+
+    def _authorize_file(self, publication: FilePublicationRequest) -> None:
+        principal = self._assignment(publication.child)
+        manifest = publication.manifest
+        if manifest.scope is FileScope.ticket:
+            if principal.kind is not PrincipalKind.ticket or manifest.owner_id != principal.id:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "artifact belongs to another Ticket", {}
+                )
+        elif manifest.owner_id != publication.child.conversation_id:
+            raise PlannerError(
+                ErrorCode.agent_forbidden, "input belongs to another conversation", {}
+            )
+
+    async def _file(
+        self, message: WireMessage, identity: ExecutorIdentity
+    ) -> tuple[JsonObject, WireMessageKind]:
+        from planner.executor.publication import PublicationReceiver
+
+        if self.file_receiver is None:
+            root = Path(self.db_path).resolve().parent
+            self.file_receiver = PublicationReceiver(
+                self.store, root / "files", root / "executor-quarantine"
+            )
+        service = self._transports.get(identity)
+        if service is None:
+            raise ValueError("file generation unavailable")
+        publication = TypeAdapter(FilePublicationRequest).validate_python(message.payload)
+        self._authorize_file(publication)
+        manifest = publication.manifest
+        key = identity, manifest.publication_id
+        if message.kind is WireMessageKind.file_manifest:
+            assigned = self._file_assignments.get(manifest.publication_id)
+            if assigned is not None and assigned != publication.child:
+                raise ValueError("file publication assignment changed")
+            self._file_assignments[manifest.publication_id] = publication.child
+            await self._receive_work(
+                identity, self.file_receiver.begin, manifest, identity=identity
+            )
+            self.store.verify_connection(identity)
+            if self.store.publication_accepted(manifest):
+                return _object(manifest), WireMessageKind.file_accepted
+            previous = self._upload_transfers.pop(key, None)
+            if previous is not None:
+                service.release(previous)
+            slot = service.create_upload(manifest)
+            self._upload_transfers[key] = slot.transfer_id
+            return _object(slot), WireMessageKind.file_slot
+        if self._file_assignments.get(manifest.publication_id) != publication.child:
+            raise ValueError("file publication assignment changed")
+        transfer_id = self._upload_transfers.pop(key, None)
+        if transfer_id is None:
+            if self.store.publication_accepted(manifest):
+                return _object(manifest), WireMessageKind.file_accepted
+            raise ValueError("unknown publication transfer")
+        try:
+            staged = service.upload_path(transfer_id)
+            self.store.verify_connection(identity)
+            self._authorize_file(publication)
+            await self._receive_work(
+                identity, self.file_receiver.ingest_staged, manifest, staged, identity=identity
+            )
+            self.store.verify_connection(identity)
+            self._authorize_file(publication)
+            await self._receive_work(
+                identity, self.file_receiver.complete, manifest, now_ms(), identity=identity
+            )
+            self.store.verify_connection(identity)
+            return _object(manifest), WireMessageKind.file_accepted
+        finally:
+            service.release(transfer_id)
+
+    async def _receive_work(
+        self, generation: ExecutorIdentity, operation: Any, *args: Any, **kwargs: Any
+    ) -> None:
+        # Cancellation cannot terminate a filesystem thread. Keep its source and
+        # generation directory alive until the admitted operation has settled.
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        pending = self._receiver_work.setdefault(generation, set())
+        pending.add(task)
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+        finally:
+            pending.discard(task)
+            if not pending:
+                self._receiver_work.pop(generation, None)
+
+    async def _close_transport(self, identity: ExecutorIdentity) -> None:
+        # Take ownership before yielding: replacement and old-session cleanup can
+        # arrive together, but only one owns this service and its directory.
+        service = self._transports.pop(identity, None)
+        root = self._transport_roots.pop(identity, None)
+        work = tuple(self._receiver_work.get(identity, ()))
+
+        async def cleanup() -> None:
+            try:
+                if work:
+                    await asyncio.gather(*work, return_exceptions=True)
+                if service is not None:
+                    await service.close()
+            finally:
+                for key in tuple(self._upload_transfers):
+                    if key[0] == identity:
+                        self._upload_transfers.pop(key)
+                if root is not None:
+                    root.cleanup()
+
+        closing = asyncio.create_task(cleanup())
+        try:
+            await asyncio.shield(closing)
+        except BaseException:
+            await asyncio.gather(closing, return_exceptions=True)
+            raise
+
+
+def _object(value: object) -> JsonObject:
+    encoded = encode_value(value)
+    if not isinstance(encoded, dict):
+        raise ValueError("expected object")
+    return encoded

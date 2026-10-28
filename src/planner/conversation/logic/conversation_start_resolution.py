@@ -56,5 +56,6 @@ def resolve_conversation_start_request(
         reasoning_effort=request.reasoning_effort,
         role_materials=request.role_materials,
         workspace_folder=workspace_folder,
+        workspace_path_policy=request.workspace_path_policy,
         access=FLOOR_DEFAULT_ACCESS if request.access is None else request.access,
     )

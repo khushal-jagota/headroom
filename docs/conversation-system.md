@@ -19,6 +19,60 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Conversation directories
+
+An explicit workspace takes precedence over the Project folder. For Mac work, either
+path names an absolute directory on the Mac. The VPS forwards that path without
+checking its own disk or replacing its home prefix with the Mac home.
+
+The Mac resolves its own symlinks and checks that the directory exists before it starts
+the agent. A missing path or a path that names a file refuses the start. Panels does
+not substitute another directory or create the requested one.
+
+Without an explicit workspace or Project folder, Mac work uses the existing default.
+A default path beneath the VPS home maps to the same relative location beneath the Mac home.
+VPS work retains its existing rules: a Project folder must exist as a directory on the VPS.
+The VPS resolves that folder's symlinks. A missing or unset Project folder selects the default workspace.
+
+A conversation stores its selected directory and the rule for its interpretation together.
+Resume retains both after a Project folder changes or clears. Existing conversations retain
+the earlier home mapping rule.
+
+_Code paths:_ `src/planner/runtime/conversation_start.py`, `src/planner/conversation/`,
+`src/planner/executor/remote.py`, `src/planner/executor/runtime.py`.
+
+## Native execution and answer receipts
+
+Native events use the same lifecycle facts and publication transaction as local events.
+New public request IDs include the turn number. Provider IDs remain bound to the original native child and callback.
+Existing native requests retain their original public IDs through an upgrade and later restarts.
+Panels retains their exact reference mapping without changes to notebook rows or saved choices.
+Permission callbacks and user-input callbacks keep separate identities, even when their provider IDs match.
+The owner can save an exact pending answer during a Mac connection outage.
+VPS acceptance does not prove native callback delivery. Native application is a separate durable fact.
+A VPS restart retains native turn knowledge until executor reconciliation supplies evidence.
+Deployment recovery does not start a replacement turn over unresolved native work.
+
+Explicit conversation shutdown also claims an initial delivery before its settled-phase barrier.
+It fences prompt dispatch and reconnect replay for that reservation before it releases local waiters.
+Complete evidence of no prompt transmission permits an audited discard and suppressed delivery.
+Possible transmission or incomplete older evidence retains unknown prompt delivery through the existing uncertainty records.
+Known native acceptance remains factual. Shutdown never promises to undo its effects.
+
+Local shutdown and native termination remain separate facts.
+If local backend cleanup fails, shutdown retains the exact child in quarantine and closes local callback authority.
+Claude retains its cleanup handles until the adapter confirms cleanup. Reader cancellation alone does not prove native termination.
+Shutdown during an unsettled initial delivery can return its local disposition before the original child stops.
+Ordinary remote shutdown waits outside the conversation lock for confirmed retirement before it returns.
+The original reference remains quarantined until its exact stop outcome receives canonical acceptance.
+Required native evidence that receives a refusal keeps cleanup uncertain across explicit retries and restarts.
+Confirmed retirement closes the assignment and prevents later inventory from restoring that exact child.
+The next explicit prompt starts a fresh child with the same provider session cursor.
+Historical uncertain outcomes remain unchanged.
+Restart recovery can bind the original open assignment and intent without a saved native turn row.
+It does not repeat start or prompt, invent a missing command identity, or treat absent evidence as non-delivery.
+The [retained initial-prompt procedure](initial-mac-prompt-cancellation.md) supplies the isolated application handoff.
+
 ## Diagnostic history expiry
 
 Diagnostic expiry remains an explicit offline operator action. Normal startup
@@ -357,6 +411,19 @@ associations and leaves each conversation record behind. A file removed by eithe
 turn an attachment somebody sent into a file nobody can retrieve, while the row still
 says that the attachment was sent.
 
+An explicit Ticket locale move uses a separate idle-retirement operation. It holds
+conversation admission through source retirement and the synchronous locale write.
+It preserves the notebook, session cursor, model settings, and access posture.
+The old child cannot receive the next prompt after a successful move. A missing
+linked conversation refuses rather than supplying an idle proof.
+
+For a Mac source, the executor checks current work and retires the assigned source
+child identities. Old identities remain fenced against delayed commands and IPC
+writes. A later return to the Mac receives fresh child identities. Receipt evidence
+must still match the current executor incarnation and connection generation at commit.
+Admission refusal precedes native effects. Stop uncertainty keeps the child handle
+quarantined. A failed write after confirmed stop reports that the source retired.
+
 A finished tool call keeps the readable text that its backend reports. Claude can
 report a result as a list of text and non-text blocks. Panels joins its text blocks
 and keeps no finish detail when the list contains no text. Some older Claude rows
@@ -648,6 +715,12 @@ message, then the remaining FIFO line continues. Steer consumes the selected
 text into the captured running turn and does not apply model choices that waited with
 that message. Being told that the message is gone is an ordinary answer because
 automatic delivery may win the same race.
+
+For executor admissions, the VPS saves held content and its first queued receipt
+together. Startup restores its original target and order. Interrupted dispatch
+retains the content with `delivery_uncertain`, blocks further dispatch, and does
+not repeat the native operation. Queued and uncertain receipts do not prove an
+explicit reply. Actual composed delivery supplies that credit.
 
 Claude gives every steered message a UUID. Its queue receipt admits the message to work
 owned by the captured Panels turn. Claude can fold that work into its current model loop
@@ -961,11 +1034,28 @@ remembering — this system keeps no grant state at all. Ask and answer are both
 notebook rows; an answer only lands on an ask that is still waiting on the live
 turn, and an unanswered ask dies — visibly — when its turn ends.
 
-Agent questions use a separate path. A request keeps every question in order, including
+For a remote child, the VPS saves the selected choice before transmission and
+records callback application separately. A dropped connection supplies no answer
+or refusal. An owner can save a new choice during the outage if the exact persisted
+child, turn, and callback remain open and pending. The request carries the original
+`executor_ask` reference from the snapshot. A remote `{landed: true}` confirms
+VPS acceptance; the UI says "Answer saved on VPS; delivery to Mac is pending."
+Only matching application evidence says "Answer applied on Mac." Fresh evidence
+of the original callback gates delivery after reconnect. A restart preserves the
+pending form or saved answer before inventory returns. Cancellation persists
+closure before waiting for the Mac; an ended or replaced turn cannot receive the
+saved answer. Such an answer stays saved and unresolved. A prior transmission
+can still receive its application acknowledgment after closure. See
+[the Mac executor](executor.md) for this boundary and its timing limitations.
+
+Agent question requests keep every question in order, including
 its short header, full text, choices, descriptions, whether several choices are allowed,
 and whether a typed answer is allowed. The composer presents one question at a time and
-sends the complete answer map only after all are answered. The answer row is written only
-after the backend accepts that map. Refreshing the page rebuilds a still-pending request
+sends the complete answer map only after all are answered. For a remote child, the same
+authoritative answer path preserves the validated map before transmission. Its identity
+includes the callback type, child, turn, and request. The conversation answer row appears
+after callback application. A lost callback leaves the accepted map unresolved.
+Refreshing the page rebuilds a still-pending request
 from the notebook. Cancelling the turn withdraws it. A malformed question request is
 shown as a failure and refused; it never turns into an approval prompt.
 
@@ -977,16 +1067,19 @@ ACP has no agent-question request, so its existing permission flow is unchanged.
 
 One child process per conversation, started when a send or maintenance run needs it. The
 agent's own session handle is stored on the conversation row, so a later send
-can bring the same memory back. After a server restart nothing is running and
-the system says so — there is no pretending, and no machinery that quietly
-reattaches. An agent idle for half an hour is stopped silently (its memory is
+can bring the same memory back. After a server restart local children are gone.
+Remote children can survive and require exact inventory and record reconciliation
+before they reattach. Link recovery alone proves no child or callback survival.
+An agent idle for half an hour is stopped silently (its memory is
 already saved); the next send brings it back without anyone noticing. A resume
 that did not actually restore the agent's memory is refused out loud — never
 silently accepted as a fresh brain behind an old transcript. A failed turn
 writes one error-log line with the ids and the tail of the process's stderr.
 
-Held messages live in memory only: a server restart loses whatever was still
-waiting in line (the notebook keeps what was delivered or discarded). Kill is
+Executor-admitted held messages survive a VPS restart in the canonical operation
+record. Pending items resume through the held lifecycle. An interrupted dispatch
+stays uncertain. This cannot recover content lost before persistence existed.
+Ordinary local admissions retain the memory-only held line. Kill is
 the loud version of stopping: it ends the running turn and throws away the
 waiting line, writing a discard row for each thrown-away message, because text
 someone handed over must never vanish without a trace. Pressing New in the pane
@@ -1477,8 +1570,11 @@ when present, and retry delay, capped at 240 characters.
 Successful app metadata stays with that child for 15 minutes. An installed-state update
 fetches missing or expired metadata; expiry alone starts no polling. Removing an app
 also removes its metadata, and a late reply cannot restore its entry or invocation.
-Unchanged entries and invocations produce no catalog event. Stopping the child cancels
-and awaits its source requests and retries.
+The first snapshot publishes even when it is empty. Later snapshots publish only when
+visible entries change. Equal entries still refresh invocation paths. A failed publication
+retains the last admitted snapshot and publication marker. A surviving child retains that
+marker across relay reconnection. A new child starts unpublished. Stopping the child
+cancels and awaits its source requests and retries.
 
 Codex resolves a selected token against that complete snapshot when the prompt starts.
 Skills use Codex skill input. Apps and plugins use exact mention paths. Exact protocol
@@ -1606,8 +1702,8 @@ application lifespan with fresh synthetic homes.
 
 ## Deferred
 
-- **Held-line durability**: if losing the in-memory waiting line on a restart
-  ever bites, the line can be made durable without changing the contract.
+- **Local held-line durability**: ordinary local admissions retain the volatile
+  waiting line. Executor-admitted messages now persist their pending content.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 

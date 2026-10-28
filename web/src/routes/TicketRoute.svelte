@@ -1,4 +1,16 @@
 <script lang="ts">
+  import { machineRows } from "../lib/machines/visibility";
+  const machineRegistry=machineRows();
+  const machinePageKey=Symbol();
+  $effect(() => {
+    const locale=ticket.data?.locale;
+    untrack(() => machineRegistry?.set(machinePageKey,locale,false));
+    return () => untrack(() => machineRegistry?.delete(machinePageKey));
+  });
+  import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
+  import MachineIdentity from "../components/machines/MachineIdentity.svelte";
+  import MachineKey from "../components/machines/MachineKey.svelte";
+  import MachineNotice from "../components/machines/MachineNotice.svelte";
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
@@ -54,12 +66,14 @@
     // The artifact this screen is showing, when the host keeps that in its address, and
     // the way to write it there. The Workspace supplies both; without them, the screen
     // holds the value itself.
+    machineNoticeManaged = false,
     requestedConversationId = null,
     openFile = null,
     onOpenFile = null,
     navigationErrorHandledByParent = false
   }: {
     id: string;
+    machineNoticeManaged?: boolean;
     requestedConversationId?: string | null;
     navigationErrorHandledByParent?: boolean;
     openFile?: ManagedFileTarget | null;
@@ -453,7 +467,9 @@
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
-        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
+        <div class="machine-heading">{#if detail.locale}<MachineIdentity locale={masthead.locale} ticketId={detail.id} />{/if}<span>{detail.title}</span><MachineKey /></div>
+        {#if !machineNoticeManaged}<MachineNotice relevant={detail.locale === "macos"} />{/if}
+        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
@@ -466,7 +482,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               />
-              <ConversationSignalMark signal={masthead.conversation_signal} conversationId={masthead.conversation_id} />
+              <MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -601,7 +617,7 @@
         data-conversation-layer-host
       >
         <div class="conversation-column">
-          <LiveConversation
+          <LiveConversation locale={masthead.locale}
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId
@@ -624,8 +640,10 @@
 </section>
 
 <style>
+  .machine-heading { position:sticky; top:0; z-index:4; display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) var(--space-3); background:var(--surface-1); }
+  .machine-heading > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ticket-col { padding-top:0; }
-  .ticket-doc { scrollbar-gutter:auto; }
+  .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }

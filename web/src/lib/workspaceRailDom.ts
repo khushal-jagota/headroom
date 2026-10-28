@@ -1,3 +1,4 @@
+import { MACHINE_ACTIVITY_UNKNOWN } from "./machines/config";
 import { type WorkspaceRail, type WorkspaceChief, type WorkspaceTicketGroup } from './workspaceRail';
 import type { WorkItemTicketFacts } from './workItemPresentation';
 import type { ConversationSignal } from './conversationSignal';
@@ -15,7 +16,7 @@ function groupsMatch(root: Element,groups: readonly WorkspaceTicketGroup[]) {
 function ticketMatches(row:HTMLElement,ticket:WorkItemTicketFacts) {
   return row.dataset.ticketId===ticket.id && row.dataset.ticketStage===ticket.stage
     && row.dataset.ticketStatus===ticket.ticket_status && row.querySelector('.ticket-row-title')?.textContent===ticket.title
-    && JSON.stringify(actualMark(row))===JSON.stringify(expectedMark(ticket.conversation_signal,ticket.conversation_id));
+    && JSON.stringify(actualMark(row))===JSON.stringify(expectedMark(ticket.conversation_signal,ticket.conversation_id,row));
 }
 /** Read actual rendered values, including motion-controlled membership and marks. */
 export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:WorkspaceChief | null | undefined,settledOpen:boolean,settledCount=rail.settledItems.length):boolean {
@@ -43,7 +44,7 @@ export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:Workspa
 export function hoverDomMatches(root:HTMLElement,title:string,recap:string,stage:string,signal:Partial<ConversationSignal> | undefined,
   conversationId:string | null | undefined,kicker:string):boolean {
   return root.querySelector('.kicker')?.textContent===kicker && root.getAttribute('aria-hidden')==='false' && root.querySelector('.title > span')?.textContent===title
-    && (root.querySelector('[data-recap-text]')?.textContent ?? '')===recap && (root.querySelector('.doing')?.textContent ?? '')===stage
-    && JSON.stringify(actualMark(root))===JSON.stringify(expectedMark(signal,conversationId));
+    && (root.querySelector('[data-recap-text]')?.textContent ?? '')===recap && (root.querySelector('.doing')?.textContent ?? '')===(root.querySelector('[data-machine-stage-unknown="true"]') ? MACHINE_ACTIVITY_UNKNOWN : stage)
+    && JSON.stringify(actualMark(root))===JSON.stringify(expectedMark(signal,conversationId,root));
 }
 

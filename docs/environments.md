@@ -180,10 +180,44 @@ path.
 - **The conversation system** (`conversation-system.md`) — the three agent backends
   that use the configured provider homes.
 
----
+## Mac executor installation
 
-_Last verified: 2026-08-09._
+The Mac uses one ordinary native virtual environment and one exact source checkout:
 
+```text
+~/Deployments/PanelsExecutor/
+├── source/   reviewed source and native backend packages
+└── venv/     installed Python package and pinned dependencies
+
+~/Library/Application Support/Panels/executor/
+└── persistent spool, artifacts, logs, and IPC
+```
+
+Create the environment at its final path. Keep the source and environment at those paths.
+Install the full Python package with standard pip commands and backend packages with `npm ci`.
+No custom wrapper, runtime receipt, source manifest, or versioned runtime directory controls installation.
+The standard `venv/bin/panels` console supports the executor and Worker CLI.
+
+The supported target is native ordinary CPython 3.14.3 on Apple Silicon, macOS 11 or later,
+and native Node 22 or newer. Intel support remains outside this dependency set.
+Pinned dependencies use compatible wheels, except the pinned `http-ece` and `PyICU` source distributions.
+PyICU requires native ICU libraries, headers, `pkg-config`, and a compatible C++ compiler.
+The operator runbook defines these prerequisites. No broad source-build fallback exists.
+
+One GUI LaunchAgent runs the console with explicit source SHA, HTTPS app origin, and logical executor ID.
+Its environment retains the owner's HOME and reviewed backend PATH, with `venv/bin` first.
+The Claude executable points explicitly into the source's `agent_backends/node_modules`.
+The installed Python package cannot infer that source path.
+
+The small plist renderer prints configuration only. The operator owns installation and service commands.
+The [Mac operator runbook](mac-executor-installation.md) owns inputs, shutdown, updates, and failed-install recovery.
+[VPS deployment](deployment.md#explicit-vps-executor-configuration) owns the independent server mode and executor identity configuration.
+Physical Mac installation, provider credentials, reboot, and pre-unlock behavior require separate live evidence.
+
+Code paths: `src/planner/environments/mac_executor/`, `src/planner/executor/`,
+`requirements-build.txt`, `requirements-executor.txt`, `agent_backends/`.
+
+_Last verified: 2026-10-25._
 ## Python build prerequisites
 
 The indexed workspace ordering uses PyICU, pinned in `requirements.txt`. Install

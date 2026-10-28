@@ -3891,6 +3891,13 @@ def run(browser, urls):
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'visibility':
             _preview_lifecycle(browser, urls[0])
             return
+        _machine_evidence(browser, urls[0])
+        if __import__('os').environ.get('PANELS_MACHINE_ONLY') == '1':
+            return
+        _short_lens_restoration(browser, urls[0])
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'short-lens':
+            return
+
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'repairs':
             _conversation_repairs(browser, urls[0])
             return
@@ -3958,3 +3965,96 @@ def run(browser, urls):
         _projected_visual_relationships(browser, urls[0])
         _bounded_reader(browser, urls[0])
         _run(browser, urls)
+
+
+def _machine_evidence(browser, url):
+    import time
+
+    from playwright.sync_api import expect
+    started = time.perf_counter()
+    page=browser.new_page(viewport={"width":1100,"height":850})
+    errors=[]
+    page.on("pageerror",lambda error:errors.append(str(error)))
+    page.goto(url+"?machines",wait_until="domcontentloaded")
+    expect(page.locator('[data-machine-notice]')).to_be_visible()
+    expect(page.locator('[data-conversation-id="vps-conversation"] [data-conversation-signal="working"]')).to_be_visible()
+    expect(page.locator('[data-conversation-id="machine-conversation"] [data-conversation-signal="working"]')).to_have_count(0)
+    assert page.locator('.ticket-row button, .ticket-row a').count()==0
+    expect(page.locator('[data-conversation-alive-word]')).to_contain_text('Current activity on Mac is unknown')
+    allow=page.locator('[data-conversation-ask-action="yes"]')
+    expect(allow).to_be_enabled()
+    page.evaluate('()=>window.__machine.change({wrongChild:true})')
+    expect(allow).to_be_disabled()
+    page.evaluate('()=>window.__machine.change({wrongChild:false})')
+    expect(allow).to_be_enabled()
+    allow.click()
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    post=page.evaluate('()=>window.__machine.posts[0]')
+    assert post['ask_id']=='public-turn:permission:native-ask'
+    assert post['executor_ask']['ask_id']=='native-ask'
+    page.evaluate('()=>window.__machine.change({applied:true})')
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer applied on Mac.')
+    page.evaluate('()=>window.__machine.change({questions:true})')
+    expect(page.locator('[data-user-input-option="One"]')).to_be_enabled()
+    page.locator('[data-user-input-option="One"]').click()
+    page.locator('[data-user-input-continue]').click()
+    page.locator('[data-user-input-option="Two"]').click()
+    page.locator('[data-user-input-continue]').click()
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    post=page.evaluate('()=>window.__machine.posts[1]')
+    assert post['request_id']=='public-turn:user_input:native-questions'
+    assert post['executor_ask']['ask_id']=='native-questions'
+    assert len(post['answers'])==2
+    page.get_by_role('button',name='Runs on Mac. Show machine details').click()
+    dialog=page.get_by_role('dialog')
+    dialog.get_by_role('button',name='Move Ticket…').click()
+    dialog.get_by_role('button',name='Move Ticket',exact=True).click()
+    expect(dialog.get_by_role('alert')).to_contain_text('Source state unknown.')
+    dialog.get_by_role('button',name='Close').click()
+    page.evaluate('()=>window.__machineCreating()')
+    form=page.get_by_role('form',name='Create a Ticket')
+    form.get_by_label('Title',exact=True).fill('Current Manager creation')
+    form.get_by_label('Brief',exact=True).fill('Canonical brief bytes')
+    form.get_by_label('Manager',exact=True).select_option('manager-fixture')
+    form.get_by_label('Run on',exact=True).select_option('macos')
+    expect(form.get_by_text('Resolved machine: Mac.',exact=True)).to_be_visible()
+    form.get_by_role('button',name='Create Ticket',exact=True).click()
+    page.wait_for_function('()=>window.__machineCreated === "created-worker"')
+    created=page.evaluate('()=>window.__machine.creates[0]')
+    assert created['manager']=={'kind':'manager','id':'manager-fixture'}
+    assert created['brief']=='Canonical brief bytes'
+    assert created['locale']=='macos'
+    assert 'orchestrator' not in created and 'kickoff_note' not in created
+    assert not errors,errors
+    page.close()
+    print('MACHINE_EVIDENCE_PROOF seconds='+str(round(time.perf_counter()-started,3))+' newHosts=0',flush=True)
+
+
+def _short_lens_restoration(browser, url):
+    import json
+    import time
+
+    from playwright.sync_api import expect
+
+    started=time.perf_counter()
+    page=browser.new_page(viewport={"width":1000,"height":900})
+    try:
+        page.goto(url+"?reader=1&short-lens=1&unread=0")
+        text=page.get_by_text("Child direct message",exact=True)
+        expect(text).to_be_visible()
+        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
+        measure="""() => { const thread=document.querySelector('[data-conversation-thread]'); const text=thread.querySelector('p'); const region=document.querySelector('.conversation-transcript-region'); return {padding:getComputedStyle(thread).paddingTop,top:text.getBoundingClientRect().top-thread.getBoundingClientRect().top,scrollTop:thread.scrollTop,scrollHeight:thread.scrollHeight,height:thread.clientHeight,visibility:getComputedStyle(region).visibility,status:document.querySelector('[data-conversation-restoration-status]')?.dataset.conversationRestorationStatus??null}; }"""
+        before=page.evaluate(measure)
+        page.locator('[data-conversation-lens-choice="full"]').click()
+        expect(text).to_be_visible()
+        after=page.evaluate(measure)
+        assert after['status'] is None,after
+        assert abs(after['top']-before['top'])<=1,{'before':before,'after':after}
+        page.locator('[data-conversation-lens-choice="focus"]').click()
+        expect(text).to_be_visible()
+        restored=page.evaluate(measure)
+        assert restored['status'] is None,restored
+        assert abs(restored['top']-before['top'])<=1,{'before':before,'restored':restored}
+        print('SHORT_LENS_RESTORATION '+json.dumps({'before':before,'full':after,'focus':restored,'seconds':round(time.perf_counter()-started,3),'newHosts':0}),flush=True)
+    finally:
+        page.close()

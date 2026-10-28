@@ -27,6 +27,12 @@ def _make_conversation(conn: sqlite3.Connection, conversation_id: str, *, compac
         (conversation_id, compacted),
     )
 
+    if compacted:
+        conn.execute(
+            "INSERT INTO conversation_events VALUES (?, ?, 'context_compacted', '{}', 0)",
+            (conversation_id, compacted + 1),
+        )
+
 
 def _add_prompt(
     conn: sqlite3.Connection,
@@ -61,6 +67,6 @@ def test_a_memory_notice_answers_the_boundary_so_the_same_one_is_never_sent_twic
     _add_prompt(conn, "c1", sequence=3, sender_message_id="worker_step_message_abc")
     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1") is True
 
-    _add_prompt(conn, "c1", sequence=8, sender_message_id="worker_step_memory_notice_xyz")
+    _add_prompt(conn, "c1", sequence=9, sender_message_id="worker_step_memory_notice_xyz")
 
     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1") is False

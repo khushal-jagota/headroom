@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     PromptDeliveryMode,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     AgentMessageEventPayload,
@@ -26,6 +28,7 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.storage import (
     ConversationStore,
+    ensure_started_conversation_record,
 )
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import ChangeSignallingConnection, connect, create_schema
@@ -76,15 +79,7 @@ def store(tmp_path: Path) -> ConversationStore:
 # --- the conversation row ----------------------------------------------------------------
 
 
-
-
-
-
-
-
 # --- a delivery, written as one thing ------------------------------------------------------
-
-
 
 
 def test_a_delivery_that_cannot_be_written_leaves_no_part_of_itself_behind(
@@ -157,8 +152,6 @@ def test_appends_racing_each_other_each_get_a_number_of_their_own(
     asyncio.run(exercise())
 
 
-
-
 def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
     store: ConversationStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -198,8 +191,6 @@ def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
 
 
 # --- a message is what it holds, not only what it says ---------------------------------------
-
-
 
 
 def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -> None:
@@ -268,12 +259,6 @@ def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -
     asyncio.run(asyncio.wait_for(exercise(), 3))
 
 
-
-
-
-
-
-
 def test_latest_explicit_outcome_supersedes_historical_uncertainty(
     store: ConversationStore,
 ) -> None:
@@ -322,5 +307,39 @@ def test_sqlite_commit_failure_with_automatic_rollback_is_not_reported_as_saved(
         with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
             await store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
         assert await store.read_events_after("c", 0) == ()
+
+    asyncio.run(exercise())
+
+
+def test_existing_conversation_refuses_a_different_workspace_policy(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    resolved = replace(_resolved(), workspace_path_policy=WorkspacePathPolicy.native_absolute)
+    ensure_started_conversation_record(tmp_db, resolved, created_at=1)
+    ensure_started_conversation_record(tmp_db, resolved, created_at=2)
+    with pytest.raises(RuntimeError, match="differ from its durable record"):
+        ensure_started_conversation_record(
+            tmp_db,
+            replace(resolved, workspace_path_policy=WorkspacePathPolicy.legacy_home_mapping),
+            created_at=3,
+        )
+    assert (
+        tmp_db.execute(
+            "SELECT workspace_path_policy FROM conversations WHERE conversation_id = 'c'"
+        ).fetchone()[0]
+        == "native_absolute"
+    )
+
+
+@pytest.mark.parametrize("policy", list(WorkspacePathPolicy))
+def test_workspace_policy_round_trip(store: ConversationStore, policy: WorkspacePathPolicy) -> None:
+    async def exercise() -> None:
+        resolved = replace(_resolved(), workspace_path_policy=policy)
+        await store.create_conversation(resolved)
+        read = await store.read_conversation("c")
+        assert read is not None
+        assert read.workspace_path_policy is policy
+        assert read.resolved_start().workspace_path_policy is policy
+        assert read.workspace_folder == resolved.workspace_folder
 
     asyncio.run(exercise())

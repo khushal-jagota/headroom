@@ -45,7 +45,7 @@ def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
             title_max_chars=200,
             worker_type=worker_type,
         ),
-        lambda: data.validate_ticket_creation_context(
+        lambda: data.resolve_ticket_creation_context(
             tmp_db,
             title="Retired",
             title_max_chars=200,

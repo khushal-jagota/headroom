@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from planner.environments.app import digest_app_artifact, digest_app_source
+from planner.environments.deployment import DeploymentResult, deploy_app
+from planner.environments.executor_launch_contracts import (
+    ExecutorLaunchConfigurationError,
+    VpsExecutorLaunchConfiguration,
+)
+from planner.environments.vps_launch import read_vps_launch, write_vps_launch
+
+SHA_A = "a" * 40
+SHA_B = "b" * 40
+REMOTE = VpsExecutorLaunchConfiguration("remote", "owner-mac")
+LOCAL = VpsExecutorLaunchConfiguration("local")
+
+
+class Service:
+    def __init__(self, path: Path, *, fail_candidate: bool = False) -> None:
+        self.path = path
+        self.seen: list[VpsExecutorLaunchConfiguration | None] = []
+        self.stops: list[VpsExecutorLaunchConfiguration | None] = []
+        self.fail_candidate = fail_candidate
+
+    def stop(self) -> None:
+        self.stops.append(read_vps_launch(self.path))
+
+    def restart(self) -> None:
+        self.seen.append(read_vps_launch(self.path))
+        if self.fail_candidate and len(self.seen) == 1:
+            raise OSError("candidate start refused")
+
+
+class Health:
+    def wait_for_sha(self, sha: str, *, deadline: float) -> bool:
+        return True
+
+
+def deploy(
+    tmp_path: Path,
+    *,
+    prior: VpsExecutorLaunchConfiguration | None = None,
+    desired: VpsExecutorLaunchConfiguration | None = REMOTE,
+    same_sha: bool = False,
+    first: bool = False,
+    fail_candidate: bool = False,
+) -> tuple[DeploymentResult, Service]:
+    current = tmp_path / "current"
+    path = current / "data" / "executor-launch.json"
+    if not first:
+        _app(current / "app", SHA_A, "old")
+        path.parent.mkdir(parents=True, mode=0o700)
+        (path.parent / "planning.db").write_text("database")
+        if prior is not None:
+            write_vps_launch(path, prior)
+    candidate = _app(tmp_path / "candidate", SHA_A if same_sha else SHA_B, "new")
+    service = Service(path, fail_candidate=fail_candidate)
+
+    def backup(_: str) -> Path:
+        assert service.stops == [prior]
+        assert read_vps_launch(path) == prior
+        return tmp_path / "snapshot"
+
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=path.parent / "planning.db",
+        backup=backup,
+        restore=lambda _: None,
+        service=service,
+        health=Health(),
+        executor_launch_configuration=desired,
+    )
+    return result, service
+
+
+@pytest.mark.parametrize("same_sha", [False, True])
+@pytest.mark.parametrize("prior,desired", [(None, REMOTE), (REMOTE, LOCAL), (LOCAL, REMOTE)])
+def test_explicit_mode_is_applied_only_after_stop(
+    tmp_path: Path,
+    same_sha: bool,
+    prior: VpsExecutorLaunchConfiguration | None,
+    desired: VpsExecutorLaunchConfiguration,
+) -> None:
+    result, service = deploy(tmp_path, prior=prior, desired=desired, same_sha=same_sha)
+    assert result.status == "succeeded"
+    assert service.stops == [prior]
+    assert service.seen == [desired]
+
+
+@pytest.mark.parametrize("prior", [None, LOCAL, REMOTE])
+def test_candidate_failure_restores_config_before_fallback(
+    tmp_path: Path,
+    prior: VpsExecutorLaunchConfiguration | None,
+) -> None:
+    desired = LOCAL if prior == REMOTE else REMOTE
+    result, service = deploy(tmp_path, prior=prior, desired=desired, fail_candidate=True)
+    assert result.status == "rolled_back"
+    assert service.stops == [prior, desired]
+    assert service.seen == [desired, prior]
+    assert read_vps_launch(service.path) == prior
+
+
+@pytest.mark.parametrize("first_failure", [False, True])
+def test_first_install_applies_config_and_restores_absence_on_failure(
+    tmp_path: Path,
+    first_failure: bool,
+) -> None:
+    result, service = deploy(tmp_path, first=True, fail_candidate=first_failure)
+    assert result.status == ("initial_failed" if first_failure else "succeeded")
+    assert service.seen == [REMOTE]
+    assert read_vps_launch(service.path) == (None if first_failure else REMOTE)
+    assert service.stops == ([REMOTE] if first_failure else [])
+
+
+@pytest.mark.parametrize("prior", [None, REMOTE])
+def test_omitted_configuration_preserves_existing_default_behavior(
+    tmp_path: Path,
+    prior: VpsExecutorLaunchConfiguration | None,
+) -> None:
+    result, service = deploy(tmp_path, prior=prior, desired=None)
+    assert result.status == "succeeded"
+    assert service.seen == [prior]
+
+
+def test_equal_revision_and_equal_config_does_not_restart(tmp_path: Path) -> None:
+    result, service = deploy(tmp_path, prior=REMOTE, desired=REMOTE, same_sha=True)
+    assert result.status == "unchanged"
+    assert service.stops == []
+    assert service.seen == []
+
+
+@pytest.mark.parametrize("unsafe", ["malformed", "public", "symlink"])
+def test_invalid_prior_refuses_before_service_disruption(tmp_path: Path, unsafe: str) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    path = current / "data" / "executor-launch.json"
+    write_vps_launch(path, REMOTE)
+    if unsafe == "malformed":
+        path.write_text("{}")
+    elif unsafe == "public":
+        path.chmod(0o644)
+    else:
+        path.unlink()
+        path.symlink_to(tmp_path / "missing")
+    service = Service(path)
+    with pytest.raises(ExecutorLaunchConfigurationError):
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=path.parent / "planning.db",
+            backup=lambda _: tmp_path,
+            restore=lambda _: None,
+            service=service,
+            health=Health(),
+            executor_launch_configuration=LOCAL,
+        )
+    assert service.stops == []
+    assert service.seen == []
+
+
+def _app(
+    root: Path,
+    sha: str,
+    marker: str,
+    *,
+    include_cli: bool = True,
+) -> Path:
+    root.mkdir(parents=True)
+    (root / marker).write_text(marker, encoding="utf-8")
+    python = root / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    planner_file = root / "src" / "planner" / "__init__.py"
+    planner_file.parent.mkdir(parents=True)
+    planner_file.write_text("", encoding="utf-8")
+    python.write_text(
+        "#!/bin/sh\n"
+        'root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)\n'
+        'printf "%s\\n" "$root/src/planner/__init__.py"\n',
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    launcher = root / "bin" / "panels-launcher"
+    launcher.parent.mkdir()
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    if include_cli:
+        cli = root / "bin" / "panels"
+        cli.write_text("#!/bin/sh\n", encoding="utf-8")
+        cli.chmod(0o755)
+    (root / "web" / "dist").mkdir(parents=True)
+    (root / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
+    (root / "agent_backends" / "node_modules").mkdir(parents=True)
+    (root / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "panels-app-v1",
+                "app_sha": sha,
+                "source_digest": digest_app_source(root),
+                "artifact_digest": digest_app_artifact(root),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_cli_supplies_only_validated_explicit_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    explicit: bool,
+) -> None:
+    from click.testing import CliRunner
+
+    from planner.environments import cli
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    config = tmp_path / "executor-launch.json"
+    write_vps_launch(config, REMOTE)
+    captured: dict[str, object] = {}
+
+    def run(**values: object) -> DeploymentResult:
+        captured.update(values)
+        return DeploymentResult("succeeded", SHA_B, SHA_A, None)
+
+    monkeypatch.setattr(cli, "deploy_app", run)
+    # Staging requires reviewed gate evidence even when executor mode is explicit.
+    evidence = tmp_path / "gate.json"
+    evidence.write_text("{}")
+    monkeypatch.setattr(
+        "planner.environments.deployment_gate.read_gate_evidence",
+        lambda _: {"observation": {"health_url": "http://localhost:12345/health"}},
+    )
+    arguments = [
+        "app-deploy",
+        "--gate-evidence",
+        str(evidence),
+        "--candidate-app",
+        str(candidate),
+        "--current-root",
+        str(tmp_path / "current"),
+        "--source-db",
+        str(tmp_path / "db"),
+        "--backup-dir",
+        str(tmp_path / "backup"),
+        "--health-url",
+        "http://localhost:12345/health",
+        "--service-manager",
+        "systemctl",
+        "--service-name",
+        "panels",
+    ]
+    if explicit:
+        arguments.extend(["--executor-launch-config", str(config)])
+    result = CliRunner().invoke(cli.environment, arguments)
+    assert result.exit_code == 0, result.output
+    assert captured["executor_launch_configuration"] == (REMOTE if explicit else None)
+
+
+def test_unsafe_desired_target_directory_refuses_before_stop(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    path = current / "data" / "executor-launch.json"
+    path.parent.mkdir()
+    path.parent.chmod(0o770)
+    service = Service(path)
+    with pytest.raises(ExecutorLaunchConfigurationError, match="owner controlled"):
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=path.parent / "planning.db",
+            backup=lambda _: tmp_path,
+            restore=lambda _: None,
+            service=service,
+            health=Health(),
+            executor_launch_configuration=REMOTE,
+        )
+    assert service.stops == []
+    assert service.seen == []
+
+
+def test_rollback_restores_exact_prior_configuration_bytes(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    path = current / "data" / "executor-launch.json"
+    write_vps_launch(path, LOCAL)
+    (path.parent / "planning.db").write_text("database")
+    original = b'{ "socket": null, "mode": "local", "version": 1 }\n'
+    path.write_bytes(original)
+    service = Service(path, fail_candidate=True)
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=path.parent / "planning.db",
+        backup=lambda _: tmp_path,
+        restore=lambda _: None,
+        service=service,
+        health=Health(),
+        executor_launch_configuration=REMOTE,
+    )
+    assert result.status == "rolled_back"
+    assert path.read_bytes() == original
+    assert service.seen == [REMOTE, VpsExecutorLaunchConfiguration("local", version=1)]
+
+
+@pytest.mark.parametrize("legacy_shared_directory", [False, True])
+def test_absent_config_is_effectively_local_without_restart_or_write(
+    tmp_path: Path,
+    legacy_shared_directory: bool,
+) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_A, "new")
+    path = current / "data" / "executor-launch.json"
+    path.parent.mkdir(mode=0o700)
+    if legacy_shared_directory:
+        path.parent.chmod(0o770)
+    service = Service(path)
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=path.parent / "planning.db",
+        backup=lambda _: tmp_path,
+        restore=lambda _: None,
+        service=service,
+        health=Health(),
+        executor_launch_configuration=LOCAL,
+    )
+    assert result.status == "unchanged"
+    assert service.stops == []
+    assert service.seen == []
+    assert not path.exists()

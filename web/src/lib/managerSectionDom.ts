@@ -23,7 +23,7 @@ export function childrenSectionDomMatches(
       return node.dataset.workerTicketId === ticket.id
         && node.querySelector('.ticket-row-title')?.textContent === ticket.title
         && node.getAttribute('href') === workspaceAddress(address)
-        && JSON.stringify(actualMark(node)) === JSON.stringify(expectedMark(ticket.conversation_signal,ticket.conversation_id));
+        && JSON.stringify(actualMark(node)) === JSON.stringify(expectedMark(ticket.conversation_signal,ticket.conversation_id,node));
     });
   }
   if (filter === 'active') {

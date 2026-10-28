@@ -305,12 +305,13 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
     """Existing recovery spies did not prove pre-mutation release proof binding."""
     from planner.environments import deployment_gate
     from planner.environments.deployment_gate_contracts import GateEvidence, ServedObservation
+    from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
 
     current = tmp_path / "current"
     if change != "first-copy":
         _app(current / "app", SHA_B if change == "same-base" else SHA_A, "old")
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
-    (current / "data").mkdir(parents=True)
+    (current / "data").mkdir(parents=True, mode=0o700)
     database = current / "data" / "planning.db"
     database.write_text("db")
     if change == "first-copy":
@@ -360,8 +361,10 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
             service=FakeService(events),
             health=FakeHealth(events, {SHA_B}),
             gate_evidence=evidence,
+            executor_launch_configuration=VpsExecutorLaunchConfiguration("remote", "owner-mac"),
         )
     assert events == []
+    assert not (current / "data" / "executor-launch.json").exists()
     assert not list(current.glob(".app-*"))
 
 

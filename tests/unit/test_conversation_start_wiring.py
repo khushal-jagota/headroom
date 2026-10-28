@@ -27,11 +27,14 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
+    MoveRetirementResult,
+    MoveSourceRetirement,
     PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    WorkspacePathPolicy,
 )
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
@@ -52,7 +55,8 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartValues,
     worker_conversation_role_materials,
 )
-from planner.tickets.contracts import Ticket
+from planner.tickets import locale_configuration
+from planner.tickets.contracts import Ticket, TicketLocale
 from planner.tickets.data import create_ticket, read_ticket
 from planner.worker_types.store import read_definition, write_definition
 
@@ -107,6 +111,15 @@ class _LinkWatchingConversationSystem:
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         return await self._system.run_if_idle(conversation_id, operation)
+
+    async def retire_idle_for_move(
+        self,
+        conversation_id: str | None,
+        operation: Callable[[], None],
+        *,
+        source: MoveSourceRetirement | None = None,
+    ) -> MoveRetirementResult:
+        return await self._system.retire_idle_for_move(conversation_id, operation, source=source)
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self.start_requests.append(request)
@@ -309,8 +322,6 @@ async def _sent(
     return delivered.fate
 
 
-
-
 def test_creation_launch_choices_reach_the_first_worker_session(
     tmp_db: Connection,
 ) -> None:
@@ -398,8 +409,6 @@ def test_a_change_on_a_refused_delivery_records_nothing(tmp_db: Connection, tick
     asyncio.run(exercise())
 
 
-
-
 def test_resetting_stops_the_conversation_and_unlinks_it(
     tmp_db: Connection, ticket: Ticket
 ) -> None:
@@ -428,9 +437,18 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("locale", list(TicketLocale))
+@pytest.mark.parametrize("clear", [False, True])
 def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_changes(
-    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+    tmp_db: Connection,
+    ticket: Ticket,
+    tmp_path: Path,
+    locale: TicketLocale,
+    clear: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(locale_configuration, "CURRENT_EXECUTION_LOCALE", locale)
+
     async def exercise() -> None:
         original_folder = tmp_path / "original"
         replacement_folder = tmp_path / "replacement"
@@ -442,7 +460,10 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
             folder_path=original_folder,
             now=2,
         )
-        tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+        tmp_db.execute(
+            "UPDATE tickets SET project_id = ?, locale = ? WHERE id = ?",
+            (project.id, locale.value, ticket.id),
+        )
         system = InMemoryConversationSystem()
         conversation_id = await _started(
             system,
@@ -452,24 +473,25 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
             now=3,
         )
 
-        update_project(tmp_db, project.id, folder_path=replacement_folder, now=4)
+        update_project(tmp_db, project.id, folder_path=None if clear else replacement_folder, now=4)
         fate = await _sent(system, tmp_db, ticket.id, "continue", now=5)
 
         assert isinstance(fate, PromptDeliveryStarted)
         stored_workspace = tmp_db.execute(
-            "SELECT workspace_folder FROM conversations WHERE conversation_id = ?",
+            "SELECT workspace_folder, workspace_path_policy FROM conversations "
+            "WHERE conversation_id = ?",
             (conversation_id,),
         ).fetchone()
         assert stored_workspace is not None
         assert Path(str(stored_workspace["workspace_folder"])) == original_folder.resolve()
+        expected = (
+            WorkspacePathPolicy.native_absolute
+            if locale == TicketLocale.macos
+            else WorkspacePathPolicy.legacy_home_mapping
+        )
+        assert stored_workspace["workspace_path_policy"] == expected
 
     asyncio.run(exercise())
-
-
-
-
-
-
 
 
 def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_override(
@@ -489,3 +511,97 @@ def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_over
             workspace_folder=_WORKSPACE,
         )
     assert read_ticket(tmp_db, ticket.id) == ticket
+
+
+@pytest.mark.parametrize("project_requires_mac", [False, True])
+def test_ordinary_mac_project_creation_preserves_a_directory_absent_on_vps(
+    tmp_db: Connection, tmp_path: Path, project_requires_mac: bool
+) -> None:
+    async def exercise() -> None:
+        folder = tmp_path / "Mac-only-checkout"
+        assert not folder.exists()
+        project = create_project(
+            tmp_db,
+            name="Native project",
+            folder_path=folder,
+            requires_macos=project_requires_mac,
+            now=1,
+        )
+        ticket = create_ticket(
+            tmp_db,
+            title="Native work",
+            principal=OWNER_PRINCIPAL,
+            now=2,
+            title_max_chars=200,
+            worker_type="coding",
+            project_id=project.id,
+            locale=None if project_requires_mac else "macos",
+        )
+        assert ticket.locale is TicketLocale.macos
+        values = worker_resolve(tmp_db, ticket)
+        assert values.workspace_folder == folder
+        assert values.workspace_path_policy is WorkspacePathPolicy.native_absolute
+        system = InMemoryConversationSystem()
+        conversation_id = await _started(system, tmp_db, ticket, values, now=3)
+        row = tmp_db.execute(
+            "SELECT workspace_folder, workspace_path_policy FROM conversations "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        assert tuple(row) == (str(folder), "native_absolute")
+        explicit = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
+        assert explicit.workspace_folder == _WORKSPACE
+        assert explicit.workspace_path_policy is WorkspacePathPolicy.native_absolute
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("locale", list(TicketLocale))
+def test_project_symlink_spelling_is_stored_and_resolved_on_the_execution_host(
+    tmp_db: Connection,
+    tmp_path: Path,
+    ticket: Ticket,
+    locale: TicketLocale,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback = tmp_path / "default-workspace"
+    monkeypatch.setattr(
+        "planner.runtime.conversation_start._default_workspace_folder", lambda: fallback
+    )
+    target = tmp_path / "vps-target"
+    target.mkdir()
+    alias = tmp_path / "checkout"
+    alias.symlink_to(target, target_is_directory=True)
+    project = create_project(
+        tmp_db,
+        name="Symlink project",
+        folder_path=alias,
+        now=1,
+    )
+    assert project.folder_path == alias
+    tmp_db.execute(
+        "UPDATE tickets SET project_id = ?, locale = ? WHERE id = ?",
+        (project.id, locale.value, ticket.id),
+    )
+    ticket = read_ticket(tmp_db, ticket.id)
+    values = worker_resolve(tmp_db, ticket)
+    assert values.workspace_folder == (alias if locale == TicketLocale.macos else target)
+    explicit = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
+    assert explicit.workspace_folder == _WORKSPACE
+    assert explicit.workspace_path_policy is (
+        WorkspacePathPolicy.native_absolute
+        if locale == TicketLocale.macos
+        else WorkspacePathPolicy.legacy_home_mapping
+    )
+    update_project(tmp_db, project.id, folder_path=tmp_path / "absent", now=2)
+    values = worker_resolve(tmp_db, ticket)
+    if locale == TicketLocale.vps:
+        assert values.workspace_path_policy is WorkspacePathPolicy.legacy_home_mapping
+        assert values.workspace_folder == fallback
+    else:
+        assert values.workspace_folder == tmp_path / "absent"
+        assert values.workspace_path_policy is WorkspacePathPolicy.native_absolute
+    update_project(tmp_db, project.id, folder_path=None, now=3)
+    default = worker_resolve(tmp_db, ticket)
+    assert default.workspace_path_policy is WorkspacePathPolicy.legacy_home_mapping
+    assert default.workspace_folder == fallback

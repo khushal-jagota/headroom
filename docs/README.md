@@ -74,6 +74,10 @@ path. The Manager reads canonical Item and Ticket state before it acts on a noti
   agent, behind a fixed contract: one agent process per conversation, an append-only
   notebook of events, honest send fates, and backend cards. It serves every screen that
   shows a conversation — a Ticket's and the Chief of Staff's.
+- **The Mac executor** (`executor.md`) — host-local children, one outbound journal,
+  complete files, and reconciliation against the authoritative VPS record.
+- **Mac installation and updates** (`mac-executor-installation.md`) — fixed native environment,
+  explicit LaunchAgent inputs, graceful shutdown, and operator recovery.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **VPS measurements** (`vps-metrics.md`) — stored machine and process evidence, bounded history, and sampler ownership.

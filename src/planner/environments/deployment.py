@@ -23,7 +23,16 @@ from planner.environments.backup import SNAPSHOT_METADATA_NAME, is_verified_snap
 from planner.environments.deployment_configuration import DEPLOYMENT_HEALTH_TIMEOUT_SECONDS
 from planner.environments.deployment_gate import verify_gate_evidence
 from planner.environments.deployment_gate_contracts import GateEvidence
+from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
 from planner.environments.interruption_capture import capture_after_stop
+from planner.environments.vps_launch import (
+    read_vps_launch,
+    restore_vps_launch,
+    snapshot_vps_launch,
+    validate_vps_launch_for_application,
+    validate_vps_launch_path,
+    write_vps_launch,
+)
 
 
 class DeploymentError(RuntimeError):
@@ -79,9 +88,7 @@ class SubprocessServiceController:
             command = ["systemctl", "--user", "restart", self.service_name]
         elif self.manager == "launchctl":
             target = (
-                self.service_name
-                if "/" in self.service_name
-                else f"system/{self.service_name}"
+                self.service_name if "/" in self.service_name else f"system/{self.service_name}"
             )
             if target.startswith("gui/"):
                 self._restart_user_launchagent(target)
@@ -114,9 +121,7 @@ class SubprocessServiceController:
                 raise DeploymentError("user LaunchAgent did not stop cleanly")
             time.sleep(0.05)
         subprocess.run(["/bin/launchctl", "bootout", target], check=False, shell=False)
-        subprocess.run(
-            ["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False
-        )
+        subprocess.run(["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False)
 
 
 def run_current_app_backup(
@@ -230,6 +235,7 @@ def deploy_app(
     health_timeout_seconds: float = DEPLOYMENT_HEALTH_TIMEOUT_SECONDS,
     lock_path: Path | None = None,
     lifecycle_transition: LifecycleTransition | None = None,
+    executor_launch_configuration: VpsExecutorLaunchConfiguration | None = None,
     gate_evidence: GateEvidence | None = None,
     deployment_id: str | None = None,
 ) -> DeploymentResult:
@@ -249,10 +255,31 @@ def deploy_app(
             except (OSError, ValueError) as exc:
                 raise DeploymentError(str(exc)) from exc
         _validate_current_root(root)
-        candidate_manifest = _validate_app(
-            candidate_app, "candidate app", require_runtime=True
-        )
+        candidate_manifest = _validate_app(candidate_app, "candidate app", require_runtime=True)
         prior_manifest = _validate_optional_current_app(current_app)
+        launch_path = root / "data" / "executor-launch.json"
+        # Refuse unsafe explicit settings before any service disruption.
+        prior_launch_bytes = snapshot_vps_launch(launch_path)
+        prior_launch = read_vps_launch(launch_path)
+        validate_vps_launch_for_application(
+            executor_launch_configuration or prior_launch or VpsExecutorLaunchConfiguration("local")
+        )
+        launch_changed = False
+        if executor_launch_configuration is not None:
+            effective_prior_launch = prior_launch or VpsExecutorLaunchConfiguration("local")
+            launch_changed = executor_launch_configuration != effective_prior_launch
+            if launch_changed:
+                validate_vps_launch_path(launch_path)
+
+        def apply_launch() -> None:
+            if launch_changed:
+                assert executor_launch_configuration is not None
+                write_vps_launch(launch_path, executor_launch_configuration)
+
+        def restore_launch() -> None:
+            if launch_changed:
+                restore_vps_launch(launch_path, prior_launch_bytes)
+
         if prior_manifest is None:
             if _persistent_state_exists(root):
                 raise DeploymentError("persistent state exists without a current app")
@@ -265,9 +292,12 @@ def deploy_app(
                 now=now,
                 health_timeout_seconds=health_timeout_seconds,
                 lifecycle_transition=lifecycle_transition,
+                launch_changed=launch_changed,
+                apply_launch=apply_launch,
+                restore_launch=restore_launch,
                 expected_digest=gate_evidence["artifact_digest"] if gate_evidence else None,
             )
-        if prior_manifest.app_sha == candidate_manifest.app_sha:
+        if prior_manifest.app_sha == candidate_manifest.app_sha and not launch_changed:
             _publish_lifecycle(lifecycle_transition, "verifying")
             if not health.wait_for_sha(
                 prior_manifest.app_sha, deadline=now() + health_timeout_seconds
@@ -403,6 +433,7 @@ def deploy_app(
                 raise
             try:
                 os.replace(staged, current_app)
+                apply_launch()
                 service.restart()
                 _publish_lifecycle(lifecycle_transition, "verifying")
                 if not health.wait_for_sha(
@@ -430,6 +461,7 @@ def deploy_app(
                     timeout_seconds=health_timeout_seconds,
                     original=exc,
                     lifecycle_transition=lifecycle_transition,
+                    restore_launch=restore_launch,
                 )
                 if detail is not None:
                     raise DeploymentError(detail) from exc
@@ -471,6 +503,9 @@ def _install_first_app(
     now: Callable[[], float],
     health_timeout_seconds: float,
     lifecycle_transition: LifecycleTransition | None,
+    launch_changed: bool,
+    apply_launch: Callable[[], None],
+    restore_launch: Callable[[], None],
     expected_digest: str | None = None,
 ) -> DeploymentResult:
     current_app.parent.mkdir(parents=True, exist_ok=True)
@@ -489,6 +524,7 @@ def _install_first_app(
         os.replace(staged, current_app)
         try:
             _publish_lifecycle(lifecycle_transition, "restarting")
+            apply_launch()
             service.restart()
             _publish_lifecycle(lifecycle_transition, "verifying")
             if not health.wait_for_sha(
@@ -501,6 +537,9 @@ def _install_first_app(
                 serving_sha=candidate_manifest.app_sha,
             )
         except BaseException as exc:
+            if launch_changed:
+                service.stop()
+                restore_launch()
             if current_app.exists() and not current_app.is_symlink():
                 shutil.rmtree(current_app)
             _publish_lifecycle(
@@ -589,6 +628,7 @@ def _restore_fallback(
     timeout_seconds: float,
     original: BaseException,
     lifecycle_transition: LifecycleTransition | None,
+    restore_launch: Callable[[], None],
 ) -> str | None:
     failed = current_app.parent / f".app-failed-{os.getpid()}"
     try:
@@ -600,11 +640,10 @@ def _restore_fallback(
         if current_app.exists() or current_app.is_symlink():
             os.replace(current_app, failed)
         os.replace(fallback, current_app)
+        restore_launch()
         service.restart()
         _publish_lifecycle(lifecycle_transition, "verifying")
-        if not health.wait_for_sha(
-            prior_manifest.app_sha, deadline=now() + timeout_seconds
-        ):
+        if not health.wait_for_sha(prior_manifest.app_sha, deadline=now() + timeout_seconds):
             raise DeploymentError("prior app did not become healthy")
         _publish_lifecycle(
             lifecycle_transition,

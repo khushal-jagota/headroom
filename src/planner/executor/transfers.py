@@ -1,0 +1,220 @@
+"""Generation-owned file reservations over bounded HTTP bodies."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import os
+import re
+import stat
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from planner.executor.configuration import FILE_CHUNK_BYTES, MAX_TRANSFERS, TRANSFER_CHUNK_BYTES
+from planner.executor.contracts import ExecutorIdentity, FileManifest, FileSnapshot, FileTransfer
+from planner.executor.files import copy_verified, directory_descriptor, regular_descriptor
+
+
+async def settled_io[Result](function: Callable[..., Result], *args: Any) -> Result:
+    """Keep file resources alive until an admitted thread operation settles."""
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except BaseException:
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
+@dataclass
+class _Transfer:
+    contract: FileTransfer
+    started: bool = False
+    completed: bool = False
+    consumed: bool = False
+
+
+class GenerationTransfers:
+    def __init__(self, identity: ExecutorIdentity, root: Path, valid: Callable[[], bool]) -> None:
+        self.identity, self.root, self._valid = identity, root, valid
+        self.closed = False
+        self.transfers: dict[str, _Transfer] = {}
+        self.preparations: set[asyncio.Task[Any]] = set()
+        self.active: set[asyncio.Task[Any]] = set()
+        if not root.is_absolute():
+            raise ValueError("transfer directory must be absolute")
+        with directory_descriptor(root, create=True) as descriptor:
+            info = os.fstat(descriptor)
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise ValueError("transfer directory must be private and owned")
+
+    def valid(self) -> bool:
+        return not self.closed and self._valid()
+
+    def _admit(self, manifest: FileManifest) -> None:
+        if not self.valid():
+            raise ValueError("generation revoked")
+        if len(self.transfers) >= MAX_TRANSFERS:
+            raise ValueError("transfer limit")
+        if manifest.byte_count < 0 or not re.fullmatch("[a-f0-9]{64}", manifest.sha256):
+            raise ValueError("invalid manifest length or digest")
+
+    def _claim(self, transfer_id: str, direction: str) -> _Transfer:
+        transfer = self.transfers.get(transfer_id)
+        if (
+            not self.valid()
+            or transfer is None
+            or transfer.started
+            or transfer.contract.direction != direction
+        ):
+            raise ValueError("unknown, consumed, or stale transfer")
+        transfer.started = True
+        return transfer
+
+    def create_upload(self, manifest: FileManifest) -> FileTransfer:
+        self._admit(manifest)
+        transfer_id = uuid4().hex
+        with directory_descriptor(self.root) as parent:
+            descriptor = os.open(
+                transfer_id,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=parent,
+            )
+            os.close(descriptor)
+        contract = FileTransfer(transfer_id, "upload", manifest)
+        self.transfers[transfer_id] = _Transfer(contract)
+        return contract
+
+    async def create_download_async(self, snapshot: FileSnapshot) -> FileTransfer:
+        self._admit(snapshot.manifest)
+        transfer_id = uuid4().hex
+        contract = FileTransfer(transfer_id, "download", snapshot.manifest)
+        self.transfers[transfer_id] = _Transfer(contract)
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                copy_verified, snapshot.local_path, self.root / transfer_id, snapshot.manifest
+            )
+        )
+        self.preparations.add(task)
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            await asyncio.gather(task, return_exceptions=True)
+            self.release(transfer_id)
+            raise
+        finally:
+            self.preparations.discard(task)
+        if not self.valid():
+            self.release(transfer_id)
+            raise ValueError("generation revoked")
+        return contract
+
+    async def upload(self, transfer_id: str, chunks: AsyncIterator[bytes]) -> None:
+        transfer = self._claim(transfer_id, "upload")
+        task = asyncio.current_task()
+        assert task is not None
+        self.active.add(task)
+        manifest = transfer.contract.manifest
+        try:
+            with _upload_descriptor(self.root / transfer_id) as descriptor:
+                count, digest = 0, hashlib.sha256()
+                async for chunk in chunks:
+                    if not self.valid() or count + len(chunk) > manifest.byte_count:
+                        raise ValueError("upload exceeds manifest or generation revoked")
+                    for start in range(0, len(chunk), FILE_CHUNK_BYTES):
+                        piece = chunk[start : start + FILE_CHUNK_BYTES]
+                        await settled_io(_write_all, descriptor, piece)
+                        digest.update(piece)
+                        count += len(piece)
+                if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
+                    raise ValueError("upload is short or corrupt")
+                await settled_io(os.fsync, descriptor)
+            if not self.valid():
+                raise ValueError("generation revoked")
+            transfer.completed = True
+        except BaseException:
+            self.release(transfer_id)
+            raise
+        finally:
+            self.active.discard(task)
+
+    def claim_download(self, transfer_id: str) -> AsyncIterator[bytes]:
+        transfer = self._claim(transfer_id, "download")
+
+        async def chunks() -> AsyncIterator[bytes]:
+            task = asyncio.current_task()
+            assert task is not None
+            self.active.add(task)
+            try:
+                with regular_descriptor(self.root / transfer_id) as descriptor:
+                    count = 0
+                    while chunk := await settled_io(os.read, descriptor, TRANSFER_CHUNK_BYTES):
+                        if (
+                            not self.valid()
+                            or count + len(chunk) > transfer.contract.manifest.byte_count
+                        ):
+                            raise ValueError("download revoked or exceeds manifest")
+                        count += len(chunk)
+                        yield chunk
+                    if count != transfer.contract.manifest.byte_count:
+                        raise ValueError("download is short")
+            finally:
+                self.active.discard(task)
+
+        return chunks()
+
+    def upload_path(self, transfer_id: str) -> Path:
+        transfer = self.transfers.get(transfer_id)
+        if (
+            not self.valid()
+            or transfer is None
+            or not transfer.completed
+            or transfer.consumed
+            or transfer.contract.direction != "upload"
+        ):
+            raise ValueError("upload revoked or incomplete")
+        transfer.consumed = True
+        return self.root / transfer_id
+
+    def release(self, transfer_id: str) -> None:
+        if self.transfers.pop(transfer_id, None) is not None:
+            with directory_descriptor(self.root) as parent:
+                try:
+                    os.unlink(transfer_id, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
+
+    async def close(self) -> None:
+        self.closed = True
+        tasks = tuple(self.active)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if self.preparations:
+            await asyncio.gather(*self.preparations, return_exceptions=True)
+        for transfer_id in tuple(self.transfers):
+            self.release(transfer_id)
+
+
+def _write_all(descriptor: int, content: bytes) -> None:
+    while content:
+        count = os.write(descriptor, content)
+        if count <= 0:
+            raise OSError("short file write")
+        content = content[count:]
+
+
+@contextmanager
+def _upload_descriptor(path: Path) -> Iterator[int]:
+    descriptor = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("upload reservation is not regular")
+        yield descriptor
+    finally:
+        os.close(descriptor)

@@ -1,5 +1,8 @@
 <script lang="ts">
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import MachineActivityMark from "./machines/MachineActivityMark.svelte";
+  import MachineIdentity from "./machines/MachineIdentity.svelte";
+  import { macActivityKnown } from "../lib/ticketMachines";
+  import { MACHINE_ACTIVITY_UNKNOWN } from "../lib/machines/config";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -24,7 +27,9 @@
   } = $props();
   const manifests = createQuery(() => queries.workerTypeManifests());
   let currentWorker = $derived(worker);
-  let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
+  const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
+  let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
+  let stageSentence = $derived(unknownMac ? MACHINE_ACTIVITY_UNKNOWN : currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapElement = $state<HTMLDivElement | null>(null);
   let recapLines = $state(1);
@@ -95,7 +100,7 @@
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
   <div class="kicker">{kicker}</div>
-  <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="title">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} ticketId={currentWorker.id} />{/if}<span>{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
@@ -108,7 +113,7 @@
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
     </div>
   {/if}
-  {#if worker && stageSentence}<div class="doing">{stageSentence}</div>{/if}
+  {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
   .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(340px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-2); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }

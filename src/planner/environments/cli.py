@@ -7,6 +7,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, cast
 
 import click
 
@@ -28,6 +29,7 @@ from planner.environments.deployment import (
     run_current_app_backup,
 )
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.executor_launch_contracts import VpsExecutorLaunchConfiguration
 from planner.environments.hermes_home import (
     provision_planner_home_skills,
     resolve_hermes_python,
@@ -48,6 +50,7 @@ from planner.environments.materialize import (
 )
 from planner.environments.repository_runtime import resolve_repository_runtime_python
 from planner.environments.runtime_port import reserve_available_tcp_listener
+from planner.environments.vps_launch import read_vps_launch, write_vps_launch
 from planner.environments.vps_status import (
     CleanupInventory,
     VpsStatusDependencies,
@@ -171,9 +174,7 @@ def app_build(source_root: Path, requested_sha: str, candidate_app: Path) -> Non
 
 
 @environment.command("app-identity")
-@click.option(
-    "--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
-)
+@click.option("--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True)
 def app_identity(app: Path) -> None:
     """Print the validated SHA for one app directory."""
     try:
@@ -203,6 +204,22 @@ def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None
     click.echo(str(snapshot))
 
 
+@environment.command("configure-vps-launch")
+@click.option("--path", type=click.Path(path_type=Path), required=True)
+@click.option("--mode", type=click.Choice(["local", "remote"]), required=True)
+@click.option("--executor-id")
+def configure_vps_launch(path: Path, mode: str, executor_id: str | None) -> None:
+    """Write explicit owner-controlled VPS executor launch settings."""
+    try:
+        write_vps_launch(
+            path,
+            VpsExecutorLaunchConfiguration(cast(Literal["local", "remote"], mode), executor_id),
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps({"disposition": "prepared", "mode": mode}, sort_keys=True))
+
+
 @environment.command("app-deploy")
 @click.option(
     "--candidate-app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
@@ -217,6 +234,9 @@ def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None
 @click.option(
     "--lifecycle-path",
     type=click.Path(path_type=Path, dir_okay=False),
+)
+@click.option(
+    "--executor-launch-config", type=click.Path(path_type=Path, exists=True, dir_okay=False)
 )
 @click.option("--deployment-id")
 @click.option(
@@ -233,17 +253,14 @@ def app_deploy(
     lock_path: Path | None,
     lifecycle_path: Path | None,
     deployment_id: str | None,
+    executor_launch_config: Path | None,
     gate_evidence: Path,
 ) -> None:
     """Hard-cut over the deployed app with a verified snapshot and full recovery."""
     if (lifecycle_path is None) != (deployment_id is None):
-        raise click.ClickException(
-            "--lifecycle-path and --deployment-id must be supplied together"
-        )
+        raise click.ClickException("--lifecycle-path and --deployment-id must be supplied together")
     lifecycle_store = (
-        DeploymentLifecycleStore(lifecycle_path)
-        if lifecycle_path is not None
-        else None
+        DeploymentLifecycleStore(lifecycle_path) if lifecycle_path is not None else None
     )
 
     def publish_lifecycle(
@@ -263,6 +280,11 @@ def app_deploy(
         )
 
     try:
+        launch_configuration = None
+        if executor_launch_config is not None:
+            launch_configuration = read_vps_launch(executor_launch_config)
+            if launch_configuration is None:
+                raise ValueError("explicit executor launch configuration is missing")
         from planner.environments.deployment_gate import read_gate_evidence
 
         evidence = read_gate_evidence(gate_evidence)
@@ -283,6 +305,7 @@ def app_deploy(
             service=SubprocessServiceController(service_manager, service_name),
             health=HttpHealthClient(health_url),
             lock_path=lock_path,
+            executor_launch_configuration=launch_configuration,
             lifecycle_transition=publish_lifecycle if lifecycle_store is not None else None,
         )
     except (OSError, RuntimeError, ValueError) as exc:

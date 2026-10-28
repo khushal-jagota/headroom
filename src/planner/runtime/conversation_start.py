@@ -44,6 +44,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
+    WorkspacePathPolicy,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -64,7 +65,7 @@ from planner.runtime.logic.conversation_start_resolution import (
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import Ticket, TicketLocale
 from planner.worker_settings.service import (
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
@@ -137,6 +138,7 @@ def worker_resolve(
     if registry is None:
         registry = configured_worker_type_registry()
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
+    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
     values = resolve_worker_conversation_start(
         ticket_id=ticket.id,
         worker_type_launch_defaults=ConversationStartConfiguration(
@@ -154,23 +156,35 @@ def worker_resolve(
             )
         ),
         overrides=overrides,
-        workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
+        workspace_folder=selected_workspace,
+        workspace_path_policy=workspace_policy,
+    )
+    locale_configuration.require_locale_backend_compatibility(
+        ticket.locale, values.backend_key.value
     )
     if ticket.employee_launch_model is None or overrides.model is not None:
         require_enabled_model(conn, values.backend_key, values.model)
     return values
 
 
-def _worker_workspace_folder(
+def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
-) -> Path:
+) -> tuple[Path, WorkspacePathPolicy]:
+    policy = (
+        WorkspacePathPolicy.native_absolute
+        if ticket.locale == TicketLocale.macos
+        else WorkspacePathPolicy.legacy_home_mapping
+    )
     if explicit is not None:
-        return explicit
+        return explicit, policy
     if ticket.project_id is not None:
         project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
-        if project_folder is not None and project_folder.is_dir():
-            return project_folder.resolve(strict=False)
-    return _default_workspace_folder()
+        if project_folder is not None:
+            if ticket.locale == TicketLocale.macos:
+                return project_folder, policy
+            if project_folder.is_dir():
+                return project_folder.resolve(strict=False), policy
+    return _default_workspace_folder(), WorkspacePathPolicy.legacy_home_mapping
 
 
 def agent_resolve(
@@ -265,6 +279,7 @@ async def start_ticket_conversation(
         reasoning_effort=values.reasoning_effort,
         role_materials=values.role_materials,
         workspace_folder=values.workspace_folder,
+        workspace_path_policy=values.workspace_path_policy,
         access=values.access,
     )
     await system.start_conversation(request)
@@ -432,7 +447,7 @@ async def send_to_ticket_conversation(
     # machinery would refuse: deliver and hold, do not start. This guard only protects
     # local execution. The general runtime fix must decide whether it subsumes this
     # refusal so that separate admission mechanisms do not disagree.
-    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
+    if not locale_configuration.can_execute_locale(conn, ticket.locale):
         raise PlannerError(
             ErrorCode.validation,
             f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
@@ -785,6 +800,7 @@ async def start_agent_conversation(
             reasoning_effort=values.reasoning_effort,
             role_materials=values.role_materials,
             workspace_folder=values.workspace_folder,
+            workspace_path_policy=values.workspace_path_policy,
             access=values.access,
         )
     )

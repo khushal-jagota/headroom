@@ -91,6 +91,7 @@ jobs:
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/deployment_rehearsal.py start
       - name: Start deployment lifecycle
+        id: lifecycle-start
         run: |
           current_record="$(
             python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" read \

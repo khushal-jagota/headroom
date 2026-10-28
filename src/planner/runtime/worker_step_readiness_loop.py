@@ -301,8 +301,8 @@ async def tell_a_worker_it_lost_its_memory(
     for one, and most of these never get another. Nothing is claimed and nothing is
     released here: the claim is already out, and this only speaks into the step.
 
-    The notice answers its own boundary, because it is sent under a worker-step sender
-    message id. A second pass over the same boundary therefore finds it answered.
+    A committed reservation consumes automatic permission before send. It never proves
+    delivery or an answered boundary. Every outcome retains that consumption.
     """
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
         conn = connect_database()
@@ -311,9 +311,8 @@ async def tell_a_worker_it_lost_its_memory(
             conversation_id = ticket.conversation_id
             if conversation_id is None:
                 return False
-            if not worker_memory.conversation_holds_an_unanswered_memory_loss(
-                conn, conversation_id
-            ):
+            key = worker_memory.current_memory_notice_key(conn, ticket_id)
+            if key is None:
                 # Something answered the boundary between the scan and here. That is the
                 # normal end of a race, not a failure.
                 return False
@@ -324,15 +323,21 @@ async def tell_a_worker_it_lost_its_memory(
                 # message writes no row to find. Every poll would send another one.
                 return False
             try:
+                # Compose before consuming permission. A later poll must never recompose
+                # and replay changed text under the consumed identity.
+                content = text_message_content(mid_step_memory_loss_prompt(ticket))
+                acquired = worker_memory.consume_memory_notice_authorization(conn, key, now=now())
+                if acquired.reservation is None:
+                    return False
                 delivered = await conversation_start.send_to_ticket_conversation(
                     conversation_system,
                     conn,
                     ticket_id,
-                    text_message_content(mid_step_memory_loss_prompt(ticket)),
+                    content,
                     conversation_id=conversation_id,
                     sender_label=LOOP_SENDER_LABEL,
                     mode=PromptDeliveryMode.queue,
-                    sender_message_id=worker_memory.new_memory_notice_message_id(),
+                    sender_message_id=acquired.reservation.sender_message_id,
                     reply_requested=False,
                     worker_type_registry=worker_type_registry,
                     now=now(),
@@ -503,6 +508,11 @@ class WorkerStepReadinessLoop:
         """Start the polling thread."""
         if self._thread is not None:
             raise RuntimeError("worker-step readiness loop already started")
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            worker_memory.require_memory_notice_storage(conn)
+        finally:
+            conn.close()
         self._thread = threading.Thread(
             target=self._run_loop,
             args=(interval,),

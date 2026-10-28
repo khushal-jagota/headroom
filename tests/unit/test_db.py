@@ -1229,8 +1229,16 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "manager_wake_batch_members",
         "managed_skill_versions",
     )
+    # Compare retained columns. The independent workspace migration appends its
+    # explicit legacy policy without changing the previously stored values.
+    retained_columns = {
+        table: ",".join(f'"{row[1]}"' for row in conn.execute(f'PRAGMA table_info("{table}")'))
+        for table in unchanged_tables
+    }
     unchanged = {
-        table: [tuple(row) for row in conn.execute(f'SELECT * FROM "{table}"')]
+        table: [
+            tuple(row) for row in conn.execute(f'SELECT {retained_columns[table]} FROM "{table}"')
+        ]
         for table in unchanged_tables
     }
     create_schema(conn)
@@ -1241,7 +1249,16 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         == ticket
     )
     for table, expected in unchanged.items():
-        assert [tuple(row) for row in conn.execute(f'SELECT * FROM "{table}"')] == expected
+        assert [
+            tuple(row) for row in conn.execute(f'SELECT {retained_columns[table]} FROM "{table}"')
+        ] == expected
+    assert (
+        conn.execute(
+            "SELECT workspace_path_policy FROM conversations "
+            "WHERE conversation_id='kept-conversation'"
+        ).fetchone()[0]
+        == "legacy_home_mapping"
+    )
     assert tuple(
         conn.execute("SELECT manager_id,manager_kind FROM tickets WHERE id='t_item'").fetchone()
     ) == ("si_kept", "manager")
@@ -1392,3 +1409,26 @@ def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
         assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connect(str(tmp_path / "workspace-upgrade.db"))
+    with monkeypatch.context() as historical:
+        _migration_tree_through(tmp_path, historical, "merge_resident_native_usage")
+        create_schema(conn)
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, created_at) VALUES ('legacy', 'codex', 'test', '/home/vps/projects', 'full', 1)"
+    )
+    conn.commit()
+    create_schema(conn)
+    row = conn.execute(
+        "SELECT workspace_folder, workspace_path_policy FROM conversations "
+        "WHERE conversation_id = 'legacy'"
+    ).fetchone()
+    assert tuple(row) == ("/home/vps/projects", "legacy_home_mapping")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
+    conn.close()

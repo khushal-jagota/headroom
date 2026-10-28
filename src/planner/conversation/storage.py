@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import IO, Any, cast
 from uuid import uuid4
 
-from planner.conversation.backends.contracts import BackendSpawnFailed
+from planner.conversation.backends.contracts import BackendSpawnFailed, TurnToken
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -41,6 +41,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDispatchDecision,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.deploy_interruptions import data as interruption_data
 from planner.conversation.deploy_interruptions.files import read_manifests
@@ -48,6 +49,7 @@ from planner.conversation.events import (
     AutomaticCompactionResult,
     ConversationEventKind,
     ConversationEventPayload,
+    ExplicitReplyMissingEventPayload,
     MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PromptDeliveryRefusedEventPayload,
@@ -84,6 +86,8 @@ from planner.core.commit_capture import register_capture_task, run_in_capture_th
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
+from planner.executor.contracts import ChildReference
+from planner.executor.store import ExecutorStore
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
@@ -152,6 +156,7 @@ class ConversationRecord:
     automatic_compaction_attempted_through_sequence: int
     owner_read_through_sequence: int
     created_at: int
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.legacy_home_mapping
 
     def resolved_start(self) -> ResolvedConversationStart:
         """The start this conversation was created from, rebuilt from its row.
@@ -177,6 +182,7 @@ class ConversationRecord:
             reasoning_effort=self.reasoning_effort,
             role_materials=role_materials,
             workspace_folder=self.workspace_folder,
+            workspace_path_policy=self.workspace_path_policy,
             access=self.access,
         )
 
@@ -278,6 +284,9 @@ class ConversationStore:
 
     def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
         conn.execute("BEGIN IMMEDIATE")
+        from planner.executor.store import ExecutorStore
+
+        ExecutorStore.retain_legacy_request_ids_in_transaction(conn)
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
@@ -285,6 +294,10 @@ class ConversationStore:
         ).fetchall()
         for row in ids:
             conversation_id = str(row[0])
+            from planner.conversation.lifecycle_storage import native_execution_is_unresolved
+
+            if native_execution_is_unresolved(conn, conversation_id):
+                continue
             facts = tuple(
                 replace(
                     fact,
@@ -433,7 +446,19 @@ class ConversationStore:
                 "WHERE conversation_id=?",
                 (conversation_id,),
             ).fetchone()
-            turn_number = int(row[0]) + 1
+            native = conn.execute(
+                "SELECT json_extract(turn_json,'$.turn_number') FROM executor_core_turns "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            occurrence = conn.execute(
+                "SELECT COALESCE(MAX(turn_number),0) FROM conversation_turn_occurrences "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            turn_number = (
+                max(int(row[0]), 0 if native is None else int(native[0]), int(occurrence[0])) + 1
+            )
             epoch = conn.execute(
                 "SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1"
             ).fetchone()
@@ -483,18 +508,52 @@ class ConversationStore:
         return await asyncio.to_thread(read)
 
     async def transition_lifecycle(
-        self, conversation_id: str, facts: tuple[LifecycleFact, ...]
-    ) -> None:
-        await self._write(self._transition_lifecycle_sync, conversation_id, facts)
+        self,
+        conversation_id: str,
+        facts: tuple[LifecycleFact, ...],
+        *,
+        executor_turn: tuple[str, str, str] | None = None,
+        retired_child: ChildReference | None = None,
+    ) -> bool:
+        return await self._write(
+            self._transition_lifecycle_sync, conversation_id, facts, executor_turn, retired_child
+        )
 
     def _transition_lifecycle_sync(
-        self, conversation_id: str, facts: tuple[LifecycleFact, ...]
-    ) -> None:
+        self,
+        conversation_id: str,
+        facts: tuple[LifecycleFact, ...],
+        executor_turn: tuple[str, str, str] | None = None,
+        retired_child: ChildReference | None = None,
+    ) -> bool:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
+            if retired_child is not None:
+                retained = conn.execute(
+                    "SELECT child_json,runtime_json FROM executor_core_turns "
+                    "WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                if retained is None or (
+                    json.loads(retained[0])
+                    != {
+                        "executor_incarnation": retired_child.executor_incarnation,
+                        "child_id": retired_child.child_id,
+                        "conversation_id": retired_child.conversation_id,
+                    }
+                    or json.loads(retained[1]).get("cleanup_evidence_uncertain")
+                ):
+                    conn.rollback()
+                    return False
             apply_facts(conn, conversation_id, facts)
+            if executor_turn is not None:
+                self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
+            if retired_child is not None:
+                ExecutorStore.close_child_in_transaction(
+                    conn, retired_child, self._integer_now() * 1000
+                )
             interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
                 conn,
@@ -510,6 +569,8 @@ class ConversationStore:
                     claim_revisions != self._recovery_ticket_claim_revisions(conn, conversation_id)
                 ),
             )
+
+        return True
 
     def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
         """Actual recording errors retained for explicit persistence reconciliation."""
@@ -655,6 +716,7 @@ class ConversationStore:
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
         return await self._write(
@@ -665,7 +727,49 @@ class ConversationStore:
             automatic_compaction_confirmed,
             owner_read_through_sequence,
             lifecycle,
+            executor_turn,
         )
+
+    async def append_initial_shutdown_disposition(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        lifecycle: tuple[LifecycleFact, ...],
+        executor_turn: tuple[str, str, str] | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Commit the complete initial cancellation audit before settling its caller."""
+        return await self._write(
+            self._append_initial_shutdown_disposition_sync,
+            conversation_id,
+            payloads,
+            lifecycle,
+            executor_turn,
+        )
+
+    def _append_initial_shutdown_disposition_sync(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        lifecycle: tuple[LifecycleFact, ...],
+        executor_turn: tuple[str, str, str] | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        with self._publication_connection() as (conn, admission):
+            try:
+                self._begin_validated_attention_write(conn, conversation_id)
+                self._apply_signal_mutation(conn, admission)
+                if executor_turn is not None:
+                    self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
+                written = self.append_in_transaction(
+                    conn, conversation_id, payloads, lifecycle=lifecycle
+                )
+                self._record_signal_result(conn, written)
+                self._commit_rows(conn, payloads)
+            except BaseException as error:
+                self._invalidate_signal_failure(error)
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+        return written
 
     async def admit_sender_messages(
         self,
@@ -838,6 +942,7 @@ class ConversationStore:
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool = False,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
         return await self._write(
@@ -849,6 +954,7 @@ class ConversationStore:
             automatic_compaction_result,
             create_failure_notice,
             lifecycle,
+            executor_turn,
         )
 
     async def advance_owner_read_through_sequence(
@@ -881,6 +987,7 @@ class ConversationStore:
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -901,16 +1008,23 @@ class ConversationStore:
         later delivery from crediting rows that arrived after the owner left.
         Returns the rows in the order they were written.
         """
-        return await self._write(
-            self._append_delivered_prompt_sync,
-            conversation_id,
-            prompt,
-            model_change,
-            extra_prompts,
-            owner_read_through_sequence,
-            lifecycle,
-            composed_content_delivered,
-        )
+        from planner.conversation.contracts import PromptDeliveryStarted
+        from planner.executor.native_messages import native_message_admission
+
+        with native_message_admission(
+            PromptDeliveryStarted(), composed_content_delivered=composed_content_delivered
+        ):
+            return await self._write(
+                self._append_delivered_prompt_sync,
+                conversation_id,
+                prompt,
+                model_change,
+                extra_prompts,
+                owner_read_through_sequence,
+                lifecycle,
+                composed_content_delivered,
+                executor_turn,
+            )
 
     async def read_events_after(
         self, conversation_id: str, after_sequence: int
@@ -1040,6 +1154,7 @@ class ConversationStore:
             model=resolved.model,
             reasoning_effort=resolved.reasoning_effort,
             workspace_folder=resolved.workspace_folder,
+            workspace_path_policy=resolved.workspace_path_policy,
             role_text=None if role_materials is None else role_materials.role_text,
             identity_environment_variables=(
                 () if role_materials is None else role_materials.identity_environment_variables
@@ -1061,19 +1176,20 @@ class ConversationStore:
                     conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
                     "INSERT INTO conversations (conversation_id, backend_key, model, "
-                    "reasoning_effort, workspace_folder, role_text, "
+                    "reasoning_effort, workspace_folder, workspace_path_policy, role_text, "
                     "identity_environment_variables, access, vendor_session_cursor, "
                     "composer_catalog, latest_sequence, latest_agent_activity_at, "
                     "latest_agent_activity_sequence, automatically_compacted_through_sequence, "
                     "automatic_compaction_attempted_through_sequence, "
                     "owner_read_through_sequence, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         record.conversation_id,
                         str(record.backend_key),
                         record.model,
                         record.reasoning_effort,
                         str(record.workspace_folder),
+                        str(record.workspace_path_policy),
                         record.role_text,
                         _identity_environment_variables_to_json(
                             record.identity_environment_variables
@@ -1102,7 +1218,8 @@ class ConversationStore:
         try:
             row = conn.execute(
                 "SELECT conversation_id, backend_key, model, reasoning_effort, "
-                "workspace_folder, role_text, identity_environment_variables, access, "
+                "workspace_folder, workspace_path_policy, role_text, "
+                "identity_environment_variables, access, "
                 "vendor_session_cursor, composer_catalog, latest_sequence, "
                 "latest_agent_activity_at, latest_agent_activity_sequence, "
                 "automatically_compacted_through_sequence, "
@@ -1170,6 +1287,7 @@ class ConversationStore:
         automatic_compaction_confirmed: bool,
         owner_read_through_sequence: int | None,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> StoredConversationEvent:
         with self._publication_connection() as (conn, admission):
             try:
@@ -1208,6 +1326,8 @@ class ConversationStore:
                     occurred_at=stored.created_at,
                 )
                 capture_conversation_attention(conn, conversation_id, stored.created_at, result)
+                if executor_turn is not None:
+                    self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
                 self._participate_in_append(conn, conversation_id, written)
                 self._record_signal_result(conn, written[0])
                 self._commit_rows(conn, (payload,))
@@ -1246,6 +1366,7 @@ class ConversationStore:
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1300,6 +1421,8 @@ class ConversationStore:
                 capture_conversation_attention(
                     conn, conversation_id, written[-1].created_at, result
                 )
+                if executor_turn is not None:
+                    self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
                 self._participate_in_append(conn, conversation_id, written)
                 self._record_signal_result(conn, written)
                 self._commit_rows(conn, payloads)
@@ -1319,6 +1442,7 @@ class ConversationStore:
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         with self._publication_connection() as (conn, admission):
             try:
@@ -1365,6 +1489,8 @@ class ConversationStore:
                     occurred_at=ended.created_at,
                 )
                 capture_conversation_attention(conn, conversation_id, ended.created_at, result)
+                if executor_turn is not None:
+                    self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
                 self._participate_in_append(conn, conversation_id, written)
                 self._record_signal_result(conn, written)
                 self._commit_rows(conn, payloads)
@@ -1437,6 +1563,22 @@ class ConversationStore:
         together is numbered consecutively with no gap for anyone else to write into: the
         transaction is immediate, so a second writer is waiting for this one's lock.
         """
+        # Another destination can commit actual reply credit while this source
+        # prepared its ending. Canonical credit wins over a stale RAM snapshot.
+        if any(isinstance(payload, ExplicitReplyMissingEventPayload) for payload in payloads):
+            runtime = conn.execute(
+                "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if runtime is not None:
+                recipients = json.loads(runtime[0])["explicit_reply_recipients"]
+                payloads = tuple(
+                    payload
+                    for payload in payloads
+                    if not isinstance(payload, ExplicitReplyMissingEventPayload)
+                    or {"kind": payload.prompt_sender.kind.value, "id": payload.prompt_sender.id}
+                    not in recipients
+                )
         created_at = self._integer_now()
         row = conn.execute(
             "SELECT latest_sequence FROM conversations WHERE conversation_id = ?",
@@ -1459,6 +1601,12 @@ class ConversationStore:
                     created_at,
                 ),
             )
+            from planner.executor.native_messages import record_native_message_event_in_transaction
+
+            record_native_message_event_in_transaction(conn, conversation_id, payload)
+            from planner.executor.native_messages import consume_native_held_prompt_in_transaction
+
+            consume_native_held_prompt_in_transaction(conn, conversation_id, payload)
             written.append(
                 StoredConversationEvent(
                     conversation_id=conversation_id,
@@ -1860,6 +2008,493 @@ class ConversationStore:
             strict_outcome=self.signal_coordinator is not None,
         )
 
+    @staticmethod
+    def save_executor_turn_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, metadata: tuple[str, str, str]
+    ) -> None:
+        previous = conn.execute(
+            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
+            "WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+        incoming_child = json.loads(metadata[0])
+        current = json.loads(metadata[2])
+        assignment = conn.execute(
+            "SELECT rowid,closed_at_ms FROM executor_child_assignments "
+            "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+            (incoming_child["executor_incarnation"], incoming_child["child_id"], conversation_id),
+        ).fetchone()
+        if previous is not None:
+            committed_child = json.loads(previous[0])
+            committed = json.loads(previous[2])
+            if committed_child != incoming_child:
+                committed_assignment = conn.execute(
+                    "SELECT rowid FROM executor_child_assignments "
+                    "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+                    (
+                        committed_child["executor_incarnation"],
+                        committed_child["child_id"],
+                        conversation_id,
+                    ),
+                ).fetchone()
+                # An old wrapper can finish after a fresh child owns the row.
+                # Canonical assignment order, not callback arrival, owns identity.
+                if (
+                    assignment is None
+                    or assignment[1] is not None
+                    or (
+                        committed_assignment is not None and assignment[0] < committed_assignment[0]
+                    )
+                ):
+                    return
+            else:
+                if json.loads(metadata[1])["turn_number"] < json.loads(previous[1])["turn_number"]:
+                    # A late wrapper for this child cannot roll back its turn.
+                    # Child-wide retirement facts still survive the stale write.
+                    for flag in ("source_retired", "cleanup_evidence_uncertain"):
+                        if current.get(flag):
+                            committed[flag] = True
+                    if assignment is not None and assignment[1] is not None:
+                        committed["source_retired"] = True
+                    conn.execute(
+                        "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                        (json.dumps(committed), conversation_id),
+                    )
+                    return
+                for flag in ("source_retired", "cleanup_evidence_uncertain"):
+                    if committed.get(flag):
+                        current[flag] = True
+            archive = committed.get("legacy_request_public_ids")
+            if archive:
+                current["legacy_request_public_ids"] = archive
+        if assignment is not None and assignment[1] is not None:
+            current["source_retired"] = True
+        metadata = (metadata[0], metadata[1], json.dumps(current))
+        if (
+            previous is not None
+            and json.loads(previous[0]) == json.loads(metadata[0])
+            and json.loads(previous[1]) == json.loads(metadata[1])
+        ):
+            current = json.loads(metadata[2])
+            committed = json.loads(previous[2])
+            if committed.get("callbacks_revoked"):
+                current["callbacks_revoked"] = True
+            recipients = current.setdefault("explicit_reply_recipients", [])
+            for recipient in committed.get("explicit_reply_recipients", []):
+                if recipient not in recipients:
+                    recipients.append(recipient)
+            metadata = (metadata[0], metadata[1], json.dumps(current))
+        conn.execute(
+            "INSERT INTO "
+            "executor_core_turns(conversation_id,child_json,turn_json,runtime_json) "
+            "VALUES (?,?,?,?) ON CONFLICT(conversation_id) DO UPDATE SET "
+            "child_json=excluded.child_json,turn_json=excluded.turn_json,runtime_json=excluded.runtime_json",
+            (conversation_id, *metadata),
+        )
+        if json.loads(metadata[2]).get("ended"):
+            token = json.loads(metadata[1])
+            for row in conn.execute(
+                "SELECT ask_key,reference_json FROM executor_asks WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchall():
+                reference = json.loads(row[1])
+                if reference["turn"] == token and reference["child"] == json.loads(metadata[0]):
+                    conn.execute(
+                        "UPDATE executor_asks SET reachability='callback_gone' "
+                        "WHERE ask_key=? AND reachability IN ('reachable','uncertain')",
+                        (row[0],),
+                    )
+
+    @staticmethod
+    def credit_executor_reply_in_transaction(
+        conn: sqlite3.Connection, turn: Any, recipient: Principal
+    ) -> None:
+        row = conn.execute(
+            "SELECT turn_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
+            (turn.conversation_id,),
+        ).fetchone()
+        if row is None:
+            return
+        token = json.loads(str(row[0]))
+        if (
+            token.get("turn_number") != turn.turn_number
+            or token.get("conversation_id") != turn.conversation_id
+        ):
+            return
+        runtime = json.loads(str(row[1]))
+        principal = {"kind": recipient.kind.value, "id": recipient.id}
+        recipients = runtime["explicit_reply_recipients"]
+        if principal not in recipients:
+            recipients.append(principal)
+            conn.execute(
+                "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                (json.dumps(runtime), turn.conversation_id),
+            )
+
+    def _executor_mutation_sync[T](self, operation: Callable[[sqlite3.Connection], T]) -> T:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            self._apply_signal_mutation(conn, admission)
+            result = operation(conn)
+            self._record_signal_result(conn, result)
+            self._commit_rows(conn, ())
+            return result
+
+    async def save_move_retirement(self, conversation_id: str, *, uncertain: bool) -> None:
+        """Retain remote turn history while retiring its live source association."""
+
+        def write(conn: sqlite3.Connection) -> None:
+            row = conn.execute(
+                "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if row is not None:
+                runtime = json.loads(row[0])
+                runtime["source_retired"] = not uncertain
+                runtime["move_retirement_uncertain"] = uncertain
+                conn.execute(
+                    "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                    (json.dumps(runtime), conversation_id),
+                )
+
+        await self._write(self._executor_mutation_sync, write)
+
+    async def revoke_executor_turn_asks(self, child: ChildReference, turn: TurnToken) -> None:
+        """Close callbacks before a remote cancellation can await transport."""
+
+        def write(conn: sqlite3.Connection) -> None:
+            context = conn.execute(
+                "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
+                "WHERE conversation_id=?",
+                (child.conversation_id,),
+            ).fetchone()
+            if (
+                context is not None
+                and json.loads(context[0]) == asdict(child)
+                and json.loads(context[1]) == asdict(turn)
+            ):
+                runtime = json.loads(context[2])
+                runtime["callbacks_revoked"] = True
+                conn.execute(
+                    "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                    (json.dumps(runtime), child.conversation_id),
+                )
+            for row in conn.execute(
+                "SELECT ask_key,reference_json FROM executor_asks WHERE conversation_id=?",
+                (child.conversation_id,),
+            ).fetchall():
+                reference = json.loads(row[1])
+                token = reference["turn"]
+                if (
+                    reference["child"] == asdict(child)
+                    and token["conversation_id"] == turn.conversation_id
+                    and token["turn_number"] == turn.turn_number
+                ):
+                    conn.execute(
+                        "UPDATE executor_asks SET reachability='callback_gone' "
+                        "WHERE ask_key=? AND reachability IN ('reachable','uncertain')",
+                        (row[0],),
+                    )
+
+        await self._write(self._executor_mutation_sync, write)
+
+    async def save_executor_turn(
+        self, conversation_id: str, metadata: tuple[str, str, str]
+    ) -> None:
+        await self.transition_lifecycle(conversation_id, (), executor_turn=metadata)
+
+    async def executor_held_targets(self) -> tuple[str, ...]:
+        def read() -> tuple[str, ...]:
+            conn = self._connect()
+            try:
+                return tuple(
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT DISTINCT held_target_conversation_id FROM executor_native_messages "
+                        "WHERE held_state IN ('pending','dispatching') "
+                        "ORDER BY held_target_conversation_id"
+                    )
+                )
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(read)
+
+    async def read_executor_held_prompts(self, conversation_id: str) -> tuple[tuple[str, str], ...]:
+        return await asyncio.to_thread(self.read_executor_held_prompts_sync, conversation_id)
+
+    def read_executor_held_prompts_sync(self, conversation_id: str) -> tuple[tuple[str, str], ...]:
+        conn = self._connect()
+        try:
+            return tuple(
+                (str(row[0]), str(row[1]))
+                for row in conn.execute(
+                    "SELECT held_prompt_json,held_state FROM executor_native_messages WHERE "
+                    "held_target_conversation_id=? AND held_state IN "
+                    "('pending','dispatching') ORDER BY held_admission_order",
+                    (conversation_id,),
+                )
+            )
+        finally:
+            conn.close()
+
+    async def mark_executor_held_dispatching(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> bool:
+        return await self._write(
+            self._mark_executor_held_dispatching_sync, conversation_id, sender_message_ids
+        )
+
+    def _mark_executor_held_dispatching_sync(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> bool:
+        def write(conn: sqlite3.Connection) -> bool:
+            changed = False
+            for sender_id in sender_message_ids:
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM executor_native_messages WHERE "
+                        "held_target_conversation_id=? AND submission_id=? "
+                        "AND held_state='pending'",
+                        (conversation_id, sender_id),
+                    ).fetchone()
+                    is None
+                ):
+                    continue
+                cursor = conn.execute(
+                    "UPDATE executor_native_messages SET held_state='dispatching' WHERE "
+                    "held_target_conversation_id=? AND submission_id=? "
+                    "AND held_state='pending'",
+                    (conversation_id, sender_id),
+                )
+                changed = changed or cursor.rowcount > 0
+            return changed
+
+        return self._executor_mutation_sync(write)
+
+    def requeue_executor_held_prompt(self, conversation_id: str, held: object) -> None:
+        """Persist a known non-delivery before its replacement enters the held line."""
+        from planner.executor.codec import encode_value
+
+        encoded = encode_value(held)
+        assert isinstance(encoded, dict)
+        conn = self._connect()
+        try:
+            with conn:
+                rows = conn.execute(
+                    "SELECT * FROM executor_native_messages WHERE "
+                    "held_target_conversation_id=? AND submission_id=? "
+                    "AND held_state='dispatching'",
+                    (conversation_id, encoded.get("sender_message_id")),
+                ).fetchall()
+                for row in rows:
+                    original = json.loads(row["held_prompt_json"])
+                    if any(
+                        original[key] != encoded[key]
+                        for key in (
+                            "content",
+                            "sender_label",
+                            "sender",
+                            "recipient",
+                        )
+                    ):
+                        raise ValueError("requeued held identity or bytes changed")
+                    order = conn.execute(
+                        "SELECT COALESCE(MAX(held_admission_order),0)+1 FROM "
+                        "executor_native_messages WHERE held_target_conversation_id=?",
+                        (conversation_id,),
+                    ).fetchone()[0]
+                    conn.execute(
+                        "UPDATE executor_native_messages SET held_prompt_json=?,"
+                        "held_admission_order=?,held_state='pending' WHERE "
+                        "sender_id=? AND submission_id=?",
+                        (
+                            json.dumps(encoded, sort_keys=True, separators=(",", ":")),
+                            order,
+                            row["sender_id"],
+                            row["submission_id"],
+                        ),
+                    )
+        finally:
+            conn.close()
+
+    def read_executor_runtime_snapshots(
+        self,
+    ) -> tuple[tuple[ConversationRecord, tuple[str, str, str] | None], ...]:
+        """Restore durable native knowledge before the initial runtime publication."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT c.*,e.child_json,e.turn_json,e.runtime_json FROM conversations c "
+                "LEFT JOIN executor_core_turns e ON e.conversation_id=c.conversation_id "
+                "WHERE e.conversation_id IS NOT NULL OR EXISTS (SELECT 1 FROM "
+                "executor_native_messages m WHERE m.held_target_conversation_id=c.conversation_id "
+                "AND m.held_state IN ('pending','dispatching'))"
+            ).fetchall()
+            return tuple(
+                (
+                    _conversation_record(row),
+                    None
+                    if row["child_json"] is None
+                    else (str(row["child_json"]), str(row["turn_json"]), str(row["runtime_json"])),
+                )
+                for row in rows
+            )
+        finally:
+            conn.close()
+
+    async def read_executor_turn(self, conversation_id: str) -> tuple[str, str, str] | None:
+        def read() -> tuple[str, str, str] | None:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT child_json,turn_json,runtime_json FROM executor_core_turns WHERE "
+                    "conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return None if row is None else (str(row[0]), str(row[1]), str(row[2]))
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(read)
+
+    def executor_public_request_id(self, ask: Any) -> str | None:
+        from planner.executor.store import ExecutorStore
+
+        return ExecutorStore(self._db_path).public_request_id(ask)
+
+    def accept_executor_effect(
+        self,
+        envelope: Any,
+        acceptor: Any,
+        writer: Any,
+        mutation: SignalRuntimeMutation | None,
+    ) -> Any:
+        """Bind receipt acceptance to the same reversible runtime publication.
+
+        Prepare before BEGIN. Apply only a successful new effect after its savepoint
+        closes. A replay or refused effect leaves runtime fields unchanged.
+        """
+        coordinator = self.signal_coordinator
+        if coordinator is None:
+            return acceptor(envelope, writer)
+        admission: SignalAdmission | None = None
+        applied = False
+
+        @contextmanager
+        def transaction_context(conn: sqlite3.Connection) -> Iterator[None]:
+            nonlocal admission
+            admission = coordinator.prepare_mutation(conn, mutation, operation_id=uuid4().hex)
+            assert self._bind_signal_admission is not None
+            with self._bind_signal_admission(conn, admission):
+                yield
+
+        def write(conn: sqlite3.Connection, accepted: Any) -> Any:
+            nonlocal applied
+            result = writer(conn, accepted)
+            applied = True
+            return result
+
+        def before_commit(conn: sqlite3.Connection) -> None:
+            if applied:
+                assert admission is not None
+                coordinator.apply_mutation(conn, admission)
+
+        return acceptor(
+            envelope, write, transaction_context=transaction_context, before_commit=before_commit
+        )
+
+    @staticmethod
+    def lifecycle_facts_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str
+    ) -> tuple[LifecycleFact, ...]:
+        return read_facts(conn, conversation_id)
+
+    def append_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        *,
+        agent_activity: bool = False,
+        automatic_compaction_confirmed: bool = False,
+        automatic_compaction_result: AutomaticCompactionResult | None = None,
+        create_failure_notice: bool = False,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Canonical append under the executor receipt's existing write transaction.
+
+        The caller owns commit and publishes these rows only after it succeeds.
+        """
+        if not conn.in_transaction:
+            raise ValueError("conversation append requires an open transaction")
+        if not payloads and not lifecycle:
+            return ()
+        snapshot = conversation_attention_snapshot(conn, conversation_id, transaction_open=True)
+        written = self._insert_rows(conn, conversation_id, payloads, lifecycle)
+        if not written:
+            self._participate_in_append(conn, conversation_id, written)
+            return written
+        last = written[-1]
+        if agent_activity:
+            conn.execute(
+                "UPDATE conversations SET latest_agent_activity_at=?, "
+                "latest_agent_activity_sequence=? WHERE conversation_id=?",
+                (last.created_at, last.sequence, conversation_id),
+            )
+        if automatic_compaction_confirmed:
+            conn.execute(
+                "UPDATE conversations SET "
+                "automatically_compacted_through_sequence=latest_agent_activity_sequence, "
+                "automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
+            conn.execute(
+                "UPDATE conversations SET "
+                "automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        if create_failure_notice:
+            self._create_ticket_failure_notice(
+                conn,
+                conversation_id=conversation_id,
+                event_sequence=last.sequence,
+                error_summary=str(getattr(last.payload, "error_summary", None)),
+                now=last.created_at,
+            )
+        if snapshot is not None:
+            result = advance_conversation_attention(
+                snapshot,
+                payloads,
+                owner_read_through_sequence=snapshot.owner_read_through_sequence,
+                occurred_at=last.created_at,
+            )
+            capture_conversation_attention(conn, conversation_id, last.created_at, result)
+        self._participate_in_append(conn, conversation_id, written)
+        return written
+
+    def update_remote_identity_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        vendor_session_cursor: str | None = None,
+        composer_catalog: tuple[ComposerCatalogEntry, ...] | None = None,
+    ) -> None:
+        if vendor_session_cursor is not None:
+            conn.execute(
+                "UPDATE conversations SET vendor_session_cursor=? WHERE conversation_id=?",
+                (vendor_session_cursor, conversation_id),
+            )
+        if composer_catalog is not None:
+            conn.execute(
+                "UPDATE conversations SET composer_catalog=? WHERE conversation_id=?",
+                (_composer_catalog_to_json(composer_catalog), conversation_id),
+            )
+
     def _connect(self) -> sqlite3.Connection:
         return connect(self._db_path, self._busy_timeout_ms)
 
@@ -1943,6 +2578,7 @@ def ensure_started_conversation_record(
     immutable_expected = (
         str(resolved.backend_key),
         str(resolved.workspace_folder),
+        str(resolved.workspace_path_policy),
         None if role_materials is None else role_materials.role_text,
         identity_environment_variables_json,
         str(resolved.access),
@@ -1952,19 +2588,20 @@ def ensure_started_conversation_record(
         resolved.model,
         resolved.reasoning_effort,
         str(resolved.workspace_folder),
+        str(resolved.workspace_path_policy),
         None if role_materials is None else role_materials.role_text,
         identity_environment_variables_json,
         str(resolved.access),
     )
     conn.execute(
         "INSERT OR IGNORE INTO conversations (conversation_id, backend_key, model, "
-        "reasoning_effort, workspace_folder, role_text, "
+        "reasoning_effort, workspace_folder, workspace_path_policy, role_text, "
         "identity_environment_variables, access, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (resolved.conversation_id, *inserted_values, created_at),
     )
     row = conn.execute(
-        "SELECT backend_key, workspace_folder, role_text, "
+        "SELECT backend_key, workspace_folder, workspace_path_policy, role_text, "
         "identity_environment_variables, access FROM conversations "
         "WHERE conversation_id = ?",
         (resolved.conversation_id,),
@@ -1986,6 +2623,7 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
             None if row["reasoning_effort"] is None else str(row["reasoning_effort"])
         ),
         workspace_folder=Path(str(row["workspace_folder"])),
+        workspace_path_policy=WorkspacePathPolicy(str(row["workspace_path_policy"])),
         role_text=None if row["role_text"] is None else str(row["role_text"]),
         identity_environment_variables=_identity_environment_variables_from_json(
             str(row["identity_environment_variables"])

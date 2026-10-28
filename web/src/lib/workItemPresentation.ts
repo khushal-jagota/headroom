@@ -8,6 +8,7 @@ export type WorkItemAttentionFacts = Omit<WorkAttention, 'awaiting_reply' | 'awa
 };
 
 export type WorkItemTicketFacts = WorkItemAttentionFacts & {
+  locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: Partial<import("./conversationSignal").ConversationSignal>;
   id: string;
   title: string;

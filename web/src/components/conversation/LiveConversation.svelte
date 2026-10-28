@@ -1,5 +1,9 @@
 <script lang="ts">
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { queries } from "../../lib/queryCatalogue";
+  import { macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
+  import { executorAnswerAvailable, currentExecutorAnswers, currentExecutorAskRecord, executorAnswerSentence, executorUnavailableSentence } from "../../lib/conversation/executorEvidence";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
@@ -84,6 +88,7 @@
   } from "../../lib/conversation/wire";
 
   let {
+    locale,
     conversationId = null,
     ownerLoading = false,
     persistenceKey,
@@ -104,6 +109,7 @@
     selectedPastConversationId = $bindable(null)
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
+    locale?: TicketLocale;
     conversationId?: string | null;
     /** The owner is still reading which conversation belongs here. */
     ownerLoading?: boolean;
@@ -148,6 +154,13 @@
   } = $props();
 
   let view = $state<ConversationView | null>(null);
+  let remote = $derived(locale === "macos" || view?.executor_context != null);
+  const healthQuery = createQuery(() => ({...queries.executorHealth(), enabled:remote}), () => queryClient);
+  let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
+  $effect(() => {
+    healthQuery.dataUpdatedAt;
+    if (remote && openedId) untrack(() => void refreshView());
+  });
   let reader = $state<ConversationViewReader | null>(null);
   let viewAnchor=$state<ViewReaderAnchor|null>(null);
   let viewFolds=new Set<string>();
@@ -168,6 +181,7 @@
   let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
+  let askNoteKey = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
   let lens = $state<ConversationLens>("focus");
@@ -205,6 +219,17 @@
     const pending=view?.pending_user_input;
     return pending&&pending.request_id===reader?.status?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
   });
+  let permissionAvailable = $derived(executorAnswerAvailable(view,"permission",ask?.askId,locale,
+    reader?.status?.pending_permission?.request_id === ask?.askId));
+  let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
+    reader?.status?.pending_user_input?.request_id === userInput?.requestId));
+  let executorAnswers = $derived(currentExecutorAnswers(view));
+  let permissionRecord = $derived(currentExecutorAskRecord(view,"permission",ask?.askId));
+  let userInputRecord = $derived(currentExecutorAskRecord(view,"user_input",userInput?.requestId));
+  let permissionNote = $derived(executorAnswerSentence(permissionRecord) ?? (askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
+    (remote && !permissionAvailable ? executorUnavailableSentence(view?.pending_permission_ask?.executor_evidence) : null));
+  let userInputNote = $derived(executorAnswerSentence(userInputRecord) ?? (askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ??
+    (remote && !userInputAvailable ? executorUnavailableSentence(view?.pending_user_input?.executor_evidence) : null));
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
@@ -813,14 +838,16 @@
 
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
-    if (readOnly || askId === undefined || openedId === null) return;
+    if (readOnly || busy || !permissionAvailable || askId === undefined || openedId === null) return;
+    askNoteKey = `permission:${askId}`;
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerPermissionAsk(openedId, askId, optionId);
+      const { landed } = await answerPermissionAsk(openedId, askId, optionId, view?.pending_permission_ask?.executor_evidence?.ask);
       askNote = landed
-        ? null
+        ? remote ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take that answer. Cancelling the turn always works.";
+      await refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -830,14 +857,16 @@
 
   async function submitUserInput(answers: UserInputAnswers): Promise<void> {
     const requestId = userInput?.requestId;
-    if (readOnly || requestId === undefined || openedId === null) return;
+    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return;
+    askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
     try {
-      const { landed } = await answerUserInput(openedId, requestId, answers);
+      const { landed } = await answerUserInput(openedId, requestId, answers, view?.pending_user_input?.executor_evidence?.ask);
       askNote = landed
-        ? null
+        ? remote ? "Answer saved on VPS; delivery to Mac is pending." : null
         : "The backend did not take those answers. You can try again or stop the turn.";
+      await refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -938,6 +967,9 @@
   });
 </script>
 
+{#each executorAnswers as record (record.answer?.answer_id)}
+  <p class="executor-answer-status" data-executor-answer-status role="status">{executorAnswerSentence(record)}</p>
+{/each}
 <ConversationPane
   roleLabel={label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}
@@ -964,7 +996,11 @@
   {running}
   {ask}
   {userInput}
-  {askNote}
+  askNote={permissionNote}
+  {userInputNote}
+  {permissionAvailable}
+  {userInputAvailable}
+  {activityUncertain}
   {current}
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}

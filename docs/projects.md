@@ -11,8 +11,14 @@ Project ──► Ticket ──► optional Manager classification
 ```
 
 Each Project folder is explicit and does not depend on the Project name. Panels expands
-paths that start with `~` and stores an absolute path. The folder can be absent on disk.
-Panels does not create it. A clear operation returns the stored path to `null`.
+paths that start with `~` against the server's home and stores an absolute path.
+New writes preserve the absolute path without resolving symlinks on the server.
+Existing stored paths stay unchanged. The folder can be absent on the server, and Panels does not create it.
+A clear operation returns the stored path to `null`.
+
+The host that runs the work checks the directory. Mac work uses its configured Project
+folder even when that folder is absent on the VPS. See [conversation directories](conversation-system.md#conversation-directories)
+for directory selection and resume behavior.
 
 Each project also has one free-text summary. That summary is the project context
 for humans and agents: what the project is, what matters about it, and any repo or

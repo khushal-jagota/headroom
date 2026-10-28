@@ -1,4 +1,26 @@
 <script lang="ts">
+  import { setContext } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
+  import { MACHINE_ROWS, type MachineRowRegistry } from "../lib/machines/visibility";
+  import type { TicketLocale } from "../lib/ticketMachines";
+  import MachineNotice from "../components/machines/MachineNotice.svelte";
+  import MachineKey from "../components/machines/MachineKey.svelte";
+  import TicketCreation from "../components/machines/TicketCreation.svelte";
+  const machineRows = new SvelteMap<symbol,{locale:TicketLocale | undefined;rail:boolean}>();
+  setContext<MachineRowRegistry>(MACHINE_ROWS,{
+    set:(key,locale,rail) => { const previous=machineRows.get(key); if (previous?.locale !== locale || previous?.rail !== rail) machineRows.set(key,{locale,rail}); },
+    delete:key => { machineRows.delete(key); }
+  });
+  let narrowMachineView = $state(false);
+  let creatingTicket = $state(false);
+  onMount(() => {
+    const media=window.matchMedia('(max-width: 720px)');
+    const update=()=>narrowMachineView=media.matches;
+    update();media.addEventListener('change',update);
+    return ()=>media.removeEventListener('change',update);
+  });
+
+
   import { viewWindow } from "../lib/navigation/views/owner";
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
   import { createScrollWindowCoordinator } from "../lib/navigation/views/scrollWindowRestoration";
@@ -101,6 +123,8 @@
   });
   const selectedItemWorkspace = createQuery(() => ({ ...queries.managerWorkspaceContent(opening.openManagerId ?? ""), enabled: opening.openManagerId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
+  let machineNoticeRelevant = $derived([...machineRows.values()].some(row => row.locale === 'macos' && (!row.rail || !narrowMachineView))
+    || workspace?.tickets.some(ticket => ticket.id === opening.markedTicketId && ticket.locale === 'macos') === true);
   let visibleItems=$state<string[]>([]);
   let railWindows=$state<Record<string,{anchor:string;direction:'before'|'after'}>>({});
   function railPage(key:string,anchor:string,direction:'before'|'after'){railWindows={...railWindows,[key]:{anchor,direction}};}
@@ -327,9 +351,13 @@
 
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
+      <div class="machine-toolbar"><MachineKey /><button type="button" class="button button--quiet" onclick={() => creatingTicket = !creatingTicket}>Create Ticket</button></div>
+      {#if creatingTicket}<TicketCreation onCreated={id => {creatingTicket=false;selectCard(id,null);}} />{/if}
+      <MachineNotice relevant={machineNoticeRelevant} />
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
+
           <ResourceState shape="block" layout="fill" error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
             <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={() => hover.leave()}>
@@ -416,6 +444,7 @@
               {#await import("./TicketRoute.svelte") then view}
 <view.default
                 navigationErrorHandledByParent
+                machineNoticeManaged
                 id={opening.markedTicketId}
                 requestedConversationId={address.selectedConversationId ?? null}
                 openFile={address.openFile}
@@ -458,6 +487,9 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} recap={hoverRecap} rail={railElement} recapTarget={hoverRecapTarget} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
+  .board-workspace-wrap { display:flex; flex-direction:column; }
+  .board-workspace-shell { flex:1; height:auto; }
+  .machine-toolbar { flex:none; padding-inline:var(--space-3); display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); margin-bottom:var(--space-2); }
   /* The pane's own scroller for a utility screen. It is here, scoped to this component,
      rather than in the shared stylesheet, so no skeleton rule can take it away. */
   .board-workspace-utility { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; }

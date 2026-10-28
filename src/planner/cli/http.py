@@ -67,6 +67,8 @@ def send(
     """Execute one request and apply the failure half of the exit contract. Transport
     failure -> stderr + exit 2. Non-2xx (or a 2xx body that still carries an "error"
     key) -> stderr + exit 1. On 2xx: return the parsed JSON body to the caller."""
+    if os.environ.get("PLAN_EXECUTOR_ROOT"):
+        return _executor_send(method, path, as_json=as_json, json_body=json_body, params=params)
     try:
         resp = httpx.request(
             method,
@@ -96,6 +98,11 @@ def send_text(
     as_json: bool,
     params: dict[str, Any] | None = None,
 ) -> str:
+    if os.environ.get("PLAN_EXECUTOR_ROOT"):
+        result = _executor_send(method, path, as_json=as_json, json_body=None, params=params)
+        if isinstance(result, dict) and isinstance(result.get("text"), str):
+            return str(result["text"])
+        fail_validation("executor read did not return text", as_json)
     try:
         resp = httpx.request(
             method,
@@ -194,3 +201,36 @@ def _fail_response(resp: httpx.Response, data: Any, as_json: bool) -> NoReturn:
             no_route="No panels call can recover from this server response.",
         )
     exit_with_human_error(str(err["message"]), exit_code=EXIT_ERROR)
+
+
+def _executor_send(
+    method: str, path: str, *, as_json: bool, json_body: Any, params: dict[str, Any] | None
+) -> Any:
+    from dataclasses import asdict
+
+    from planner.executor.contracts import IpcOperation
+    from planner.executor.ipc_client import request
+    from planner.executor.mutations import cli_mutation
+
+    try:
+        if method.upper() == "GET":
+            response = request(IpcOperation.read, {"path": path, "params": params or {}})
+        else:
+            operation, arguments = cli_mutation(method.upper(), path, json_body)
+            response = request(IpcOperation.write, {"operation": operation, "arguments": arguments})
+    except ValueError as error:
+        fail_validation(str(error), as_json)
+    except (OSError, ConnectionError) as error:
+        _fail_connection(httpx.ConnectError(str(error)), as_json)
+    if response.queued is not None:
+        payload = asdict(response.queued)
+        if as_json:
+            print(json.dumps(payload))
+        else:
+            print(f"Queued {response.queued.submission_id}; VPS acceptance is unconfirmed.")
+        sys.exit(3)
+    if response.error is not None:
+        _fail_response(httpx.Response(400), {"error": response.error}, as_json)
+    if response.result is not None and "error" in response.result:
+        _fail_response(httpx.Response(400), response.result, as_json)
+    return response.result

@@ -39,6 +39,7 @@ from tests.support.conversation_system_under_test import (
 
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
+    BackendSpawnFailed,
     BackendUserInputRequest,
     TurnToken,
 )
@@ -658,5 +659,47 @@ def test_real_core_and_scripted_acp_settle_unconfirmed_compaction_without_a_retr
             assert [
                 write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
             ] == ["owner:\nfirst", "/compress", "owner:\nreleased after failure"]
+
+    _run(exercise)
+
+
+def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from collections.abc import AsyncIterator
+    from contextlib import asynccontextmanager
+
+    missing_interpreter = tmp_path / "missing-hermes-python"
+    failure = FileNotFoundError(2, "No such file or directory", str(missing_interpreter))
+    launches: list[str] = []
+
+    @asynccontextmanager
+    async def unavailable_transport(
+        executable: str, *args: object, **kwargs: object,
+    ) -> AsyncIterator[object]:
+        launches.append(executable)
+        raise failure
+        yield  # pragma: no cover - an async context manager that refuses entry
+
+    monkeypatch.setattr(
+        "planner.conversation.backends.hermes_acp.spawn_stdio_transport", unavailable_transport,
+    )
+
+    async def exercise() -> None:
+        start = _resolved_start(tmp_path)
+        sink = _RecordingSink()
+        child = HermesAcpBackendChild(
+            launch=AcpChildLaunch((str(missing_interpreter), "-m", "hermes.acp")),
+            resolved_start=start, event_sink=sink, message_files=_message_files(),
+        )
+        with pytest.raises(BackendSpawnFailed) as refusal:
+            await child.start(start, vendor_session_cursor=None)
+        assert str(refusal.value) == str(failure)
+        assert refusal.value.__cause__ is failure
+        assert launches == [str(missing_interpreter)]
+        assert sink.vendor_session_cursor is None
+        assert sink.agent_contents == []
+        assert sink.endings == []
+        await child.stop()
 
     _run(exercise)

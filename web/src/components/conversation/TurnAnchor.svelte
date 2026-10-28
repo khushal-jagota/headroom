@@ -29,6 +29,7 @@
   const LIVELINESS_DECAY_MS = 2_000;
 
   let {
+    activityUncertain = false,
     settled = false,
     stopped = false,
     startedAtUnixMilliseconds = null,
@@ -40,6 +41,7 @@
     expanded = false,
     livenessPulse = 0
   }: {
+    activityUncertain?: boolean;
     settled?: boolean;
     stopped?: boolean;
     /** When the turn began, in unix milliseconds, so a reload counts from the truth and
@@ -127,17 +129,17 @@
     {:else if !settled}
       <div
         class="c2-alive"
-        class:is-fresh={fresh}
+        class:is-fresh={fresh && !activityUncertain}
         data-conversation-alive
-        data-conversation-alive-fresh={fresh ? "true" : "false"}
+        data-conversation-alive-fresh={fresh && !activityUncertain ? "true" : "false"}
         role="status"
       >
         <span
           class="c2-alive-word"
-          class:live-text-shimmer={fresh}
+          class:live-text-shimmer={fresh && !activityUncertain}
           data-conversation-alive-word
         >
-          {workingSentence(elapsedSeconds)}
+          {activityUncertain ? "Current activity on Mac is unknown." : workingSentence(elapsedSeconds)}
         </span>
       </div>
     {/if}

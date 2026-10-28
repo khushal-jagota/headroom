@@ -257,11 +257,9 @@ def requested_ticket_launch_configuration(
     return launch_configuration
 
 
-def resolve_ticket_creation_context(
+def resolve_ticket_draft_context(
     conn: sqlite3.Connection,
     *,
-    title: str,
-    title_max_chars: int,
     worker_type: str,
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
@@ -275,7 +273,6 @@ def resolve_ticket_creation_context(
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
 ) -> ResolvedTicketCreationContext:
     """Resolve and validate every ordinary Ticket creation path before insertion."""
-    admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     admission.require_creatable_worker_type(worker_type)
@@ -347,12 +344,46 @@ def resolve_ticket_creation_context(
         project_requires_macos=bool(project["requires_macos"]) if project is not None else False,
         worker_requires_macos=read_worker_requires_macos(conn, worker_type),
     )
-    require_locale_backend_compatibility(resolved_locale, launch_configuration.employee_backend)
     return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
 
 
-# Existing callers that validate a future Ticket use the same resolution as insertion.
-validate_ticket_creation_context = resolve_ticket_creation_context
+def resolve_ticket_creation_context(
+    conn: sqlite3.Connection,
+    *,
+    title: str,
+    title_max_chars: int,
+    worker_type: str,
+    locale: TicketLocale | str | None = None,
+    employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
+    model_source_is_historical: bool = False,
+    project_id: str | None = None,
+    deadline: str | None = None,
+    manager_id: str | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
+    worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
+) -> ResolvedTicketCreationContext:
+    """Admit final text and locale against the same context used by draft reads."""
+    admission.validate_title(title, title_max_chars)
+    context = resolve_ticket_draft_context(
+        conn,
+        worker_type=worker_type,
+        locale=locale,
+        employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+        model_source_is_historical=model_source_is_historical,
+        project_id=project_id,
+        deadline=deadline,
+        manager_id=manager_id,
+        blocked_by_ticket_ids=blocked_by_ticket_ids,
+        worker_runtime_definitions=worker_runtime_definitions,
+    )
+    require_locale_backend_compatibility(
+        context.locale, context.launch_configuration.employee_backend
+    )
+    return context
 
 
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
@@ -2120,6 +2151,25 @@ def set_ticket_backlog(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def validate_ticket_locale_move(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    locale: TicketLocale,
+    principal: Principal,
+    expected_record_sha256: str | None = None,
+) -> Ticket:
+    """Read-only admission checks, shared with the canonical final writer."""
+    authority.require_above(conn, principal, authority.ticket(ticket_id))
+    ticket = _load_ticket_for_write(conn, ticket_id)
+    _require_record_sha256(conn, ticket_id, expected_record_sha256)
+    locale = require_ticket_locale(locale)
+    require_locale_backend_compatibility(locale, ticket.employee_backend)
+    if ticket.worker_step_claim is not WorkerStepClaim.none:
+        raise PlannerError(ErrorCode.validation, "the Ticket has an outstanding worker-step claim")
+    return ticket
+
+
 def move_ticket_locale(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -2128,18 +2178,26 @@ def move_ticket_locale(
     principal: Principal,
     now: int,
     expected_record_sha256: str | None = None,
+    expected_source_locale: TicketLocale | None = None,
+    expected_conversation_id: str | None = None,
+    validate_source: Callable[[], None] | None = None,
 ) -> Ticket:
-    """Canonical locale-only writer; runtime owns exclusion against conversation admission."""
+    """Canonical writer; caller retains source/admission fencing through this commit."""
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        _require_record_sha256(conn, ticket_id, expected_record_sha256)
-        locale = require_ticket_locale(locale)
-        require_locale_backend_compatibility(locale, ticket.employee_backend)
-        if ticket.worker_step_claim is not WorkerStepClaim.none:
-            raise PlannerError(
-                ErrorCode.validation, "the Ticket has an outstanding worker-step claim"
-            )
+        ticket = validate_ticket_locale_move(
+            conn,
+            ticket_id,
+            locale=locale,
+            principal=principal,
+            expected_record_sha256=expected_record_sha256,
+        )
+        if expected_source_locale is not None and (
+            ticket.locale is not expected_source_locale
+            or ticket.conversation_id != expected_conversation_id
+        ):
+            raise PlannerError(ErrorCode.validation, "the Ticket source changed during move")
+        if validate_source is not None:
+            validate_source()
         if ticket.locale != locale:
             conn.execute("UPDATE tickets SET locale=? WHERE id=?", (locale.value, ticket_id))
         return _load_ticket_for_write(conn, ticket_id)

@@ -76,16 +76,10 @@ def add_ticket_block(
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with tickets_data._txn(conn):
         if admit is not None:
             admit()
         ticket_blocks.add_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
 
 
 def remove_ticket_block(
@@ -100,16 +94,10 @@ def remove_ticket_block(
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with tickets_data._txn(conn):
         if admit is not None:
             admit()
         ticket_blocks.remove_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
 
 
 def file_current_proposal(

@@ -27,7 +27,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from planner.conversation.backend_state import (
     BackendStateStore,
@@ -135,6 +135,7 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
+from planner.executor.contracts import AskReference
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.runtime import conversation_start
 
@@ -376,7 +377,35 @@ class VoiceTranscriptionBody(BaseModel):
     media_type: str = "audio/webm"
 
 
-class PermissionAnswerBody(BaseModel):
+class ExecutorAnswerBody(BaseModel):
+    executor_ask: AskReference | None = None
+
+    @field_validator("executor_ask", mode="before")
+    @classmethod
+    def exact_executor_ask(cls, value: object) -> object:
+        if value is None or isinstance(value, AskReference):
+            return value
+        if not isinstance(value, dict) or set(value) != {"child", "turn", "ask_id", "kind"}:
+            raise ValueError("executor_ask must contain the exact original reference")
+        child, turn = value["child"], value["turn"]
+        if (
+            not isinstance(child, dict)
+            or set(child) != {"executor_incarnation", "child_id", "conversation_id"}
+            or any(not isinstance(part, str) or not part for part in child.values())
+            or not isinstance(turn, dict)
+            or set(turn) != {"conversation_id", "turn_number"}
+            or not isinstance(turn["conversation_id"], str)
+            or type(turn["turn_number"]) is not int
+            or not isinstance(value["ask_id"], str)
+            or not value["ask_id"]
+            or value["kind"] not in ("permission", "user_input")
+            or turn["conversation_id"] != child["conversation_id"]
+        ):
+            raise ValueError("executor_ask identity is invalid")
+        return value
+
+
+class PermissionAnswerBody(ExecutorAnswerBody):
     ask_id: str
     option_id: str
 
@@ -385,9 +414,10 @@ class UserInputQuestionAnswerBody(BaseModel):
     answers: list[str]
 
 
-class UserInputAnswerBody(BaseModel):
+class UserInputAnswerBody(ExecutorAnswerBody):
     request_id: str
     answers: dict[str, UserInputQuestionAnswerBody]
+    executor_ask: AskReference | None = None
 
 
 class PromoteHeldPromptBody(BaseModel):
@@ -745,34 +775,53 @@ async def promote_held_prompt(
 
 @router.post("/conversations/{conversation_id}/permission-answers")
 async def answer_permission_ask(
-    conversation_id: str, body: PermissionAnswerBody, runtime: Runtime
+    conversation_id: str, body: PermissionAnswerBody, runtime: Runtime, ctx: Ctx
 ) -> dict[str, bool]:
-    """Give the backend the option a person chose, and say whether it landed.
-
-    Not landing is an ordinary outcome — the ask was answered already, or its turn has
-    since ended — so it is a false rather than an error.
-    """
+    """Return durable VPS acceptance for remote answers, native delivery for local ones."""
+    require_owner(ctx)
     _require_mutable_conversation(runtime, conversation_id)
-    landed = await runtime.system.answer_permission_ask(
-        conversation_id, body.ask_id, body.option_id
-    )
+    if runtime.executor_endpoint is not None and (
+        body.executor_ask is not None
+        or runtime.executor_endpoint.owns_conversation(conversation_id)
+    ):
+        # Exact historical choices retain their first receipt after retirement.
+        # The endpoint still validates identity and refuses new closed targets.
+        landed = await runtime.executor_endpoint.answer_permission(
+            conversation_id, body.ask_id, body.option_id, body.executor_ask
+        )
+    elif body.executor_ask is not None:
+        landed = False
+    else:
+        landed = await runtime.system.answer_permission_ask(
+            conversation_id, body.ask_id, body.option_id
+        )
     return {"landed": landed}
 
 
 @router.post("/conversations/{conversation_id}/user-input-answers")
 async def answer_user_input(
-    conversation_id: str, body: UserInputAnswerBody, runtime: Runtime
+    conversation_id: str, body: UserInputAnswerBody, runtime: Runtime, ctx: Ctx
 ) -> dict[str, bool]:
     """Give the backend the complete answer map for one question request."""
+    require_owner(ctx)
     _require_mutable_conversation(runtime, conversation_id)
-    landed = await runtime.system.answer_user_input(
-        conversation_id,
-        body.request_id,
-        tuple(
-            UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
-            for question_id, answer in body.answers.items()
-        ),
+    answers = tuple(
+        UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
+        for question_id, answer in body.answers.items()
     )
+    if runtime.executor_endpoint is not None and (
+        body.executor_ask is not None
+        or runtime.executor_endpoint.owns_conversation(conversation_id)
+    ):
+        # Exact historical choices retain their first receipt after retirement.
+        # The endpoint still validates identity and refuses new closed targets.
+        landed = await runtime.executor_endpoint.answer_user_input(
+            conversation_id, body.request_id, answers, body.executor_ask
+        )
+    elif body.executor_ask is not None:
+        landed = False
+    else:
+        landed = await runtime.system.answer_user_input(conversation_id, body.request_id, answers)
     return {"landed": landed}
 
 
@@ -1009,11 +1058,22 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
                     else {"kind": held.recipient.kind.value, "id": held.recipient.id}
                 ),
                 "queue_reason": str(held.queue_reason),
+                "delivery_uncertain": held.delivery_uncertain,
             }
             for held in await runtime.system.held_prompts(conversation_id)
         ],
         "pending_permission_ask": await _pending_permission_ask(runtime, conversation_id),
         "pending_user_input": await _pending_user_input(runtime, conversation_id),
+        "executor_context": (
+            None
+            if runtime.executor_endpoint is None
+            else runtime.executor_endpoint.conversation_context(conversation_id)
+        ),
+        "executor_asks": (
+            []
+            if runtime.executor_endpoint is None
+            else runtime.executor_endpoint.conversation_asks(conversation_id)
+        ),
     }
 
 
@@ -1035,6 +1095,12 @@ async def _pending_permission_ask(
         if isinstance(payload, PermissionAskedEventPayload) and payload.ask_id in waiting:
             return {
                 "ask_id": payload.ask_id,
+                **(
+                    runtime.executor_endpoint.ask_status(conversation_id, payload.ask_id)
+                    if runtime.executor_endpoint is not None
+                    and runtime.executor_endpoint.owns_conversation(conversation_id)
+                    else {}
+                ),
                 "title": payload.title,
                 "detail": payload.detail,
                 "options": [
@@ -1053,6 +1119,8 @@ async def _pending_user_input(
     runtime: ConversationRuntime, conversation_id: str
 ) -> dict[str, Any] | None:
     """The pending request, rebuilt from its durable row after a refresh."""
+    from planner.executor.contracts import AskKind
+
     waiting = await runtime.system.pending_user_input_request_ids(conversation_id)
     if not waiting:
         return None
@@ -1062,6 +1130,14 @@ async def _pending_user_input(
         if isinstance(payload, UserInputRequestedEventPayload) and payload.request_id in waiting:
             return {
                 "request_id": payload.request_id,
+                **(
+                    runtime.executor_endpoint.ask_status(
+                        conversation_id, payload.request_id, AskKind.user_input
+                    )
+                    if runtime.executor_endpoint is not None
+                    and runtime.executor_endpoint.owns_conversation(conversation_id)
+                    else {}
+                ),
                 "questions": [
                     {
                         "question_id": question.question_id,

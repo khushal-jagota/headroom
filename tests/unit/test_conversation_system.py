@@ -3204,3 +3204,53 @@ def test_identified_review_attachment_retry_is_one_delivery_and_keeps_original_r
             await attempt()
 
     _run(exercise)
+
+
+def test_local_worker_does_not_receive_native_context(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(
+            harness,
+            role_materials=ConversationRoleMaterials(
+                "Local Worker role.", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_worker"))
+            ),
+        )
+        await harness.system.send("c", text_message_content("Local work"), sender_label="Panels")
+        assert harness.backend("c").writes[0].content == text_message_content(
+            "Local Worker role.\n\nLocal work"
+        )
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_shutdown_retains_unconfirmed_local_child_and_revokes_callbacks(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, cancelled: bool
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        await harness.settle()
+        state = harness.system._conversations["c"]
+        child = state.child
+        assert child is not None
+        backend = harness.backend("c")
+        token = backend.live_turn_token
+        sink = backend.sink
+        assert token is not None and sink is not None
+        before = await harness.events("c")
+
+        async def fail_stop() -> None:
+            if cancelled:
+                raise asyncio.CancelledError
+            raise RuntimeError("termination remains unconfirmed")
+
+        monkeypatch.setattr(child, "stop", fail_stop)
+        await harness.system.shutdown()
+        assert state.child is child
+        assert state.child_is_quarantined
+        assert state.backend_event_pump is None
+        assert harness.system._runtime_ownership.closed
+        await sink.agent_message_completed(token, text_message_content("late callback"))
+        assert await harness.events("c") == before
+
+    _run(exercise)

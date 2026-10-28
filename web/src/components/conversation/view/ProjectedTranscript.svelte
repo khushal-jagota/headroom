@@ -14,12 +14,13 @@
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
   import { TURN_STOPPED_SENTENCE } from '../../../lib/conversation/transcript';
-  let { reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
+  let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
       withdrawnDisplayIds?: ReadonlySet<string>;
       onStopDrawingMessage?: (id:string)=>Promise<void>|void;
       onSendAgain?: (id:string)=>Promise<void>|void;
+      activityUncertain?: boolean;
       reader: ConversationViewReader;
       models: readonly BackendModel[];
       ownSenderLabel: string | null;
@@ -169,14 +170,14 @@
     <ViewItem itemKey={item.key} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
-          <TurnAnchor settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
         </div>
       {:else if item.kind==='work_group'}
         <div use:demand={item} data-conversation-work-group>
           {#if reader.lens!=='full'&&item.entry_count>1}<button type="button" class="c2-run-toggle" data-conversation-work-fold onclick={()=>void reader.expand({kind:'work_group',key:item.key},!reader.isExpanded({kind:'work_group',key:item.key}))}>{item.entry_count-1} earlier tool calls</button>{/if}
         </div>
       {:else}
-        <ProjectedRow {item} {reader} {models} {ownSenderLabel} {openRows} {wholeDetails} onEmptyEnding={(reference)=>emptyEndings.set(item.key,endingVersion(reference))}/>
+        <ProjectedRow {activityUncertain} {item} {reader} {models} {ownSenderLabel} {openRows} {wholeDetails} onEmptyEnding={(reference)=>emptyEndings.set(item.key,endingVersion(reference))}/>
       {/if}
     </ViewItem>
     {/if}

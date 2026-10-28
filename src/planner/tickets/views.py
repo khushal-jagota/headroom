@@ -22,7 +22,7 @@ from planner.managers import views as managers_views
 from planner.navigation.review import review_message_items
 from planner.navigation.review_contracts import ReviewMessageItem, ReviewProposalItem
 from planner.navigation.review_logic import group_review_items
-from planner.runtime import conversation_start
+from planner.runtime import conversation_start, worker_memory
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
 from planner.tickets.contracts import (
@@ -178,6 +178,7 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "waiting_to_closeout": facts.waiting_to_closeout,
         "id": str(row["id"]),
         "title": str(row["title"]),
+        "locale": str(row["locale"]),
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
         "ticket_status": facts.ticket_status.value,
@@ -225,7 +226,7 @@ def list_ticket_summaries(
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
+        "SELECT tickets.id, tickets.title, tickets.locale, tickets.worker_type, tickets.stage, "
         "tickets.is_backlogged, "
         "tickets.worker_step_claim, tickets.recap, "
         "tickets.pending_proposal, "
@@ -333,6 +334,9 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
             "artifacts": _ticket_artifacts(conn, ticket_id),
             "blocked": blocker_summary.blocked,
             "employee_configuration_editable": tickets_data.employee_configuration_editable(ticket),
+            "memory_notice_inspection": worker_memory.inspect_memory_notices(
+                conn, ticket_id
+            ).model_dump(mode="json"),
             "conversation_history": [
                 {
                     "conversation_id": str(row["conversation_id"]),
@@ -415,7 +419,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         "managers.title AS manager_title, "
         "parent_projects.name AS parent_project_name, "
         "tickets.pending_proposal, tickets.worker_type, "
-        "tickets.employee_backend, "
+        "tickets.employee_backend, tickets.locale, "
         "tickets.conversation_id, "
         "tickets.worker_step_claim, "
         "tickets.created_at, tickets.updated_at FROM tickets "
@@ -479,6 +483,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
             "ticket_status": facts.ticket_status.value,
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
+            "locale": str(row["locale"]),
             "stage": stage,
             "stage_label": worker_type_definition.stage_definition(stage).label,
             "gating_field": gating_field_id,

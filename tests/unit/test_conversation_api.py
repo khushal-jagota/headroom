@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import sqlite3
 import zlib
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator, MutableMapping
 from contextlib import AsyncExitStack
@@ -23,6 +24,8 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from tests.support.executor_turns import persist_pending_turn
 from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
@@ -97,12 +100,15 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.conversation.video_uploads.service import VideoUploadService
+from planner.core.clock import build_clock
+from planner.core.config import load_config
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
     CompressExceptEventStreams,
     event_stream_route_patterns,
 )
+from planner.core.server import create_app
 from planner.files.logic.paths import conversation_files_root
 from planner.tickets import data as tickets_data
 
@@ -804,15 +810,7 @@ def test_every_conversation_mutation_rejects_a_tickets_past_conversation(
     _run(exercise)
 
 
-
-
 # --- sending -----------------------------------------------------------------------------
-
-
-
-
-
-
 
 
 def test_owner_read_position_persists_and_refuses_employee_updates(
@@ -845,7 +843,9 @@ def test_owner_read_position_persists_and_refuses_employee_updates(
             # A stale browser watermark cannot clear a later addressed message.
             for text in ("earlier owner message", "later owner message"):
                 await harness.system.record_message_to_owner(
-                    "c", text_message_content(text), sender_label="Worker",
+                    "c",
+                    text_message_content(text),
+                    sender_label="Worker",
                     sender=Principal(PrincipalKind.ticket, "t_one"),
                     recipient=OWNER_PRINCIPAL,
                 )
@@ -989,19 +989,293 @@ def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
     _run(exercise)
 
 
+def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
+            )
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "held"}],
+                    "sender_label": "owner",
+                    "sender_message_id": "sender-one",
+                    "sent_at_unix_milliseconds": 1234,
+                },
+            )
+            held = (await client.get("/api/conversation/conversations/c")).json()["held_prompts"][0]
+            assert held == {
+                "held_prompt_id": held["held_prompt_id"],
+                "text": "held",
+                "sender_label": "owner",
+                "sender_message_id": "sender-one",
+                "sent_at_unix_milliseconds": 1234,
+                "sender": None,
+                "recipient": None,
+                "queue_reason": "requested",
+                "delivery_uncertain": False,
+            }
+
+            promoted = await client.post(
+                f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}/promote",
+                json={"mode": "send_now"},
+            )
+
+            assert promoted.json() == {"promoted": True, "fate": "started"}
+            assert harness.backend("c").written_texts == ["incumbent", "held"]
+            assert harness.backend("c").cancellations == 1
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "held_prompts"
+            ] == []
+            again = await client.post(
+                f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}/promote",
+                json={"mode": "send_now"},
+            )
+            assert again.json() == {"promoted": False}
+
+    _run(exercise)
 
 
+@pytest.mark.parametrize("kind", ["permission", "user_input"])
+def test_remote_answer_requires_original_reference_and_accepts_first_choice_offline(
+    harness: _Harness,
+    kind: str,
+) -> None:
+    from dataclasses import replace
+
+    from planner.core.clock import RealClock
+    from planner.executor.codec import encode_value
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.executor.contracts import AskKind, AskReference, ChildReference, ExecutorIdentity
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            endpoint = ExecutorEndpoint(str(harness.db_path), RealClock())
+            harness.runtime = replace(harness.runtime, executor_endpoint=endpoint)
+            harness.app.state.conversation = harness.runtime
+            identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
+            endpoint.store.begin_connection(identity, 100)
+            ask = AskReference(
+                ChildReference("inc", "child", "c"), TurnToken("c", 1), "ask", AskKind(kind)
+            )
+            public_id = f"1:{kind}:ask"
+            persist_pending_turn(
+                endpoint.store,
+                ask,
+                runtime_overrides={
+                    "pending_permission_ask_ids": [public_id] if kind == "permission" else [],
+                    "permission_provider_ids": {public_id: "ask"} if kind == "permission" else {},
+                    "user_input_provider_ids": {public_id: "ask"} if kind == "user_input" else {},
+                },
+            )
+            if kind == "permission":
+                endpoint.store.publish_ask(ask, ("allow", "deny"), 100)
+                route = "permission-answers"
+                body: dict[str, Any] = {"ask_id": "1:permission:ask", "option_id": "allow"}
+            else:
+                questions = (UserInputQuestion("q", "Question", "Choose", (), False, True),)
+                persist_pending_turn(
+                    endpoint.store,
+                    ask,
+                    runtime_overrides={
+                        "pending_user_input_questions": {public_id: encode_value(questions)},
+                        "permission_provider_ids": {},
+                        "user_input_provider_ids": {public_id: "ask"},
+                    },
+                )
+                endpoint.store.publish_user_input_request(ask, questions, 100)
+                route = "user-input-answers"
+                body = {"request_id": "1:user_input:ask", "answers": {"q": {"answers": ["answer"]}}}
+            endpoint.store.mark_lost(identity, 101)
+            path = f"/api/conversation/conversations/c/{route}"
+            # Neither an ID nor an identity partly copied from another ask grants admission.
+            assert (await client.post(path, json=body)).json() == {"landed": False}
+            mismatches = (
+                replace(ask, ask_id="other"),
+                replace(
+                    ask,
+                    child=replace(ask.child, conversation_id="elsewhere"),
+                    turn=TurnToken("elsewhere", 1),
+                ),
+                replace(
+                    ask, kind=AskKind.user_input if kind == "permission" else AskKind.permission
+                ),
+                replace(ask, child=replace(ask.child, child_id="replacement")),
+                replace(ask, turn=TurnToken("c", 2)),
+                replace(ask, child=replace(ask.child, executor_incarnation="replacement")),
+            )
+            for mismatch in mismatches:
+                response = await client.post(
+                    path, json={**body, "executor_ask": encode_value(mismatch)}
+                )
+                assert response.status_code == 200, response.text
+                assert response.json() == {"landed": False}
+            assert endpoint.store.recorded_answer(ask) is None
+            malformed = encode_value(ask)
+            assert isinstance(malformed, dict)
+            malformed["unexpected"] = True
+            assert (
+                await client.post(path, json={**body, "executor_ask": malformed})
+            ).status_code == 422
+            malformed = encode_value(ask)
+            assert isinstance(malformed, dict) and isinstance(malformed["turn"], dict)
+            malformed["turn"]["turn_number"] = "1"
+            assert (
+                await client.post(path, json={**body, "executor_ask": malformed})
+            ).status_code == 422
+            exact = {**body, "executor_ask": encode_value(ask)}
+            for actor in ("chief", "worker"):
+                headers = {"X-Plan-Actor": actor, "X-Plan-Ticket-ID": "test-ticket"}
+                with pytest.raises(PlannerError, match="only to the owner"):
+                    await client.post(path, json=exact, headers=headers)
+            assert endpoint.store.recorded_answer(ask) is None
+            response = await client.post(path, json=exact)
+            assert response.status_code == 200 and response.json() == {"landed": True}
+            answer = endpoint.store.recorded_answer(ask)
+            assert answer is not None
+            evidence = endpoint.store.ask_evidence(ask)
+            assert evidence is not None and evidence.applied_at_mac_ms is None
+            endpoint.store.close_child(ask.child, 102)
+            metadata = await harness.store.read_executor_turn("c")
+            assert metadata is not None
+            await harness.store.save_executor_turn("c", metadata)
+            assert not endpoint.owns_conversation("c")
+            assert (await client.post(path, json=exact)).json() == {"landed": True}
+            changed = (
+                {**exact, "option_id": "deny"}
+                if kind == "permission"
+                else {**exact, "answers": {"q": {"answers": ["different"]}}}
+            )
+            assert (await client.post(path, json=changed)).json() == {"landed": False}
+            assert (
+                await client.post(
+                    path,
+                    json={
+                        **exact,
+                        "executor_ask": encode_value(replace(ask, ask_id="new-closed-ask")),
+                    },
+                )
+            ).json() == {"landed": False}
+            assert not endpoint.pending_commands
+            assert endpoint.store.recorded_answer(ask) == answer
+
+    _run(exercise)
 
 
+@pytest.mark.parametrize("kind", ["permission", "user_input"])
+def test_remote_reference_never_falls_through_to_local_callback(
+    harness: _Harness,
+    kind: str,
+) -> None:
+    from planner.executor.codec import encode_value
+    from planner.executor.contracts import AskKind, AskReference, ChildReference
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                },
+            )
+            if kind == "permission":
+                ask_id = await harness.raise_permission_ask("c")
+                path = "/api/conversation/conversations/c/permission-answers"
+                body: dict[str, Any] = {"ask_id": ask_id, "option_id": "allow-once"}
+            else:
+                request = await harness.request_user_input("c")
+                ask_id = request.request_id
+                path = "/api/conversation/conversations/c/user-input-answers"
+                body = {
+                    "request_id": ask_id,
+                    "answers": {
+                        "where": {"answers": ["Local"]},
+                        "why": {"answers": ["because"]},
+                    },
+                }
+            ask = AskReference(
+                ChildReference("inc", "child", "c"), TurnToken("c", 1), ask_id, AskKind(kind)
+            )
+            response = await client.post(path, json={**body, "executor_ask": encode_value(ask)})
+            assert response.status_code == 200 and response.json() == {"landed": False}
+            assert harness.backend("c").permission_answers == {}
+            assert harness.backend("c").user_input_answers == {}
+
+    _run(exercise)
 
 
+def test_interrupting_frees_what_was_held_and_killing_throws_it_away(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "interrupted")
+            await client.post(
+                "/api/conversation/conversations/interrupted/send",
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
+            )
+            await client.post(
+                "/api/conversation/conversations/interrupted/send",
+                json={
+                    "content": [{"piece": "text", "text": "held"}],
+                    "sender_label": "owner",
+                },
+            )
+
+            stopped = await client.post("/api/conversation/conversations/interrupted/interrupt")
+            await harness.settle()
+
+            assert stopped.status_code == 204
+            assert harness.backend("interrupted").written_texts == ["incumbent", "held"]
+
+            await _start(client, "killed")
+            await client.post(
+                "/api/conversation/conversations/killed/send",
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
+            )
+            await client.post(
+                "/api/conversation/conversations/killed/send",
+                json={
+                    "content": [{"piece": "text", "text": "held"}],
+                    "sender_label": "owner",
+                },
+            )
+
+            killed = await client.post("/api/conversation/conversations/killed/kill")
+            await harness.settle()
+
+            assert killed.status_code == 204
+            assert harness.backend("killed").written_texts == ["incumbent"]
+            kinds = [
+                event["kind"]
+                for event in (
+                    await client.get("/api/conversation/conversations/killed/events")
+                ).json()["events"]
+            ]
+            assert kinds == ["prompt", "prompt_discarded", "turn_ended"]
+
+    _run(exercise)
 
 
 # --- reading the record ---------------------------------------------------------------------
-
-
-
-
 
 
 def test_public_replays_keep_non_claude_and_unrecognized_json_detail(
@@ -1162,10 +1436,6 @@ def test_a_public_read_carries_the_start_of_a_long_tool_output_and_says_so(
     _run(exercise)
 
 
-
-
-
-
 def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
     harness: _Harness,
 ) -> None:
@@ -1239,10 +1509,6 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
     _run(exercise)
 
 
-
-
-
-
 def test_a_watcher_that_stops_reading_has_its_watch_closed_rather_than_grown(
     harness: _Harness,
 ) -> None:
@@ -1271,11 +1537,98 @@ def test_a_watcher_that_stops_reading_has_its_watch_closed_rather_than_grown(
     _run(exercise)
 
 
-
-
 # --- the wiring in the real application ---------------------------------------------------------
 
 
+def test_the_application_serves_the_conversation_system_and_puts_it_away(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The additive wiring, proved through the real app: built on start, gone on stop."""
+    db_path = tmp_path / "wired.db"
+    boot = connect(str(db_path))
+    create_schema(boot)
+    boot.close()
+    config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)})
+
+    def conn_factory() -> sqlite3.Connection:
+        return connect(str(db_path))
+
+    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.executor.contracts import (
+        AskReachability,
+        AskReference,
+        ChildInventory,
+        ChildReference,
+        ExecutorIdentity,
+        ReconciliationInventory,
+    )
+    from planner.executor.store import ExecutorStore
+
+    executor_store = ExecutorStore(str(db_path))
+    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "inc", 1)
+    executor_store.begin_connection(identity, 100)
+    asks = tuple(
+        AskReference(ChildReference("inc", name, name), TurnToken(name, 1), "ask")
+        for name in ("child-gone", "callback-gone", "live")
+    )
+    for ask in asks:
+        executor_store.publish_ask(ask, ("allow", "deny"), 100)
+    executor_store.reconcile(
+        ReconciliationInventory(
+            identity,
+            (
+                ChildInventory(asks[1].child, asks[1].turn, (), ()),
+                ChildInventory(asks[2].child, asks[2].turn, (asks[2],), ()),
+            ),
+            (),
+            (),
+        ),
+        101,
+    )
+    app = create_app(config, build_clock(config), conn_factory)
+    with TestClient(app) as client:
+        # This wiring proof creates a row without any provider catalogue probe.
+        monkeypatch.setattr(app.state.conversation.system, "_model_resolver", None)
+        # Startup discards live reachability but retains conclusive callback closure.
+        for ask, expected in zip(
+            asks,
+            (
+                AskReachability.child_gone,
+                AskReachability.callback_gone,
+                AskReachability.uncertain,
+            ),
+            strict=True,
+        ):
+            evidence = executor_store.ask_evidence(ask)
+            assert evidence is not None and evidence.reachability == expected
+        assert client.get("/api/conversation/conversations/nobody").status_code == 404
+
+        created = client.post(
+            "/api/conversation/conversations",
+            json={
+                "conversation_id": "wired",
+                "model": "a-model",
+                "backend_key": "codex",
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["backend_key"] == "codex"
+
+        view = client.get("/api/conversation/conversations/wired")
+        assert view.status_code == 200
+        # Creating a conversation spawns nothing, which is why this test can run against
+        # the real backends without an agent starting anywhere.
+        assert view.json()["is_running"] is False
+
+        events = client.get("/api/conversation/conversations/wired/events")
+        assert events.json() == {"events": [], "has_more": False, "diagnostics_expired": False}
+
+        # The worker path and the browser's conversation are the same system. A worker's
+        # prompt goes into a real conversation, not a stand-in beside it.
+        assert app.state.conversation_system is app.state.conversation.system
+
+    assert app.state.conversation is None
 
 
 # --- a message that carries more than words --------------------------------------------------
@@ -1312,12 +1665,6 @@ def _png_with_total_bytes(total_bytes: int) -> bytes:
     return A_TINY_PNG[:-12] + chunk + A_TINY_PNG[-12:]
 
 
-
-
-
-
-
-
 def test_the_picture_reaches_the_backend_and_not_just_the_record(
     harness: _Harness,
 ) -> None:
@@ -1352,8 +1699,6 @@ def test_the_picture_reaches_the_backend_and_not_just_the_record(
             assert await harness.message_files.read("c", picture.stored_file_id) == A_TINY_PNG
 
     _run(exercise)
-
-
 
 
 def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptEventStreams:
@@ -1418,7 +1763,8 @@ def test_suppressed_fate_keeps_its_reason_at_the_http_boundary() -> None:
     from planner.conversation.contracts import PromptDeliverySuppressed
 
     assert delivery_fate_json(PromptDeliverySuppressed("proposal_revision_changed")) == {
-        "fate": "suppressed", "reason": "proposal_revision_changed"
+        "fate": "suppressed",
+        "reason": "proposal_revision_changed",
     }
 
 
