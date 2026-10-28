@@ -65,7 +65,6 @@ jobs:
     env:
       PANELS_REHEARSAL: 'true'
       PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '2c0e05cefc82de100bfc576c1a8f3eda7a931f2d' }}
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/panels-playwright-browsers
     defaults:
       run:
         shell: python3 scripts/deployment_progress.py {0}
