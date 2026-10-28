@@ -8,8 +8,6 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
-import pytest
-
 
 def validate_destination(root: Path, destination: Path) -> Path:
     """Reject lexical or existing-ancestor escapes from a freshly owned root."""
@@ -54,17 +52,3 @@ def synthetic_home_environment(homes: Mapping[str, str]) -> Iterator[None]:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
-
-
-@pytest.fixture(autouse=True)
-def synthetic_homes(
-    request: pytest.FixtureRequest,
-    tmp_path_factory: pytest.TempPathFactory,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[None]:
-    """Route synthetic setup before dependent fixtures; explicit cases retain routing."""
-    if request.node.get_closest_marker("real_provider_homes") is None:
-        storage = tmp_path_factory.mktemp("synthetic-home-storage")
-        for name, value in create_synthetic_homes(storage).items():
-            monkeypatch.setenv(name, value)
-    yield

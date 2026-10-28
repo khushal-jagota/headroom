@@ -50,11 +50,13 @@ def test_existing_symlink_and_lexical_escapes_are_rejected_before_creation(
 
 
 def test_explicit_configuration_can_replace_and_remove_synthetic_defaults(
-    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The autouse fixture must run first, then allow a case to exercise fallback rules.
+    # Protocol routing precedes fixtures, then permits explicit fallback configuration.
     default_home = Path(os.environ["HOME"])
-    assert default_home.is_relative_to(tmp_path_factory.getbasetemp())
+    assert default_home.is_dir()
+    assert all(Path(os.environ[name]).is_relative_to(default_home)
+               for name in HOME_KEYS - {"HOME"})
     assert not default_home.is_relative_to(tmp_path)
     fallback = tmp_path / "explicit-home"
     fallback.mkdir()

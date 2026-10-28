@@ -157,8 +157,10 @@ replace this inventory. The dependency preflight still runs before collection.
 
 Synthetic tests receive fresh private `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
 `HERMES_HOME`, and `PLAN_HERMES_HOME` values. Both Hermes values name the same
-profile. Tests can explicitly replace or remove a value to exercise fallback rules.
-Server fixtures establish these homes before parent database setup and apply the
+profile. The test protocol supplies these values before fixture setup, including
+module and session fixtures. Its private storage stays separate from test output
+directories and lasts through final fixture teardown. Tests can explicitly replace
+or remove a value to exercise fallback rules. Server fixtures establish these homes before parent database setup and apply the
 same values after child environment scrubbing. CLI fixtures use the same helper.
 Credentials and real native profiles are never copied.
 

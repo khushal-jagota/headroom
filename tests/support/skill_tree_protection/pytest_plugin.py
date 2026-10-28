@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from tests.support.skill_tree_protection.inventory import (
     compare_manifests,
     snapshot,
 )
+from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 
 class SkillTreeProtectionPlugin:
@@ -27,6 +29,7 @@ class SkillTreeProtectionPlugin:
         self.baseline = baseline
         self.guard = AuditGuard(inventory)
         self.guard.install()
+        self._homes_storage = tempfile.TemporaryDirectory(prefix="panels-synthetic-homes-")
         self.final: Manifest | None = None
         self.differences: tuple[ManifestDifference, ...] = ()
         self.snapshot_error: str | None = None
@@ -43,8 +46,16 @@ class SkillTreeProtectionPlugin:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_protocol(self, item: pytest.Item) -> Iterator[None]:
         self.guard.set_context(item.nodeid)
+        homes = (
+            {}
+            if item.get_closest_marker("real_provider_homes") is not None
+            else create_synthetic_homes(Path(self._homes_storage.name))
+        )
         try:
-            yield
+            # Fixture scope does not determine when native profiles first resolve.
+            # Route before pytest sets up even session- and module-scoped fixtures.
+            with synthetic_home_environment(homes):
+                yield
         finally:
             self.guard.set_context("session after test teardown")
 
@@ -52,6 +63,8 @@ class SkillTreeProtectionPlugin:
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
         self.guard.set_context("session final manifest")
         try:
+            # High-scope fixture teardown can still use an earlier case's homes.
+            self._homes_storage.cleanup()
             self.final = snapshot(self.inventory)
             self.differences = compare_manifests(self.baseline, self.final)
         except Exception as error:

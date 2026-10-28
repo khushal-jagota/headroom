@@ -252,7 +252,6 @@ def _pytest_probe(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProces
     suite.mkdir()
     (suite / "conftest.py").write_text(
         "from tests.support.skill_tree_protection.pytest_plugin import bootstrap\n"
-        "from tests.support.synthetic_homes import synthetic_homes as synthetic_homes\n"
         "protection = bootstrap()\n"
         "def pytest_configure(config):\n"
         "    config.pluginmanager.register(protection, 'probe-protection')\n"
@@ -330,3 +329,44 @@ def test_child_bypass_reports_unknown_source_even_when_test_already_fails(tmp_pa
     assert "unknown" in output.lower()
     assert "owner change" in output.lower()
     assert "receipt" in output.lower()
+
+
+def test_home_routing_precedes_all_fixture_scopes_and_preserves_teardown_paths(
+    tmp_path: Path,
+) -> None:
+    # Module/session setup can launch native processes before function fixtures exist.
+    result, sentinel = _pytest_probe(
+        tmp_path,
+        "import os, pytest\n"
+        "from pathlib import Path\n"
+        "keys = ['HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PLAN_HERMES_HOME', 'HERMES_HOME']\n"
+        "def private_homes():\n"
+        "    homes = {key: Path(os.environ[key]) for key in keys}\n"
+        "    assert homes['HOME'] != Path(SENTINEL).parents[2]\n"
+        "    assert all(path.is_dir() for path in homes.values())\n"
+        "    assert all(path.is_relative_to(homes['HOME']) for path in homes.values())\n"
+        "    return homes\n"
+        "@pytest.fixture(scope='session')\n"
+        "def session_homes():\n"
+        "    homes = private_homes()\n"
+        "    yield homes\n"
+        "    assert all(path.is_dir() for path in homes.values())\n"
+        "@pytest.fixture(scope='module')\n"
+        "def module_homes(session_homes):\n"
+        "    homes = private_homes()\n"
+        "    assert homes == session_homes\n"
+        "    yield homes\n"
+        "    assert all(path.is_dir() for path in homes.values())\n"
+        "def test_first(module_homes, tmp_path):\n"
+        "    homes = private_homes()\n"
+        "    assert homes == module_homes\n"
+        "    assert list(tmp_path.iterdir()) == []\n"
+        "def test_second(module_homes):\n"
+        "    homes = private_homes()\n"
+        "    assert all(path.is_dir() for path in module_homes.values())\n",
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "2 passed" in output
+    assert "Skill-tree guard receipts (0): []" in output
+    assert sentinel.read_text() == "original"

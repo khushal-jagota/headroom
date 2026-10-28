@@ -28,7 +28,6 @@ if _BOOTSTRAP_DIAGNOSIS:
     raise pytest.UsageError(_BOOTSTRAP_DIAGNOSIS)
 
 from tests.support.skill_tree_protection.pytest_plugin import bootstrap  # noqa: E402
-from tests.support.synthetic_homes import synthetic_homes as synthetic_homes  # noqa: E402
 
 _SKILL_TREE_PROTECTION = bootstrap()
 
