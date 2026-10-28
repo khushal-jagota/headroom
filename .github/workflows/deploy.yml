@@ -316,6 +316,7 @@ jobs:
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py rehearsal
       - name: Start deployment lifecycle
+        id: lifecycle_start
         run: |
           current_record="$(
             python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" read \
@@ -376,7 +377,7 @@ jobs:
             --claude-home "$PANELS_APP_HOME/.claude"
       - name: Finalize deployment lifecycle
         shell: bash
-        if: always()
+        if: ${{ always() && steps.lifecycle_start.outcome != 'skipped' && steps.lifecycle_start.outcome != '' }}
         env:
           PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
         run: |

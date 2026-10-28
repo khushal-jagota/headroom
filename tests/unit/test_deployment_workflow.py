@@ -95,6 +95,12 @@ def test_publication_preserves_existing_isolated_suite_report_boundaries() -> No
             script.index('.venv/bin/pytest "${selected[@]}"')
         )
     assert steps["Finalize deployment lifecycle"]["shell"] == "bash"
+    # Skip only an unattempted start. Partial start failures must retain CLI diagnostics.
+    assert steps["Start deployment lifecycle"]["id"] == "lifecycle_start"
+    assert steps["Finalize deployment lifecycle"]["if"] == (
+        "${{ always() && steps.lifecycle_start.outcome != 'skipped' "
+        "&& steps.lifecycle_start.outcome != '' }}"
+    )
     assert steps["Remove rehearsal temporary state"]["shell"] == shell.replace(
         " {0}", " --cleanup {0}"
     )
