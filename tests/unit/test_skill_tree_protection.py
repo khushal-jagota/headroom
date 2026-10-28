@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pwd
 import subprocess
 import sys
 from pathlib import Path
@@ -34,11 +35,16 @@ def _child_env(home: Path) -> dict[str, str]:
 
 
 def test_launch_inventory_freezes_aliases_and_manifest_detects_persistent_changes(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     account = tmp_path / "account"
     initial = tmp_path / "initial"
     configured = tmp_path / "configured-outside-home"
+    named_home = tmp_path / "named-user-home"
+    monkeypatch.setattr(
+        pwd, "getpwnam",
+        lambda username: pwd.struct_passwd((username, "x", 1234, 1234, "", str(named_home), "")),
+    )
     skills = initial / ".claude/skills"
     skills.mkdir(parents=True)
     external = tmp_path / "external"
@@ -54,12 +60,14 @@ def test_launch_inventory_freezes_aliases_and_manifest_detects_persistent_change
         "PLAN_HERMES_HOME": str(tmp_path / "hermes-one"),
         "HERMES_HOME": str(tmp_path / "hermes-two"),
         "PLAN_DB_PATH": str(tmp_path / "database/planner.db"),
+        "CLAUDE_CONFIG_DIR": "~skill-test-user/profile",
     }
     inventory, baseline = capture_launch_inventory(env, tmp_path, account)
     for root in (
         account / ".claude/skills", initial / ".claude/skills",
         configured / "skills", tmp_path / "hermes-one/skills",
         tmp_path / "hermes-two/skills", tmp_path / "database/skills",
+        named_home / "profile/skills",
     ):
         assert str(root) in inventory.roots
     assert str(external) in inventory.protected_paths

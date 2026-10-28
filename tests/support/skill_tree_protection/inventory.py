@@ -24,6 +24,13 @@ def _absolute(path: str | Path, cwd: Path, home: Path) -> str:
     text = os.fspath(path)
     if text == "~" or text.startswith("~/"):
         text = str(home) + text[1:]
+    elif text.startswith("~"):
+        username, separator, suffix = text[1:].partition("/")
+        try:
+            named_home = pwd.getpwnam(username).pw_dir
+        except KeyError as exc:
+            raise RuntimeError(f"cannot determine home directory for {username!r}") from exc
+        text = named_home + separator + suffix
     # Keep '..' until filesystem resolution: a preceding component may be a
     # symlink, and lexical normpath would change the kernel's destination.
     return str(Path(cwd) / text)
