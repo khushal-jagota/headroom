@@ -290,6 +290,7 @@ jobs:
           if [ -z "$selected_text" ]; then exit 0; fi
           mapfile -t selected <<< "$selected_text"
           browser_format="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["browser_format"])' "$PANELS_GATE_DIR/selection.json")"
+          node --input-type=module -e 'import {pathToFileURL} from "node:url"; const {assertCompleteCaseEnvironment} = await import(pathToFileURL(process.env.GITHUB_WORKSPACE + "/web/tests/browser/contracts.mjs").href); assertCompleteCaseEnvironment(process.env);'
           if [ "$browser_format" = shared-v1 ]; then
             invocation_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-browser"
             # The receipt proves its own revision with git, so the checkout's git
