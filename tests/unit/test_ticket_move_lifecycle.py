@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -10,9 +11,12 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from tests.support.executor_catalog import ScriptedCatalogObserver
 from tests.unit.test_conversation_system import _FakeBackend, _FakeBackendChild, _Harness
+from tests.unit.test_current_model_resolution import Catalogue
 from tests.unit.test_executor_source_retirement import IDENTITY, build
 
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -23,12 +27,23 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     MoveRetirementDisposition,
+    PromptDeliveryQueued,
+    PromptDeliveryStarted,
     ResolvedConversationStart,
 )
 from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.contracts import (
+    CatalogObservation,
+    CatalogRequest,
+    CatalogWorkspaceBinding,
+    LaunchContext,
+    SelectionKind,
+)
+from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect
@@ -67,7 +82,81 @@ def ticket(conn: Connection) -> Ticket:
         now=1,
         title_max_chars=200,
         employee_backend="codex",
+        employee_launch_model="test",
+        employee_launch_reasoning_effort="high",
+        selection_kind=SelectionKind.concrete,
     )
+
+
+class _MoveCatalogObserver(ScriptedCatalogObserver):
+    """Scoped metadata validation around the existing fake child transports."""
+
+    def __init__(
+        self, destination: TicketLocale, native: _MoveCatalogObserver | None = None
+    ) -> None:
+        super().__init__(lambda: IDENTITY)
+        self.destination = destination
+        self.native = native
+        self.model = "test"
+        self.efforts = ("high",)
+        self.contexts: list[LaunchContext] = []
+
+    async def capture_context(
+        self,
+        backend_key: ConversationBackendKey,
+        *,
+        workspace: CatalogWorkspaceBinding,
+    ) -> LaunchContext:
+        result = replace(
+            await super().capture_context(backend_key, workspace=workspace),
+            context_ref=f"move-fixture-{self.destination.value}",
+            destination=self.destination,
+            executor_identity=IDENTITY if self.destination is TicketLocale.macos else None,
+        )
+        self.contexts.append(result)
+        return result
+
+    def verify_context(self, expected: LaunchContext) -> bool:
+        return expected in self.contexts or (
+            self.native is not None and self.native.verify_context(expected)
+        )
+
+
+def _move_harness(
+    path: Path,
+    *,
+    remote: ExecutorEndpoint | None = None,
+    native: _MoveCatalogObserver | None = None,
+) -> _Harness:
+    harness = _Harness(path)
+    harness.clock.now = time.time()
+    observer = _MoveCatalogObserver(TicketLocale.vps, native)
+    harness.system._model_resolver = ModelResolutionService(
+        snapshots=Catalogue(()),
+        store=ModelResolutionStore(str(path)),
+        backend_state=BackendStateStore(str(path)),
+        observer=observer,
+        now=harness.clock,
+    )
+    harness.system.configure_destination_validation(observer, endpoint=remote)
+    return harness
+
+
+async def _wait_for_actual_stop(moving: asyncio.Task[Ticket], began: asyncio.Event) -> None:
+    """Expose a failed move instead of waiting forever for an effect it never began."""
+    waiting = asyncio.create_task(began.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (moving, waiting), timeout=5, return_when=asyncio.FIRST_COMPLETED
+        )
+        if moving in done:
+            await moving
+            pytest.fail("move completed without entering the expected source stop")
+        assert waiting in done, "source stop did not begin within the fixture bound"
+        await waiting
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
 
 
 def endpoint(conn: Connection) -> ExecutorEndpoint:
@@ -219,8 +308,28 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         from planner.tickets.locale_move import move_ticket_locale
 
         t = ticket(tmp_db)
-        h = _Harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
+        from planner.runtime import conversation_start
+
+        monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
         remote = endpoint(tmp_db)
+        native_observer = _MoveCatalogObserver(TicketLocale.macos)
+        h = _move_harness(Path(remote.db_path), remote=remote, native=native_observer)
+
+        async def observe_catalog(
+            request: CatalogRequest,
+            *,
+            attempt_id: str,
+            deadline: float | None = None,
+        ) -> CatalogObservation:
+            assert request.expected_context.executor_identity == IDENTITY
+            return await native_observer.observe(
+                request.backend_key,
+                workspace=request.expected_context.workspace,
+                attempt_id=attempt_id,
+                deadline=deadline or time.monotonic() + 5,
+            )
+
+        monkeypatch.setattr(remote, "observe_catalog", observe_catalog)
         remote.runtime = SimpleNamespace(system=h.system, message_files=h.message_files)
         natives: list[_FakeBackend] = []
 
@@ -245,6 +354,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
             incarnation=IDENTITY.executor_incarnation,
             spool=FilesystemSpool(tmp_path / "spool"),
             factory=native_factory,
+            admission_observer=native_observer,
             message_files=ConversationMessageFiles(remote.db_path),
         )
 
@@ -286,8 +396,11 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         )
         tmp_db.execute("UPDATE tickets SET conversation_id='c_move' WHERE id=?", (t.id,))
         tmp_db.commit()
-        await h.system.send(
-            "c_move", text_message_content("initial local work"), sender_label="Owner"
+        assert isinstance(
+            await h.system.send(
+                "c_move", text_message_content("initial local work"), sender_label="Owner"
+            ),
+            PromptDeliveryStarted,
         )
         await h.complete_turn("c_move")
         before = await h.store.read_conversation("c_move")
@@ -296,7 +409,10 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         )
         assert h.backend("c_move").stops == 1
         assert await h.store.read_conversation("c_move") == before
-        await h.system.send("c_move", text_message_content("Mac work"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send("c_move", text_message_content("Mac work"), sender_label="Owner"),
+            PromptDeliveryStarted,
+        )
         await drain_events()
         native = natives[-1]
         assert native.sink is not None and native.live_turn_token is not None
@@ -328,7 +444,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
             state = h.system._conversations["c_move"]
             assert state.child_is_quarantined and state.executor_child_reference == old_ref
             await h.system.shutdown()
-            restarted = _Harness(Path(remote.db_path))
+            restarted = _move_harness(Path(remote.db_path), remote=remote, native=native_observer)
             restored = await restarted.system._conversation_state("c_move")
             assert restored is not None and restored.child_is_quarantined
             assert restored.executor_child_reference == old_ref
@@ -362,7 +478,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         await h.system.shutdown()
         # Retain fake provider observations across a real replacement of the runtime owner.
         observed_backends = h.backends
-        restarted = _Harness(Path(remote.db_path))
+        restarted = _move_harness(Path(remote.db_path), remote=remote, native=native_observer)
         restarted.backends = observed_backends
         restored = await restarted.system._conversation_state("c_move")
         assert restored is not None and restored.executor_child_reference is None
@@ -371,7 +487,12 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         remote.runtime = SimpleNamespace(system=h.system, message_files=h.message_files)
         router = LocaleBackendChildFactory(remote.db_path, h._make_child, remote.factory)
         h.system._backend_child_factories = dict.fromkeys(ConversationBackendKey, router)
-        await h.system.send("c_move", text_message_content("local again"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send(
+                "c_move", text_message_content("local again"), sender_label="Owner"
+            ),
+            PromptDeliveryStarted,
+        )
         await h.complete_turn("c_move")
         assert h.backend("c_move").session_starts == 2
         assert (
@@ -380,7 +501,10 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         await move_ticket_locale(
             h.system, tmp_db, t.id, locale=TicketLocale.macos, principal=OWNER_PRINCIPAL, now=6
         )
-        await h.system.send("c_move", text_message_content("Mac again"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send("c_move", text_message_content("Mac again"), sender_label="Owner"),
+            PromptDeliveryStarted,
+        )
         await drain_events()
         new_ref = h.system._conversations["c_move"].executor_child_reference
         assert new_ref != old_ref and new_ref.executor_incarnation == old_ref.executor_incarnation
@@ -402,17 +526,21 @@ def test_preflight_has_no_native_effects(
         from planner.tickets.locale_move import move_ticket_locale
 
         t = ticket(tmp_db)
-        h = _Harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
+        h = _move_harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
         await h.system.start_conversation(
             ConversationStartRequest(conversation_id="c_preflight", model="test")
         )
         tmp_db.execute("UPDATE tickets SET conversation_id='c_preflight' WHERE id=?", (t.id,))
         tmp_db.commit()
-        await h.system.send("c_preflight", text_message_content("work"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send("c_preflight", text_message_content("work"), sender_label="Owner"),
+            PromptDeliveryStarted,
+        )
         await h.complete_turn("c_preflight")
         backend = h.backend("c_preflight")
         before = await h.store.read_conversation("c_preflight")
         if failure == "compatibility":
+
             def refuse_compatibility(locale: TicketLocale, backend: str) -> None:
                 raise PlannerError(
                     ErrorCode.validation,
@@ -469,19 +597,25 @@ def test_local_activity_refuses_before_stop(tmp_db: Connection, activity: str) -
         from planner.tickets.locale_move import move_ticket_locale
 
         t = ticket(tmp_db)
-        h = _Harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
+        h = _move_harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
         await h.system.start_conversation(
             ConversationStartRequest(conversation_id="c_busy", model="test")
         )
         tmp_db.execute("UPDATE tickets SET conversation_id='c_busy' WHERE id=?", (t.id,))
         tmp_db.commit()
-        await h.system.send("c_busy", text_message_content("work"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send("c_busy", text_message_content("work"), sender_label="Owner"),
+            PromptDeliveryStarted,
+        )
         if activity == "permission":
             await h.raise_permission_ask("c_busy")
         elif activity == "user_input":
             await h.request_user_input("c_busy")
         elif activity == "held":
-            await h.system.send("c_busy", text_message_content("queued"), sender_label="Owner")
+            assert isinstance(
+                await h.system.send("c_busy", text_message_content("queued"), sender_label="Owner"),
+                PromptDeliveryQueued,
+            )
         elif activity in ("quarantine", "event"):
             await h.complete_turn("c_busy")
             if activity == "quarantine":
@@ -508,13 +642,16 @@ def test_local_stop_failure_quarantines_retained_source(
         from planner.tickets.locale_move import move_ticket_locale
 
         t = ticket(tmp_db)
-        h = _Harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
+        h = _move_harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
         await h.system.start_conversation(
             ConversationStartRequest(conversation_id="c_failure", model="test")
         )
         tmp_db.execute("UPDATE tickets SET conversation_id='c_failure' WHERE id=?", (t.id,))
         tmp_db.commit()
-        await h.system.send("c_failure", text_message_content("work"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send("c_failure", text_message_content("work"), sender_label="Owner"),
+            PromptDeliveryStarted,
+        )
         await h.complete_turn("c_failure")
         backend = h.backend("c_failure")
         backend.stop_raises_something_unnamed = True
@@ -540,13 +677,16 @@ def test_confirmed_local_stop_then_hash_conflict_keeps_locale_and_can_restart_so
         from planner.tickets.locale_move import move_ticket_locale
 
         t = ticket(tmp_db)
-        h = _Harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
+        h = _move_harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
         await h.system.start_conversation(
             ConversationStartRequest(conversation_id="c_conflict", model="test")
         )
         tmp_db.execute("UPDATE tickets SET conversation_id='c_conflict' WHERE id=?", (t.id,))
         tmp_db.commit()
-        await h.system.send("c_conflict", text_message_content("work"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send("c_conflict", text_message_content("work"), sender_label="Owner"),
+            PromptDeliveryStarted,
+        )
         await h.complete_turn("c_conflict")
         expected = data.ticket_record_sha256(tmp_db, t.id)
         backend = h.backend("c_conflict")
@@ -562,7 +702,7 @@ def test_confirmed_local_stop_then_hash_conflict_keeps_locale_and_can_restart_so
                 expected_record_sha256=expected,
             )
         )
-        await backend.stop_has_begun.wait()
+        await _wait_for_actual_stop(moving, backend.stop_has_begun)
         assert not tmp_db.in_transaction
         other = connect(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
         try:
@@ -596,13 +736,16 @@ def test_move_link_fence_serializes_send_worker_and_reset(tmp_db: Connection) ->
         from planner.worker_types.configuration import configured_worker_type_registry
 
         t = ticket(tmp_db)
-        h = _Harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
+        h = _move_harness(Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2])))
         await h.system.start_conversation(
             ConversationStartRequest(conversation_id="c_lock", model="test")
         )
         tmp_db.execute("UPDATE tickets SET conversation_id='c_lock' WHERE id=?", (t.id,))
         tmp_db.commit()
-        await h.system.send("c_lock", text_message_content("work"), sender_label="Owner")
+        assert isinstance(
+            await h.system.send("c_lock", text_message_content("work"), sender_label="Owner"),
+            PromptDeliveryStarted,
+        )
         await h.complete_turn("c_lock")
         backend = h.backend("c_lock")
         backend.stop_has_begun, backend.stops_wait_for_release = asyncio.Event(), asyncio.Event()
@@ -611,7 +754,7 @@ def test_move_link_fence_serializes_send_worker_and_reset(tmp_db: Connection) ->
                 h.system, tmp_db, t.id, locale=TicketLocale.macos, principal=OWNER_PRINCIPAL, now=4
             )
         )
-        await backend.stop_has_begun.wait()
+        await _wait_for_actual_stop(moving, backend.stop_has_begun)
         assert conversation_link_lock(f"ticket:{t.id}").locked()
         entered: list[str] = []
 
