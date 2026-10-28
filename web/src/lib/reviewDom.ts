@@ -1,6 +1,6 @@
 import { reviewProposalIdentity, reviewProposalDetailMatches } from './navigation/presentation';
 import { renderMarkdownToElement, serializeMarkdownDomToSource } from './markdownPipeline';
-export function reviewDomMatches(root:HTMLElement,item:import('./types').NavigationReviewItem | null,count:number | null):boolean {
+export function reviewDomMatches(root:HTMLElement,item:import('./types').NavigationReviewItem | null,count:number | null,waitingCount?:number | null):boolean {
   if (item) {
     const messageMatches=(message:import('./types').ReviewMessageItem)=>[...root.querySelectorAll('[data-review-card][data-review-item-type="message"][data-review-loaded="true"]')]
       .some(element=>element.getAttribute('data-message-identity')===`message:${message.conversation_id}`);
@@ -13,7 +13,11 @@ export function reviewDomMatches(root:HTMLElement,item:import('./types').Navigat
   }
   const empty=root.querySelector('[data-review-empty]');
   const meta=empty?.querySelector('.review-empty-meta');
-  return Boolean(empty) && (count === null ? !meta : meta?.textContent===`${count} ${count===1 ? 'agent' : 'agents'} in progress`);
+  if (!empty || !(count === null ? !meta : meta?.textContent===`${count} ${count===1 ? 'agent' : 'agents'} in progress`)) return false;
+  if (waitingCount === undefined) return true;
+  const status=waitingCount === null ? 'Review is unavailable right now.' : waitingCount === 0 ? 'Nothing needs you right now.' : `${waitingCount} ${waitingCount===1 ? 'thing awaits' : 'things await'} review.`;
+  return empty.getAttribute('data-review-final-count')===String(waitingCount ?? 'unknown')
+    && empty.querySelector('[data-review-final-status]')?.textContent===status;
 }
 
 /** Check actual editor DOM for the admitted body, not a summary marker alone. */
