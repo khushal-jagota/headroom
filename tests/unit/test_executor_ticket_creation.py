@@ -101,6 +101,7 @@ def _setup(
                     "worker_type": "coding",
                     "brief": "Preserve exact approved intent α",
                     "manager": {"kind": "manager", "id": "manager"},
+                    "ceiling_holder": {"kind": "manager", "id": "manager"},
                     "employee_backend": "codex",
                     "employee_launch_model": "gpt-5-sol",
                     "employee_launch_reasoning_effort": "high",
