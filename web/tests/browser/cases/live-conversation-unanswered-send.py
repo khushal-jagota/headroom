@@ -302,6 +302,10 @@ def run_retirement(browser, urls):
         page.wait_for_timeout(300)
         after = sample('latest-canceled-settled')
         assert abs(after['top'] - canceled['top']) <= 1, (canceled, after)
+        # Cancellation can land at the real bottom, where Latest is absent.
+        # Establish scrollback for the separate new-send interruption below.
+        wheel(-180, 'latest-before-new-send')
+        page.get_by_role('button', name='Jump to latest message').wait_for(state='visible')
         page.get_by_role('button', name='Jump to latest message').click()
         page.wait_for_timeout(35)
         latest_send = accept('This fresh send supersedes Latest.')
