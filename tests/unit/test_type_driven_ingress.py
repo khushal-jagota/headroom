@@ -185,7 +185,7 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
             f"/api/tickets/{target}/accept/brief",
             json={
                 "next_ceiling": "needs_success_condition",
-                "next_holder": {"kind": "owner"},
+                "next_holder": {"kind": "owner", "id": "owner"},
             },
         )
         assert scoped.status_code == 200, scoped.text
