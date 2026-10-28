@@ -961,6 +961,9 @@ def _run(browser, urls):
         before_row_height = page.evaluate("window.__delayedRow.getBoundingClientRect().height")
         capped_following = kind == "markdown" and mode == "following"
         if capped_following:
+            final_root = page.locator('[data-conversation-content] > [data-conversation-transcript] > *').last
+            assert final_root.locator('[aria-busy="true"], [data-markdown-rendering]').count() > 0
+            assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'true'
             before_clip_height = page.evaluate(
                 "window.__delayedRow.querySelector('.file-preview-clip').getBoundingClientRect().height"
             )
@@ -1003,6 +1006,9 @@ def _run(browser, urls):
             )
             page.get_by_text("Delayed preview paragraph 5:", exact=False).wait_for()
         settled(page)
+        if capped_following:
+            assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'false'
+            assert page.locator(THREAD).is_visible()
         assert page.evaluate("window.__delayedRow.isConnected")
         assert page.locator("[data-conversation-row]").count() == row_count
         growth = page.evaluate("window.__delayedRow.getBoundingClientRect().height") - before_row_height

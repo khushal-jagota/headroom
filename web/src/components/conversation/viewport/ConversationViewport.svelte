@@ -588,6 +588,15 @@
     return next?.node ?? candidates.at(-1)?.node ?? null;
   }
 
+  /** Readiness belongs to a projected wrapper or a direct row-backed presentation root. */
+  function presentationRoots(thread: HTMLDivElement): HTMLElement[] {
+    const roots = reader !== null
+      ? [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
+      : [...(contentElement?.querySelector<HTMLElement>(':scope > [data-conversation-transcript]')?.children ?? [])]
+        .filter((node): node is HTMLElement => node instanceof HTMLElement);
+    return roots.filter(node => node.getBoundingClientRect().height > 0);
+  }
+
   /** Released previews keep their height but do not load until they approach the reader. */
   function restorationPresentationReady(thread: HTMLDivElement): boolean {
     if (contentElement === null) return false;
@@ -724,7 +733,7 @@
             } else if (!restorationPresentationReady(thread)) return;
           }
           if (targetKey === null) landTheOpen(thread);
-          const destination = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
+          const destination = presentationRoots(thread).at(-1) ?? contentElement ?? thread;
           const target = (targetKey === null ? destination : restoredAnchorElement(thread) ?? undefined);
           if (target === undefined) return;
           const restoringAnchor = viewAnchor !== null && !viewAnchor.following;
@@ -733,7 +742,7 @@
             const viewport = thread.getBoundingClientRect();
             // A held lazy body cannot hide an available tool or message beside its placeholder.
             // The provisional newest position is already applied, so this reveals no top flash.
-            provisionalNewest = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].some(node => {
+            provisionalNewest = presentationRoots(thread).some(node => {
               if (node === target || !node.querySelector('[data-conversation-row], [data-conversation-tool]') || !presentationReady(node)) return false;
               const bounds = node.getBoundingClientRect();
               return bounds.height > 0 && bounds.bottom > viewport.top && bounds.top < viewport.bottom;
@@ -882,8 +891,7 @@
         else if (sentMessageToPlace !== null) dirty = true;
         takeTheReading(geometry.read(reservedSpacePixels));
         jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
-        const finalRow = [...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')]
-          .filter(node => node.getBoundingClientRect().height > 0).at(-1) ?? contentElement ?? thread;
+        const finalRow = presentationRoots(thread).at(-1) ?? contentElement ?? thread;
         const latestPresented = intent?.cause !== 'restoration-fallback' || presentationReady(finalRow);
         const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && actualNewestIsHeld()
           && reservedSpacePixels === 0 && Math.abs(thread.scrollTop - Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels))) <= 1
