@@ -1011,16 +1011,24 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                     )
                     response = await harness.mac.handle_ipc(
                         IpcRequest(
-                            write_request.request_id,
+                            "equal_catalog_reconnect_recap_retry",
                             IpcOperation.retry,
                             registered.reference.child_id,
                             registered.capability,
                             {"submission_id": write_request.request_id},
                         )
                     )
-                assert response.queued is not None and response.error is None
+                    assert response.request_id == "equal_catalog_reconnect_recap_retry"
+                    assert response.error is None
+                    assert response.unconfirmed is not None
+                    assert response.unconfirmed.publication == "queued"
+                    assert response.unconfirmed.submission_id == write_request.request_id
+                    queued_submission_id = response.unconfirmed.submission_id
+                else:
+                    assert response.queued is not None and response.error is None
+                    queued_submission_id = response.queued.submission_id
                 write = harness.mac.spool.pending()[-1]
-                assert write.submission_id == response.queued.submission_id
+                assert write.submission_id == queued_submission_id
                 assert write.sequence == initial[0].sequence + 1
                 assert len(harness.mac.spool.pending()) == 2
                 release_inventory.set()
