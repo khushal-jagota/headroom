@@ -13,6 +13,13 @@ export async function prepare({scratchRoot}) {
     import {flushSync} from "svelte";
     import FileDocument from "../src/components/FileDocument.svelte";
     import FilePreview from "../src/components/FilePreview.svelte";
+    import ConversationFileCard from "../src/components/conversation/ConversationFileCard.svelte";
+    let previewPath = $state("");
+    let previewFull = $state(false);
+    let previewConversation = $state(false);
+    (window as any).__preview = (path: string, full = false, conversation = false) => flushSync(() => {
+      previewPath = path; previewFull = full; previewConversation = conversation;
+    });
     let htmlMode = $state("");
     let htmlPath = $state("site/index.html");
     (window as any).__html = (mode: string, path = "site/index.html") => flushSync(() => { htmlMode = mode; htmlPath = path; });
@@ -35,6 +42,10 @@ export async function prepare({scratchRoot}) {
     {#if htmlMode === 'full'}<FileDocument target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />
     {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />{/if}
   </section>{/if}
+  {#if previewPath}<section data-card-fixture class="chat-thread"><div class="chat-u">
+    {#if previewConversation}<ConversationFileCard href="/api/conversation/conversations/proof/files/proof.txt" fileName="proof.txt" mediaType="text/plain" byteCount={1024} />
+    {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_card',path:previewPath}} mode={previewFull ? 'full' : 'embedded'} download={!previewFull && (previewPath.endsWith('.png') || previewPath === 'missing.md') ? {href:'/files/tickets/t_card/'+previewPath,fileName:previewPath} : undefined} />{/if}
+  </div></section>{/if}
   <header>Persistent heading</header>
   <section data-fixed style="height:400px;display:flex;flex-direction:column">
     {#if shown}<SkeletonRegion shape="document" layout="fill" {loading} loadingText="Loading document">
