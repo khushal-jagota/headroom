@@ -17,6 +17,7 @@ from pydantic import TypeAdapter
 
 from planner.conversation.backends.codex_app_server.login import codex_home
 from planner.conversation.backends.contracts import (
+    AdmissionRefused,
     BackendAdapterError,
     BackendChild,
     BackendChildFactory,
@@ -24,6 +25,7 @@ from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendSpawnFailed,
     BackendUserInputRequest,
+    NeedsRebind,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -88,6 +90,11 @@ class _Child:
         default_factory=dict
     )
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    launch_context: object | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    backend_key: ConversationBackendKey | None = None
+    resolved_model_id: str | None = None
 
 
 class JournalEventSink:
@@ -119,8 +126,10 @@ class NativeChildRegistry:
         message_files: ConversationMessageFiles,
         paths: ExecutorPaths | None = None,
         workspace_home: Path | None = None,
+        admission_observer: object | None = None,
     ) -> None:
         self.workspace_home = workspace_home or Path.home()
+        self.admission_observer = admission_observer
         self.paths = paths
         self.incarnation = incarnation
         self.spool = spool
@@ -566,6 +575,17 @@ class NativeChildRegistry:
         while self._source_work.get(reference, 0):
             await asyncio.sleep(0)
 
+    async def _invoke_admitted(self, child: _Child, command: ChildCommand) -> JsonObject:
+        previous_turn = child.active_turn
+        if command.operation is ChildOperation.write_prompt:
+            child.active_turn = command.turn
+        try:
+            return await invoke_child(child.native, command)
+        except AdmissionRefused:
+            # A refused final writer emitted no user bytes and owns no new turn.
+            child.active_turn = previous_turn
+            raise
+
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
         if command.child.executor_incarnation != self.incarnation:
             outcome = CommandOutcome(
@@ -616,6 +636,18 @@ class NativeChildRegistry:
         else:
             try:
                 native_command = command
+                expectation = None
+                if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
+                    from planner.conversation.admission.service import parse_expectation
+
+                    raw_expectation = command.arguments.get("admission_expectation")
+                    if raw_expectation is not None:
+                        try:
+                            expectation = parse_expectation(raw_expectation)
+                        except ValueError as malformed:
+                            raise AdmissionRefused("invalid admission expectation") from malformed
+                        if expectation.child != command.child or expectation.turn != command.turn:
+                            raise AdmissionRefused("model verification command identity changed")
                 child = self.children.get(command.child.child_id)
                 if child is not None and command.operation == ChildOperation.start:
                     raise BackendSpawnFailed("child identity already has a native start")
@@ -633,6 +665,28 @@ class NativeChildRegistry:
                         else ()
                     )
                     ticket_id = environment.get("PLAN_TICKET_ID")
+                    if (
+                        ticket_id is not None
+                        and resolved.backend_key is not ConversationBackendKey.hermes
+                        and expectation is None
+                    ):
+                        raise AdmissionRefused(
+                            "model verification legacy_unscoped",
+                            reason="legacy_unscoped",
+                            corrective_action="classify_selection",
+                        )
+                    if expectation is not None and (
+                        expectation.conversation_id != resolved.conversation_id
+                        or expectation.selection.backend_key != resolved.backend_key
+                        or expectation.launch_token != resolved.model
+                        or expectation.reasoning_effort != resolved.reasoning_effort
+                        or expectation.workspace.workspace_folder != resolved.workspace_folder
+                        or expectation.workspace.workspace_path_policy
+                        != resolved.workspace_path_policy
+                        or expectation.workspace.workspace_home_relative
+                        != command.arguments.get("workspace_home_relative")
+                    ):
+                        raise AdmissionRefused("model verification start parameters changed")
                     if ticket_id is not None and any(
                         existing.ticket_id == ticket_id for existing in self.children.values()
                     ):
@@ -697,7 +751,17 @@ class NativeChildRegistry:
                         else ()
                     )
                     child = _Child(
-                        command.child, capability, native, ticket_id=identity.get("PLAN_TICKET_ID")
+                        command.child,
+                        capability,
+                        native,
+                        ticket_id=identity.get("PLAN_TICKET_ID"),
+                        launch_context=None if expectation is None else expectation.context,
+                        model=resolved.model,
+                        reasoning_effort=resolved.reasoning_effort,
+                        backend_key=resolved.backend_key,
+                        resolved_model_id=None
+                        if expectation is None
+                        else expectation.resolved_model_id,
                     )
                     self.children[command.child.child_id] = child
                 if child is None or child.reference != command.child:
@@ -717,8 +781,72 @@ class NativeChildRegistry:
                         if command.operation == ChildOperation.write_prompt:
                             if self.admission_stopped:
                                 raise _CommandAdmissionRefused("executor is quiescing")
-                            child.active_turn = command.turn
-                        result = await invoke_child(child.native, native_command)
+                        if command.operation in (
+                            ChildOperation.start,
+                            ChildOperation.write_prompt,
+                        ) and (
+                            (
+                                child.ticket_id is not None
+                                and child.backend_key is not ConversationBackendKey.hermes
+                            )
+                            or expectation is not None
+                        ):
+                            from planner.conversation.admission.service import (
+                                AdmissionContextObserver,
+                                admission_scope,
+                            )
+
+                            if expectation is None:
+                                raise AdmissionRefused(
+                                    "model verification legacy_unscoped",
+                                    reason="legacy_unscoped",
+                                    corrective_action="classify_selection",
+                                )
+                            if child.launch_context != expectation.context:
+                                raise AdmissionRefused(
+                                    "model verification retained process context changed"
+                                )
+                            if (
+                                command.operation is ChildOperation.write_prompt
+                                and child.backend_key is ConversationBackendKey.claude
+                                and child.model == expectation.launch_token
+                                and child.resolved_model_id != expectation.resolved_model_id
+                            ):
+                                raise NeedsRebind(
+                                    "the provider alias target changed before admission"
+                                )
+                            if command.operation == ChildOperation.write_prompt and (
+                                (
+                                    child.model
+                                    if command.arguments.get("model_change") is None
+                                    else command.arguments["model_change"]
+                                )
+                                != expectation.launch_token
+                                or (
+                                    child.reasoning_effort
+                                    if command.arguments.get("reasoning_effort_change") is None
+                                    else command.arguments["reasoning_effort_change"]
+                                )
+                                != expectation.reasoning_effort
+                            ):
+                                raise AdmissionRefused(
+                                    "model verification prompt parameters changed"
+                                )
+                            observer = cast(
+                                AdmissionContextObserver | None, self.admission_observer
+                            )
+                            with admission_scope(expectation, observer):
+                                if observer is None or not observer.verify_context(
+                                    expectation.context
+                                ):
+                                    raise AdmissionRefused("model verification context_changed")
+                                result = await self._invoke_admitted(child, native_command)
+                                if command.operation == ChildOperation.write_prompt:
+                                    child.model = expectation.launch_token
+                                    child.reasoning_effort = expectation.reasoning_effort
+                                    child.resolved_model_id = expectation.resolved_model_id
+                        else:
+                            result = await self._invoke_admitted(child, native_command)
                         if command.operation == ChildOperation.answer_permission_ask:
                             ask = child.asks.get(str(command.arguments["ask_id"]))
                             if ask is not None:
@@ -738,12 +866,20 @@ class NativeChildRegistry:
                         outcome = CommandOutcome(
                             command.command_id, command.child, CommandDisposition.succeeded, result
                         )
-            except _CommandAdmissionRefused as error:
+            except (_CommandAdmissionRefused, AdmissionRefused) as error:
                 outcome = CommandOutcome(
                     command.command_id,
                     command.child,
                     CommandDisposition.refused,
-                    {"error_type": type(error).__name__, "error_message": str(error)},
+                    {
+                        "error_type": type(error).__name__,
+                        "error_message": str(error),
+                        **(
+                            {"reason": error.reason, "corrective_action": error.corrective_action}
+                            if isinstance(error, AdmissionRefused)
+                            else {}
+                        ),
+                    },
                 )
             except (ValueError, BackendAdapterError) as error:
                 # A native write failure does not prove non-delivery.

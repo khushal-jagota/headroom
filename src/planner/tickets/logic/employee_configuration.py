@@ -75,16 +75,10 @@ def normalize_employee_launch_configuration(
     reasoning_supported: bool | None,
     advertised_reasoning_efforts: frozenset[str] | None,
 ) -> EmployeeLaunchConfiguration:
-    """Validate a same-backend snapshot, or take a backend change whole.
+    """Preserve exact intent; reject only an applicable known incompatibility.
 
-    Every candidate names a model, whichever it is. A backend change is taken as it
-    stands: there is no catalog to check it against, because the one this Ticket was on
-    is the wrong backend's and the candidate is the caller's own naming of the new one.
-    A same-backend change is checked against that backend's catalog, and a model change
-    carries an old reasoning selection harmlessly: if the new model does not advertise it,
-    the value normalizes to the new model's own (null).
-
-    Catalog inputs may be absent only for a no-op or a backend change.
+    Catalog arguments describe this candidate's destination and selected model.
+    Unknown support permits configuration while execution remains unvalidated.
     """
 
     if candidate == current:
@@ -96,12 +90,7 @@ def normalize_employee_launch_configuration(
             "a Ticket's launch configuration has to name a model",
             {"employee_backend": candidate.employee_backend},
         )
-    if candidate.employee_backend != current.employee_backend:
-        return candidate
-    if advertised_models is None or reasoning_supported is None:
-        raise RuntimeError("same-backend Employee configuration change requires a catalog")
-
-    if model not in advertised_models:
+    if advertised_models is not None and model not in advertised_models:
         raise PlannerError(
             ErrorCode.validation,
             "Employee model is not available",
@@ -112,22 +101,22 @@ def normalize_employee_launch_configuration(
         )
 
     reasoning_effort = candidate.employee_launch_reasoning_effort
-    advertised_reasoning = advertised_reasoning_efforts or frozenset()
     if reasoning_effort is not None and (
-        not reasoning_supported or reasoning_effort not in advertised_reasoning
+        reasoning_supported is False
+        or (
+            advertised_reasoning_efforts is not None
+            and reasoning_effort not in advertised_reasoning_efforts
+        )
     ):
-        if model != current.employee_launch_model:
-            reasoning_effort = None
-        else:
-            raise PlannerError(
-                ErrorCode.validation,
-                "Employee reasoning effort is not available",
-                {
-                    "employee_backend": candidate.employee_backend,
-                    "employee_launch_model": model,
-                    "employee_launch_reasoning_effort": reasoning_effort,
-                },
-            )
+        raise PlannerError(
+            ErrorCode.validation,
+            "Employee reasoning effort is not available",
+            {
+                "employee_backend": candidate.employee_backend,
+                "employee_launch_model": model,
+                "employee_launch_reasoning_effort": reasoning_effort,
+            },
+        )
 
     return EmployeeLaunchConfiguration(
         employee_backend=candidate.employee_backend,

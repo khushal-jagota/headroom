@@ -594,7 +594,9 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
         now=11,
     )
     tmp_db.execute("UPDATE manager_wakes SET summary='Event 1' WHERE ticket_id=?", (ticket_id,))
-    for revision, kind in enumerate(list(WakeSourceKind)[1:], start=2):
+    for revision, kind in enumerate(
+        (WakeSourceKind.worker_error, WakeSourceKind.turn_failure), start=2
+    ):
         wake_data.create_wake(
             tmp_db,
             manager_id=item_id,

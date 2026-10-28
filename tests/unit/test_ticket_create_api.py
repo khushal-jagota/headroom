@@ -130,6 +130,7 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
         "employee_backend": "hermes",
         "employee_launch_model": "hermes-model",
         "employee_launch_reasoning_effort": None,
+        "selection_kind": "concrete",
     }
     assert set(body) == set(CreateTicketBody.__annotations__)
     response = client.post("/api/tickets", json=body)
@@ -268,7 +269,8 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
         refused = client.post(
             "/api/tickets",
             json={
-                "title": "Invalid reviewer", "worker_type": "coding",
+                "title": "Invalid reviewer",
+                "worker_type": "coding",
                 "brief": "This Brief must not normalize the invalid holder to owner.",
                 "ceiling_holder": holder,
                 "manager": assignment,

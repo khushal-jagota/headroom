@@ -7,6 +7,7 @@ import sqlite3
 from collections.abc import Callable
 
 from planner.conversation.contracts import ConversationSystem
+from planner.conversation.model_resolution.contracts import CanonicalModelValidation, SelectionKind
 from planner.core import ticket_blocks
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
@@ -40,6 +41,8 @@ def create_ticket(
     blocked_by_ticket_ids: list[str] | None = None,
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
+    selection_kind: SelectionKind | str | None = None,
+    validation: CanonicalModelValidation | None = None,
 ) -> Ticket:
     return tickets_data.create_ticket(
         conn,
@@ -61,6 +64,8 @@ def create_ticket(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
         stated_holder=stated_holder,
+        selection_kind=selection_kind,
+        validation=validation,
     )
 
 

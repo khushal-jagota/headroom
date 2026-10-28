@@ -23,7 +23,11 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from planner.conversation.contracts import (
@@ -44,8 +48,55 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
 
 
+@dataclass(frozen=True, slots=True)
+class BackendEmissionInputs:
+    model: str | None
+    reasoning_effort: str | None
+    workspace: Path
+    executable: str | None = None
+    environment: Mapping[str, str] | None = None
+
+
+class EmissionCheck(Protocol):
+    def __call__(self, prepared: BackendEmissionInputs | None = None) -> None: ...
+
+
+_emission_check: ContextVar[EmissionCheck | None] = ContextVar(
+    "provider_emission_check", default=None
+)
+
+
+def current_emission_check() -> EmissionCheck | None:
+    """Capture only for one exact outbound user message, never background defaults."""
+    return _emission_check.get()
+
+
+@contextmanager
+def emission_check_scope(check: EmissionCheck) -> Iterator[None]:
+    token = _emission_check.set(check)
+    try:
+        yield
+    finally:
+        _emission_check.reset(token)
+
+
 class BackendAdapterError(Exception):
     """Something an adapter was asked to do could not be done. Always say which."""
+
+
+class AdmissionRefused(BackendAdapterError):
+    """A final check proved no provider submission occurred."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str = "context_changed",
+        corrective_action: str = "verify_launch_context",
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.corrective_action = corrective_action
 
 
 class BackendSpawnFailed(BackendAdapterError):

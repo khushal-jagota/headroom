@@ -6,20 +6,34 @@ import asyncio
 import json
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Literal
+from typing import Literal, Never
 
 import pytest
+from tests.support.executor_catalog import ScriptedCatalogObserver
 
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.model_corrections.contracts import CorrectionTarget, ModelCorrection
 from planner.conversation.model_corrections.service import apply_corrections, preview_corrections
 from planner.conversation.model_resolution.contracts import (
+    AliasResolutionFact,
+    CanonicalModelValidation,
+    CatalogObservation,
+    CatalogWorkspaceBinding,
     CurrentModelResolver,
+    LaunchContext,
     ModelResolution,
+    ModelSelection,
     ModelVariant,
+    SelectionKind,
 )
+from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.service import ModelResolutionService
+from planner.conversation.snapshot import BackendSnapshotService
 from planner.core.clock import Clock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
@@ -27,7 +41,7 @@ from planner.core.contracts import (
     Principal,
     PrincipalKind,
 )
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import Ticket, TicketLocale
 from planner.tickets.data import (
     create_ticket,
     employee_launch_configuration,
@@ -52,6 +66,85 @@ class Resolver:
         )
 
 
+def _no_native_identity() -> Never:
+    raise AssertionError("local correction fixture cannot request native identity")
+
+
+class ScopedCorrectionObserver(ScriptedCatalogObserver):
+    """Actual metadata service with isolated observations and an owned await seam."""
+
+    def __init__(self) -> None:
+        super().__init__(_no_native_identity)
+        self.models = ("gpt-6.1-sol", "gpt-6.0-sol")
+        self.efforts = ("medium", "high")
+        self.observed_at = 999
+        self.before_observe: Callable[[], None] | None = None
+
+    async def capture_context(
+        self, backend_key: ConversationBackendKey, *, workspace: CatalogWorkspaceBinding
+    ) -> LaunchContext:
+        return LaunchContext(
+            "correction-fixture-context",
+            TicketLocale.vps,
+            backend_key,
+            None,
+            workspace,
+            workspace.workspace_folder,
+            "fixture-cli",
+            "1",
+            "fixture-provider-settings",
+            None,
+        )
+
+    async def observe(
+        self,
+        backend_key: ConversationBackendKey,
+        *,
+        workspace: CatalogWorkspaceBinding,
+        attempt_id: str,
+        deadline: float,
+    ) -> CatalogObservation:
+        await asyncio.sleep(0)
+        if self.before_observe is not None:
+            self.before_observe()
+        return await super().observe(
+            backend_key, workspace=workspace, attempt_id=attempt_id, deadline=deadline
+        )
+
+
+class ScopedCorrectionSystem(InMemoryConversationSystem):
+    def __init__(self, db_path: str) -> None:
+        super().__init__()
+        self.observer = ScopedCorrectionObserver()
+        self.resolver = ModelResolutionService(
+            snapshots=BackendSnapshotService(),
+            store=ModelResolutionStore(db_path),
+            backend_state=BackendStateStore(db_path),
+            observer=self.observer,
+            now=lambda: 1000,
+        )
+
+    async def validate_launch_selection(
+        self,
+        selection: ModelSelection,
+        workspace: CatalogWorkspaceBinding,
+        *,
+        attempt_id: str,
+        classify_new: bool = False,
+        previous_alias_resolution: AliasResolutionFact | None = None,
+    ) -> CanonicalModelValidation:
+        return await self.resolver.validate_selection(
+            selection,
+            workspace=workspace,
+            attempt_id=attempt_id,
+            previous_alias_resolution=previous_alias_resolution,
+        )
+
+
+def scoped_system(conn: Connection) -> ScopedCorrectionSystem:
+    return ScopedCorrectionSystem(str(conn.execute("PRAGMA database_list").fetchone()[2]))
+
+
 def seed_resolution(conn: Connection) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO model_variant_resolutions "
@@ -72,6 +165,8 @@ def ticket(tmp_db: Connection) -> Ticket:
         worker_type="coding",
         employee_backend="codex",
         employee_launch_model="gpt-6.1-sol",
+        employee_launch_reasoning_effort="medium",
+        selection_kind=SelectionKind.concrete,
     )
 
 
@@ -80,8 +175,14 @@ def preview(
     target: CorrectionTarget,
     resolver: CurrentModelResolver | None = None,
     principal: Principal = OWNER_PRINCIPAL,
+    *,
+    system: ScopedCorrectionSystem | None = None,
 ) -> ModelCorrection:
-    return asyncio.run(preview_corrections(conn, principal, [target], resolver or Resolver()))[0]
+    metadata = system or scoped_system(conn)
+    selected_resolver = resolver or (metadata.resolver if target.kind == "ticket" else Resolver())
+    return asyncio.run(
+        preview_corrections(conn, principal, [target], selected_resolver, system=metadata)
+    )[0]
 
 
 def apply(
@@ -89,9 +190,15 @@ def apply(
     correction: ModelCorrection,
     resolver: CurrentModelResolver | None = None,
     principal: Principal = OWNER_PRINCIPAL,
+    *,
+    system: ScopedCorrectionSystem | None = None,
 ) -> ModelCorrection:
+    metadata = system or scoped_system(conn)
+    selected_resolver = resolver or (
+        metadata.resolver if correction.target.kind == "ticket" else Resolver()
+    )
     return asyncio.run(
-        apply_corrections(conn, principal, [correction], resolver or Resolver(), now=2)
+        apply_corrections(conn, principal, [correction], selected_resolver, system=metadata, now=2)
     )[0]
 
 
@@ -123,39 +230,48 @@ def test_idle_user_owned_correction_preserves_every_other_ticket_column(
     result = apply(tmp_db, correction, principal=principal)
     assert result.applied and result.error is None
     after = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
-    assert after.pop("employee_launch_model") == "gpt-6.2-sol"
-    before.pop("employee_launch_model")
-    after.pop("updated_at")
-    before.pop("updated_at")
+    assert correction.proposed_model == ticket.employee_launch_model
     assert after == before
 
 
-
-
 def test_apply_rechecks_model_and_catalogue_changes(tmp_db: Connection, ticket: Ticket) -> None:
+    from planner.tickets import data as tickets_data
+
+    system = scoped_system(tmp_db)
     target = CorrectionTarget(kind="ticket", id=ticket.id)
-    correction = preview(tmp_db, target)
-    resolver = Resolver()
-    resolver.model = "gpt-6.3-sol"
-    assert "preview again" in (apply(tmp_db, correction, resolver).error or "")
-    tmp_db.execute(
-        "UPDATE tickets SET employee_launch_model='gpt-6.0-sol' WHERE id=?", (ticket.id,)
+    correction = preview(tmp_db, target, system=system)
+    assert correction.error is None
+    # Known effort removal is a canonical refusal, never an automatic model upgrade.
+    system.observer.efforts = ()
+    assert "effort_incompatible" in (apply(tmp_db, correction, system=system).error or "")
+    system.observer.efforts = ("medium", "high")
+    tickets_data.write_employee_configuration(
+        tmp_db,
+        ticket.id,
+        expected_employee_configuration=employee_launch_configuration(ticket),
+        employee_backend=ticket.employee_backend,
+        employee_launch_model="gpt-6.0-sol",
+        employee_launch_reasoning_effort=ticket.employee_launch_reasoning_effort,
+        advertised_models=None,
+        reasoning_supported=None,
+        advertised_reasoning_efforts=None,
+        selection_kind=SelectionKind.concrete,
+        now=3,
     )
-    assert "preview again" in (apply(tmp_db, correction).error or "")
-
-
+    assert "preview again" in (apply(tmp_db, correction, system=system).error or "")
 
 
 def test_correction_blocks_old_active_turn_receipt(tmp_db: Connection, ticket: Ticket) -> None:
     tmp_db.execute("UPDATE tickets SET conversation_id='conv-existing' WHERE id=?", (ticket.id,))
     correction = preview(tmp_db, CorrectionTarget(kind="ticket", id=ticket.id))
     assert apply(tmp_db, correction).applied
-    assert not write_ticket_last_chosen_configuration(
+    # Verification never grants old effective model receipts authorship of intent.
+    write_ticket_last_chosen_configuration(
         tmp_db,
         ticket.id,
         expected_conversation_id="conv-existing",
         expected_configuration=employee_launch_configuration(ticket),
-        model=ticket.employee_launch_model,
+        model="gpt-6.2-sol",
         reasoning_effort=ticket.employee_launch_reasoning_effort,
         now=3,
     )
@@ -163,7 +279,7 @@ def test_correction_blocks_old_active_turn_receipt(tmp_db: Connection, ticket: T
         tmp_db.execute(
             "SELECT employee_launch_model FROM tickets WHERE id=?", (ticket.id,)
         ).fetchone()[0]
-        == "gpt-6.2-sol"
+        == "gpt-6.1-sol"
     )
 
 
@@ -185,23 +301,22 @@ def test_default_corrections_preserve_effort_and_backend(
     assert new.expected.reasoning_effort == correction.expected.reasoning_effort
 
 
-
-
 def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path: Path) -> None:
-    from dataclasses import replace
-
     from fastapi.testclient import TestClient
 
-    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+    from planner.conversation.contracts import ConversationStartRequest
+    from planner.conversation.logic.conversation_start_resolution import (
+        resolve_conversation_start_request,
+    )
     from planner.core.clock import build_clock
     from planner.core.config import load_config
     from planner.core.db import connect, create_schema
     from planner.core.server import create_app
+    from planner.tickets.data import write_ticket_conversation_start
 
     db_path = str(tmp_path / "corrections.db")
     with closing(connect(db_path)) as conn:
         create_schema(conn)
-        seed_resolution(conn)
         worker = create_ticket(
             conn,
             title="A worker",
@@ -211,62 +326,45 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
             worker_type="coding",
             employee_backend="codex",
             employee_launch_model="gpt-6.1-sol",
+            employee_launch_reasoning_effort="medium",
+            selection_kind=SelectionKind.concrete,
         )
+    system = ScopedCorrectionSystem(db_path)
     cfg = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": db_path})
     app = create_app(
-        cfg,
-        build_clock(cfg),
-        lambda: connect(db_path),
-        conversation_system_for_test=InMemoryConversationSystem(),
+        cfg, build_clock(cfg), lambda: connect(db_path), conversation_system_for_test=system
     )
-    from planner.conversation.contracts import ConversationStartRequest
-    from planner.conversation.model_resolution.contracts import CachedModelResolution
-    from planner.conversation.model_resolution.data import ModelResolutionStore
-    from planner.tickets.data import write_ticket_conversation_start
-
-    class IndependentStoreResolver(Resolver):
-        async def resolve(
-            self,
-            backend_key: ConversationBackendKey,
-            model: str,
-            reasoning_effort: str | None = None,
-        ) -> ModelResolution:
-            # Resolution legitimately suspends and uses its own managed connection.
-            await asyncio.sleep(0)
-            ModelResolutionStore(db_path).keep(
-                ModelVariant(backend_key, "sol"),
-                CachedModelResolution(self.model, ("medium", "high"), 2),
-            )
-            return await super().resolve(backend_key, model, reasoning_effort)
-
     with TestClient(app) as client:
-        resolver = IndependentStoreResolver()
-        app.state.conversation = replace(app.state.conversation, model_resolution=resolver)
+        # This endpoint owns runtime.system rather than the injected conversation
+        # controller. Configure that actual System with the same scoped service;
+        # neither snapshot fakes nor legacy resolve() can authorize this request.
+        runtime = app.state.conversation
+        runtime.system._model_resolver = system.resolver
+        runtime.system.configure_destination_validation(system.observer)
+        app.state.conversation = replace(runtime, model_resolution=system.resolver)
         body = {"targets": [{"kind": "ticket", "id": worker.id}]}
         response = client.post("/api/conversation/model-corrections/preview", json=body)
         assert response.status_code == 200
         preview_body = response.json()
+        assert preview_body["corrections"][0]["error"] is None
         refused = client.post(
             "/api/conversation/model-corrections/apply",
             json=preview_body,
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": worker.id},
         )
         assert refused.json()["corrections"][0]["error"]
-        response = client.post("/api/conversation/model-corrections/apply", json=preview_body)
-        assert response.json()["corrections"][0]["applied"]
-        with connect(db_path) as conn:
-            assert (
-                conn.execute(
-                    "SELECT conversation_id FROM tickets WHERE id=?", (worker.id,)
-                ).fetchone()[0]
-                is None
-            )
-
-        # A correction also preserves a real existing conversation association.
+        assert client.post("/api/conversation/model-corrections/apply", json=preview_body).json()[
+            "corrections"
+        ][0]["applied"]
         assert client.portal is not None
+        assert worker.employee_launch_model is not None
+        start = ConversationStartRequest(
+            conversation_id="correction-retained", model=worker.employee_launch_model
+        )
+        client.portal.call(system.start_conversation, start)
         client.portal.call(
-            app.state.conversation.system.start_conversation,
-            ConversationStartRequest(conversation_id="correction-retained", model=resolver.model),
+            app.state.conversation.store.create_conversation,
+            resolve_conversation_start_request(start),
         )
         with closing(connect(db_path)) as conn:
             write_ticket_conversation_start(
@@ -274,63 +372,51 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
                 worker.id,
                 conversation_id="correction-retained",
                 backend="codex",
-                model=resolver.model,
+                model="provider-effective-model",
                 reasoning_effort=worker.employee_launch_reasoning_effort,
                 now=2,
             )
-
-        resolver.model = "gpt-6.3-sol"
-        preview_body = client.post(
-            "/api/conversation/model-corrections/preview",
-            json=body,
-        ).json()
-        applied_with_conversation = client.post(
-            "/api/conversation/model-corrections/apply",
-            json=preview_body,
-        )
-        assert applied_with_conversation.json()["corrections"][0]["applied"]
+        preview_body = client.post("/api/conversation/model-corrections/preview", json=body).json()
+        assert client.post("/api/conversation/model-corrections/apply", json=preview_body).json()[
+            "corrections"
+        ][0]["applied"]
         with closing(connect(db_path)) as conn:
             assert tuple(
                 conn.execute(
                     "SELECT conversation_id,employee_launch_model FROM tickets WHERE id=?",
                     (worker.id,),
                 ).fetchone()
-            ) == ("correction-retained", "gpt-6.3-sol")
+            ) == ("correction-retained", "gpt-6.1-sol")
 
-        def replace_saved_model() -> None:
+        def replace_saved_effort() -> None:
             with closing(connect(db_path)) as conn:
                 conn.execute(
-                    "UPDATE tickets SET employee_launch_model='gpt-6.0-sol' WHERE id=?",
+                    "UPDATE tickets SET employee_launch_reasoning_effort='high' WHERE id=?",
                     (worker.id,),
                 )
 
-        preview_body = client.post(
-            "/api/conversation/model-corrections/preview",
-            json=body,
-        ).json()
-        resolver.before_resolve = replace_saved_model
+        # The real observation suspends and writes evidence on its independent DB
+        # connection; its callback races the final target CAS, not a fake resolver.
+        preview_body = client.post("/api/conversation/model-corrections/preview", json=body).json()
+        system.observer.before_observe = replace_saved_effort
         stale = client.post("/api/conversation/model-corrections/apply", json=preview_body)
         assert not stale.json()["corrections"][0]["applied"]
-        assert "saved model changed" in stale.json()["corrections"][0]["error"]
-        resolver.before_resolve = None
-
+        assert (
+            "launch selection changed during verification"
+            in stale.json()["corrections"][0]["error"]
+        )
+        system.observer.before_observe = None
         item = client.post(
-            "/api/managers",
-            json={"title": "Temporary authority", "project_id": "project_other"},
+            "/api/managers", json={"title": "Temporary authority", "project_id": "project_other"}
         ).json()
         with closing(connect(db_path)) as conn:
             conn.execute(
                 "UPDATE tickets SET manager_kind='manager',manager_id=? WHERE id=?",
                 (item["id"], worker.id),
             )
-        supervisor_headers = {
-            "X-Plan-Actor": "manager",
-            "X-Plan-Sprint-Item-ID": item["id"],
-        }
+        supervisor_headers = {"X-Plan-Actor": "manager", "X-Plan-Sprint-Item-ID": item["id"]}
         authorized_preview = client.post(
-            "/api/conversation/model-corrections/preview",
-            json=body,
-            headers=supervisor_headers,
+            "/api/conversation/model-corrections/preview", json=body, headers=supervisor_headers
         )
         assert authorized_preview.json()["corrections"][0]["error"] is None
 
@@ -341,7 +427,7 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
                     (worker.id,),
                 )
 
-        resolver.before_resolve = revoke_authority
+        system.observer.before_observe = revoke_authority
         revoked = client.post(
             "/api/conversation/model-corrections/apply",
             json=authorized_preview.json(),
@@ -349,20 +435,15 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
         )
         assert not revoked.json()["corrections"][0]["applied"]
         assert revoked.json()["corrections"][0]["error"]
+        assert system.observer.calls >= 8
         with closing(connect(db_path)) as conn:
-            unchanged = conn.execute(
-                "SELECT conversation_id, employee_backend, employee_launch_model, "
-                "employee_launch_reasoning_effort FROM tickets WHERE id=?",
-                (worker.id,),
-            ).fetchone()
-            assert tuple(unchanged) == (
-                "correction-retained",
-                worker.employee_backend,
-                "gpt-6.0-sol",
-                worker.employee_launch_reasoning_effort,
-            )
-
-
+            assert tuple(
+                conn.execute(
+                    "SELECT conversation_id,employee_backend,employee_launch_model,"
+                    "employee_launch_reasoning_effort FROM tickets WHERE id=?",
+                    (worker.id,),
+                ).fetchone()
+            ) == ("correction-retained", worker.employee_backend, "gpt-6.1-sol", "high")
 
 
 def test_manager_correction_preserves_identity_and_blocks_stale_receipt(
@@ -406,29 +487,25 @@ def test_manager_correction_preserves_identity_and_blocks_stale_receipt(
 
 
 def test_compare_and_swap_rejects_change_during_catalogue_await(
-    tmp_db: Connection,
-    ticket: Ticket,
+    tmp_db: Connection, ticket: Ticket
 ) -> None:
-    correction = preview(tmp_db, CorrectionTarget(kind="ticket", id=ticket.id))
+    system = scoped_system(tmp_db)
+    correction = preview(tmp_db, CorrectionTarget(kind="ticket", id=ticket.id), system=system)
+    assert correction.error is None
 
-    class RacingResolver(Resolver):
-        async def resolve(
-            self,
-            backend_key: ConversationBackendKey,
-            model: str,
-            reasoning_effort: str | None = None,
-        ) -> ModelResolution:
-            tmp_db.execute(
-                "UPDATE tickets SET employee_launch_reasoning_effort='high' WHERE id=?",
-                (ticket.id,),
-            )
-            return await super().resolve(backend_key, model, reasoning_effort)
+    def change_effort() -> None:
+        tmp_db.execute(
+            "UPDATE tickets SET employee_launch_reasoning_effort='high' WHERE id=?", (ticket.id,)
+        )
 
-    result = apply(tmp_db, correction, RacingResolver())
+    system.observer.before_observe = change_effort
+    result = apply(tmp_db, correction, system=system)
     assert not result.applied
-    assert "saved model changed" in (result.error or "")
-    row = tmp_db.execute(
-        "SELECT employee_launch_model, employee_launch_reasoning_effort FROM tickets WHERE id=?",
-        (ticket.id,),
-    ).fetchone()
-    assert tuple(row) == ("gpt-6.1-sol", "high")
+    assert "launch selection changed during verification" in (result.error or "")
+    assert system.observer.calls == 2
+    assert tuple(
+        tmp_db.execute(
+            "SELECT employee_launch_model,employee_launch_reasoning_effort FROM tickets WHERE id=?",
+            (ticket.id,),
+        ).fetchone()
+    ) == ("gpt-6.1-sol", "high")

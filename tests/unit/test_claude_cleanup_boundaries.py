@@ -13,10 +13,14 @@ from typing import Any, cast
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
-from tests.unit.test_executor_native_runtime import canonical_snapshot
-from tests.unit.test_executor_source_retirement import IDENTITY, drain
+from tests.support.executor_catalog import ScriptedCatalogObserver
+from tests.unit.test_current_model_resolution import Catalogue
+from tests.unit.test_executor_native_runtime import _fixture_admission, canonical_snapshot
+from tests.unit.test_executor_source_retirement import IDENTITY as SOURCE_IDENTITY
+from tests.unit.test_executor_source_retirement import drain
 from tests.unit.test_ticket_move_lifecycle import endpoint
 
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
@@ -33,8 +37,16 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.contracts import (
+    CatalogObservation,
+    CatalogRequest,
+    SelectionKind,
+)
+from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.executor.codec import encode_value
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
@@ -49,6 +61,9 @@ from planner.executor.contracts import (
 )
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
+from planner.runtime import conversation_start
+from planner.tickets import data as tickets
+from planner.tickets.contracts import TicketLocale
 
 
 def claude_registry(
@@ -79,6 +94,9 @@ def claude_registry(
     ), clients
 
 
+IDENTITY = replace(SOURCE_IDENTITY, executor_incarnation="11111111-1111-4111-8111-111111111111")
+
+
 async def disconnect_failure() -> None:
     raise RuntimeError("disconnect failed before native termination")
 
@@ -91,7 +109,37 @@ def test_claude_stop_result_controls_canonical_retirement(
 
     async def run() -> None:
         remote = endpoint(tmp_db)
+        remote.identity = IDENTITY
+        remote.store.begin_connection(IDENTITY, 1)
+        remote.store.mark_ready(IDENTITY, 2)
         registry, clients = claude_registry(tmp_path, monkeypatch)
+        observer = ScriptedCatalogObserver(lambda: IDENTITY)
+        observer.model = "test"
+        registry.admission_observer = observer
+        monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+        ticket = tickets.create_ticket(
+            tmp_db,
+            title="Claude cleanup",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            worker_type="coding",
+            employee_backend="claude",
+            employee_launch_model="test",
+            selection_kind=SelectionKind.concrete,
+            locale=TicketLocale.macos,
+        )
+
+        async def observe(request: CatalogRequest, *, attempt_id: str) -> CatalogObservation:
+            assert request.expected_context.executor_identity == IDENTITY
+            return await observer.observe(
+                request.backend_key,
+                workspace=request.expected_context.workspace,
+                attempt_id=attempt_id,
+                deadline=30,
+            )
+
+        monkeypatch.setattr(remote, "observe_catalog", observe)
         commands: list[ChildCommand] = []
 
         async def send(command: ChildCommand) -> CommandOutcome:
@@ -112,6 +160,13 @@ def test_claude_stop_result_controls_canonical_retirement(
             backend_child_factories=dict.fromkeys(ConversationBackendKey, remote.factory),
             message_files=ConversationMessageFiles(remote.db_path),
         )
+        system._model_resolver = ModelResolutionService(
+            snapshots=Catalogue(()),
+            store=ModelResolutionStore(remote.db_path),
+            backend_state=BackendStateStore(remote.db_path),
+            observer=observer,
+        )
+        system.configure_destination_validation(observer, endpoint=remote)
         remote.runtime = cast(Any, SimpleNamespace(system=system))
         native: ClaudeAgentSdkBackendChild | None = None
         original_disconnect = None
@@ -123,9 +178,18 @@ def test_claude_stop_result_controls_canonical_retirement(
                     backend_key=ConversationBackendKey.claude,
                     workspace_folder=tmp_path,
                     role_materials=ConversationRoleMaterials(
-                        "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_cleanup"))
+                        "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket.id))
                     ),
                 )
+            )
+            tickets.write_ticket_conversation_start(
+                tmp_db,
+                ticket.id,
+                conversation_id="c_cleanup",
+                backend="claude",
+                model="test",
+                reasoning_effort=None,
+                now=2,
             )
             await system.send("c_cleanup", text_message_content("hello"), sender_label="Owner")
             state = system._conversations["c_cleanup"]
@@ -152,7 +216,7 @@ def test_claude_stop_result_controls_canonical_retirement(
                 assert registry.children[reference.child_id] is child
                 assert child.native is native and native._client is client
                 assert state.child_is_quarantined and state.executor_child_reference == reference
-                assert remote.store.child_assignment(reference) == ("ticket", "t_cleanup")
+                assert remote.store.child_assignment(reference) == ("ticket", ticket.id)
                 with pytest.raises(PermissionError):
                     registry.authenticate(reference.child_id, child.capability)
                 before = list(client.prompts), list(client.streamed_messages)
@@ -205,6 +269,7 @@ def test_claude_disconnect_failure_cannot_confirm_source_move_or_quiescence(
             tmp_path,
             ConversationAccess.full,
         )
+        expectation = _fixture_admission(registry, reference, resolved)
         start = ChildCommand(
             "start",
             reference,
@@ -212,6 +277,7 @@ def test_claude_disconnect_failure_cannot_confirm_source_move_or_quiescence(
             None,
             {
                 "resolved_start": encode_value(resolved),
+                "admission_expectation": encode_value(expectation),
                 "canonical_skill_snapshot": encode_value(canonical_snapshot()),
             },
         )

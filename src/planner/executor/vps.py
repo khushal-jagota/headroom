@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import tempfile
 import time
@@ -16,7 +17,11 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from planner.conversation.backends.contracts import BackendEventSink, BackendSpawnFailed
+from planner.conversation.backends.contracts import (
+    AdmissionRefused,
+    BackendEventSink,
+    BackendSpawnFailed,
+)
 from planner.conversation.contracts import (
     MoveRetirementDisposition,
     MoveRetirementResult,
@@ -25,6 +30,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import UserInputAnswer
 from planner.conversation.model_resolution.contracts import (
+    CanonicalModelValidation,
     CatalogObservation,
     CatalogRequest,
     CatalogResponse,
@@ -205,6 +211,8 @@ class ExecutorEndpoint:
         self.pending_commands: dict[str, tuple[ChildCommand, asyncio.Future[CommandOutcome]]] = {}
         self._cancelled_initial_children: set[ChildReference] = set()
         self._possibly_emitted_commands: set[str] = set()
+        self._newly_recorded_commands: dict[str, ChildCommand] = {}
+        self._policy_held_commands: set[str] = set()
         self._revoked_input_commands: set[str] = set()
         self._prompt_command_ids: set[str] = set()
         self._emission_tasks: dict[str, set[asyncio.Task[bool]]] = {}
@@ -217,7 +225,7 @@ class ExecutorEndpoint:
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self.factory = RemoteBackendChildFactory(
             self.assign_child,
-            self.send_command,
+            self.send_new_command,
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
             self.retire_child,
@@ -333,7 +341,7 @@ class ExecutorEndpoint:
         """Bind the retained identity without starting it or granting new authority."""
         return RemoteBackendChild(
             child,
-            self.send_command,
+            self.send_new_command,
             self._read_skill_snapshot,
             self.cancel_initial_delivery,
             initial_history_complete=initial_history_complete,
@@ -355,7 +363,10 @@ class ExecutorEndpoint:
         return (
             pending is not None
             and pending[0].child == outcome.child
-            and pending[0].operation is ChildOperation.stop
+            and (
+                pending[0].operation is ChildOperation.stop
+                or "admission_expectation" in pending[0].arguments
+            )
         ) or self.store.is_retirement_outcome(outcome)
 
     def _outcome_hint_acknowledged(self, outcome: CommandOutcome) -> bool:
@@ -927,6 +938,8 @@ class ExecutorEndpoint:
                 writer = self.writer
                 if writer is None or not self.ready:
                     raise ConnectionError("executor link unavailable")
+                if not self._command_policy_allows_emission(command):
+                    return False
                 # From this point even a failed/partial write may have reached native.
                 self._possibly_emitted_commands.add(command.command_id)
                 if command.operation is ChildOperation.write_prompt:
@@ -1004,6 +1017,136 @@ class ExecutorEndpoint:
         task = asyncio.create_task(self.send_command(command))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def send_new_command(self, command: ChildCommand) -> CommandOutcome:
+        """Only RemoteBackendChild._call supplies freshly minted command identities.
+
+        Recovery and reconnect replay use send_command directly. Registration is
+        in-process evidence only; a reopened journal never gains unsent provenance.
+        """
+        if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
+            conn = connect(self.db_path)
+            try:
+                retained = conn.execute(
+                    "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                    (command.child.conversation_id,),
+                ).fetchone()
+                if retained is not None and any(
+                    TypeAdapter(ChildCommand).validate_python(raw) == command
+                    for raw in json.loads(retained[0]).get("initial_commands", ())
+                ):
+                    self._newly_recorded_commands.setdefault(command.command_id, command)
+            finally:
+                conn.close()
+        return await self.send_command(command)
+
+    def _command_policy_allows_emission(self, command: ChildCommand) -> bool:
+        """Use original policy facts; never turn uncertain delivery into an unsent refusal."""
+        if command.operation not in (ChildOperation.start, ChildOperation.write_prompt):
+            return True
+        from planner.conversation.admission.contracts import AdmissionExpectation
+        from planner.conversation.admission.policy import check_expectation_policy
+
+        conn = connect(self.db_path)
+        try:
+            if "admission_expectation" not in command.arguments:
+                original = conn.execute(
+                    "SELECT a.principal_kind,c.backend_key FROM executor_child_assignments a "
+                    "LEFT JOIN conversations c ON c.conversation_id=a.conversation_id "
+                    "WHERE a.executor_incarnation=? AND a.child_id=? AND a.conversation_id=?",
+                    (
+                        command.child.executor_incarnation,
+                        command.child.child_id,
+                        command.child.conversation_id,
+                    ),
+                ).fetchone()
+                scoped_ticket = (
+                    original is not None and original[0] == "ticket" and original[1] != "hermes"
+                )
+                if original is None:
+                    retained = conn.execute(
+                        "SELECT e.child_json,c.backend_key FROM executor_core_turns e "
+                        "JOIN conversations c ON c.conversation_id=e.conversation_id "
+                        "JOIN tickets t ON t.conversation_id=e.conversation_id "
+                        "WHERE e.conversation_id=?",
+                        (command.child.conversation_id,),
+                    ).fetchone()
+                    scoped_ticket = (
+                        retained is not None
+                        and retained[1] in ("codex", "claude")
+                        and TypeAdapter(ChildReference).validate_json(retained[0]) == command.child
+                    )
+                if not scoped_ticket:
+                    return True
+            known = conn.execute(
+                "SELECT outcome_json FROM executor_command_outcomes "
+                "WHERE executor_incarnation=? AND command_id=?",
+                (command.child.executor_incarnation, command.command_id),
+            ).fetchone()
+            pending = self.pending_commands.get(command.command_id)
+            if known is not None:
+                outcome = TypeAdapter(CommandOutcome).validate_json(known[0])
+                if outcome.child != command.child:
+                    raise ValueError("recorded outcome conflicts with command child")
+                if pending is not None and not pending[1].done():
+                    pending[1].set_result(outcome)
+                return False
+            try:
+                expected = TypeAdapter(AdmissionExpectation).validate_python(
+                    command.arguments.get("admission_expectation", {})
+                )
+                check_expectation_policy(conn, expected)
+            except (AdmissionRefused, ValueError, TypeError) as failure:
+                error = (
+                    failure
+                    if isinstance(failure, AdmissionRefused)
+                    else AdmissionRefused(
+                        "recorded launch expectation is unproved",
+                        reason="identity_unproved",
+                        corrective_action="verify_launch_context",
+                    )
+                )
+                if (
+                    self._newly_recorded_commands.get(command.command_id) != command
+                    or command.command_id in self._possibly_emitted_commands
+                ):
+                    if command.command_id not in self._policy_held_commands:
+                        logging.getLogger("planner.executor").warning(
+                            "Command %s on %s remains uncertain; policy blocks redispatch: %s. "
+                            "Original evidence or definitive executor settlement is required.",
+                            command.command_id,
+                            command.child,
+                            error,
+                        )
+                        self._policy_held_commands.add(command.command_id)
+                    return False
+                outcome = CommandOutcome(
+                    command.command_id,
+                    command.child,
+                    CommandDisposition.refused,
+                    {
+                        "error_type": "AdmissionRefused",
+                        "error_message": str(error),
+                        "reason": error.reason,
+                        "corrective_action": error.corrective_action,
+                    },
+                )
+                # This is a parent pre-transport refusal, not a native FIFO receipt.
+                # The existing canonical outcome transaction settles its exact lease.
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store.record_command_outcome_in_transaction(conn, outcome)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                if pending is not None and not pending[1].done():
+                    pending[1].set_result(outcome)
+                self._newly_recorded_commands.pop(command.command_id, None)
+                return False
+            return True
+        finally:
+            conn.close()
 
     async def send_command(self, command: ChildCommand) -> CommandOutcome:
         if self._initial_command_cancelled(command):
@@ -1179,8 +1322,14 @@ class ExecutorEndpoint:
                 return await self._native_message(envelope, write, principal, identity)
             principal = self._assignment(write.child)
             preparation_error: PlannerError | None = None
+            creation_validation: CanonicalModelValidation | None = None
             if write.operation == "ticket.create":
-                from planner.tickets.api import _marshal_create_ticket, warm_ticket_creation_model
+                from planner.runtime.conversation_start import refuse_known_incompatibility
+                from planner.tickets.api import (
+                    _marshal_create_ticket,
+                    validate_ticket_creation,
+                    warm_ticket_creation_model,
+                )
 
                 connection = connect(self.db_path)
                 try:
@@ -1203,6 +1352,12 @@ class ExecutorEndpoint:
                             "employee_launch_reasoning_effort"
                         ),
                     )
+                    creation_validation = await validate_ticket_creation(
+                        body,
+                        connection,
+                        self.runtime.system,
+                    )
+                    refuse_known_incompatibility(creation_validation)
                 except PlannerError as error:
                     if error.code == ErrorCode.gateway_offline:
                         raise
@@ -1221,7 +1376,12 @@ class ExecutorEndpoint:
                 if preparation_error is not None:
                     raise preparation_error
                 return write_ticket_mutation(
-                    connection, write, principal, self.clock, review_transfer_notices=notices
+                    connection,
+                    write,
+                    principal,
+                    self.clock,
+                    review_transfer_notices=notices,
+                    creation_validation=creation_validation,
                 )
 
             receipt = self.store.accept(
@@ -1347,6 +1507,9 @@ class ExecutorEndpoint:
     def _resolve_command(self, outcome: CommandOutcome) -> None:
         if not self._outcome_hint_acknowledged(outcome):
             return
+        if outcome.disposition is not CommandDisposition.uncertain:
+            self._newly_recorded_commands.pop(outcome.command_id, None)
+            self._policy_held_commands.discard(outcome.command_id)
         pending = self.pending_commands.get(outcome.command_id)
         if pending is not None and pending[0].child == outcome.child and not pending[1].done():
             pending[1].set_result(outcome)

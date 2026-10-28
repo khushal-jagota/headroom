@@ -8,7 +8,12 @@ from typing import cast
 from planner.core import ticket_blocks
 from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets import data
-from planner.tickets.views import _coherent_read, blocker_summary_json, ticket_json
+from planner.tickets.views import (
+    _coherent_read,
+    blocker_summary_json,
+    launch_validation_json,
+    ticket_json,
+)
 from planner.tickets.workspace.contracts import WorkspaceFieldBody, WorkspaceTicket
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -19,6 +24,7 @@ def workspace_ticket(conn: sqlite3.Connection, ticket_id: str) -> WorkspaceTicke
         definition = configured_worker_type_registry().require(ticket.worker_type)
         gate = definition.gating_field(ticket.stage)
         detail = ticket_json(ticket, 0)
+        detail["launch_validation"] = launch_validation_json(conn, ticket_id)
         detail["field_values"] = {gate: ticket.field_values.get(gate, "")} if gate else {}
         detail["field_summaries"] = {
             str(row["field"]): {

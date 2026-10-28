@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 import pytest
+from tests.support.executor_catalog import ScriptedCatalogObserver
+from tests.unit.test_current_model_resolution import Catalogue
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
@@ -26,10 +29,18 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.contracts import (
+    CatalogWorkspaceBinding,
+    LaunchContext,
+    SelectionKind,
+)
+from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.db import connect
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
@@ -50,6 +61,7 @@ from planner.executor.native_messages import deliver_native_message
 from planner.executor.remote import RemoteBackendChild
 from planner.executor.store import ExecutorStore
 from planner.tickets import data
+from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 CHIEF = Principal(PrincipalKind.chief, "chief")
@@ -109,6 +121,29 @@ class ScriptedNative:
         ]
 
 
+class HeldCatalogObserver(ScriptedCatalogObserver):
+    """Synthetic local context for the existing fake transport boundary."""
+
+    def __init__(self) -> None:
+        super().__init__(lambda: IDENTITY)
+        self.model = "scripted"
+        self.contexts: list[LaunchContext] = []
+
+    async def capture_context(
+        self, backend_key: ConversationBackendKey, *, workspace: CatalogWorkspaceBinding
+    ) -> LaunchContext:
+        current = replace(
+            await super().capture_context(backend_key, workspace=workspace),
+            destination=TicketLocale.vps,
+            executor_identity=None,
+        )
+        self.contexts.append(current)
+        return current
+
+    def verify_context(self, expected: LaunchContext) -> bool:
+        return expected in self.contexts
+
+
 class BoundarySystem(SqliteProcessConversationSystem):
     crash_after_held_commit = False
     pause_drain = False
@@ -142,11 +177,25 @@ class HeldFixture:
         for previous in self.systems:
             await previous.shutdown()
 
+        async def native(command: ChildCommand) -> CommandOutcome:
+            outcome = await self.native(command)
+            conn = connect(self.path)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                ExecutorStore.record_command_outcome_in_transaction(conn, outcome)
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+            return outcome
+
         def factory(**kwargs: Any) -> RemoteBackendChild:
             start = kwargs["resolved_start"]
             return RemoteBackendChild(
                 ChildReference("process", "child_" + start.conversation_id, start.conversation_id),
-                self.native,
+                native,
                 lambda start: canonical_snapshot(),
             )
 
@@ -157,6 +206,14 @@ class HeldFixture:
             idle_child_stop_after_seconds=0,
             idle_child_sweep_interval_seconds=0.005,
         )
+        observer = HeldCatalogObserver()
+        system._model_resolver = ModelResolutionService(
+            snapshots=Catalogue(()),
+            store=ModelResolutionStore(self.path),
+            backend_state=BackendStateStore(self.path),
+            observer=observer,
+        )
+        system.configure_destination_validation(observer)
         self.systems.append(system)
         return system
 
@@ -242,6 +299,7 @@ async def boot(connection: Connection, root: Path) -> HeldFixture:
         title_max_chars=200,
         employee_backend="codex",
         employee_launch_model="scripted",
+        selection_kind=SelectionKind.concrete,
     )
     fixture = HeldFixture(
         connection,

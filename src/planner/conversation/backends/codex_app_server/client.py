@@ -43,6 +43,7 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
+from planner.conversation.backends.contracts import AdmissionRefused, current_emission_check
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -180,6 +181,7 @@ class CodexAppServerClient:
         # it takes this count when it starts and asks for what arrived after it.
         self._standard_error_bytes_ever = 0
         self._wire_broken = False
+        self._write_lock = asyncio.Lock()
 
     # --- the process --------------------------------------------------------------------
 
@@ -192,6 +194,9 @@ class CodexAppServerClient:
     ) -> None:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
         try:
+            check = current_emission_check()
+            if check is not None:
+                check()
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 stdin=asyncio.subprocess.PIPE,
@@ -328,7 +333,7 @@ class CodexAppServerClient:
             message["params"] = dict(params)
         try:
             await self._write(message)
-        except (CodexWireFailed, asyncio.CancelledError):
+        except (CodexWireFailed, AdmissionRefused, asyncio.CancelledError):
             self._pending.pop(request_id, None)
             if not answer.done():
                 answer.cancel()
@@ -391,15 +396,43 @@ class CodexAppServerClient:
         await self._write({"id": request_id, "error": {"code": code, "message": message}})
 
     async def _write(self, message: Mapping[str, Any]) -> None:
+        # Capture in the exact request task, not a long-lived reader's context.
+        check = (
+            current_emission_check()
+            if message.get("method")
+            in {
+                "turn/start",
+                "thread/start",
+                "thread/resume",
+                "review/start",
+                "thread/compact/start",
+                "thread/goal/set",
+            }
+            else None
+        )
+        line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+        async with self._write_lock:
+            self._write_prepared_line(line, check)
+            process = self._process
+            assert process is not None and process.stdin is not None
+            try:
+                await process.stdin.drain()
+            except Exception as did_not_reach:
+                self._wire_broken = True
+                raise CodexWireFailed(
+                    str(did_not_reach), request_may_have_been_written=True
+                ) from did_not_reach
+
+    def _write_prepared_line(self, line: str, check: Any) -> None:
         process = self._process
         if process is None or process.stdin is None or self._wire_broken:
             raise CodexWireFailed(
                 "this child's wire is not usable", request_may_have_been_written=False
             )
-        line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+        if check is not None:
+            check()
         try:
             process.stdin.write(line.encode("utf-8"))
-            await process.stdin.drain()
         except Exception as did_not_reach:
             self._wire_broken = True
             raise CodexWireFailed(

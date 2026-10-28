@@ -11,9 +11,12 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from fastapi import FastAPI, Request
 from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
@@ -39,6 +42,12 @@ from planner.projects import data as projects
 from planner.tickets import data, locale_configuration
 from planner.tickets.api import read_ticket_creation_context
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
+
+
+def _draft_request() -> Request:
+    app = FastAPI()
+    app.state.conversation_system = InMemoryConversationSystem()
+    return Request({"type": "http", "app": app})
 
 
 class Writer:
@@ -217,9 +226,19 @@ def test_draft_inherits_project_matches_write_and_never_writes(
         read_ticket_creation_context(
             {"worker_type": "coding", "manager": {"kind": "manager", "id": item.id}},
             tmp_db,
-            cast(Any, None),
+            RequestContext(OWNER_PRINCIPAL),
+            _draft_request(),
         )
     )
+    legacy_alias = asyncio.run(
+        read_ticket_creation_context(
+            {"worker_type": "coding", "orchestrator": {"kind": "manager", "id": item.id}},
+            tmp_db,
+            RequestContext(OWNER_PRINCIPAL),
+            _draft_request(),
+        )
+    )
+    assert legacy_alias == result
     assert tuple(tmp_db.iterdump()) == before
     assert result["project_id"] == project.id
     assert result["resolved_locale"] == "macos"
@@ -247,7 +266,8 @@ def test_claude_mac_draft_matches_canonical_create(tmp_db: Connection) -> None:
                 "locale": "macos",
             },
             tmp_db,
-            cast(Any, None),
+            RequestContext(OWNER_PRINCIPAL),
+            _draft_request(),
         )
     )
     choice = next(choice for choice in result["locale_choices"] if choice["locale"] == "macos")
@@ -294,7 +314,10 @@ def test_invalid_draft_never_writes(tmp_db: Connection, fields: dict[str, Any]) 
     with pytest.raises(PlannerError):
         asyncio.run(
             read_ticket_creation_context(
-                {"worker_type": "coding", **fields}, tmp_db, cast(Any, None)
+                {"worker_type": "coding", **fields},
+                tmp_db,
+                RequestContext(OWNER_PRINCIPAL),
+                _draft_request(),
             )
         )
     assert tuple(tmp_db.iterdump()) == before

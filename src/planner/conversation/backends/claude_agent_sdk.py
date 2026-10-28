@@ -61,6 +61,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 import warnings
 from base64 import b64encode
@@ -76,6 +77,7 @@ from claude_agent_sdk import (
     CanUseToolShadowedWarning,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    CLIConnectionError,
     CLINotFoundError,
     EffortLevel,
     HookEventMessage,
@@ -100,6 +102,8 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
 from planner.conversation.backends.contracts import (
+    AdmissionRefused,
+    BackendEmissionInputs,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -109,12 +113,14 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    EmissionCheck,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
     UserInputAnswerWriteFailed,
+    current_emission_check,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -385,6 +391,54 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         super().__init__(prompt, options)
         self._cleanup_process: Process | None = None
         self._cleanup_started = False
+        self._start_check = current_emission_check()
+        self._message_checks: dict[str, EmissionCheck] = {}
+
+    def _build_command(self) -> list[str]:
+        command = super()._build_command()
+        # SDK version lookup finishes before command preparation. No asynchronous
+        # work follows this seam before the SDK submits its prepared process inputs.
+        if self._start_check is not None:
+            self._start_check(
+                BackendEmissionInputs(
+                    self._options.model,
+                    self._options.effort,
+                    Path(self._cwd or "."),
+                    str(self._cli_path),
+                    {**os.environ, **self._options.env},
+                )
+            )
+        return command
+
+    def bind_user_check(self, message_uuid: str, check: EmissionCheck) -> None:
+        self._message_checks[message_uuid] = check
+
+    async def write(self, data: str) -> None:
+        # This is the pinned SDK write sequence, with a message-bound final guard.
+        message = json.loads(data)
+        identity = (
+            message.get("uuid")
+            if isinstance(message, dict) and message.get("type") == "user"
+            else None
+        )
+        check = self._message_checks.pop(identity, None) if isinstance(identity, str) else None
+        async with self._write_lock:
+            if not self._ready or not self._stdin_stream:
+                raise CLIConnectionError("ProcessTransport is not ready for writing")
+            if self._process and self._process.returncode is not None:
+                raise CLIConnectionError("Cannot write to terminated process")
+            if self._exit_error:
+                raise CLIConnectionError(
+                    "Cannot write to process that exited with error"
+                ) from self._exit_error
+            if check is not None:
+                check()
+            try:
+                await self._stdin_stream.send(data)
+            except Exception as error:
+                self._ready = False
+                self._exit_error = CLIConnectionError(f"Failed to write to process stdin: {error}")
+                raise self._exit_error from error
 
     async def connect(self) -> None:
         if self._cleanup_started:
@@ -430,6 +484,11 @@ class _ClaudeProtocolTransport(Transport):
 
     async def write(self, data: str) -> None:
         await self._inner.write(data)
+
+    def bind_user_check(self, message_uuid: str, check: EmissionCheck) -> None:
+        if not isinstance(self._inner, _ClaudeCleanupTransport):
+            raise AdmissionRefused("provider transport cannot prove final admission")
+        self._inner.bind_user_check(message_uuid, check)
 
     def read_messages(self) -> AsyncIterator[dict[str, Any]]:
         return self._read_messages()
@@ -618,7 +677,31 @@ class _ObservedClaudeSdkClient:
         return await self._client.get_server_info()
 
     async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
-        await self._client.query(prompt)
+        check = current_emission_check()
+        if check is None:
+            await self._client.query(prompt)
+            return
+
+        async def exact_messages() -> AsyncIterator[dict[str, Any]]:
+            if isinstance(prompt, str):
+                message = {
+                    "type": "user",
+                    "message": {"role": "user", "content": prompt},
+                    "parent_tool_use_id": None,
+                }
+                message_uuid = str(uuid.uuid4())
+                message["uuid"] = message_uuid
+                self._transport.bind_user_check(message_uuid, check)
+                yield message
+            else:
+                async for original in prompt:
+                    message = dict(original)
+                    message_uuid = str(uuid.uuid4())
+                    message["uuid"] = message_uuid
+                    self._transport.bind_user_check(message_uuid, check)
+                    yield message
+
+        await self._client.query(exact_messages())
 
     def receive_messages(self) -> AsyncIterator[Message]:
         return self._client.receive_messages()
@@ -769,12 +852,8 @@ class ClaudeAgentSdkBackendChild:
         if self._client is not None or self._reader is not None:
             raise BackendSpawnFailed("the previous Claude child still owns cleanup handles")
         self._resolved_start = resolved_start
-        minted_session_id = (
-            None if vendor_session_cursor is not None else str(uuid.uuid4())
-        )
-        options = self._options(
-            resolved_start, vendor_session_cursor, minted_session_id
-        )
+        minted_session_id = None if vendor_session_cursor is not None else str(uuid.uuid4())
+        options = self._options(resolved_start, vendor_session_cursor, minted_session_id)
         client = self._client_factory(options)
         self._wire_broken = True
         self._client = client
@@ -845,9 +924,16 @@ class ClaudeAgentSdkBackendChild:
         )
         client = self._connected_client()
         self._require_a_live_wire()
-        native_command = (
-            sender_message_count == 1 and self._is_catalog_command(sender_content)
-        )
+        check = current_emission_check()
+        if check is not None:
+            check(
+                BackendEmissionInputs(
+                    self._session_model,
+                    self._session_reasoning_effort,
+                    self._resolved_start.workspace_folder,
+                )
+            )
+        native_command = sender_message_count == 1 and self._is_catalog_command(sender_content)
         try:
             delivered_content = (
                 sender_content
@@ -861,6 +947,8 @@ class ClaudeAgentSdkBackendChild:
         asked = await self._query_argument(delivered_content)
         try:
             await client.query(asked)
+        except AdmissionRefused:
+            raise
         except Exception as did_not_reach:
             self._wire_broken = True
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
@@ -881,11 +969,7 @@ class ClaudeAgentSdkBackendChild:
         A message with more in it goes as one user message carrying content blocks, which
         is the SDK's other documented input.
         """
-        if (
-            user_message_uuid is None
-            and len(content) == 1
-            and isinstance(content[0], MessageText)
-        ):
+        if user_message_uuid is None and len(content) == 1 and isinstance(content[0], MessageText):
             return content[0].text
 
         blocks: list[dict[str, Any]] = []
@@ -1352,13 +1436,8 @@ class ClaudeAgentSdkBackendChild:
             # a result ended the backend turn. It is still a message in this conversation,
             # so preserve it under the turn that just ended. Every other late event remains
             # turn-bound and is dropped. The session id above is conversation-bound too.
-            if (
-                isinstance(message, AssistantMessage)
-                and self._last_ended_turn is not None
-            ):
-                await self._on_assistant_message_after_turn(
-                    self._last_ended_turn, message
-                )
+            if isinstance(message, AssistantMessage) and self._last_ended_turn is not None:
+                await self._on_assistant_message_after_turn(self._last_ended_turn, message)
             return
         match message:
             case StreamEvent():
@@ -1949,11 +2028,7 @@ def _user_questions(tool_input: dict[str, Any]) -> tuple[_UserQuestion, ...] | N
                 return None
             label = option.get("label")
             description = option.get("description")
-            if (
-                not isinstance(label, str)
-                or not label
-                or not isinstance(description, str)
-            ):
+            if not isinstance(label, str) or not label or not isinstance(description, str):
                 return None
             choices.append(_QuestionChoice(label=label, description=description))
         if len({choice.label for choice in choices}) != len(choices):

@@ -760,16 +760,37 @@ Scoped evidence lasts less than 300 seconds and requires matching current contex
 Without account-generation evidence, each attempt requires its own fresh observation.
 Legacy backend-only rows retain their original values and timestamps, without verification authority.
 
-The destination contracts, discovery, validation, and picker facts are implemented here.
-Lifecycle callers and views do not yet consume that boundary throughout the product.
-Unscoped creation, correction, and dispatch callers now return unresolved verification.
-That refusal does not mean that the provider or requested model is unavailable.
-This source is an intermediate integration candidate, not a deployable combined feature.
+Ticket creation and configuration retain the exact request when destination evidence is
+unresolved. The Ticket stores its verification reason and corrective action. Known
+incompatibility refuses the change. Missing evidence does not make the model invalid.
+Text-only Brief changes introduce no provider discovery requirement.
 
-The lifecycle integration must supply canonical workspace and selection context through
-existing authority. It must preserve offline configuration, show alias changes, and recheck
-current evidence before execution. The combined discovery/admission review follows that integration.
-Existing correction commands require the same caller adaptation before they can verify saved choices.
+Codex and Claude Ticket execution carries the exact selection, workspace, and evidence
+to the actual executor. A final check follows asynchronous preparation at the provider
+transport write. It compares observable local revisions and prepared process inputs.
+It does not control external credential revocation or establish provider entitlement.
+
+Canonical launch-affecting writers share a narrow durable fence. Uncertain commands
+retain their source ownership until their exact outcome settles. A timeout does not
+release that ownership. A blocked mutation names its affected sources and commands.
+Unrelated sources and ordinary text edits remain available.
+
+For model enablement, that fence covers the requested token, its original supporting
+catalog row, and its resolved identity. Another model's settings remain independent.
+An affected change is refused while admission is unsettled; Panels names the blocked
+scope and command. A lost outcome can keep that scope blocked until definitive
+settlement. Missing original recovery evidence can restrict policy changes for a whole
+backend, or all model-policy changes when even the backend is unknown. That exceptional
+barrier preserves startup and reads, and reports the evidence or settlement needed.
+Turning a model off does not undo prompts already emitted or cancel an active turn.
+
+The strict executor protocol is 11. Spool format 2 retains the existing container and
+opaque command arguments. Legacy commands receive no invented verification authority.
+Known outcomes replay as recorded. Unknown outcomes never authorize redispatch.
+
+Backend reads expose typed picker facts and structured validation. Presentation remains
+subject to the separately approved compact-controls Design. This source requires the
+combined review and matching peers before any later operator application.
 
 Code: `src/planner/conversation/model_resolution/`, `src/planner/executor/`.
 
@@ -1403,8 +1424,8 @@ New Chief conversations and Workers without a historical Ticket model also check
 resolved choice after overrides. An enabled override works even if the default is off.
 Chief and Worker default saves refuse an off model. Each refusal names the model and
 requires an enabled choice. Panels never silently substitutes another model.
-Existing choices retain their selected variant. The current-model rule above governs
-the concrete model used for each turn.
+Existing choices retain their exact requested intent. The destination evidence and
+admission rules above govern whether the next turn can start.
 
 ### Recorded local usage
 

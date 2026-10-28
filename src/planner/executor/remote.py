@@ -124,6 +124,17 @@ class RemoteBackendChild:
     async def _call(
         self, operation: ChildOperation, turn: backend.TurnToken | None = None, **arguments: Any
     ) -> JsonObject:
+        if operation in (ChildOperation.start, ChildOperation.write_prompt):
+            from planner.conversation.admission.service import (
+                bind_command,
+                current_admission_expectation,
+            )
+
+            expectation = current_admission_expectation()
+            if expectation is not None:
+                arguments["admission_expectation"] = bind_command(
+                    expectation, child=self.reference, turn=turn
+                )
         command = ChildCommand(
             command_id=str(uuid4()),
             child=self.reference,
@@ -171,9 +182,18 @@ class RemoteBackendChild:
             raise RemoteCommandUncertain(result.command_id)
         if result.disposition is CommandDisposition.refused:
             error_name = str(result.result.get("error_type", "BackendSpawnFailed"))
+            if error_name == "AdmissionRefused":
+                raise backend.AdmissionRefused(
+                    str(result.result.get("error_message", "model verification refused")),
+                    reason=str(result.result.get("reason", "context_changed")),
+                    corrective_action=str(
+                        result.result.get("corrective_action", "verify_launch_context")
+                    ),
+                )
             errors: dict[str, type[backend.BackendAdapterError]] = {
                 name: getattr(backend, name)
                 for name in (
+                    "AdmissionRefused",
                     "BackendSpawnFailed",
                     "SessionLoadFailed",
                     "PromptWriteFailed",

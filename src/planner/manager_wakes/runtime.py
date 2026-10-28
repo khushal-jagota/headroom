@@ -223,7 +223,12 @@ async def deliver_batch(
                     now=now(),
                 )
                 reconcile_batch_outcomes(conn, now=now())
-                return True
+                return (
+                    data.delivery_outcome_kind(
+                        conn, delivered.conversation_id, batch.sender_message_id
+                    )
+                    == "prompt"
+                )
 
     finally:
         conn.close()

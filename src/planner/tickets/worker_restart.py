@@ -92,6 +92,10 @@ def _require_same_restart_target(
         current.worker_step_claim is not expected.worker_step_claim
         or current.worker_step_claim_revision != expected.worker_step_claim_revision
         or current.conversation_id != expected.conversation_id
+        or tickets_data.employee_launch_configuration(current)
+        != tickets_data.employee_launch_configuration(expected)
+        or (current.locale, current.project_id, current.manager_id, current.manager_kind)
+        != (expected.locale, expected.project_id, expected.manager_id, expected.manager_kind)
     ):
         raise PlannerError(
             ErrorCode.already_running,
@@ -110,6 +114,10 @@ async def restart_worker(
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     start_worker_step: Callable[[], Awaitable[WorkerStepStartResult]],
     now: Callable[[], int],
+    prepare_employee_configuration: Callable[
+        [], Awaitable[Callable[[sqlite3.Connection, int], None]]
+    ]
+    | None = None,
 ) -> dict[str, object]:
     """Kill this Ticket's dead conversation, give the claim back, and start again.
 
@@ -121,6 +129,44 @@ async def restart_worker(
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
     """
+    (
+        killed_conversation_id,
+        killed_conversation_looked_running,
+    ) = await _prepare_worker_restart(
+        conversations,
+        conn,
+        principal,
+        ticket_id,
+        write_employee_configuration=write_employee_configuration,
+        prepare_employee_configuration=prepare_employee_configuration,
+        now=now,
+    )
+    # Start obtains fresh read ownership, after mutation ownership ends.
+    start_result = await start_worker_step()
+    restarted = tickets_data.read_ticket(conn, ticket_id)
+    return _restart_result(
+        conn,
+        ticket_id,
+        restarted,
+        start_result,
+        killed_conversation_id,
+        killed_conversation_looked_running,
+    )
+
+
+async def _prepare_worker_restart(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    principal: Principal,
+    ticket_id: str,
+    *,
+    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
+    now: Callable[[], int],
+    prepare_employee_configuration: Callable[
+        [], Awaitable[Callable[[sqlite3.Connection, int], None]]
+    ]
+    | None,
+) -> tuple[str | None, bool]:
     ticket = require_restartable(conn, principal, ticket_id)
     rearming_idle_revision = (
         ticket.worker_step_claim is WorkerStepClaim.none and ticket.conversation_id is not None
@@ -135,6 +181,38 @@ async def restart_worker(
     killed_conversation_looked_running = False
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
         _require_same_restart_target(conn, principal, ticket)
+        captured_workspace = conversation_start.workspace_binding_from_start(
+            conversation_start.worker_resolve(conn, ticket),
+            ticket.locale,
+        )
+        if prepare_employee_configuration is not None:
+            write_employee_configuration = await prepare_employee_configuration()
+        if (
+            write_employee_configuration is None
+            and ticket.employee_backend != "hermes"
+            and ticket.employee_launch_model is not None
+        ):
+            validation = await conversation_start.verify_ticket_launch(
+                conversations,
+                conn,
+                ticket,
+                persist=True,
+                now=now(),
+            )
+            conversation_start.refuse_known_incompatibility(validation)
+        _require_same_restart_target(conn, principal, ticket)
+        if (
+            conversation_start.workspace_binding_from_start(
+                conversation_start.worker_resolve(conn, ticket),
+                ticket.locale,
+            )
+            != captured_workspace
+        ):
+            raise PlannerError(
+                ErrorCode.validation,
+                "workspace changed before source retirement",
+                {},
+            )
         if killed_conversation_id is not None:
             killed_conversation_looked_running = await conversations.is_running(
                 killed_conversation_id
@@ -144,50 +222,120 @@ async def restart_worker(
             # this conversation if the Ticket moves while kill is awaited.
             await conversations.kill(killed_conversation_id)
 
-        write_now = now()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            _require_same_restart_target(conn, principal, ticket)
-            if ticket.worker_step_claim in {
-                WorkerStepClaim.out,
-                WorkerStepClaim.errored,
-            }:
-                given_back = tickets_data.release_worker_step_claim(
-                    conn,
-                    ticket_id,
-                    expected_claim=ticket.worker_step_claim,
-                    expected_claim_revision=ticket.worker_step_claim_revision,
-                    now=write_now,
+        from planner.conversation.system import SqliteProcessConversationSystem
+
+        source_retirement_proven = False
+        if (
+            isinstance(conversations, SqliteProcessConversationSystem)
+            and killed_conversation_id is not None
+        ):
+            source_retirement_proven = await conversations.retirement_is_confirmed(
+                killed_conversation_id
+            )
+            if not source_retirement_proven:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "source retirement is unresolved; executor or operator settlement is required",
+                    {
+                        "retirement_started": True,
+                        "source_retired": None,
+                        "reason": "context_changed",
+                        "corrective_action": "verify_launch_context",
+                    },
                 )
-                if not given_back:
-                    raise PlannerError(
-                        ErrorCode.already_running,
-                        "the Ticket moved while it was being restarted",
-                        {"ticket_id": ticket_id},
-                    )
-                if killed_conversation_id is not None:
-                    unlinked = tickets_data.clear_ticket_conversation_link(
-                        conn,
-                        ticket_id,
-                        expected_conversation_id=killed_conversation_id,
-                        now=write_now,
-                    )
-                    if not unlinked:
-                        raise PlannerError(
-                            ErrorCode.already_running,
-                            "the Ticket moved while it was being restarted",
-                            {"ticket_id": ticket_id},
+        from planner.tickets.launch_authority import acquire_ticket_mutation, launch_authority_scope
+
+        try:
+            permit = acquire_ticket_mutation(conn, ticket_id)
+        except PlannerError as error:
+            raise PlannerError(
+                error.code,
+                "restart cannot settle the retained source authority; "
+                "executor or operator settlement is required",
+                {
+                    **error.detail,
+                    "retirement_started": killed_conversation_id is not None,
+                    "source_retired": True if source_retirement_proven else None,
+                },
+            ) from error
+        try:
+            with launch_authority_scope(permit):
+                write_now = now()
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    _require_same_restart_target(conn, principal, ticket)
+                    if ticket.worker_step_claim in {
+                        WorkerStepClaim.out,
+                        WorkerStepClaim.errored,
+                    }:
+                        given_back = tickets_data.release_worker_step_claim(
+                            conn,
+                            ticket_id,
+                            expected_claim=ticket.worker_step_claim,
+                            expected_claim_revision=ticket.worker_step_claim_revision,
+                            now=write_now,
                         )
-            if write_employee_configuration is not None:
-                write_employee_configuration(conn, write_now)
-            conn.execute("COMMIT")
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
-    start_result = await start_worker_step()
-    restarted = tickets_data.read_ticket(conn, ticket_id)
+                        if not given_back:
+                            raise PlannerError(
+                                ErrorCode.already_running,
+                                "the Ticket moved while it was being restarted",
+                                {"ticket_id": ticket_id},
+                            )
+                        if killed_conversation_id is not None:
+                            unlinked = tickets_data.clear_ticket_conversation_link(
+                                conn,
+                                ticket_id,
+                                expected_conversation_id=killed_conversation_id,
+                                now=write_now,
+                            )
+                            if not unlinked:
+                                raise PlannerError(
+                                    ErrorCode.already_running,
+                                    "the Ticket moved while it was being restarted",
+                                    {"ticket_id": ticket_id},
+                                )
+                    if write_employee_configuration is not None:
+                        write_employee_configuration(conn, write_now)
+                    conn.execute("COMMIT")
+                except BaseException:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+        except PlannerError as error:
+            raise PlannerError(
+                error.code,
+                error.message,
+                {
+                    **error.detail,
+                    "retirement_started": killed_conversation_id is not None,
+                    "source_retired": True if source_retirement_proven else None,
+                },
+            ) from error
+        finally:
+            permit.release(conn)
+    return killed_conversation_id, killed_conversation_looked_running
+
+
+def _restart_result(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    restarted: Ticket,
+    start_result: WorkerStepStartResult,
+    killed_conversation_id: str | None,
+    killed_conversation_looked_running: bool,
+) -> dict[str, object]:
+    from pydantic import TypeAdapter
+
+    from planner.conversation.model_resolution.contracts import CanonicalModelValidation
+
+    validation = start_result.launch_validation
     return {
+        "verification_failure": start_result.verification_failure,
+        "launch_validation": (
+            None
+            if validation is None
+            else TypeAdapter(CanonicalModelValidation).dump_python(validation, mode="json")
+        ),
         "ticket_id": ticket_id,
         "killed_conversation_id": killed_conversation_id,
         "killed_conversation_looked_running": killed_conversation_looked_running,
@@ -203,6 +351,13 @@ async def restart_worker(
         "not_started_because": (
             None
             if start_result.started or start_result.delivery_fate is not None
+            else (
+                f"{start_result.verification_failure['reason']}: "
+                f"{start_result.verification_failure['corrective_action']}"
+            )
+            if start_result.verification_failure is not None
+            else f"{validation.reason.value}: {validation.corrective_action.value}"
+            if validation is not None
             else worker_step_readiness.worker_step_blocker(
                 conn,
                 restarted,

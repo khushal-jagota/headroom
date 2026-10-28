@@ -127,6 +127,12 @@ from planner.conversation.events import (
     UserInputFailedEventPayload,
     UserInputQuestion,
 )
+from planner.conversation.launch_intent import (
+    effort_presence,
+)
+from planner.conversation.launch_intent import (
+    reasoning_effort_is_set as effort_presence_is_set,
+)
 from planner.conversation.lifecycle import (
     LifecycleFact,
     LifecycleKind,
@@ -157,7 +163,22 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import CurrentModelResolver, ModelResolution
+from planner.conversation.model_resolution.contracts import (
+    AliasResolutionFact,
+    CanonicalModelValidation,
+    CatalogExpectedContext,
+    CatalogRequest,
+    CatalogUnavailable,
+    CatalogWorkspaceBinding,
+    CurrentModelResolver,
+    LaunchContext,
+    ModelResolution,
+    ModelSelection,
+    PickerRow,
+    ProviderCatalogObserver,
+    ValidationReason,
+    ValidationState,
+)
 from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
 from planner.conversation.storage import (
     ConversationRecord,
@@ -167,7 +188,7 @@ from planner.conversation.storage import (
 )
 from planner.core import change_signal
 from planner.core.commit_capture import register_capture_task
-from planner.core.contracts import PlannerError, Principal, PrincipalKind
+from planner.core.contracts import JsonDict, PlannerError, Principal, PrincipalKind
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AnswerApplication,
@@ -366,6 +387,8 @@ class _HeldPrompt:
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     delivery_uncertain: bool = False
 
+    reasoning_effort_is_set: bool = False
+
 
 @dataclass(frozen=True, slots=True)
 class _PromptDeliveryAttempt:
@@ -379,6 +402,8 @@ class _PromptDeliveryAttempt:
     record_refusal: bool = False
     composed_content_delivered: bool = True
     model_resolution: ModelResolution | None = None
+    canonical_validation: CanonicalModelValidation | None = None
+    original_selection: ModelSelection | None = None
     refusal_detail: str | None = None
     suppression_reason: str | None = None
     messages: tuple[_HeldPrompt, ...] = ()
@@ -413,6 +438,9 @@ class _ConversationState:
     last_ended_turn_token: TurnToken | None = None
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
+    child_resolved_model_id: str | None = None
+    child_launch_context: LaunchContext | None = None
+    local_child_retirement_proven: bool = False
     child_is_quarantined: bool = False
     executor_child_reference: Any = None
     executor_initial_commands: tuple[ChildCommand, ...] = ()
@@ -458,6 +486,8 @@ class SqliteProcessConversationSystem:
             raise ValueError(f"no backend child factory for {missing}")
         self._store = store
         self._model_resolver = model_resolver
+        self._catalog_observer: ProviderCatalogObserver | None = None
+        self._catalog_endpoint: Any = None
         self._message_files = message_files
         # Nobody watching is the ordinary case for a system built without one: the record
         # is written exactly the same way, and there is simply nowhere to show it.
@@ -612,13 +642,6 @@ class SqliteProcessConversationSystem:
         replacing it would strand a live child that nothing can reach any more.
         """
         resolved = resolve_conversation_start_request(request)
-        if self._model_resolver is not None:
-            current = await self._model_resolver.resolve(
-                resolved.backend_key, resolved.model, resolved.reasoning_effort
-            )
-            resolved = replace(
-                resolved, model=current.model, reasoning_effort=current.reasoning_effort
-            )
         record = await self._store.create_conversation(resolved)
         async with self._conversations_lock:
             if record.conversation_id not in self._conversations:
@@ -634,6 +657,7 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -649,6 +673,7 @@ class SqliteProcessConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -659,6 +684,7 @@ class SqliteProcessConversationSystem:
         )
         return receipt.fate
 
+    @effort_presence
     async def send_with_receipt(
         self,
         conversation_id: str,
@@ -668,6 +694,7 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -844,7 +871,10 @@ class SqliteProcessConversationSystem:
                         PromptDeliveryRefusalReason.write_to_backend_failed,
                     )
                     return AddressedPromptDeliveryReceipt(
-                        PromptDeliveryRefused(refusal_reason=reason),
+                        PromptDeliveryRefused(
+                            refusal_reason=reason,
+                            model_validation=getattr(payload, "model_validation", None),
+                        ),
                         newly_accepted=False,
                     )
                 async with state.lock:
@@ -1131,6 +1161,44 @@ class SqliteProcessConversationSystem:
         running = state.running_turn
         if running is not None:
             running.explicit_reply_recipients.add(recipient)
+
+    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
+        """Require an actual cleanup receipt or proof that no source ever started."""
+        from planner.core.db import connect
+
+        conn = connect(self._store._db_path)
+        try:
+            unresolved = conn.execute(
+                "SELECT 1 FROM ticket_launch_authority a JOIN tickets t "
+                "ON a.authority_key='ticket:'||t.id WHERE t.conversation_id=? LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            retained = conn.execute(
+                "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            remote_receipt = (
+                retained is not None and json.loads(retained[0]).get("source_retired") is True
+            )
+            if unresolved is not None:
+                return False
+        finally:
+            conn.close()
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return remote_receipt
+        async with state.lock:
+            return (
+                state.child is None
+                and state.executor_child_reference is None
+                and not state.child_is_quarantined
+                and (state.initial_shutdown_task is None or state.initial_shutdown_task.done())
+                and (
+                    remote_receipt
+                    or state.local_child_retirement_proven
+                    or not state.has_delivered_prompt
+                )
+            )
 
     async def kill(self, conversation_id: str) -> None:
         state = await self._conversation_state(conversation_id)
@@ -1509,6 +1577,7 @@ class SqliteProcessConversationSystem:
                         state.record.conversation_id,
                         (),
                         executor_turn=metadata,
+                        launch_command=command,
                     ),
                 )
 
@@ -1907,6 +1976,8 @@ class SqliteProcessConversationSystem:
                     reply_requested=held.reply_requested,
                     recovery_references=held.recovery_references,
                     model_resolution=delivery.model_resolution,
+                    canonical_validation=delivery.canonical_validation,
+                    original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
                     record_refusal=True,
@@ -1928,7 +1999,10 @@ class SqliteProcessConversationSystem:
             refusal = delivery.refusal_reason
             assert refusal is not None
             await self._drain_held_prompts(state)
-            return PromptDeliveryRefused(refusal_reason=refusal)
+            return PromptDeliveryRefused(
+                refusal_reason=refusal,
+                model_validation=self._validation_json(delivery.canonical_validation),
+            )
 
         if immediate_refusal is not None:
             await self._drain_held_prompts(state)
@@ -2555,6 +2629,7 @@ class SqliteProcessConversationSystem:
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
         held = _HeldPrompt(
+            reasoning_effort_is_set=effort_presence_is_set(),
             held_prompt_id=f"held_{uuid4().hex}",
             content=content,
             sender_label=sender_label,
@@ -2825,7 +2900,11 @@ class SqliteProcessConversationSystem:
                     owner_read_through_sequence=owner_read_through_sequence,
                     acknowledge_owner_on_failure=acknowledge_owner_on_failure,
                 )
-            elif model_change is not None or reasoning_effort_change is not None:
+            elif (
+                model_change is not None
+                or reasoning_effort_change is not None
+                or effort_presence_is_set()
+            ):
                 queued = self._hold_prompt(
                     state,
                     content=content,
@@ -2910,6 +2989,7 @@ class SqliteProcessConversationSystem:
             state,
             (
                 _HeldPrompt(
+                    reasoning_effort_is_set=effort_presence_is_set(),
                     held_prompt_id="",
                     content=content,
                     sender_label=sender_label,
@@ -3106,6 +3186,7 @@ class SqliteProcessConversationSystem:
     ) -> PromptDeliveryFate:
         reservation.messages = (
             _HeldPrompt(
+                reasoning_effort_is_set=effort_presence_is_set(),
                 held_prompt_id="",
                 content=content,
                 sender_label=sender_label,
@@ -3144,6 +3225,7 @@ class SqliteProcessConversationSystem:
                 automatic_compaction=reservation.automatic_compaction,
                 messages=(
                     _HeldPrompt(
+                        reasoning_effort_is_set=effort_presence_is_set(),
                         held_prompt_id="",
                         content=content,
                         sender_label=sender_label,
@@ -3251,6 +3333,8 @@ class SqliteProcessConversationSystem:
             reply_requested=reply_requested,
             recovery_references=recovery_references,
             model_resolution=delivery.model_resolution,
+            canonical_validation=delivery.canonical_validation,
+            original_selection=delivery.original_selection,
             refusal_detail=delivery.refusal_detail,
             composed_content_delivered=delivery.composed_content_delivered,
             record_refusal=delivery.record_refusal,
@@ -3269,7 +3353,10 @@ class SqliteProcessConversationSystem:
         # The agent is free and this message is not going anywhere, so whatever was waiting
         # for it is owed its run. A send-now has already killed the incumbent to get here.
         await self._drain_held_prompts(state)
-        return PromptDeliveryRefused(refusal_reason=refusal)
+        return PromptDeliveryRefused(
+            refusal_reason=refusal,
+            model_validation=self._validation_json(delivery.canonical_validation),
+        )
 
     @staticmethod
     def _reply_senders(messages: tuple[_HeldPrompt, ...]) -> tuple[Principal, ...]:
@@ -3415,7 +3502,457 @@ class SqliteProcessConversationSystem:
             await asyncio.shield(settle_recovery_exception())
             raise
 
+    @staticmethod
+    def _validation_json(validation: CanonicalModelValidation | None) -> JsonDict | None:
+        from pydantic import TypeAdapter
+
+        if validation is None:
+            return None
+        value = TypeAdapter(CanonicalModelValidation).dump_python(validation, mode="json")
+        assert isinstance(value, dict)
+        return value
+
+    def configure_destination_validation(
+        self, observer: ProviderCatalogObserver, *, endpoint: Any = None
+    ) -> None:
+        """Wire actual local launch inputs and the authenticated native endpoint."""
+        self._catalog_observer = observer
+        self._catalog_endpoint = endpoint
+
+    def launch_policy_revision(self, backend_key: ConversationBackendKey) -> str:
+        from planner.conversation.backend_state import BackendStateStore
+
+        return repr(
+            sorted(BackendStateStore(self._store._db_path).read_disabled_models(backend_key))
+        )
+
+    async def validate_launch_selection(
+        self,
+        selection: ModelSelection,
+        workspace: CatalogWorkspaceBinding,
+        *,
+        attempt_id: str,
+        classify_new: bool = False,
+        previous_alias_resolution: AliasResolutionFact | None = None,
+    ) -> CanonicalModelValidation:
+        from planner.conversation.model_resolution.logic.validation import (
+            unresolved_validation,
+            validate_model_selection,
+        )
+        from planner.conversation.model_resolution.service import ModelResolutionService
+        from planner.tickets.contracts import TicketLocale
+
+        if selection.backend_key is ConversationBackendKey.hermes:
+            return unresolved_validation(selection, ValidationReason.catalog_unavailable)
+        if not isinstance(self._model_resolver, ModelResolutionService):
+            return unresolved_validation(selection, ValidationReason.catalog_unavailable)
+        from planner.runtime.logic.launch_selection import classify_new_selection
+
+        if classify_new:
+            selection = classify_new_selection(selection)
+        if selection.destination is TicketLocale.vps:
+            validation = await self._model_resolver.validate_selection(
+                selection,
+                workspace=workspace,
+                attempt_id=attempt_id,
+                observer=self._catalog_observer,
+                previous_alias_resolution=previous_alias_resolution,
+            )
+            if classify_new and validation.evidence is not None:
+                observation = self._model_resolver._store.read_observation(
+                    validation.evidence.context
+                )
+                classified = classify_new_selection(selection, observation)
+                if classified != selection:
+                    return validate_model_selection(
+                        classified,
+                        validation.evidence.context,
+                        observation,
+                        now=self._unix_time_now(),
+                        attempt_id=attempt_id,
+                        disabled_models=self._model_resolver._backend_state.read_disabled_models(
+                            selection.backend_key,
+                        ),
+                        previous_alias_resolution=previous_alias_resolution,
+                    )
+            if validation.reason is ValidationReason.legacy_unscoped:
+                from planner.conversation.model_resolution.contracts import CorrectiveAction
+
+                validation = replace(
+                    validation, corrective_action=CorrectiveAction.classify_selection
+                )
+            return validation
+        endpoint = self._catalog_endpoint
+        if endpoint is None or endpoint.identity is None or not endpoint.ready:
+            return unresolved_validation(selection, ValidationReason.offline)
+        identity = endpoint.identity
+        result = await endpoint.observe_catalog(
+            CatalogRequest(selection.backend_key, CatalogExpectedContext(identity, workspace)),
+            attempt_id=attempt_id,
+        )
+        if endpoint.identity != identity or not endpoint.ready:
+            return unresolved_validation(selection, ValidationReason.context_changed)
+        if isinstance(result, CatalogUnavailable):
+            return unresolved_validation(selection, result.reason, unavailable=result)
+        self._model_resolver._store.keep_observation(result)
+        if classify_new:
+            selection = classify_new_selection(selection, result)
+        return validate_model_selection(
+            selection,
+            result.evidence.context,
+            result,
+            now=self._unix_time_now(),
+            attempt_id=attempt_id,
+            disabled_models=self._model_resolver._backend_state.read_disabled_models(
+                selection.backend_key
+            ),
+            previous_alias_resolution=previous_alias_resolution,
+        )
+
+    def picker_rows_for_validation(
+        self,
+        validation: CanonicalModelValidation,
+        *,
+        attempt_id: str,
+    ) -> tuple[PickerRow, ...]:
+        """Project only the exact observation used by this contextual validation."""
+        from planner.conversation.model_resolution.contracts import CatalogPresence, EvidenceStatus
+        from planner.conversation.model_resolution.data import ModelResolutionStore
+        from planner.conversation.model_resolution.picker import project_picker_rows
+
+        context = (
+            validation.evidence.context
+            if validation.evidence is not None
+            else validation.unavailable.attempted_context
+            if validation.unavailable
+            else None
+        )
+        if context is None:
+            selection = validation.selection
+            return (
+                PickerRow(
+                    selection.submitted_token,
+                    selection.selection_kind,
+                    validation.resolved_model_id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    EvidenceStatus.unavailable
+                    if validation.unavailable
+                    else EvidenceStatus.unverified,
+                    CatalogPresence.unknown,
+                    True,
+                    validation.current_alias_resolution,
+                    validation.previous_alias_resolution,
+                    (),
+                    validation,
+                ),
+            )
+        observation = ModelResolutionStore(self._store._db_path).read_observation(context)
+        from planner.conversation.backend_state import BackendStateStore
+
+        return project_picker_rows(
+            validation.selection,
+            context,
+            observation,
+            now=self._unix_time_now(),
+            attempt_id=attempt_id,
+            previous_alias_resolution=validation.previous_alias_resolution,
+            disabled_models=BackendStateStore(self._store._db_path).read_disabled_models(
+                validation.selection.backend_key,
+            ),
+            unavailable=validation.unavailable,
+        )
+
     async def _deliver_prompt_unsettled(
+        self, state: _ConversationState, turn_token: TurnToken, **kwargs: Any
+    ) -> _PromptDeliveryAttempt:
+        """Verify the real lifecycle intent immediately around child preparation and send."""
+        from planner.conversation.admission.service import (
+            admission_scope,
+            expectation_from_validation,
+        )
+        from planner.conversation.backends.contracts import AdmissionRefused
+        from planner.core.db import connect
+        from planner.core.errors import ErrorCode
+        from planner.runtime.conversation_start import (
+            worker_resolve,
+            workspace_binding_from_start,
+        )
+        from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
+        from planner.tickets import data as ticket_data
+        from planner.tickets.launch_authority import (
+            acquire_read,
+            authority_keys,
+            current_launch_authority_permit,
+            launch_authority_scope,
+        )
+        from planner.tickets.validation.data import (
+            read_launch_selection,
+            read_launch_validation,
+            record_launch_validation,
+        )
+
+        conn = connect(self._store._db_path)
+        permit = None
+        owns_permit = False
+        validation: CanonicalModelValidation | None = None
+        workspace: CatalogWorkspaceBinding | None = None
+        ticket_id: str | None = None
+        messages = kwargs.get("messages", ())
+        effort_is_set = (
+            messages[0].reasoning_effort_is_set if messages else effort_presence_is_set()
+        )
+        model = kwargs.get("model_change")
+        effort = kwargs.get("reasoning_effort_change")
+        try:
+            row = conn.execute(
+                "SELECT id FROM tickets WHERE conversation_id=?",
+                (state.record.conversation_id,),
+            ).fetchone()
+            if row is None:
+                return await self._deliver_prompt_unsettled_verified(state, turn_token, **kwargs)
+            ticket_id = row["id"]
+            ticket = ticket_data.read_ticket(conn, ticket_id)
+            if state.record.backend_key is ConversationBackendKey.hermes:
+                return await self._deliver_prompt_unsettled_verified(state, turn_token, **kwargs)
+            from planner.conversation.admission.policy import policy_key
+
+            effective_backend = (
+                state.record.backend_key
+                if model is not None and not state.has_delivered_prompt
+                else ConversationBackendKey(ticket.employee_backend)
+            )
+            requested_token = model if model is not None else ticket.employee_launch_model
+            inherited = current_launch_authority_permit()
+            required_keys = set(authority_keys(conn, ticket_id))
+            if requested_token is not None:
+                required_keys.add(policy_key(effective_backend, requested_token))
+            if inherited is not None and inherited.mode == "read":
+                persisted = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT authority_key FROM ticket_launch_authority "
+                        "WHERE lease_id=? AND mode='read'",
+                        (inherited.lease_id,),
+                    )
+                }
+                if f"ticket:{ticket_id}" in persisted:
+                    if model is not None or effort is not None or effort_is_set:
+                        raise PlannerError(
+                            ErrorCode.already_running,
+                            "finish the captured launch before changing its model or effort",
+                            {"ticket_id": ticket_id},
+                        )
+                    if not required_keys.issubset(persisted):
+                        raise AdmissionRefused("captured launch authority is no longer current")
+                    permit = inherited
+            # Scheduled settlement may inherit a scope whose rows were already
+            # released. Such a ContextVar is no authority to borrow or to reject.
+            if permit is None:
+                permit = acquire_read(
+                    conn,
+                    ticket_id,
+                    backend_key=effective_backend,
+                    submitted_token=requested_token,
+                )
+                owns_permit = True
+            selection = read_launch_selection(conn, ticket_id)
+            original_selection = selection
+            model = kwargs.get("model_change")
+            effort = kwargs.get("reasoning_effort_change")
+            if model is not None or effort is not None or effort_is_set:
+                from planner.conversation.model_resolution.contracts import SelectionKind
+
+                selection = replace(
+                    selection,
+                    submitted_token=selection.submitted_token if model is None else model,
+                    backend_key=(
+                        state.record.backend_key
+                        if model is not None and not state.has_delivered_prompt
+                        else selection.backend_key
+                    ),
+                    selection_kind=(
+                        selection.selection_kind
+                        if model is None or model == selection.submitted_token
+                        else SelectionKind.legacy_unclassified
+                    ),
+                    reasoning_effort=(
+                        selection.reasoning_effort
+                        if effort is None and not effort_is_set
+                        else effort
+                    ),
+                )
+            values = worker_resolve(
+                conn,
+                ticket,
+                ConversationStartOverrides(
+                    backend_key=selection.backend_key,
+                    model=model,
+                    reasoning_effort=effort,
+                    reasoning_effort_is_set=effort_is_set,
+                ),
+            )
+            workspace = workspace_binding_from_start(values, selection.destination)
+            attempt_id = uuid4().hex
+            stored = read_launch_validation(conn, ticket_id)
+            previous_alias = (
+                None
+                if stored is None
+                else (
+                    stored.validation.current_alias_resolution
+                    or stored.validation.previous_alias_resolution
+                )
+            )
+            validation = await self.validate_launch_selection(
+                selection,
+                workspace,
+                attempt_id=attempt_id,
+                classify_new=model is not None,
+                previous_alias_resolution=previous_alias,
+            )
+            from planner.runtime.logic.launch_selection import preserve_alias_history
+
+            validation = preserve_alias_history(
+                validation, None if stored is None else stored.validation
+            )
+            if model is None and effort is None and not effort_is_set:
+                if not record_launch_validation(
+                    conn,
+                    ticket_id,
+                    validation,
+                    expected_workspace=workspace,
+                    now=int(self._unix_time_now()),
+                    notify=True,
+                ):
+                    return _PromptDeliveryAttempt(
+                        refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
+                        record_refusal=True,
+                        refusal_detail="model verification context_changed",
+                    )
+            if validation.state is not ValidationState.compatible:
+                return _PromptDeliveryAttempt(
+                    refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
+                    record_refusal=True,
+                    canonical_validation=validation,
+                    refusal_detail=(
+                        f"{validation.reason.value}: {validation.corrective_action.value}"
+                    ),
+                )
+            from planner.conversation.admission.policy import (
+                check_policy_dependencies,
+                protect_validation_policy,
+            )
+
+            policy_dependencies = protect_validation_policy(
+                conn, permit, validation, conversation_id=state.record.conversation_id
+            )
+            selection = validation.selection
+            assert validation.launch_token is not None
+            expectation = expectation_from_validation(
+                validation,
+                attempt_id=attempt_id,
+                conversation_id=state.record.conversation_id,
+                disabled_models_revision=self.launch_policy_revision(selection.backend_key),
+                turn=turn_token,
+            )
+            kwargs["model_change"] = validation.launch_token
+            kwargs["reasoning_effort_change"] = selection.reasoning_effort
+            from typing import cast
+
+            from planner.conversation.admission.service import AdmissionContextObserver
+            from planner.conversation.backends.contracts import BackendEmissionInputs
+
+            system = self
+            captured_observer = cast(AdmissionContextObserver, self._catalog_observer)
+
+            class CurrentContext:
+                def verify_context(self, expected: LaunchContext) -> bool:
+                    policy_conn = connect(system._store._db_path)
+                    try:
+                        check_policy_dependencies(policy_conn, policy_dependencies)
+                    finally:
+                        policy_conn.close()
+                    return captured_observer is not None and captured_observer.verify_context(
+                        expected
+                    )
+
+                def verify_prepared_launch(
+                    self,
+                    expected: LaunchContext,
+                    prepared: BackendEmissionInputs,
+                ) -> bool:
+                    return self.verify_context(
+                        expected
+                    ) and captured_observer.verify_prepared_launch(
+                        expected,
+                        prepared,
+                    )
+
+            with (
+                launch_authority_scope(permit),
+                admission_scope(expectation, CurrentContext()),
+            ):
+                delivered = await self._deliver_prompt_unsettled_verified(
+                    state,
+                    turn_token,
+                    canonical_validation=validation,
+                    **kwargs,
+                )
+                return replace(
+                    delivered,
+                    canonical_validation=validation,
+                    original_selection=original_selection,
+                )
+        except (PlannerError, AdmissionRefused) as error:
+            if isinstance(error, AdmissionRefused) and validation is not None:
+                from planner.conversation.model_resolution.contracts import CorrectiveAction
+
+                reason = ValidationReason(error.reason)
+                action = CorrectiveAction(error.corrective_action)
+                validation = replace(
+                    validation,
+                    state=(
+                        ValidationState.incompatible
+                        if reason
+                        in (
+                            ValidationReason.model_incompatible,
+                            ValidationReason.effort_incompatible,
+                        )
+                        else ValidationState.unresolved
+                    ),
+                    reason=reason,
+                    corrective_action=action,
+                    launch_token=None,
+                )
+                if (
+                    ticket_id is not None
+                    and workspace is not None
+                    and model is None
+                    and effort is None
+                    and not effort_is_set
+                ):
+                    record_launch_validation(
+                        conn,
+                        ticket_id,
+                        validation,
+                        expected_workspace=workspace,
+                        now=int(self._unix_time_now()),
+                        notify=True,
+                    )
+            return _PromptDeliveryAttempt(
+                refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
+                record_refusal=True,
+                canonical_validation=validation,
+                refusal_detail=str(error),
+            )
+        finally:
+            if permit is not None and owns_permit:
+                permit.release(conn)
+            conn.close()
+
+    async def _deliver_prompt_unsettled_verified(
         self,
         state: _ConversationState,
         turn_token: TurnToken,
@@ -3429,6 +3966,7 @@ class SqliteProcessConversationSystem:
         automatic_compaction: bool,
         reply_senders: tuple[Principal, ...] = (),
         messages: tuple[_HeldPrompt, ...] = (),
+        canonical_validation: CanonicalModelValidation | None = None,
     ) -> _PromptDeliveryAttempt:
         """Get the message onto a live child's wire, or name why that was impossible.
 
@@ -3452,32 +3990,25 @@ class SqliteProcessConversationSystem:
             ),
         )
         resolution: ModelResolution | None = None
-        if self._model_resolver is not None:
-            requested_model = model_change or state.record.model
-            if requested_model is None:
-                raise ConversationRecordNamesNoModel(state.record.conversation_id)
-            try:
-                resolution = await self._model_resolver.resolve(
-                    state.record.backend_key,
-                    requested_model,
-                    state.record.reasoning_effort
-                    if reasoning_effort_change is None
-                    else reasoning_effort_change,
+        requires_exact_rebind = (
+            canonical_validation is not None
+            and state.child is not None
+            and (
+                (
+                    canonical_validation.evidence is not None
+                    and canonical_validation.evidence.context != state.child_launch_context
                 )
-            except PlannerError as error:
-                return _PromptDeliveryAttempt(
-                    refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
-                    record_refusal=True,
-                    refusal_detail=str(error),
+                or (
+                    canonical_validation.selection.reasoning_effort is None
+                    and state.record.reasoning_effort is not None
                 )
-            model_change = resolution.model
-            reasoning_effort_change = resolution.reasoning_effort
-            if resolution.catalogue_warning is not None:
-                LOGGER.warning(
-                    "conversation %s: %s",
-                    state.record.conversation_id,
-                    resolution.catalogue_warning,
+                or (
+                    state.record.backend_key is ConversationBackendKey.claude
+                    and canonical_validation.launch_token == state.record.model
+                    and canonical_validation.resolved_model_id != state.child_resolved_model_id
                 )
+            )
+        )
         try:
             if (
                 state.last_ended_turn_token is not None
@@ -3534,6 +4065,8 @@ class SqliteProcessConversationSystem:
         attempted_child = child
         attempted_reservation = state.reserved_turn
         try:
+            if requires_exact_rebind:
+                raise NeedsRebind("exact desired default or alias target requires a fresh child")
             accepted = await attempted_child.write_prompt(
                 turn_token,
                 composed,
@@ -3738,6 +4271,8 @@ class SqliteProcessConversationSystem:
         recovery_references: tuple[DeploymentRecoveryReference, ...],
         composed_content_delivered: bool,
         model_resolution: ModelResolution | None = None,
+        canonical_validation: CanonicalModelValidation | None = None,
+        original_selection: ModelSelection | None = None,
         refusal_detail: str | None = None,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
@@ -3750,9 +4285,18 @@ class SqliteProcessConversationSystem:
         The rows are written before the turn is admitted, so nothing the backend says about
         this turn can be recorded ahead of the prompt that started it.
         """
+        sender_requested_change = (
+            model_change is not None
+            or reasoning_effort_change is not None
+            or effort_presence_is_set()
+            or any(message.reasoning_effort_is_set for message in reservation.messages)
+        )
         if model_resolution is not None:
             model_change = model_resolution.model
             reasoning_effort_change = model_resolution.reasoning_effort
+        if canonical_validation is not None:
+            model_change = canonical_validation.launch_token
+            reasoning_effort_change = canonical_validation.selection.reasoning_effort
         async with state.lock:
             try:
                 if reservation.shutdown_owned:
@@ -3788,6 +4332,7 @@ class SqliteProcessConversationSystem:
                                 mode=mode,
                                 refusal_reason=refusal,
                                 refusal_detail=refusal_detail,
+                                model_validation=self._validation_json(canonical_validation),
                                 sender_message_id=sender_message_id,
                                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                                 sender=sender,
@@ -3812,6 +4357,7 @@ class SqliteProcessConversationSystem:
                                     mode=mode,
                                     refusal_reason=refusal,
                                     refusal_detail=refusal_detail,
+                                    model_validation=self._validation_json(canonical_validation),
                                     sender_message_id=message.sender_message_id,
                                     sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
                                     sender=message.sender,
@@ -3832,9 +4378,13 @@ class SqliteProcessConversationSystem:
                     carried_change = ModelChangedEventPayload(
                         model=running_on,
                         reasoning_effort=(
-                            state.record.reasoning_effort
-                            if reasoning_effort_change is None
-                            else reasoning_effort_change
+                            canonical_validation.selection.reasoning_effort
+                            if canonical_validation is not None
+                            else (
+                                state.record.reasoning_effort
+                                if reasoning_effort_change is None
+                                else reasoning_effort_change
+                            )
                         ),
                     )
 
@@ -3888,6 +4438,12 @@ class SqliteProcessConversationSystem:
                             _prompt_fact(reservation.token, LifecycleStatus.started),
                         ),
                         executor_turn=accepted_metadata,
+                        original_ticket_selection=(
+                            original_selection if sender_requested_change else None
+                        ),
+                        requested_ticket_validation=(
+                            canonical_validation if sender_requested_change else None
+                        ),
                         composed_content_delivered=composed_content_delivered,
                         model_change=carried_change,
                         extra_prompts=tuple(
@@ -4167,6 +4723,8 @@ class SqliteProcessConversationSystem:
                     reply_requested=held.reply_requested,
                     recovery_references=held.recovery_references,
                     model_resolution=delivery.model_resolution,
+                    canonical_validation=delivery.canonical_validation,
+                    original_selection=delivery.original_selection,
                     refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
                     record_refusal=True,
@@ -4614,7 +5172,16 @@ class SqliteProcessConversationSystem:
             return child
 
         resolved_start = state.record.resolved_start()
-        if model is not None or reasoning_effort is not None:
+        from planner.conversation.admission.service import current_admission_expectation
+
+        expectation = current_admission_expectation()
+        if expectation is not None:
+            resolved_start = replace(
+                resolved_start,
+                model=expectation.launch_token,
+                reasoning_effort=expectation.reasoning_effort,
+            )
+        elif model is not None or reasoning_effort is not None:
             resolved_start = replace(
                 resolved_start,
                 model=resolved_start.model if model is None else model,
@@ -4668,7 +5235,12 @@ class SqliteProcessConversationSystem:
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
         start_reservation = state.reserved_turn
+        state.local_child_retirement_proven = False
         await child.start(resolved_start, vendor_session_cursor=state.record.vendor_session_cursor)
+        state.child_resolved_model_id = (
+            None if expectation is None else expectation.resolved_model_id
+        )
+        state.child_launch_context = None if expectation is None else expectation.context
         if (
             isinstance(child, RemoteBackendChild)
             and (
@@ -4717,6 +5289,7 @@ class SqliteProcessConversationSystem:
                 state.record.conversation_id,
             )
             return False
+        state.local_child_retirement_proven = True
         return True
 
     async def _cancel_child_turn(

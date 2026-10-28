@@ -29,9 +29,11 @@ class StartObservingSystem(InMemoryConversationSystem):
     def __init__(self) -> None:
         super().__init__()
         self.starts: list[str] = []
+        self.start_backends: list[ConversationBackendKey] = []
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self.starts.append(request.conversation_id)
+        self.start_backends.append(request.backend_key)
         await super().start_conversation(request)
 
 
@@ -191,6 +193,11 @@ def test_mac_backend_picker_resolves_each_implemented_provider(
 
     asyncio.run(send())
     assert system.starts == ["c_native"]
+    assert system.start_backends == [backend]
     configured = data.read_ticket(tmp_db, ticket.id)
     assert configured.conversation_id == "c_native"
-    assert configured.employee_backend == backend.value
+    # This start-observing fake does not prove contextual sender-intent departure.
+    # Hermes retains its preexisting configuration path outside this integration.
+    assert configured.employee_backend == (
+        backend.value if backend is ConversationBackendKey.hermes else ticket.employee_backend
+    )

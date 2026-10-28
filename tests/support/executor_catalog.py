@@ -32,6 +32,13 @@ class ScriptedCatalogObserver:
         self.cleanup_release = asyncio.Event()
         self.cleanup_release.set()
         self.observed_at = int(time.time()) - 3
+        self.model = "gpt-scripted"
+        self.models: tuple[str, ...] = ()
+        self.efforts: tuple[str, ...] = ("medium",)
+        self.context_valid = True
+
+    def verify_context(self, expected: LaunchContext) -> bool:
+        return self.context_valid and expected.executor_identity == self.identity()
 
     async def capture_context(
         self, backend_key: ConversationBackendKey, *, workspace: CatalogWorkspaceBinding
@@ -69,25 +76,26 @@ class ScriptedCatalogObserver:
                 raise
         return CatalogObservation(
             evidence=CatalogEvidenceReference(
-                observation_id="scripted-observation",
+                observation_id=f"scripted-observation-{attempt_id}",
                 observation_revision="scripted-revision",
                 context=await self.capture_context(backend_key, workspace=workspace),
                 observed_at=self.observed_at,
                 attempt_id=attempt_id,
                 clock_uncertainty_seconds=0.0,
             ),
-            rows=(
+            rows=tuple(
                 CatalogRow(
-                    submitted_token="gpt-scripted",
+                    submitted_token=model,
                     selection_kind=SelectionKind.concrete,
-                    resolved_model_id="gpt-scripted",
+                    resolved_model_id=model,
                     display_name="Scripted model",
-                    supported_reasoning_efforts=("medium",),
+                    supported_reasoning_efforts=self.efforts,
                     hidden=False,
                     enabled=True,
-                    identity_preserving_launch_token="gpt-scripted",
+                    identity_preserving_launch_token=model,
                     source="scripted-native-provider",
-                ),
+                )
+                for model in self.models or (self.model,)
             ),
             complete=True,
             visibility_limited=False,

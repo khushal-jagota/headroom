@@ -157,9 +157,7 @@ class BackendStateStore:
         finally:
             conn.close()
 
-    def model_is_enabled(
-        self, backend_key: ConversationBackendKey, model_id: str
-    ) -> bool:
+    def model_is_enabled(self, backend_key: ConversationBackendKey, model_id: str) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             return model_is_enabled(conn, backend_key, model_id)
@@ -256,11 +254,39 @@ def write_model_enablement(
     model_id: str,
     enabled: bool,
 ) -> None:
-    conn.execute(
-        "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) VALUES (?, ?, ?) "
-        "ON CONFLICT(backend_key, model_id) DO UPDATE SET enabled = excluded.enabled",
-        (str(backend_key), model_id, int(enabled)),
-    )
+    from planner.conversation.admission.policy import policy_key, recovery_policy_key
+    from planner.tickets.launch_authority import _write, acquire_mutation
+
+    with _write(conn):
+        if model_is_enabled(conn, backend_key, model_id) == enabled:
+            return
+        markers = conn.execute(
+            "SELECT authority_key,command_id,lease_id FROM ticket_launch_authority "
+            "WHERE authority_key IN (?,?)",
+            (recovery_policy_key(None), recovery_policy_key(backend_key)),
+        ).fetchall()
+        if markers and backend_key is not ConversationBackendKey.hermes:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "model policy is unavailable until original admission scope "
+                "is recovered or settled",
+                {
+                    "reason": "model_policy_scope_unresolved",
+                    "authority_keys": sorted({str(row[0]) for row in markers}),
+                    "command_ids": sorted({str(row[1]) for row in markers if row[1]}),
+                    "source_leases": sorted({str(row[2]) for row in markers}),
+                },
+            )
+        permit = acquire_mutation(conn, (policy_key(backend_key, model_id),))
+        try:
+            conn.execute(
+                "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(backend_key, model_id) DO UPDATE SET enabled = excluded.enabled",
+                (str(backend_key), model_id, int(enabled)),
+            )
+        finally:
+            permit.release(conn)
 
 
 def resolve_usage_model_scopes(
@@ -283,7 +309,8 @@ def _catalogue_model_id(snapshot: BackendSnapshot, scope: str) -> str | None:
     exact = [
         model.model_id
         for model in snapshot.available_models
-        if wanted in {
+        if wanted
+        in {
             model.model_id.casefold(),
             (model.display_name or "").casefold(),
         }

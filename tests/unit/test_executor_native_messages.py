@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 import pytest
+from tests.support.executor_catalog import ScriptedCatalogObserver
 from tests.unit.test_executor_native_runtime import canonical_snapshot
 
 from planner.conversation.backends.contracts import TurnToken
@@ -23,6 +25,7 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.db import connect
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
@@ -41,6 +44,62 @@ from planner.executor.native_messages import bound_native_principal, deliver_nat
 from planner.executor.remote import RemoteBackendChild
 from planner.executor.store import ExecutorStore
 from planner.tickets import data
+
+
+def _configure_scoped_metadata(
+    system: SqliteProcessConversationSystem,
+    path: str,
+    identity: ExecutorIdentity,
+) -> None:
+    from planner.conversation.backend_state import BackendStateStore
+    from planner.conversation.model_resolution.contracts import (
+        CatalogWorkspaceBinding,
+        LaunchContext,
+    )
+    from planner.conversation.model_resolution.data import ModelResolutionStore
+    from planner.conversation.model_resolution.service import ModelResolutionService
+    from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
+    from planner.tickets.contracts import TicketLocale
+
+    class NoUnscopedProbe(BackendSnapshotService):
+        def __init__(self) -> None:
+            pass
+
+        async def snapshot(
+            self,
+            backend_key: ConversationBackendKey,
+            *,
+            refresh: bool = False,
+            discover_update_advisory: bool = True,
+        ) -> BackendSnapshot:
+            raise AssertionError("This lifecycle requires scoped metadata")
+
+    class Observer(ScriptedCatalogObserver):
+        async def capture_context(
+            self,
+            backend_key: ConversationBackendKey,
+            *,
+            workspace: CatalogWorkspaceBinding,
+        ) -> LaunchContext:
+            return replace(
+                await super().capture_context(backend_key, workspace=workspace),
+                destination=TicketLocale.vps,
+                executor_identity=None,
+            )
+
+        def verify_context(self, expected: LaunchContext) -> bool:
+            return self.context_valid and expected.executor_identity is None
+
+    observer = Observer(lambda: identity)
+    observer.model = "scripted"
+    observer.efforts = ()
+    system._model_resolver = ModelResolutionService(
+        snapshots=NoUnscopedProbe(),
+        store=ModelResolutionStore(path),
+        backend_state=BackendStateStore(path),
+        observer=observer,
+    )
+    system.configure_destination_validation(observer)
 
 
 class SimulatedCrash(BaseException):
@@ -87,6 +146,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             brief="Brief",
             employee_backend="codex",
             employee_launch_model="scripted",
+            selection_kind="concrete",
         )
         sender = Principal(PrincipalKind.ticket, ticket.id)
         reference = ChildReference("incarnation", "child", "c_source")
@@ -99,9 +159,18 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 if command.operation is ChildOperation.write_prompt
                 else {}
             )
-            return CommandOutcome(
+            outcome = CommandOutcome(
                 command.command_id, command.child, CommandDisposition.succeeded, result
             )
+            # Model the actual endpoint's definitive receipt settlement, not a hint.
+            outcome_conn = connect(path)
+            try:
+                outcome_conn.execute("BEGIN IMMEDIATE")
+                store.record_command_outcome_in_transaction(outcome_conn, outcome)
+                outcome_conn.commit()
+            finally:
+                outcome_conn.close()
+            return outcome
 
         def factory(**kwargs: Any) -> RemoteBackendChild:
             return RemoteBackendChild(reference, native, lambda start: canonical_snapshot())
@@ -111,6 +180,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             backend_child_factories={key: factory for key in ConversationBackendKey},
             message_files=ConversationMessageFiles(path),
         )
+        _configure_scoped_metadata(system, path, identity)
         system.crash_before_owner_record = not committed
         try:
             await system.start_conversation(
@@ -282,6 +352,7 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             title_max_chars=200,
             employee_backend="codex",
             employee_launch_model="scripted",
+            selection_kind="concrete",
         )
         recipient = Principal(PrincipalKind.ticket, target.id)
         sender = Principal(PrincipalKind.chief, "chief")
@@ -295,9 +366,18 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
                 if command.operation is ChildOperation.write_prompt
                 else {}
             )
-            return CommandOutcome(
+            outcome = CommandOutcome(
                 command.command_id, command.child, CommandDisposition.succeeded, result
             )
+            # Model the actual endpoint's definitive receipt settlement, not a hint.
+            outcome_conn = connect(path)
+            try:
+                outcome_conn.execute("BEGIN IMMEDIATE")
+                store.record_command_outcome_in_transaction(outcome_conn, outcome)
+                outcome_conn.commit()
+            finally:
+                outcome_conn.close()
+            return outcome
 
         def factory(**kwargs: Any) -> RemoteBackendChild:
             return RemoteBackendChild(reference, native, lambda start: canonical_snapshot())
@@ -307,6 +387,7 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             backend_child_factories={key: factory for key in ConversationBackendKey},
             message_files=ConversationMessageFiles(path),
         )
+        _configure_scoped_metadata(system, path, identity)
         spool = FilesystemSpool(tmp_path / "spool")
         try:
             await system.start_conversation(ConversationStartRequest("c_idle", "scripted"))
@@ -361,6 +442,7 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             assert isinstance(system.observed[0].fate, PromptDeliveryStarted)
             assert store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
             before_replay = list(native_calls)
+            events_before_replay = await system._store.read_events_after("c_idle", 0)
             receipt = await deliver_native_message(
                 store=ExecutorStore(path),
                 envelope=envelope,
@@ -378,7 +460,13 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
             }
             assert native_calls == before_replay
             assert len(system.observed) == 1
-            assert len(await system._store.read_events_after("c_idle", 0)) == 1
+            assert await system._store.read_events_after("c_idle", 0) == events_before_replay
+            from planner.conversation.events import PromptEventPayload
+
+            assert (
+                sum(isinstance(event.payload, PromptEventPayload) for event in events_before_replay)
+                == 1
+            )
         finally:
             spool.close()
             for state in system._conversations.values():

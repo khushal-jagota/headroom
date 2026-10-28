@@ -10,17 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import sqlite3
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
-from typing import Protocol
+from typing import Literal, Protocol
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import require_conversation_backend_key
-from planner.conversation.model_resolution.contracts import ModelResolutionUnavailable
-from planner.conversation.model_resolution.service import resolve_cached_model
+from planner.conversation.model_resolution.contracts import (
+    CanonicalModelValidation,
+    SelectionKind,
+    ValidationState,
+)
 from planner.core import authority, ticket_blocks
 from planner.core.authority.logic import can_hold_review
 from planner.core.contracts import (
@@ -34,7 +36,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
-from planner.tickets import derivation, revision_feedback
+from planner.tickets import derivation, launch_authority, revision_feedback
 from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
     NextCeiling,
@@ -291,32 +293,8 @@ def resolve_ticket_draft_context(
         and employee_launch_model.strip()
     ):
         require_enabled_model(conn, backend_key, employee_launch_model)
-    try:
-        resolved = resolve_cached_model(
-            conn,
-            backend_key,
-            launch_configuration.employee_launch_model,
-            launch_configuration.employee_launch_reasoning_effort,
-        )
-    except ModelResolutionUnavailable as error:
-        if employee_launch_reasoning_effort is not None:
-            raise PlannerError(
-                ErrorCode.validation,
-                "cannot validate explicit reasoning effort without a model catalogue",
-            ) from error
-        require_enabled_model(conn, backend_key, launch_configuration.employee_launch_model)
-        logging.getLogger(__name__).warning(
-            "Ticket creation model resolution unavailable for %s/%s; "
-            "preserving requested model and reasoning effort without catalogue validation",
-            backend_key.value,
-            launch_configuration.employee_launch_model,
-        )
-    else:
-        launch_configuration = replace(
-            launch_configuration,
-            employee_launch_model=resolved.model,
-            employee_launch_reasoning_effort=resolved.reasoning_effort,
-        )
+    # Configuration is saved intent. Destination discovery validates it later;
+    # legacy family caches cannot replace its token or discard explicit effort.
     if manager_id is not None:
         item = conn.execute(
             "SELECT project_id FROM managers WHERE id = ?",
@@ -761,15 +739,15 @@ def write_ticket_conversation_start(
     now: int,
     expected_configuration: EmployeeLaunchConfiguration | None = None,
 ) -> Ticket:
-    """Point the Ticket at the conversation just started for it, and record what it
-    runs on. Returns the Ticket as it now stands, which names whichever conversation won.
+    """Link the started conversation without replacing the Ticket's requested intent.
+
+    Return the Ticket as it now stands, naming whichever conversation won.
 
     ``conversation_id`` is the Ticket's conversation link. Under the new
     conversation system the value it holds is the caller-owned conversation id, not an
     ACP session id: the conversation system rebinds its own backend sessions behind that
-    one name. The three launch columns are the Ticket's last-chosen values — kept up to
-    date with what the conversation actually runs on, so a fresh conversation starts
-    from where the last one ended.
+    one name. Actual provider identities belong to the conversation record. The
+    Ticket's launch columns retain its author-selected token and exact effort.
 
     The link only lands on a Ticket that has none. A Ticket has one conversation, and two
     callers can decide to make one at the same moment — the readiness loop with a step to
@@ -778,21 +756,12 @@ def write_ticket_conversation_start(
     caller reads the returned Ticket to see whether it was the one that landed.
     """
     with _txn(conn):
-        current = _load_ticket_for_write(conn, ticket_id)
-        if (
-            expected_configuration is not None
-            and employee_launch_configuration(current) != expected_configuration
-        ):
-            # Link the conversation without replacing a correction accepted while
-            # the backend was being resolved or created.
-            backend = current.employee_backend
-            model = current.employee_launch_model
-            reasoning_effort = current.employee_launch_reasoning_effort
+        _load_ticket_for_write(conn, ticket_id)
+        # Actual provider resolution belongs to the conversation, never Ticket intent.
         updated = conn.execute(
-            "UPDATE tickets SET conversation_id = ?, employee_backend = ?, "
-            "employee_launch_model = ?, employee_launch_reasoning_effort = ?, "
-            "updated_at = ? WHERE id = ? AND conversation_id IS NULL",
-            (conversation_id, backend, model, reasoning_effort, now, ticket_id),
+            "UPDATE tickets SET conversation_id = ?, updated_at = ? "
+            "WHERE id = ? AND conversation_id IS NULL",
+            (conversation_id, now, ticket_id),
         )
         if updated.rowcount == 1:
             conn.execute(
@@ -835,17 +804,10 @@ def write_ticket_last_chosen_configuration(
     now: int,
     expected_configuration: EmployeeLaunchConfiguration | None = None,
 ) -> bool:
-    """Record the model and reasoning effort a Ticket's conversation now runs on.
+    """Retired effective-identity hook; it never changes canonical Ticket intent.
 
-    ``expected_conversation_id`` names the conversation these values are true of, and the
-    write only lands while the Ticket still points at it. Sending is awaited, and a Ticket
-    can be pointed at a fresh conversation while a send into the old one is still out —
-    without the guard, that send's model would be stamped onto a conversation that never
-    ran on it. Reports whether the write fired. Not firing is not a failure: the values
-    were never claimed to be true of whatever the Ticket moved on to.
-
-    The backend is not here because a message cannot change it: a conversation keeps the
-    backend it was started on, and choosing another one is a new conversation.
+    Genuine accepted sender overrides use write_explicit_ticket_launch_intent.
+    Provider resolution and conversation rebinding cannot author a new selection.
     """
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
@@ -853,13 +815,86 @@ def write_ticket_last_chosen_configuration(
             current = employee_launch_configuration(_load_ticket_for_write(conn, ticket_id))
             if current != expected_configuration:
                 return False
-        updated = conn.execute(
-            "UPDATE tickets SET employee_launch_model = ?, "
-            "employee_launch_reasoning_effort = ?, updated_at = ? "
-            "WHERE id = ? AND conversation_id = ?",
-            (model, reasoning_effort, now, ticket_id, expected_conversation_id),
+        # This compatibility hook records no model correction. The exact launch
+        # intent changes only through the explicit configuration writer.
+        return _load_ticket_for_write(conn, ticket_id).conversation_id == expected_conversation_id
+
+
+def write_explicit_ticket_launch_intent(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    expected_conversation_id: str,
+    expected_configuration: EmployeeLaunchConfiguration,
+    expected_selection_revision: str,
+    model: str,
+    reasoning_effort: str | None,
+    selection_kind: SelectionKind | str,
+    source_type: Literal["sender_override"],
+    now: int,
+    employee_backend: str | None = None,
+    authority_permit: launch_authority.LaunchAuthorityPermit | None = None,
+    validation: CanonicalModelValidation | None = None,
+) -> bool:
+    """Persist exact authorized sender intent only after its prompt departs.
+
+    Delivery finalization owns the proof of departure and the original requested
+    tuple. Queuing, provider alias resolution and effective launch identity cannot
+    invoke this transition. A newer conversation or choice wins over a late send.
+    The admission read permit must have settled before this mutation is acquired.
+    """
+    if source_type != "sender_override":
+        raise PlannerError(ErrorCode.validation, "explicit sender intent is required")
+    if not isinstance(model, str) or not model.strip():
+        raise PlannerError(ErrorCode.validation, "explicit model must be nonblank")
+    if reasoning_effort is not None and (
+        not isinstance(reasoning_effort, str) or not reasoning_effort.strip()
+    ):
+        raise PlannerError(ErrorCode.validation, "explicit effort must be nonblank or null")
+    kind = SelectionKind(selection_kind)
+    if validation is not None and validation.state is not ValidationState.compatible:
+        raise PlannerError(
+            ErrorCode.validation, "explicit departure requires compatible validation"
         )
-        return updated.rowcount == 1
+    with _txn(conn):
+        current = _load_ticket_for_write(conn, ticket_id)
+        from planner.tickets.validation import data as launch_validation
+
+        if (
+            current.conversation_id != expected_conversation_id
+            or employee_launch_configuration(current) != expected_configuration
+            or launch_validation.read_launch_selection(conn, ticket_id).selection_revision
+            != expected_selection_revision
+        ):
+            return False
+        backend = require_conversation_backend_key(employee_backend or current.employee_backend)
+        if backend != current.employee_backend:
+            actual = conn.execute(
+                "SELECT backend_key FROM conversations WHERE conversation_id=?",
+                (expected_conversation_id,),
+            ).fetchone()
+            if actual is None or actual[0] != backend.value:
+                raise PlannerError(
+                    ErrorCode.validation, "explicit backend does not match departed conversation"
+                )
+        with launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",), authority_permit):
+            conn.execute(
+                "UPDATE tickets SET employee_backend=?,employee_launch_model=?,"
+                "employee_launch_reasoning_effort=?,"
+                "updated_at=? WHERE id=?",
+                (backend, model, reasoning_effort, now, ticket_id),
+            )
+            selected = launch_validation.read_launch_selection(conn, ticket_id)
+            launch_validation.set_selection_kind(
+                conn, ticket_id, kind, expected_selection_revision=selected.selection_revision
+            )
+            if validation is None:
+                launch_validation.initialize_unresolved_validation(conn, ticket_id, now=now)
+            else:
+                launch_validation.store_written_configuration_validation(
+                    conn, ticket_id, validation, now=now
+                )
+        return True
 
 
 def clear_ticket_conversation_link(
@@ -919,6 +954,24 @@ def employee_configuration_editable(ticket: Ticket) -> bool:
     return ticket.conversation_id is None and ticket.worker_step_claim is not WorkerStepClaim.out
 
 
+def assignment_authority_keys(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    manager_id: str | None = None,
+    project_id: str | None = None,
+) -> tuple[str, ...]:
+    """Stable source/destination order for the existing assignment writers."""
+    keys = set(launch_authority.authority_keys(conn, ticket_id))
+    if manager_id is not None:
+        row = conn.execute("SELECT project_id FROM managers WHERE id=?", (manager_id,)).fetchone()
+        if row is not None:
+            project_id = str(row[0])
+    if project_id is not None:
+        keys.add(f"project:{project_id}")
+    return tuple(sorted(keys))
+
+
 def write_employee_configuration(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -931,6 +984,9 @@ def write_employee_configuration(
     reasoning_supported: bool | None,
     advertised_reasoning_efforts: frozenset[str] | None,
     now: int,
+    selection_kind: SelectionKind | str | None = None,
+    validation: CanonicalModelValidation | None = None,
+    authority_permit: launch_authority.LaunchAuthorityPermit | None = None,
 ) -> Ticket:
     """Atomically replace the complete launch request during pristine Kickoff.
 
@@ -941,7 +997,16 @@ def write_employee_configuration(
     transactions — and that is the reason it is gone rather than something to add back.
     """
 
-    with _txn(conn):
+    with (
+        _txn(conn),
+        launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",), authority_permit),
+    ):
+        if validation is not None and validation.state is ValidationState.incompatible:
+            raise PlannerError(
+                ErrorCode.validation,
+                validation.reason.value,
+                {"corrective_action": validation.corrective_action.value},
+            )
         registered_backend = require_conversation_backend_key(employee_backend)
         ticket = _load_ticket_for_write(conn, ticket_id)
         current = employee_launch_configuration(ticket)
@@ -963,7 +1028,7 @@ def write_employee_configuration(
             reasoning_supported=reasoning_supported,
             advertised_reasoning_efforts=advertised_reasoning_efforts,
         )
-        if current == normalized:
+        if current == normalized and selection_kind is None and validation is None:
             return ticket
         if not employee_configuration_editable(ticket):
             raise PlannerError(
@@ -983,6 +1048,22 @@ def write_employee_configuration(
                 ticket_id,
             ),
         )
+        from planner.tickets.validation import data as launch_validation
+
+        if selection_kind is not None:
+            selected = launch_validation.read_launch_selection(conn, ticket_id)
+            launch_validation.set_selection_kind(
+                conn,
+                ticket_id,
+                selection_kind,
+                expected_selection_revision=selected.selection_revision,
+            )
+        if validation is not None:
+            launch_validation.store_written_configuration_validation(
+                conn, ticket_id, validation, now=now
+            )
+        else:
+            launch_validation.initialize_unresolved_validation(conn, ticket_id, now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1022,7 +1103,15 @@ def create_ticket(
     blocked_by_ticket_ids: list[str] | None = None,
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
+    selection_kind: SelectionKind | str | None = None,
+    validation: CanonicalModelValidation | None = None,
 ) -> Ticket:
+    if validation is not None and validation.state is ValidationState.incompatible:
+        raise PlannerError(
+            ErrorCode.validation,
+            validation.reason.value,
+            {"corrective_action": validation.corrective_action.value},
+        )
     admission.require_creatable_worker_type(worker_type)
     manager_kind = manager_kind or ("manager" if manager_id else "chief")
     if manager_kind not in {"chief", "manager"} or (
@@ -1142,6 +1231,42 @@ def create_ticket(
                 creation_context.locale.value,
             ),
         )
+        from planner.tickets.validation import data as launch_validation
+
+        if selection_kind is not None:
+            conn.execute(
+                "UPDATE ticket_launch_validation SET selection_kind=? WHERE ticket_id=?",
+                (SelectionKind(selection_kind).value, ticket_id),
+            )
+        elif not model_source_is_historical:
+            from planner.conversation.contracts import ConversationBackendKey
+            from planner.conversation.model_resolution.logic.variants import recognize_variant
+
+            variant = recognize_variant(
+                ConversationBackendKey(launch_configuration.employee_backend),
+                launch_configuration.employee_launch_model or "",
+            )
+            if (
+                variant is not None
+                and variant.name == launch_configuration.employee_launch_model
+                and launch_configuration.employee_backend != "hermes"
+            ):
+                conn.execute(
+                    "UPDATE ticket_launch_validation SET selection_kind='panels_alias' "
+                    "WHERE ticket_id=?",
+                    (ticket_id,),
+                )
+        if model_source_is_historical:
+            conn.execute(
+                "UPDATE ticket_launch_validation SET intent_origin='historical' WHERE ticket_id=?",
+                (ticket_id,),
+            )
+        if validation is not None:
+            launch_validation.store_written_configuration_validation(
+                conn, ticket_id, validation, now=now
+            )
+        else:
+            launch_validation.initialize_unresolved_validation(conn, ticket_id, now=now)
         wake_target = _proposal_wake_target(conn, initial_proposal_route)
         if wake_target is not None and initial_proposal is not None:
             manager_wakes_data.create_proposal_wake(
@@ -1800,7 +1925,17 @@ def edit_ticket(
     Most of a Ticket is its own record and a Worker keeps it current. The fields in
     admission.TICKET_FIELDS_ONLY_FROM_ABOVE are not, and need a caller above the Ticket.
     """
-    with _txn(conn):
+    with (
+        _txn(conn),
+        (
+            launch_authority.mutation_scope(
+                conn,
+                (f"ticket:{ticket_id}",),
+            )
+            if set(edit) & {"manager_id", "manager", "project_id"}
+            else nullcontext()
+        ),
+    ):
         target = authority.ticket(ticket_id)
         if set(edit) & admission.TICKET_FIELDS_ONLY_FROM_ABOVE:
             authority.require_above(conn, principal, target)
@@ -2024,7 +2159,10 @@ def classify_ticket(
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
-    with _txn(conn):
+    with (
+        _txn(conn),
+        launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",)),
+    ):
         if admit is not None:
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
@@ -2065,7 +2203,10 @@ def unclassify_ticket(
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
-    with _txn(conn):
+    with (
+        _txn(conn),
+        launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",)),
+    ):
         if admit is not None:
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
@@ -2180,9 +2321,14 @@ def move_ticket_locale(
     expected_source_locale: TicketLocale | None = None,
     expected_conversation_id: str | None = None,
     validate_source: Callable[[], None] | None = None,
+    authority_permit: launch_authority.LaunchAuthorityPermit | None = None,
+    validation: CanonicalModelValidation | None = None,
 ) -> Ticket:
     """Canonical writer; caller retains source/admission fencing through this commit."""
-    with _txn(conn):
+    with (
+        _txn(conn),
+        launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",), authority_permit),
+    ):
         ticket = validate_ticket_locale_move(
             conn,
             ticket_id,
@@ -2199,6 +2345,15 @@ def move_ticket_locale(
             validate_source()
         if ticket.locale != locale:
             conn.execute("UPDATE tickets SET locale=? WHERE id=?", (locale.value, ticket_id))
+            if ticket.employee_backend != "hermes":
+                from planner.tickets.validation import data as launch_validation
+
+                if validation is None:
+                    launch_validation.initialize_unresolved_validation(conn, ticket_id, now=now)
+                else:
+                    launch_validation.store_written_configuration_validation(
+                        conn, ticket_id, validation, now=now
+                    )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2216,10 +2371,6 @@ def correct_ticket_model(
 
     The correction service authorizes the target and proves same-variant resolution.
     """
-    updated = conn.execute(
-        "UPDATE tickets SET employee_launch_model=?, updated_at=? "
-        "WHERE id=? AND employee_backend=? AND employee_launch_model=? "
-        "AND employee_launch_reasoning_effort IS ?",
-        (new_model, now, ticket_id, backend, old_model, reasoning_effort),
-    )
-    return updated.rowcount == 1
+    # Legacy family repair cannot classify or upgrade a saved request. Explicit
+    # user selection uses write_employee_configuration with destination evidence.
+    return False

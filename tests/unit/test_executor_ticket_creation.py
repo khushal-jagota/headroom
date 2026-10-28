@@ -21,20 +21,19 @@ from tests.unit.test_current_model_resolution import (
     context,
     observation,
     row,
-    selection,
-    workspace,
 )
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.model_resolution.contracts import ModelResolution, ModelVariant
+from planner.conversation.model_resolution.contracts import (
+    CanonicalModelValidation,
+    CatalogWorkspaceBinding,
+    ModelSelection,
+)
 from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.logic.validation import validate_model_selection
 from planner.conversation.model_resolution.service import ModelResolutionService
-from planner.conversation.snapshot import BackendModel
 from planner.core.clock import RealClock
-from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
@@ -55,39 +54,51 @@ class ScriptedPreparation:
         self.path = path
         self.calls = 0
         self.refuse = refuse
-        self.catalogue = Catalogue((BackendModel("gpt-6-sol", reasoning_effort_options=("high",)),))
         self.service = ModelResolutionService(
-            snapshots=self.catalogue,
+            snapshots=Catalogue(()),
             store=ModelResolutionStore(path),
             backend_state=BackendStateStore(path),
             now=lambda: 1000,
         )
 
-    async def resolve(self, *args: Any, **kwargs: Any) -> Any:
-        self.calls += 1
-        # A separate writer proves no SQLite write lease crosses this await.
-        other = connect(self.path)
-        try:
-            other.execute("PRAGMA busy_timeout=50")
-            other.execute("BEGIN IMMEDIATE")
-            await asyncio.sleep(0)
-            other.rollback()
-        finally:
-            other.close()
-        if self.refuse:
-            raise PlannerError(ErrorCode.validation, "scripted permanent model refusal", {})
-        backend_key, model, effort = args
-        desired = selection(model, effort=effort, backend_key=backend_key)
-        # This explicit scripted boundary supplies scoped facts. Production lifecycle
-        # adaptation belongs to its successor Ticket, not this ingestion test.
-        result = await self.service.validate_selection(
-            desired,
-            workspace=workspace(),
-            attempt_id="scripted-creation",
-            observer=ScopedCatalogue(observation((row(model),))),
+    async def validate_launch_selection(
+        self,
+        desired: ModelSelection,
+        binding: CatalogWorkspaceBinding,
+        *,
+        attempt_id: str,
+        classify_new: bool = False,
+    ) -> CanonicalModelValidation:
+        preparation = self
+        launch = context(
+            backend_key=desired.backend_key,
+            workspace=binding,
+            localized_workspace_folder=binding.workspace_folder,
         )
-        assert result.launch_token == model
-        return ModelResolution(ModelVariant(backend_key, model), model, effort, ("high",))
+
+        class Probe(ScopedCatalogue):
+            async def observe(self, *args: Any, **kwargs: Any) -> Any:
+                preparation.calls += 1
+                # The real service calls this metadata probe outside any write lease.
+                other = connect(preparation.path)
+                try:
+                    other.execute("PRAGMA busy_timeout=50")
+                    other.execute("BEGIN IMMEDIATE")
+                    await asyncio.sleep(0)
+                    other.rollback()
+                finally:
+                    other.close()
+                return await super().observe(*args, **kwargs)
+
+        source = Probe(
+            observation((row(desired.submitted_token, enabled=not self.refuse),), launch=launch)
+        )
+        return await self.service.validate_selection(
+            desired,
+            workspace=binding,
+            attempt_id=attempt_id,
+            observer=source,
+        )
 
 
 def _setup(
@@ -99,27 +110,6 @@ def _setup(
 ) -> tuple[ExecutorEndpoint, ScriptedPreparation, QueuedEnvelope, ExecutorIdentity]:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
 
-    def scoped_scripted_cached(
-        connection: sqlite3.Connection,
-        backend_key: ConversationBackendKey,
-        model: str,
-        reasoning_effort: str | None = None,
-    ) -> ModelResolution:
-        # Isolate the executor receipt boundary from unadapted production lifecycle
-        # callers. The real legacy refusal has its own fake-factory assertion.
-        desired = selection(model, effort=reasoning_effort, backend_key=backend_key)
-        checked = validate_model_selection(
-            desired,
-            context(),
-            observation((row(model),)),
-            now=1000,
-            attempt_id="scripted",
-        )
-        assert checked.launch_token == model
-        return ModelResolution(ModelVariant(backend_key, model), model, reasoning_effort, ("high",))
-
-    monkeypatch.setattr("planner.tickets.api.resolve_cached_model", scoped_scripted_cached)
-    monkeypatch.setattr("planner.tickets.data.resolve_cached_model", scoped_scripted_cached)
     conn.execute("DELETE FROM model_variant_resolutions")
     conn.execute(
         "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
@@ -134,7 +124,7 @@ def _setup(
     child = ChildReference("incarnation", "child", "source-conversation")
     endpoint.store.register_child(child, "chief", "chief", 1002)
     resolver = ScriptedPreparation(path, refuse=refuse)
-    endpoint.runtime = SimpleNamespace(model_resolution=resolver, system=None)
+    endpoint.runtime = SimpleNamespace(model_resolution=resolver.service, system=resolver)
     payload = encode_value(
         CliWrite(
             "ticket.create",
@@ -147,6 +137,7 @@ def _setup(
                     "ceiling_holder": {"kind": "manager", "id": "manager"},
                     "employee_backend": "codex",
                     "employee_launch_model": "gpt-6-sol",
+                    "selection_kind": "concrete",
                     "employee_launch_reasoning_effort": "high",
                 }
             },
@@ -175,7 +166,7 @@ def test_creation_preparation_receipt_and_replay_share_canonical_semantics(
         ReceiptDisposition.refused if refuse else ReceiptDisposition.accepted
     )
     if refuse:
-        assert "scripted permanent model refusal" in str(receipt.result)
+        assert "model_incompatible" in str(receipt.result)
         assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
     else:
         ticket = tmp_db.execute(

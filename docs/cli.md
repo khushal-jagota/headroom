@@ -134,9 +134,10 @@ Create accepts `employee_launch_reasoning_effort` with the selected backend and 
 }
 ```
 
-The current source returns unresolved verification from legacy creation callers without
-canonical destination context. The lifecycle integration must preserve offline configuration
-and distinguish known incompatibility from missing evidence. No effort can be silently replaced.
+Creation preserves the exact model and effort when destination verification is unresolved.
+The response includes structured validation. Known incompatibility refuses insertion and
+retains the draft. No effort is silently replaced. JSON requests can carry `selection_kind`
+from a typed destination choice. Unknown historical intent is not silently classified.
 
 An omitted or null effort keeps the existing creation defaults. The Worker type's
 effort applies only to its own backend and model. Other selections store null.
@@ -180,9 +181,9 @@ commands because they have effects beyond a Ticket field edit.
 
 ## Correct saved models
 
-The administrative `model-corrections` commands address explicit saved-choice targets. Their
-legacy resolver calls currently return unresolved verification until contextual integration.
-Repeat target flags to inspect several records.
+The administrative `model-corrections` commands address explicit saved-choice targets.
+They preserve exact concrete tokens and compare the saved request before a write.
+Unclassified historical intent remains unresolved. Repeat target flags to inspect several records.
 
 ```sh
 panels model-corrections preview --ticket t_example --manager si_example --chief --worker-default coding > corrections.json

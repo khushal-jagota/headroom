@@ -27,6 +27,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
     CodexModelCatalogUnavailable,
     probe_codex_model_catalog,
 )
+from planner.conversation.backends.contracts import BackendEmissionInputs
 from planner.conversation.backends.probe_lifetime import owned_probe
 from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
 from planner.conversation.model_resolution.config import CATALOGUE_COLD_START_TIMEOUT_SECONDS
@@ -166,6 +167,65 @@ class ProductionCatalogObserver:
             localized, executable_identity, version, scope, generation,
         )
 
+    def verify_context(self, expected: LaunchContext) -> bool:
+        """Compare observable launch facts without a probe or an asynchronous gap.
+
+        The version belongs to the retained binary identity. External credential
+        revocation remains a provider decision, never a metadata entitlement claim.
+        """
+        try:
+            if (
+                expected.destination != self.destination
+                or expected.executor_identity != self.executor_identity
+            ):
+                return False
+            localized = self._workspace(expected.workspace)
+            if localized != expected.localized_workspace_folder:
+                return False
+            executable, environment = self._launch(expected.backend_key)
+            selected = _resolve_launch_executable(executable, environment, localized)
+            if selected is None:
+                return False
+            info = selected.stat()
+            identity = (
+                f"{selected}:{info.st_dev}:{info.st_ino}:{info.st_size}:"
+                f"{info.st_mtime_ns}:{info.st_ctime_ns}"
+            )
+            revisions = _configuration_revisions(expected.backend_key, localized, environment)
+            fingerprint = (tuple(sorted(environment.items())), revisions, identity)
+            retained = self._scopes.get((expected.backend_key, localized))
+            return (
+                identity == expected.executable_identity
+                and revisions is not None
+                and retained is not None
+                and retained == (fingerprint, expected.provider_scope)
+                and _account_generation(expected.backend_key, environment, localized)
+                == expected.account_generation
+            )
+        except (OSError, ValueError):
+            return False
+
+    def verify_prepared_launch(
+        self, expected: LaunchContext, prepared: BackendEmissionInputs
+    ) -> bool:
+        if prepared.executable is None or prepared.environment is None:
+            return False
+        try:
+            executable, environment = self._launch(expected.backend_key)
+            if any(
+                prepared.environment.get(key) != value
+                for key, value in environment.items()
+                if not key.startswith("PLAN_")
+            ):
+                return False
+            return _resolve_launch_executable(
+                executable, environment, prepared.workspace
+            ) == _resolve_launch_executable(
+                prepared.executable, prepared.environment, prepared.workspace
+            )
+        except (OSError, ValueError):
+            return False
+
     def _unavailable(
         self,
         backend_key: ConversationBackendKey,
@@ -303,8 +363,10 @@ def _configuration_revisions(
     home = Path(environment.get("HOME", str(Path.home())))
     # Unknown source indirection cannot establish an effective configuration scope.
     for key, value in environment.items():
-        if value and key.startswith(("CODEX_", "CLAUDE_", "ANTHROPIC_")) and any(
-            marker in key for marker in ("CONFIG_PATH", "SETTINGS", "MANAGED_CONFIG")
+        if (
+            value
+            and key.startswith(("CODEX_", "CLAUDE_", "ANTHROPIC_"))
+            and any(marker in key for marker in ("CONFIG_PATH", "SETTINGS", "MANAGED_CONFIG"))
         ):
             return None
     if backend_key is ConversationBackendKey.codex:
@@ -348,8 +410,16 @@ def _configuration_revisions(
                 document = tomllib.loads(text) if path.suffix == ".toml" else json.loads(text)
                 if _has_indirect_source(document):
                     return None
-            revisions.append((str(path), info.st_dev, info.st_ino, info.st_size,
-                              info.st_mtime_ns, info.st_ctime_ns))
+            revisions.append(
+                (
+                    str(path),
+                    info.st_dev,
+                    info.st_ino,
+                    info.st_size,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                )
+            )
         except FileNotFoundError:
             revisions.append((str(path), None))
         except (OSError, ValueError, UnicodeError):

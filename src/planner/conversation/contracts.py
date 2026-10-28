@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
-from planner.core.contracts import ErrorCode, PlannerError, Principal
+from planner.core.contracts import ErrorCode, JsonDict, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
 
@@ -599,6 +599,7 @@ class PromptDeliveryRefused:
     """
 
     refusal_reason: PromptDeliveryRefusalReason
+    model_validation: JsonDict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -780,6 +781,7 @@ class ConversationSystem(Protocol):
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
@@ -836,6 +838,7 @@ class ConversationSystem(Protocol):
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,

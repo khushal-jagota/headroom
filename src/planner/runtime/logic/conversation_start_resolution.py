@@ -87,6 +87,7 @@ class ConversationStartOverrides:
     backend_key: ConversationBackendKey | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    reasoning_effort_is_set: bool = False
 
 
 NO_CONVERSATION_START_OVERRIDES: Final = ConversationStartOverrides()
@@ -183,7 +184,7 @@ def _with_overrides(
         model=base.model if overrides.model is None else overrides.model,
         reasoning_effort=(
             base.reasoning_effort
-            if overrides.reasoning_effort is None
+            if overrides.reasoning_effort is None and not overrides.reasoning_effort_is_set
             else overrides.reasoning_effort
         ),
     )

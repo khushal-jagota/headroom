@@ -36,6 +36,41 @@ async def move_ticket_locale(
     synchronous writer checks authority, compatibility and the outstanding claim inside
     its own transaction; no backend I/O or await occurs with that transaction open.
     """
+    from planner.tickets.launch_authority import (
+        acquire_ticket_mutation,
+        launch_authority_scope,
+    )
+
+    permit = acquire_ticket_mutation(conn, ticket_id)
+    try:
+        with launch_authority_scope(permit):
+            return await _move_ticket_locale_with_authority(
+                system,
+                conn,
+                ticket_id,
+                locale=locale,
+                principal=principal,
+                now=now,
+                expected_record_sha256=expected_record_sha256,
+                source=source,
+                source_factory=source_factory,
+            )
+    finally:
+        permit.release(conn)
+
+
+async def _move_ticket_locale_with_authority(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    locale: TicketLocale,
+    principal: Principal,
+    now: int,
+    expected_record_sha256: str | None,
+    source: MoveSourceRetirement | None,
+    source_factory: Callable[[Ticket], MoveSourceRetirement] | None,
+) -> Ticket:
     link_lock = conversation_link_lock(f"ticket:{ticket_id}")
     if link_lock.locked():
         raise PlannerError(
@@ -53,6 +88,34 @@ async def move_ticket_locale(
         )
         if ticket.locale is locale:
             return ticket
+        from planner.runtime.conversation_start import (
+            refuse_known_incompatibility,
+            verify_ticket_launch,
+        )
+
+        validation = None
+        if ticket.employee_backend != "hermes" and ticket.employee_launch_model is not None:
+            validation = await verify_ticket_launch(
+                system,
+                conn,
+                ticket,
+                locale=locale,
+                persist=False,
+                now=now,
+            )
+            refuse_known_incompatibility(validation)
+        # Recheck authority and exact source before any retirement after discovery.
+        current = data.validate_ticket_locale_move(
+            conn,
+            ticket_id,
+            locale=locale,
+            principal=principal,
+            expected_record_sha256=expected_record_sha256,
+        )
+        if current != ticket:
+            raise PlannerError(
+                ErrorCode.validation, "Ticket changed during destination verification", {}
+            )
         if ticket.locale is TicketLocale.macos and source_factory is not None:
             source = source_factory(ticket)
         if ticket.locale is TicketLocale.macos and source is None:
@@ -72,6 +135,7 @@ async def move_ticket_locale(
                 principal=principal,
                 now=now,
                 expected_record_sha256=expected_record_sha256,
+                validation=validation,
                 expected_source_locale=ticket.locale,
                 expected_conversation_id=ticket.conversation_id,
                 validate_source=None if source is None else source.validate_current,

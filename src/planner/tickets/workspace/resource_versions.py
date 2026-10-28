@@ -35,6 +35,12 @@ SOURCE_TRIGGERS = (
     *_sources("managers", "manager", "ROW.id"),
     *_sources("ticket_blocks", "blockers", "ROW.blocked_ticket_id"),
 )
+# Installed only by ticket_launch_validation, after this table exists.
+LAUNCH_VALIDATION_SOURCE_TRIGGERS = _sources(
+    "ticket_launch_validation",
+    "launch-validation",
+    "ROW.ticket_id",
+)
 _PATH = re.compile(r"^/api/tickets/([^/?]+)/workspace(?:/fields/([^/?]+))?$")
 
 
@@ -60,7 +66,11 @@ class TicketWorkspaceResources:
         ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-        dependencies = [("ticket", ticket_id), ("blockers", ticket_id)]
+        dependencies = [
+            ("ticket", ticket_id),
+            ("blockers", ticket_id),
+            ("launch-validation", ticket_id),
+        ]
         if row["manager_id"] is not None:
             dependencies.append(("manager", str(row["manager_id"])))
         if row["project_id"] is not None:

@@ -26,13 +26,13 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from pydantic import TypeAdapter
 
 from planner.conversation.backend_event_contracts import ExecutorEffectResult, ExecutorEffectWriter
-from planner.conversation.backends.contracts import BackendSpawnFailed, TurnToken
+from planner.conversation.backends.contracts import AdmissionRefused, BackendSpawnFailed, TurnToken
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -91,6 +91,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
 from planner.executor.contracts import (
     AcceptanceReceipt,
+    ChildCommand,
     ChildReference,
     ExecutorEffectAcceptor,
     JsonObject,
@@ -133,6 +134,13 @@ class ConversationRecordNamesNoModel(BackendSpawnFailed):
     spawn failure because that is exactly what it is — a conversation that cannot be
     started refuses the message rather than breaking the page that lists it.
     """
+
+
+if TYPE_CHECKING:
+    from planner.conversation.model_resolution.contracts import (
+        CanonicalModelValidation,
+        ModelSelection,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -523,9 +531,15 @@ class ConversationStore:
         *,
         executor_turn: tuple[str, str, str] | None = None,
         retired_child: ChildReference | None = None,
+        launch_command: ChildCommand | None = None,
     ) -> bool:
         return await self._write(
-            self._transition_lifecycle_sync, conversation_id, facts, executor_turn, retired_child
+            self._transition_lifecycle_sync,
+            conversation_id,
+            facts,
+            executor_turn,
+            retired_child,
+            launch_command,
         )
 
     def _transition_lifecycle_sync(
@@ -534,11 +548,29 @@ class ConversationStore:
         facts: tuple[LifecycleFact, ...],
         executor_turn: tuple[str, str, str] | None = None,
         retired_child: ChildReference | None = None,
+        launch_command: ChildCommand | None = None,
     ) -> bool:
         with self._publication_connection() as (conn, admission):
             conn.execute("BEGIN IMMEDIATE")
             self._apply_signal_mutation(conn, admission)
+            if launch_command is not None:
+                from planner.conversation.admission.policy import check_expectation_policy
+                from planner.conversation.admission.service import current_admission_expectation
+
+                expectation = current_admission_expectation()
+                if expectation is not None:
+                    check_expectation_policy(conn, expectation)
+                from planner.tickets.launch_authority import current_launch_authority_permit
+
+                permit = current_launch_authority_permit()
+                if permit is not None:
+                    permit.bind_command(
+                        conn,
+                        launch_command.command_id,
+                        launch_command.child.executor_incarnation,
+                    )
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
+            retained_commands: tuple[ChildCommand, ...] = ()
             if retired_child is not None:
                 retained = conn.execute(
                     "SELECT child_json,runtime_json FROM executor_core_turns "
@@ -556,12 +588,19 @@ class ConversationStore:
                 ):
                     conn.rollback()
                     return False
+                retained_commands = tuple(
+                    TypeAdapter(ChildCommand).validate_python(raw)
+                    for raw in json.loads(retained[1]).get("initial_commands", ())
+                )
             apply_facts(conn, conversation_id, facts)
             if executor_turn is not None:
                 self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
             if retired_child is not None:
                 ExecutorStore.close_child_in_transaction(
-                    conn, retired_child, self._integer_now() * 1000
+                    conn,
+                    retired_child,
+                    self._integer_now() * 1000,
+                    retained_commands=retained_commands,
                 )
             interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
@@ -614,7 +653,8 @@ class ConversationStore:
         while True:
             try:
                 return await operation()
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, AdmissionRefused):
+                # A proven pre-dispatch refusal is an admission outcome, not a failed write.
                 raise
             except Exception as error:
                 resumed = asyncio.Event()
@@ -997,6 +1037,8 @@ class ConversationStore:
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
         executor_turn: tuple[str, str, str] | None = None,
+        original_ticket_selection: ModelSelection | None = None,
+        requested_ticket_validation: CanonicalModelValidation | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -1033,6 +1075,8 @@ class ConversationStore:
                 lifecycle,
                 composed_content_delivered,
                 executor_turn,
+                original_ticket_selection,
+                requested_ticket_validation,
             )
 
     async def read_events_after(
@@ -1376,6 +1420,8 @@ class ConversationStore:
         lifecycle: tuple[LifecycleFact, ...] = (),
         composed_content_delivered: bool = True,
         executor_turn: tuple[str, str, str] | None = None,
+        original_ticket_selection: ModelSelection | None = None,
+        requested_ticket_validation: CanonicalModelValidation | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -1432,6 +1478,43 @@ class ConversationStore:
                 )
                 if executor_turn is not None:
                     self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
+                if (
+                    original_ticket_selection is not None
+                    and requested_ticket_validation is not None
+                ):
+                    from planner.tickets import data as ticket_data
+                    from planner.tickets.contracts import EmployeeLaunchConfiguration
+
+                    row = conn.execute(
+                        "SELECT id FROM tickets WHERE conversation_id=?",
+                        (conversation_id,),
+                    ).fetchone()
+                    if row is not None:
+                        from planner.tickets.launch_authority import acquire_ticket_mutation
+
+                        intent_permit = acquire_ticket_mutation(conn, row[0])
+                        try:
+                            ticket_data.write_explicit_ticket_launch_intent(
+                                conn,
+                                row[0],
+                                expected_conversation_id=conversation_id,
+                                expected_selection_revision=original_ticket_selection.selection_revision,
+                                expected_configuration=EmployeeLaunchConfiguration(
+                                    employee_backend=original_ticket_selection.backend_key.value,
+                                    employee_launch_model=original_ticket_selection.submitted_token,
+                                    employee_launch_reasoning_effort=original_ticket_selection.reasoning_effort,
+                                ),
+                                model=requested_ticket_validation.selection.submitted_token,
+                                reasoning_effort=requested_ticket_validation.selection.reasoning_effort,
+                                selection_kind=requested_ticket_validation.selection.selection_kind,
+                                employee_backend=requested_ticket_validation.selection.backend_key.value,
+                                source_type="sender_override",
+                                now=self._integer_now(),
+                                validation=requested_ticket_validation,
+                                authority_permit=intent_permit,
+                            )
+                        finally:
+                            intent_permit.release(conn)
                 self._participate_in_append(conn, conversation_id, written)
                 self._record_signal_result(conn, written)
                 self._commit_rows(conn, payloads)

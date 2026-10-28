@@ -568,7 +568,13 @@ def send_message(
         as_json=as_json,
         json_body={"target": recipient, "message": text, "mode": mode},
     )
-    http.emit(data, as_json, f"message {data['fate']}")
+    validation = data.get("model_validation")
+    detail = (
+        f": {validation['reason']}: {validation['corrective_action']}"
+        if isinstance(validation, dict)
+        else ""
+    )
+    http.emit(data, as_json, f"message {data['fate']}{detail}")
 
 
 @main.command("serve", hidden=True)
@@ -1875,7 +1881,13 @@ def ticket_restart_worker(
     elif data["delivery_fate"] == "uncertain":
         human_result = f"{ticket_id} start delivery is uncertain. The Worker claim remains held."
     elif data["delivery_fate"] == "refused":
-        human_result = f"{ticket_id} start delivery was refused"
+        validation = data.get("launch_validation")
+        detail = (
+            f": {validation['reason']}: {validation['corrective_action']}"
+            if isinstance(validation, dict)
+            else ""
+        )
+        human_result = f"{ticket_id} start delivery was refused{detail}"
     else:
         human_result = f"{ticket_id} did not start: {data['not_started_because']}"
     http.emit(
@@ -1992,9 +2004,7 @@ def manager_create(
 @manager.command("list")
 @click.option("--search", default=None, help="Find a Manager by title.")
 @click.option("--active", is_flag=True, help="Only show active Managers (settled=false).")
-@click.option(
-    "--settled", is_flag=True, help="Only show settled Managers (finished destinations)."
-)
+@click.option("--settled", is_flag=True, help="Only show settled Managers (finished destinations).")
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
 @bounded_options

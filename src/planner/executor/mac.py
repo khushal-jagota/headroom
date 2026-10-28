@@ -33,6 +33,7 @@ from planner.conversation.model_resolution.contracts import (
     CatalogResponse,
     CatalogUnavailable,
     CorrectiveAction,
+    LaunchContext,
     ProviderCatalogObserver,
     ValidationReason,
 )
@@ -185,7 +186,21 @@ class MacExecutor:
             spool=self.spool,
             factory=self._factory(panels_server_url),
             message_files=ConversationMessageFiles(paths.root / "artifacts" / "unused-db-path"),
+            admission_observer=self,
         )
+
+    def verify_context(self, expected: LaunchContext) -> bool:
+        observer = self._catalog_observer
+        verify = getattr(observer, "verify_context", None)
+        return (
+            expected.executor_identity == self.identity
+            and callable(verify)
+            and bool(verify(expected))
+        )
+
+    def verify_prepared_launch(self, expected: LaunchContext, prepared: Any) -> bool:
+        verify = getattr(self._catalog_observer, "verify_prepared_launch", None)
+        return callable(verify) and bool(verify(expected, prepared))
 
     def _factory(
         self, server_url: str
@@ -453,7 +468,9 @@ class MacExecutor:
         deadline: float,
     ) -> None:
         observer = self._catalog_observer
-        if observer is None:
+        if observer is None or (
+            hasattr(observer, "executor_identity") and observer.executor_identity != identity
+        ):
             from planner.conversation.model_resolution.observer import ProductionCatalogObserver
 
             observer = ProductionCatalogObserver(
@@ -461,6 +478,7 @@ class MacExecutor:
                 panels_server_url=self.server_url,
                 executor_identity=identity,
             )
+            self._catalog_observer = observer
         owner = asyncio.current_task()
         assert owner is not None
         work = asyncio.create_task(

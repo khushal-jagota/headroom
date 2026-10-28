@@ -26,7 +26,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from uuid import uuid4
@@ -44,12 +44,19 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliverySuppressed,
+    ResolvedConversationStart,
     WorkspacePathPolicy,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
 from planner.conversation.message_content import MessageContent
+from planner.conversation.model_resolution.contracts import (
+    CanonicalModelValidation,
+    CatalogWorkspaceBinding,
+    SelectionKind,
+    ValidationReason,
+)
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
@@ -170,21 +177,192 @@ def worker_resolve(
 def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
 ) -> tuple[Path, WorkspacePathPolicy]:
+    return workspace_for_project(conn, ticket.locale, ticket.project_id, explicit=explicit)
+
+
+def workspace_for_project(
+    conn: sqlite3.Connection,
+    locale: TicketLocale,
+    project_id: str | None,
+    *,
+    explicit: Path | None = None,
+) -> tuple[Path, WorkspacePathPolicy]:
+    """Use the existing project localization policy for both drafts and real starts."""
     policy = (
         WorkspacePathPolicy.native_absolute
-        if ticket.locale == TicketLocale.macos
+        if locale == TicketLocale.macos
         else WorkspacePathPolicy.legacy_home_mapping
     )
     if explicit is not None:
         return explicit, policy
-    if ticket.project_id is not None:
-        project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
+    if project_id is not None:
+        project_folder = projects_data.read_project(conn, project_id).folder_path
         if project_folder is not None:
-            if ticket.locale == TicketLocale.macos:
+            if locale == TicketLocale.macos:
                 return project_folder, policy
             if project_folder.is_dir():
                 return project_folder.resolve(strict=False), policy
     return _default_workspace_folder(), WorkspacePathPolicy.legacy_home_mapping
+
+
+def workspace_binding_from_start(
+    values: ConversationStartValues | ResolvedConversationStart,
+    destination: TicketLocale = TicketLocale.vps,
+) -> CatalogWorkspaceBinding:
+    """Use the existing start authority and native home-relative transport rule."""
+    relative: str | None = None
+    if (
+        destination is TicketLocale.macos
+        and values.workspace_path_policy is WorkspacePathPolicy.legacy_home_mapping
+    ):
+        try:
+            part = values.workspace_folder.resolve().relative_to(Path.home().resolve())
+        except ValueError:
+            pass
+        else:
+            relative = "" if part == Path(".") else part.as_posix()
+    return CatalogWorkspaceBinding(
+        values.workspace_folder,
+        values.workspace_path_policy,
+        relative,
+    )
+
+
+async def verify_ticket_launch(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    locale: TicketLocale | None = None,
+    employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
+    selection_kind: SelectionKind | None = None,
+    persist: bool = True,
+    notify: bool = False,
+    classify_new: bool = False,
+    now: int,
+) -> CanonicalModelValidation:
+    """Observe outside transactions, then compare the exact captured launch selection."""
+    from planner.conversation.model_resolution.logic.validation import unresolved_validation
+    from planner.tickets.validation.data import (
+        read_launch_selection,
+        read_launch_validation,
+        record_launch_validation,
+        set_selection_kind,
+    )
+
+    proposed = employee_launch_model is not None or employee_backend is not None
+    if ticket.employee_launch_model is None:
+        if employee_launch_model is None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "historical model selection needs an explicit choice",
+                {
+                    "state": "unresolved",
+                    "reason": "legacy_unscoped",
+                    "corrective_action": "classify_selection",
+                },
+            )
+        from planner.conversation.model_resolution.contracts import ModelSelection
+
+        revision = conn.execute(
+            "SELECT launch_revision FROM ticket_launch_validation WHERE ticket_id=?",
+            (ticket.id,),
+        ).fetchone()[0]
+        selection = ModelSelection(
+            ticket.locale,
+            ConversationBackendKey(employee_backend or ticket.employee_backend),
+            employee_launch_model,
+            selection_kind or SelectionKind.legacy_unclassified,
+            employee_launch_reasoning_effort,
+            str(revision),
+        )
+    else:
+        selection = read_launch_selection(conn, ticket.id)
+    selected_ticket = replace(
+        ticket,
+        locale=ticket.locale if locale is None else locale,
+        employee_backend=ticket.employee_backend if employee_backend is None else employee_backend,
+        employee_launch_model=(
+            ticket.employee_launch_model if employee_launch_model is None else employee_launch_model
+        ),
+        employee_launch_reasoning_effort=(
+            ticket.employee_launch_reasoning_effort
+            if not proposed
+            else employee_launch_reasoning_effort
+        ),
+    )
+    values = worker_resolve(conn, selected_ticket)
+    selection = replace(
+        selection,
+        destination=selected_ticket.locale,
+        backend_key=values.backend_key,
+        submitted_token=values.model,
+        reasoning_effort=values.reasoning_effort,
+        selection_kind=selection.selection_kind if selection_kind is None else selection_kind,
+    )
+    workspace = workspace_binding_from_start(values, selection.destination)
+    validator = getattr(system, "validate_launch_selection", None)
+    if callable(validator):
+        stored = read_launch_validation(conn, ticket.id)
+        validation = await validator(
+            selection,
+            workspace,
+            attempt_id=uuid4().hex,
+            classify_new=classify_new,
+            previous_alias_resolution=(
+                None
+                if stored is None
+                else stored.validation.current_alias_resolution
+                or stored.validation.previous_alias_resolution
+            ),
+        )
+    else:
+        stored = None
+        validation = unresolved_validation(selection, ValidationReason.catalog_unavailable)
+    from planner.runtime.logic.launch_selection import preserve_alias_history
+
+    validation = preserve_alias_history(validation, None if stored is None else stored.validation)
+    if persist and not proposed and locale is None:
+        if validation.selection.selection_kind != selection.selection_kind:
+            updated = set_selection_kind(
+                conn,
+                ticket.id,
+                validation.selection.selection_kind,
+                expected_selection_revision=selection.selection_revision,
+            )
+            validation = replace(validation, selection=updated)
+        if not record_launch_validation(
+            conn,
+            ticket.id,
+            validation,
+            expected_workspace=workspace,
+            now=now,
+            notify=notify,
+        ):
+            raise PlannerError(
+                ErrorCode.validation, "launch selection changed during verification", {}
+            )
+    if not isinstance(validation, CanonicalModelValidation):
+        raise TypeError("destination validator returned no canonical validation")
+    return validation
+
+
+def refuse_known_incompatibility(validation: CanonicalModelValidation) -> None:
+    """Unknown support preserves configuration. Only a known mismatch refuses a write."""
+    from planner.conversation.model_resolution.contracts import ValidationState
+
+    if validation.state is ValidationState.incompatible:
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{validation.reason.value}: {validation.corrective_action.value}",
+            {
+                "state": validation.state.value,
+                "reason": validation.reason.value,
+                "corrective_action": validation.corrective_action.value,
+            },
+        )
 
 
 def agent_resolve(
@@ -342,6 +520,7 @@ async def _send_with_addressed_receipt(
     mode: PromptDeliveryMode,
     model_change: str | None = None,
     reasoning_effort_change: str | None = None,
+    reasoning_effort_is_set: bool = False,
     owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
@@ -359,6 +538,7 @@ async def _send_with_addressed_receipt(
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -374,6 +554,7 @@ async def _send_with_addressed_receipt(
         mode=mode,
         model_change=model_change,
         reasoning_effort_change=reasoning_effort_change,
+        reasoning_effort_is_set=reasoning_effort_is_set,
         owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -539,6 +720,13 @@ async def _send_into_the_conversation_the_ticket_is_in(
     """
     captured_ticket = tickets_data.read_ticket(conn, ticket_id)
     expected_configuration = tickets_data.employee_launch_configuration(captured_ticket)
+    from planner.tickets.validation.data import read_launch_selection
+
+    captured_selection = (
+        None
+        if captured_ticket.employee_launch_model is None
+        else read_launch_selection(conn, ticket_id)
+    )
     receipt = await _send_with_addressed_receipt(
         system,
         sending_into,
@@ -547,6 +735,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
         owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -555,20 +744,31 @@ async def _send_into_the_conversation_the_ticket_is_in(
         reply_requested=reply_requested,
     )
     fate = receipt.fate
-    carries_a_change = runs_under.model is not None or runs_under.reasoning_effort is not None
-    if carries_a_change and isinstance(fate, PromptDeliveryStarted):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        tickets_data.write_ticket_last_chosen_configuration(
+    if (
+        captured_ticket.employee_backend == "hermes"
+        and captured_selection is not None
+        and isinstance(fate, PromptDeliveryStarted)
+        and (
+            runs_under.model is not None
+            or (runs_under.reasoning_effort is not None or runs_under.reasoning_effort_is_set)
+        )
+    ):
+        tickets_data.write_explicit_ticket_launch_intent(
             conn,
             ticket_id,
             expected_conversation_id=sending_into,
             expected_configuration=expected_configuration,
-            model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
+            expected_selection_revision=captured_selection.selection_revision,
+            model=captured_selection.submitted_token
+            if runs_under.model is None
+            else runs_under.model,
             reasoning_effort=(
-                ticket.employee_launch_reasoning_effort
-                if runs_under.reasoning_effort is None
+                captured_selection.reasoning_effort
+                if runs_under.reasoning_effort is None and not runs_under.reasoning_effort_is_set
                 else runs_under.reasoning_effort
             ),
+            selection_kind=SelectionKind.legacy_unclassified,
+            source_type="sender_override",
             now=now,
         )
     return DeliveredMessage(
@@ -610,11 +810,15 @@ async def _make_a_conversation_and_send_into_it(
     So the undo is on the way out, not on the answer.
     """
     making = created_conversation_id or new_conversation_id()
+    values = worker_resolve(conn, ticket, runs_under, worker_type_registry=worker_type_registry)
+    from planner.tickets.validation.data import read_launch_selection
+
+    captured_selection = read_launch_selection(conn, ticket.id)
     linked = await start_ticket_conversation(
         system,
         conn,
         ticket,
-        worker_resolve(conn, ticket, runs_under, worker_type_registry=worker_type_registry),
+        values,
         conversation_id=making,
         now=now,
     )
@@ -654,6 +858,9 @@ async def _make_a_conversation_and_send_into_it(
             await _message_content_for(content, making),
             sender_label=sender_label,
             mode=mode,
+            model_change=runs_under.model,
+            reasoning_effort_change=runs_under.reasoning_effort,
+            reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -662,6 +869,28 @@ async def _make_a_conversation_and_send_into_it(
             reply_requested=reply_requested,
         )
         fate = receipt.fate
+        if (
+            values.backend_key is ConversationBackendKey.hermes
+            and isinstance(fate, PromptDeliveryStarted)
+            and (
+                runs_under.model is not None
+                or (runs_under.reasoning_effort is not None or runs_under.reasoning_effort_is_set)
+                or runs_under.backend_key is not None
+            )
+        ):
+            tickets_data.write_explicit_ticket_launch_intent(
+                conn,
+                ticket.id,
+                expected_conversation_id=making,
+                expected_configuration=tickets_data.employee_launch_configuration(ticket),
+                expected_selection_revision=captured_selection.selection_revision,
+                employee_backend=values.backend_key.value,
+                model=values.model,
+                reasoning_effort=values.reasoning_effort,
+                selection_kind=SelectionKind.legacy_unclassified,
+                source_type="sender_override",
+                now=now,
+            )
     except BaseException:
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
@@ -942,6 +1171,7 @@ async def send_to_agent_conversation(
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
         owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,

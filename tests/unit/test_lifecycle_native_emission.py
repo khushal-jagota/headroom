@@ -1,0 +1,620 @@
+"""Final owned transport waits cannot turn old observations into provider writes.
+
+Risks absent from scope-1 metadata coverage: mutation during a write lock wait,
+an SDK task with unrelated context, and malformed nested command identity.
+No browser, server, subprocess, or provider is needed for these boundaries.
+"""
+
+import asyncio
+import json
+import time
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+
+import pytest
+from claude_agent_sdk import ClaudeAgentOptions
+
+from planner.conversation.admission.contracts import AdmissionExpectation
+from planner.conversation.admission.service import check_expectation, parse_expectation
+from planner.conversation.backends.claude_agent_sdk import _ClaudeCleanupTransport
+from planner.conversation.backends.codex_app_server.client import CodexAppServerClient
+from planner.conversation.backends.contracts import AdmissionRefused, emission_check_scope
+from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
+from planner.conversation.model_resolution.contracts import (
+    CatalogEvidenceReference,
+    CatalogWorkspaceBinding,
+    LaunchContext,
+    ModelSelection,
+    SelectionKind,
+)
+from planner.executor.codec import encode_value
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.executor.contracts import ExecutorIdentity
+from planner.tickets.contracts import TicketLocale
+
+
+def expectation(workspace: Path) -> AdmissionExpectation:
+    binding = CatalogWorkspaceBinding(workspace, WorkspacePathPolicy.native_absolute, None)
+    context = LaunchContext(
+        "context",
+        TicketLocale.macos,
+        ConversationBackendKey.codex,
+        ExecutorIdentity(
+            PROTOCOL_VERSION,
+            "a" * 40,
+            SPOOL_FORMAT_VERSION,
+            "11111111-1111-4111-8111-111111111111",
+            1,
+        ),
+        binding,
+        workspace,
+        "binary",
+        "1",
+        "scope",
+        None,
+    )
+
+    return AdmissionExpectation(
+        ModelSelection(
+            TicketLocale.macos,
+            ConversationBackendKey.codex,
+            "exact",
+            SelectionKind.concrete,
+            None,
+            "1",
+        ),
+        binding,
+        context,
+        CatalogEvidenceReference(
+            "observation", "revision", context, int(time.time()) - 1, "attempt", 0.0
+        ),
+        "attempt",
+        "exact",
+        None,
+        "[]",
+        "conversation",
+        "exact",
+    )
+
+
+def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
+    tmp_path: Path,
+) -> None:
+    """Required args change core command JSON, while spool-2 carries outcomes.
+
+    The uncovered risk is serialization/reopen/replay, not another provider or TLS
+    campaign. Retain the independent review proof against these actual two stores.
+    """
+    from pydantic import TypeAdapter
+
+    from planner.conversation.contracts import (
+        ConversationAccess,
+        ConversationRoleMaterials,
+        ResolvedConversationStart,
+    )
+    from planner.conversation.storage import ConversationStore
+    from planner.core.db import connect, create_schema
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.contracts import (
+        AcceptanceReceipt,
+        ChildCommand,
+        ChildOperation,
+        ChildReference,
+        CommandDisposition,
+        CommandOutcome,
+        EnvelopeKind,
+        JsonObject,
+        ReceiptDisposition,
+        WireMessage,
+        WireMessageKind,
+    )
+    from planner.executor.journal import FilesystemSpool
+    from planner.executor.mac import MacExecutor
+    from planner.executor.wire import ProtocolRefused, parse_identity
+
+    def payload_object(value: object) -> JsonObject:
+        payload = encode_value(value)
+        assert isinstance(payload, dict)
+        return payload
+
+    async def prove() -> None:
+        exact = expectation(tmp_path)
+        assert exact.context.executor_identity is not None
+        child = ChildReference(
+            exact.context.executor_identity.executor_incarnation, "old-child", "conversation"
+        )
+        resolved = ResolvedConversationStart(
+            child.conversation_id,
+            ConversationBackendKey.codex,
+            "exact",
+            None,
+            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "ticket"),)),
+            tmp_path,
+            ConversationAccess.full,
+        )
+        old = ChildCommand(
+            "old-pending",
+            child,
+            ChildOperation.start,
+            None,
+            {"resolved_start": encode_value(resolved)},
+        )
+        new = replace(
+            old,
+            command_id="new-pending",
+            arguments={
+                **old.arguments,
+                "admission_expectation": encode_value(replace(exact, child=child)),
+            },
+        )
+        database = str(tmp_path / "core.db")
+        conn = connect(database)
+        try:
+            create_schema(conn)
+            conn.execute(
+                "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,"
+                "access,created_at) VALUES('conversation','codex','exact',?,'full',1)",
+                (str(tmp_path),),
+            )
+            runtime = {"initial_commands": [encode_value(old), encode_value(new)]}
+            ConversationStore.save_executor_turn_in_transaction(
+                conn,
+                child.conversation_id,
+                (
+                    json.dumps(encode_value(child)),
+                    json.dumps({"conversation_id": child.conversation_id, "turn_number": 1}),
+                    json.dumps(runtime),
+                ),
+            )
+        finally:
+            conn.close()
+        reopened = connect(database)
+        try:
+            stored = json.loads(
+                reopened.execute("SELECT runtime_json FROM executor_core_turns").fetchone()[0]
+            )
+            restored = tuple(
+                TypeAdapter(ChildCommand).validate_python(raw) for raw in stored["initial_commands"]
+            )
+            assert restored == (old, new)
+            assert "admission_expectation" not in restored[0].arguments
+            assert restored[1].arguments["admission_expectation"] == encode_value(
+                replace(exact, child=child)
+            )
+        finally:
+            reopened.close()
+
+        paths = ExecutorPaths(tmp_path / "native")
+        spool = FilesystemSpool(paths.spool)
+        outcomes = (
+            CommandOutcome("legacy-known", child, CommandDisposition.succeeded, {"old": True}),
+            CommandOutcome("legacy-unknown", child, CommandDisposition.uncertain, {"old": True}),
+            CommandOutcome(
+                "new-known",
+                child,
+                CommandDisposition.refused,
+                {
+                    "error_type": "AdmissionRefused",
+                    "reason": "context_changed",
+                    "corrective_action": "verify_launch_context",
+                },
+            ),
+            CommandOutcome("new-unknown", child, CommandDisposition.uncertain, {"new": True}),
+        )
+        envelopes = tuple(
+            spool.mint_envelope(
+                conversation_id=child.conversation_id,
+                kind=EnvelopeKind.command_outcome,
+                payload=payload_object(value),
+            )
+            for value in outcomes
+        )
+        sender = spool.sender_id
+        before = spool._db.execute(
+            "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
+        ).fetchall()
+        spool.close()
+        executor = MacExecutor(
+            paths=paths,
+            revision="a" * 40,
+            executor_id="fixture-only",
+            panels_server_url="https://unused.invalid",
+        )
+        try:
+            assert executor.spool.sender_id == sender
+            assert (
+                executor.spool._db.execute(
+                    "SELECT submission_id,envelope_json,pending FROM envelopes "
+                    "ORDER BY submission_id"
+                ).fetchall()
+                == before
+            )
+            assert executor.spool.pending() == envelopes
+            assert executor.identity.executor_incarnation != child.executor_incarnation
+
+            def never_create(*args: object, **kwargs: object) -> Any:
+                pytest.fail("persisted command replay reached provider factory")
+
+            executor.registry.factory = never_create
+            assert executor.registry.children == {} and executor.registry.outcomes == {}
+            old_incarnation = await executor.registry.execute_command(old)
+            assert old_incarnation.disposition is CommandDisposition.refused
+            assert old_incarnation.result == {"reason": "incarnation_gone"}
+            legacy_current = replace(
+                old,
+                command_id="legacy-proven-nondispatch",
+                child=replace(child, executor_incarnation=executor.identity.executor_incarnation),
+            )
+            legacy_refusal = await executor.registry.execute_command(legacy_current)
+            assert legacy_refusal.disposition is CommandDisposition.refused
+            assert legacy_refusal.result["reason"] == "legacy_unscoped"
+
+            submitted: list[dict[str, Any]] = []
+            executor._handshake_accepted = True
+
+            async def request(kind: WireMessageKind, payload: dict[str, Any]) -> WireMessage:
+                assert kind is WireMessageKind.envelope
+                submitted.append(payload)
+                receipt = AcceptanceReceipt(
+                    payload["sender_id"],
+                    payload["submission_id"],
+                    payload["payload_sha256"],
+                    ReceiptDisposition.accepted,
+                    {},
+                    1,
+                )
+                return WireMessage(WireMessageKind.receipt, "fixture", payload_object(receipt))
+
+            executor._request = request  # type: ignore[method-assign]
+            await executor._replay()
+            original = {entry.submission_id: encode_value(entry) for entry in envelopes}
+            replayed_original = [entry for entry in submitted if entry["submission_id"] in original]
+            assert len(replayed_original) == 4
+            assert all(entry == original[entry["submission_id"]] for entry in replayed_original)
+            assert (
+                sum(entry["payload"]["disposition"] == "uncertain" for entry in replayed_original)
+                == 2
+            )
+            assert executor.spool.pending_count() == 0 and not executor.registry.children
+            assert PROTOCOL_VERSION == 11 and SPOOL_FORMAT_VERSION == 2
+            with pytest.raises(ProtocolRefused):
+                parse_identity(
+                    encode_value(
+                        replace(executor.identity, protocol_version=10, connection_generation=1)
+                    )
+                )
+            assert (
+                parse_identity(
+                    encode_value(replace(executor.identity, connection_generation=1))
+                ).protocol_version
+                == 11
+            )
+        finally:
+            executor.spool.close()
+
+    asyncio.run(prove())
+
+
+def test_native_expectation_rejects_nested_identity_and_attempt_changes(tmp_path: Path) -> None:
+    exact = expectation(tmp_path)
+    raw = cast(dict[str, Any], encode_value(exact))
+    raw["context"]["executor_identity"]["connection_generation"] = True
+    with pytest.raises(ValueError, match="identity integer"):
+        parse_expectation(raw)
+    with pytest.raises(AdmissionRefused, match="account_observation_required"):
+        check_expectation(replace(exact, attempt_id="unrelated"))
+
+
+def test_prepared_launch_uses_actual_executable_and_provider_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.backends.contracts import BackendEmissionInputs
+    from planner.conversation.model_resolution.observer import ProductionCatalogObserver
+
+    observer = ProductionCatalogObserver(
+        destination=TicketLocale.macos,
+        panels_server_url="https://invalid.test",
+        executor_identity=expectation(tmp_path).context.executor_identity,
+    )
+    monkeypatch.setattr(
+        observer,
+        "_launch",
+        lambda _: (
+            "/exact/provider",
+            {"PROVIDER_SCOPE": "canonical", "PLAN_TICKET_ID": "parent"},
+        ),
+    )
+    monkeypatch.setattr(
+        "planner.conversation.model_resolution.observer._resolve_launch_executable",
+        lambda executable, environment, workspace: Path(executable),
+    )
+    prepared = BackendEmissionInputs(
+        "exact",
+        None,
+        tmp_path,
+        "/exact/provider",
+        {"PROVIDER_SCOPE": "canonical", "PLAN_TICKET_ID": "child"},
+    )
+    context = expectation(tmp_path).context
+    assert observer.verify_prepared_launch(context, prepared)
+    assert not observer.verify_prepared_launch(
+        context, replace(prepared, executable="/old/provider")
+    )
+    assert not observer.verify_prepared_launch(
+        context,
+        replace(
+            prepared,
+            environment={"PROVIDER_SCOPE": "old", "PLAN_TICKET_ID": "child"},
+        ),
+    )
+
+
+def test_codex_guard_runs_after_owned_write_lock_and_cleans_pending_request() -> None:
+    async def run() -> None:
+        writes: list[bytes] = []
+
+        async def drain() -> None:
+            pass
+
+        client = CodexAppServerClient(handler=cast(Any, None), description="admission")
+        client._process = cast(
+            Any, SimpleNamespace(stdin=SimpleNamespace(write=writes.append, drain=drain))
+        )
+        valid = True
+
+        def check(prepared: object = None) -> None:
+            del prepared
+            if not valid:
+                raise AdmissionRefused("context_changed")
+
+        await client._write_lock.acquire()
+        with emission_check_scope(check):
+            pending = asyncio.create_task(client.begin_request("turn/start", {"model": "exact"}))
+        await asyncio.sleep(0)
+        valid = False
+        client._write_lock.release()
+        with pytest.raises(AdmissionRefused, match="context_changed"):
+            await pending
+        assert writes == []
+        assert client._pending == {}
+
+    asyncio.run(run())
+
+
+def test_claude_message_guard_survives_scope_exit_and_waits_for_sdk_lock() -> None:
+    async def run() -> None:
+        writes: list[str] = []
+
+        async def send(data: str) -> None:
+            writes.append(data)
+
+        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions())
+        transport._ready = True
+        transport._stdin_stream = cast(Any, SimpleNamespace(send=send))
+        valid = True
+
+        def check(prepared: object = None) -> None:
+            del prepared
+            if not valid:
+                raise AdmissionRefused("context_changed")
+
+        transport.bind_user_check("exact-message", check)
+        await transport._write_lock.acquire()
+        # No callback is drawn from this background task's ContextVar.
+        pending = asyncio.create_task(
+            transport.write(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "uuid": "exact-message",
+                        "message": {"content": "exact"},
+                    }
+                )
+            )
+        )
+        await asyncio.sleep(0)
+        valid = False
+        transport._write_lock.release()
+        with pytest.raises(AdmissionRefused, match="context_changed"):
+            await pending
+        assert writes == []
+        # An unrelated control response is not this user message and consumes no guard.
+        await transport.write(json.dumps({"type": "control_response"}))
+        assert len(writes) == 1
+
+    asyncio.run(run())
+
+
+def test_legacy_ticket_command_refuses_before_factory_and_replays_same_outcome(
+    tmp_path: Path,
+) -> None:
+    from planner.conversation.contracts import (
+        ConversationAccess,
+        ConversationRoleMaterials,
+        ResolvedConversationStart,
+    )
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        ChildReference,
+        CommandDisposition,
+    )
+    from planner.executor.journal import FilesystemSpool
+    from planner.executor.runtime import NativeChildRegistry
+
+    async def run() -> None:
+        def never_create(*args: object, **kwargs: object) -> Any:
+            pytest.fail("legacy command reached provider factory")
+
+        reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
+        registry = NativeChildRegistry(
+            incarnation="11111111-1111-4111-8111-111111111111",
+            spool=FilesystemSpool(tmp_path / "spool"),
+            factory=never_create,
+            message_files=ConversationMessageFiles(tmp_path / "db"),
+        )
+        resolved = ResolvedConversationStart(
+            "conversation",
+            ConversationBackendKey.codex,
+            "exact",
+            None,
+            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "ticket"),)),
+            tmp_path,
+            ConversationAccess.full,
+        )
+        command = ChildCommand(
+            "legacy",
+            reference,
+            ChildOperation.start,
+            None,
+            {"resolved_start": encode_value(resolved)},
+        )
+        first = await registry.execute_command(command)
+        assert first.disposition is CommandDisposition.refused
+        assert first.result["reason"] == "legacy_unscoped"
+        assert first.result["corrective_action"] == "classify_selection"
+        assert await registry.execute_command(command) == first
+        assert registry.children == {}
+
+    asyncio.run(run())
+
+
+def test_final_refusal_leaves_retained_native_child_without_a_new_turn(tmp_path: Path) -> None:
+    from planner.conversation.backends.contracts import TurnToken, current_emission_check
+    from planner.conversation.message_content import text_message_content
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        ChildReference,
+        CommandDisposition,
+    )
+    from planner.executor.journal import FilesystemSpool
+    from planner.executor.runtime import NativeChildRegistry, _Child
+
+    async def run() -> None:
+        valid = True
+        prepared = False
+
+        class Native:
+            async def write_prompt(self, *args: object, **kwargs: object) -> None:
+                nonlocal valid, prepared
+                prepared = True
+                valid = False
+                check = current_emission_check()
+                assert check is not None
+                check()
+                pytest.fail("failed final guard submitted provider bytes")
+
+        exact = expectation(tmp_path)
+        reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
+        turn = TurnToken("conversation", 1)
+        exact = replace(exact, child=reference, turn=turn)
+        registry = NativeChildRegistry(
+            incarnation="11111111-1111-4111-8111-111111111111",
+            spool=FilesystemSpool(tmp_path / "spool"),
+            factory=cast(Any, None),
+            message_files=ConversationMessageFiles(tmp_path / "db"),
+            admission_observer=SimpleNamespace(verify_context=lambda _: valid),
+        )
+        child = _Child(
+            reference,
+            "capability",
+            cast(Any, Native()),
+            ticket_id="ticket",
+            launch_context=exact.context,
+            model="exact",
+            backend_key=ConversationBackendKey.codex,
+        )
+        registry.children[reference.child_id] = child
+        content = encode_value(text_message_content("exact message"))
+        command = ChildCommand(
+            "prompt",
+            reference,
+            ChildOperation.write_prompt,
+            turn,
+            {
+                "admission_expectation": encode_value(exact),
+                "content": content,
+                "sender_content": content,
+                "sender_label": "Owner",
+                "mode": "queue",
+            },
+        )
+        outcome = await registry.execute_command(command)
+        assert outcome.disposition is CommandDisposition.refused
+        assert outcome.result["reason"] == "context_changed"
+        assert child.active_turn is None
+        assert prepared
+
+    asyncio.run(run())
+
+
+def test_claude_changed_alias_target_requires_rebind_before_native_prompt(tmp_path: Path) -> None:
+    from planner.conversation.backends.contracts import TurnToken
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        ChildReference,
+        CommandDisposition,
+    )
+    from planner.executor.journal import FilesystemSpool
+    from planner.executor.runtime import NativeChildRegistry, _Child
+
+    async def run() -> None:
+        base = expectation(tmp_path)
+        context = replace(base.context, backend_key=ConversationBackendKey.claude)
+        reference = ChildReference("11111111-1111-4111-8111-111111111111", "child", "conversation")
+        turn = TurnToken("conversation", 1)
+        exact = replace(
+            base,
+            context=context,
+            evidence=replace(base.evidence, context=context),
+            selection=replace(
+                base.selection,
+                backend_key=ConversationBackendKey.claude,
+                submitted_token="alias",
+                selection_kind=SelectionKind.provider_alias,
+            ),
+            child=reference,
+            turn=turn,
+            launch_token="alias",
+            resolved_model_id="new-target",
+        )
+        registry = NativeChildRegistry(
+            incarnation="11111111-1111-4111-8111-111111111111",
+            spool=FilesystemSpool(tmp_path / "spool"),
+            factory=cast(Any, None),
+            message_files=ConversationMessageFiles(tmp_path / "db"),
+            admission_observer=SimpleNamespace(verify_context=lambda _: True),
+        )
+        child = _Child(
+            reference,
+            "capability",
+            cast(Any, None),
+            ticket_id="ticket",
+            launch_context=context,
+            model="alias",
+            resolved_model_id="old-target",
+            backend_key=ConversationBackendKey.claude,
+        )
+        registry.children[reference.child_id] = child
+        outcome = await registry.execute_command(
+            ChildCommand(
+                "prompt",
+                reference,
+                ChildOperation.write_prompt,
+                turn,
+                {"admission_expectation": encode_value(exact)},
+            )
+        )
+        assert outcome.disposition is CommandDisposition.refused
+        assert outcome.result["error_type"] == "NeedsRebind", outcome.result
+        assert child.active_turn is None and child.resolved_model_id == "old-target"
+
+    asyncio.run(run())

@@ -36,6 +36,7 @@ from planner.conversation.contracts import (
     PromptDeliveryFate,
     PromptDeliverySuppressed,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
@@ -326,11 +327,24 @@ class ExecutorHarness:
 
 
 def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
-    return SqliteProcessConversationSystem(
+    from planner.conversation.backend_state import BackendStateStore
+    from planner.conversation.model_resolution.data import ModelResolutionStore
+    from planner.conversation.model_resolution.service import ModelResolutionService
+    from planner.conversation.snapshot import BackendSnapshotService
+
+    system = SqliteProcessConversationSystem(
         store=ConversationStore(endpoint.db_path),
         backend_child_factories={key: endpoint.factory for key in ConversationBackendKey},
         message_files=ConversationMessageFiles(endpoint.db_path),
+        model_resolver=ModelResolutionService(
+            snapshots=BackendSnapshotService(),
+            store=ModelResolutionStore(endpoint.db_path),
+            backend_state=BackendStateStore(endpoint.db_path),
+        ),
     )
+    # All transport fixtures are native. Local discovery is never called here.
+    system._catalog_endpoint = endpoint
+    return system
 
 
 async def boot(
@@ -353,31 +367,25 @@ async def boot(
     connection = connect(db_path)
     try:
         create_schema(connection)
-        from planner.conversation.model_resolution.contracts import ModelResolution, ModelVariant
+        from planner.projects.data import create_project
         from planner.tickets import data
         from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
-        # This transport rig supplies its own scripted provider. Its exact model
-        # fact is test input, not production backend-only cache authority.
-        def scripted_resolution(
-            conn: Any, backend: ConversationBackendKey, token: str, effort: str | None = None
-        ) -> ModelResolution:
-            del conn
-            return ModelResolution(ModelVariant(backend, token), token, effort, ())
-
-        with monkeypatch.context() as scripted_model:
-            scripted_model.setattr(data, "resolve_cached_model", scripted_resolution)
-            ticket = data.create_ticket(
-                connection,
-                title="Reconnect worker",
-                worker_type="coding",
-                principal=OWNER_PRINCIPAL,
-                now=1,
-                title_max_chars=TITLE_MAX_CHARS,
-                locale=TicketLocale.macos,
-                employee_backend=backend_key.value,
-                employee_launch_model=model,
-            )
+        project = create_project(connection, name="Transport fixture", folder_path=root, now=1)
+        ticket = data.create_ticket(
+            connection,
+            title="Reconnect worker",
+            worker_type="coding",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            locale=TicketLocale.macos,
+            project_id=project.id,
+            employee_backend=backend_key.value,
+            employee_launch_model=model,
+            selection_kind="concrete",
+            employee_launch_reasoning_effort=reasoning_effort,
+        )
         worker_ticket_id = ticket.id
     finally:
         connection.close()
@@ -427,6 +435,14 @@ async def boot(
         panels_server_url=proxy.origin,
         session_factory=proxy.session_factory,
     )
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
+    observer = ScriptedCatalogObserver(lambda: mac.identity)
+    observer.model = model
+    if backend_key is ConversationBackendKey.claude:
+        observer.models = (model, "claude-new")
+    observer.efforts = ("low", "medium", "high", "xhigh", "max")
+    mac._catalog_observer = observer
 
     def factory(
         resolved: ResolvedConversationStart, capability: str, child: ChildReference
@@ -445,6 +461,7 @@ async def boot(
         spool=mac.spool,
         factory=native_factory or factory,
         message_files=ConversationMessageFiles(root / "mac/unused"),
+        admission_observer=mac,
     )
     task = asyncio.create_task(mac.run())
     harness = ExecutorHarness(
@@ -462,13 +479,24 @@ async def boot(
                 backend_key=backend_key,
                 reasoning_effort=reasoning_effort,
                 workspace_folder=root,
+                workspace_path_policy=WorkspacePathPolicy.native_absolute,
                 role_materials=ConversationRoleMaterials(
                     "A scripted test worker.",
                     (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", worker_ticket_id)),
                 ),
             )
         )
-        await asyncio.wait_for(
+        with contextlib.closing(connect(db_path)) as connection:
+            data.write_ticket_conversation_start(
+                connection,
+                worker_ticket_id,
+                conversation_id="c_scripted",
+                backend=backend_key.value,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                now=2,
+            )
+        initial_delivery = await asyncio.wait_for(
             system.send(
                 "c_scripted",
                 text_message_content("Start"),
@@ -478,6 +506,8 @@ async def boot(
             ),
             5,
         )
+        if native_factory is None:
+            assert native.start_count == 1, initial_delivery
         await eventually(lambda: not mac.spool.pending(), "Initial command outcomes did not drain")
         return harness
     except BaseException:
@@ -498,6 +528,8 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
     )
     from planner.executor.configuration import NATIVE_WORKER_CONTEXT
     from planner.executor.contracts import ChildOperation
+    from planner.runtime.conversation_start import send_to_ticket_conversation
+    from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 
     async def run() -> None:
         clients: list[_ScriptedClaudeSdkClient] = []
@@ -545,6 +577,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
             ]
 
         sending = None
+        conn = connect(harness.endpoint.db_path)
         try:
             session = clients[0].options.session_id
             assert session is not None
@@ -569,9 +602,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                     lambda: not harness.mac.spool.pending(), "result receipt did not drain"
                 )
 
-            for index, changes in enumerate(
-                ({"model_change": "claude-new"}, {"reasoning_effort_change": "high"}), 1
-            ):
+            for index in (1, 2):
                 await finish_turn()
                 old = clients[-1]
                 old_prompt = prompts(old)[-1]
@@ -580,16 +611,22 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 cleanup_release.clear()
                 sender_text = f"Keep sender bytes {index}: café\nsecond line"
                 sending = asyncio.create_task(
-                    harness.system.send(
-                        "c_scripted",
+                    send_to_ticket_conversation(
+                        harness.system,
+                        conn,
+                        old.options.env["PLAN_TICKET_ID"],
                         text_message_content(sender_text),
+                        conversation_id="c_scripted",
                         sender_label="Chief",
                         sender=CHIEF_PRINCIPAL,
                         recipient=Principal(
                             PrincipalKind.ticket, old.options.env["PLAN_TICKET_ID"]
                         ),
-                        model_change=changes.get("model_change"),
-                        reasoning_effort_change=changes.get("reasoning_effort_change"),
+                        runs_under=ConversationStartOverrides(
+                            model="claude-new",
+                            reasoning_effort="low" if index == 1 else "high",
+                        ),
+                        now=3 + index,
                     )
                 )
                 await asyncio.wait_for(cleanup_entered.wait(), 5)
@@ -621,9 +658,9 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                     for command in harness.mac.registry._commands.values()
                     if command.operation is ChildOperation.write_prompt
                     and command.arguments.get("sender_label") == "Chief"
-                    and command.arguments.get("model_change") == changes.get("model_change")
+                    and command.arguments.get("model_change") == "claude-new"
                     and command.arguments.get("reasoning_effort_change")
-                    == changes.get("reasoning_effort_change")
+                    == ("low" if index == 1 else "high")
                 ]
                 assert len(writes) == 2
                 refused, accepted = [harness.mac.registry.outcomes[c.command_id] for c in writes]
@@ -646,9 +683,119 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
             if sending is not None and not sending.done():
                 sending.cancel()
                 await asyncio.gather(sending, return_exceptions=True)
+            conn.close()
             await harness.close()
             for client in clients:
                 await client.disconnect()
+
+    asyncio.run(run())
+
+
+def test_lifecycle_expectation_crosses_authenticated_native_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New boundary: real Ticket lifecycle through TLS, with an unrelated active child."""
+    import time
+
+    from planner.executor.contracts import ChildOperation
+    from planner.runtime.conversation_start import start_ticket_conversation, worker_resolve
+    from planner.tickets import data
+    from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
+
+    async def run() -> None:
+        started = time.monotonic()
+        harness = await boot(tmp_path, monkeypatch)
+        conn = connect(harness.endpoint.db_path)
+        try:
+            first = next(iter(harness.mac.registry.children.values()))
+            second = ScriptedNativeChild()
+
+            def factory(
+                resolved: ResolvedConversationStart, capability: str, child: ChildReference
+            ) -> BackendChildFactory:
+                del resolved, capability, child
+
+                def create(**arguments: object) -> BackendChild:
+                    second.sink = cast(BackendEventSink, arguments["event_sink"])
+                    return cast(BackendChild, second)
+
+                return cast(BackendChildFactory, create)
+
+            harness.mac.registry.factory = factory
+            project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0]
+            ticket = data.create_ticket(
+                conn,
+                title="Combined admission",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=int(time.time()),
+                title_max_chars=TITLE_MAX_CHARS,
+                locale=TicketLocale.macos,
+                project_id=project_id,
+                employee_backend="codex",
+                employee_launch_model="scripted",
+                selection_kind="concrete",
+            )
+            linked = await start_ticket_conversation(
+                harness.system,
+                conn,
+                ticket,
+                worker_resolve(conn, ticket),
+                conversation_id="c_combined_admission",
+                now=int(time.time()),
+            )
+            fate = await harness.system.send(
+                linked.conversation_id,
+                text_message_content("Exact lifecycle selection"),
+                sender_label="Test",
+                sender=CHIEF_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, ticket.id),
+            )
+            assert second.start_count == second.prompt_count == 1, fate
+            commands = [
+                command
+                for command in harness.mac.registry._commands.values()
+                if command.child.conversation_id == linked.conversation_id
+            ]
+            assert [command.operation for command in commands] == [
+                ChildOperation.start,
+                ChildOperation.write_prompt,
+            ]
+            for command in commands:
+                expectation = command.arguments["admission_expectation"]
+                assert isinstance(expectation, dict)
+                assert expectation["conversation_id"] == linked.conversation_id
+                assert expectation["child"] == {
+                    "executor_incarnation": command.child.executor_incarnation,
+                    "child_id": command.child.child_id,
+                    "conversation_id": linked.conversation_id,
+                }
+                assert expectation["turn"] == (
+                    None
+                    if command.turn is None
+                    else {
+                        "conversation_id": linked.conversation_id,
+                        "turn_number": command.turn.turn_number,
+                    }
+                )
+            assert harness.mac.registry.children[first.reference.child_id] is first
+            assert harness.native.stop_count == 0
+            assert harness.native.sink is not None and harness.native.turn is not None
+            before = harness.events("tool_call_finished")
+            await harness.native.sink.tool_call_finished(
+                harness.native.turn,
+                tool_call_id="other-child-after-admission",
+                tool_call_status=ToolCallStatus.completed,
+                detail="Independent child remains active.",
+            )
+            await eventually(
+                lambda: harness.events("tool_call_finished") == before + 1,
+                "Unrelated child lost its authenticated event path",
+            )
+            print(f"lifecycle admission TLS scenario elapsed: {time.monotonic() - started:.3f}s")
+        finally:
+            conn.close()
+            await harness.close()
 
     asyncio.run(run())
 

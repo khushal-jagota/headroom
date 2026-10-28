@@ -137,6 +137,7 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -152,6 +153,7 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -170,6 +172,7 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -186,6 +189,7 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -403,7 +407,7 @@ def test_a_change_on_a_refused_delivery_records_nothing(tmp_db: Connection, tick
         assert isinstance(fate, PromptDeliveryRefused)
         assert fate.refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
         after = read_ticket(tmp_db, ticket.id)
-        assert after.employee_launch_model == "opus"
+        assert after.employee_launch_model == ticket.employee_launch_model
         assert after.updated_at == 10
 
     asyncio.run(exercise())
@@ -428,10 +432,10 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
         after = read_ticket(tmp_db, ticket.id)
         assert after.conversation_id is None
         assert _history(tmp_db, ticket.id) == [conversation_id]
-        # The last-chosen values stay: they are what the next conversation starts from.
-        assert after.employee_backend == "claude"
-        assert after.employee_launch_model == "opus"
-        assert after.employee_launch_reasoning_effort == "high"
+        # Resolved conversation values never replace the Ticket's requested intent.
+        assert after.employee_backend == ticket.employee_backend
+        assert after.employee_launch_model == ticket.employee_launch_model
+        assert after.employee_launch_reasoning_effort == ticket.employee_launch_reasoning_effort
         assert after.updated_at == 30
 
     asyncio.run(exercise())

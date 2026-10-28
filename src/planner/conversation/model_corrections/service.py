@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 from typing import TypedDict
 
-from planner.conversation.contracts import require_conversation_backend_key
+from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
 from planner.conversation.model_corrections.contracts import (
     CorrectionTarget,
     ModelCorrection,
@@ -81,6 +81,10 @@ async def preview_corrections(
     principal: Principal,
     targets: Sequence[CorrectionTarget],
     resolver: CurrentModelResolver,
+    *,
+    system: ConversationSystem | None = None,
+    persist_ticket_validation: bool = False,
+    checked_at: int = 0,
 ) -> list[ModelCorrection]:
     results = []
     for target in targets:
@@ -88,6 +92,38 @@ async def preview_corrections(
         try:
             _authorize(conn, principal, target)
             expected = _read(conn, target)
+            if target.kind == "ticket" and expected.backend.value != "hermes":
+                from planner.conversation.model_resolution.contracts import ValidationState
+                from planner.runtime.conversation_start import verify_ticket_launch
+                from planner.tickets import data as ticket_data
+
+                if system is None:
+                    raise PlannerError(
+                        ErrorCode.validation, "destination verification is unavailable", {}
+                    )
+                validation = await verify_ticket_launch(
+                    system,
+                    conn,
+                    ticket_data.read_ticket(conn, target.id),
+                    persist=persist_ticket_validation,
+                    now=checked_at,
+                )
+                if validation.state is not ValidationState.compatible:
+                    raise PlannerError(
+                        ErrorCode.validation,
+                        f"{validation.reason.value}: {validation.corrective_action.value}",
+                        {},
+                    )
+                # A contextual alias resolution is a fact, never a rewrite of requested intent.
+                results.append(
+                    ModelCorrection(
+                        target=target,
+                        expected=expected,
+                        proposed_model=expected.model,
+                        variant=validation.selection.selection_kind.value,
+                    )
+                )
+                continue
             resolution = await resolver.resolve(
                 expected.backend, expected.model, expected.reasoning_effort
             )
@@ -142,13 +178,31 @@ async def apply_corrections(
     resolver: CurrentModelResolver,
     *,
     now: int,
+    system: ConversationSystem | None = None,
 ) -> list[ModelCorrection]:
     results = []
     for correction in corrections:
         try:
             if correction.error or correction.expected is None or correction.proposed_model is None:
                 raise PlannerError(ErrorCode.validation, "target needs a successful preview", {})
-            current = (await preview_corrections(conn, principal, [correction.target], resolver))[0]
+            expected_revision = None
+            if correction.target.kind == "ticket":
+                from planner.tickets.validation.data import read_launch_selection
+
+                expected_revision = read_launch_selection(
+                    conn, correction.target.id
+                ).selection_revision
+            current = (
+                await preview_corrections(
+                    conn,
+                    principal,
+                    [correction.target],
+                    resolver,
+                    system=system,
+                    persist_ticket_validation=True,
+                    checked_at=now,
+                )
+            )[0]
             if current.error:
                 raise PlannerError(ErrorCode.validation, current.error, {})
             if (
@@ -163,7 +217,19 @@ async def apply_corrections(
             conn.execute("BEGIN IMMEDIATE")
             try:
                 _authorize(conn, principal, correction.target)
-                if not _write(conn, correction, now):
+                if (
+                    correction.target.kind == "ticket"
+                    and correction.expected.backend.value != "hermes"
+                ):
+                    unchanged = (
+                        _read(conn, correction.target) == correction.expected
+                        and correction.proposed_model == correction.expected.model
+                        and read_launch_selection(conn, correction.target.id).selection_revision
+                        == expected_revision
+                    )
+                else:
+                    unchanged = _write(conn, correction, now)
+                if not unchanged:
                     raise PlannerError(
                         ErrorCode.validation, "saved model changed; preview again", {}
                     )

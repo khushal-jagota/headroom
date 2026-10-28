@@ -79,3 +79,74 @@ def test_field_revision_changes_only_with_its_body_and_rolls_back(tmp_db: Connec
     assert restored is not None and restored.revision == original.revision
     restored_body = restored.read()
     assert isinstance(restored_body, dict) and restored_body["value"] == ""
+
+
+def test_validation_only_change_updates_selected_revision_in_same_second(
+    tmp_db: Connection,
+) -> None:
+    """Mounted controls must refresh when only attributed verification changes."""
+    from dataclasses import replace
+
+    from planner.conversation.model_resolution.contracts import ValidationReason
+    from planner.conversation.model_resolution.logic.validation import unresolved_validation
+    from planner.runtime.conversation_start import worker_resolve, workspace_binding_from_start
+    from planner.tickets.validation.data import read_launch_selection, record_launch_validation
+
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Verification state",
+        worker_type="coding",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+    )
+    provider = TicketWorkspaceResources()
+    request = Request({"type": "http"})
+    key = f"/api/tickets/{ticket.id}/workspace"
+    original = provider.capture(tmp_db, request, key)
+    assert original is not None
+    selection = read_launch_selection(tmp_db, ticket.id)
+    binding = workspace_binding_from_start(worker_resolve(tmp_db, ticket), ticket.locale)
+    assert record_launch_validation(
+        tmp_db,
+        ticket.id,
+        unresolved_validation(selection, ValidationReason.offline),
+        expected_workspace=binding,
+        now=1,
+    )
+    changed = provider.capture(tmp_db, request, key)
+    assert changed is not None and changed.revision != original.revision
+    body = changed.read()
+    assert isinstance(body, dict)
+    assert body["launch_validation"]["validation"]["reason"] == "offline"
+    assert body["updated_at"] == ticket.updated_at
+    assert record_launch_validation(
+        tmp_db,
+        ticket.id,
+        replace(
+            unresolved_validation(selection, ValidationReason.offline),
+            reason=ValidationReason.timeout,
+        ),
+        expected_workspace=binding,
+        now=1,
+    )
+    second = provider.capture(tmp_db, request, key)
+    assert second is not None and second.revision != changed.revision
+
+
+def test_historical_null_model_is_visible_without_invented_selection(tmp_db: Connection) -> None:
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Historical absence",
+        worker_type="coding",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+    )
+    tmp_db.execute("UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    for body in (workspace_ticket(tmp_db, ticket.id), views.ticket_detail(tmp_db, ticket.id, 1)):
+        assert body["employee_launch_model"] is None
+        assert body["launch_validation"]["selection"] is None
+        assert body["launch_validation"]["reason"] == "legacy_unscoped"
+        assert body["launch_validation"]["corrective_action"] == "classify_selection"

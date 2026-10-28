@@ -77,6 +77,8 @@ from planner.conversation.backends.codex_app_server.login import (
     read_stored_codex_login,
 )
 from planner.conversation.backends.contracts import (
+    AdmissionRefused,
+    BackendEmissionInputs,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -91,6 +93,7 @@ from planner.conversation.backends.contracts import (
     SessionLoadFailed,
     TurnToken,
     UserInputAnswerWriteFailed,
+    current_emission_check,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -372,13 +375,25 @@ class CodexAppServerBackendChild:
         self._resolved_start = resolved_start
         self._model = resolved_start.model
         self._reasoning_effort = resolved_start.reasoning_effort
+        environment = child_environment(
+            overrides=self._launch.environment_overrides,
+            identity=self._identity_environment(resolved_start),
+        )
+        check = current_emission_check()
+        if check is not None:
+            check(
+                BackendEmissionInputs(
+                    resolved_start.model,
+                    resolved_start.reasoning_effort,
+                    resolved_start.workspace_folder,
+                    self._launch.argv[0],
+                    environment,
+                )
+            )
         try:
             await self._client.start(
                 argv=self._launch.argv,
-                environment=child_environment(
-                    overrides=self._launch.environment_overrides,
-                    identity=self._identity_environment(resolved_start),
-                ),
+                environment=environment,
                 working_directory=resolved_start.workspace_folder,
             )
         except CodexChildWouldNotStart as would_not_spawn:
@@ -423,6 +438,13 @@ class CodexAppServerBackendChild:
         reasoning_effort = (
             self._reasoning_effort if reasoning_effort_change is None else reasoning_effort_change
         )
+        check = current_emission_check()
+        if check is not None:
+            check(
+                BackendEmissionInputs(
+                    model, reasoning_effort, self._resolved_start.workspace_folder
+                )
+            )
         turn = _TurnInFlight(
             token=turn_token,
             started=asyncio.get_running_loop().create_future(),
@@ -434,7 +456,7 @@ class CodexAppServerBackendChild:
             invocation = (
                 self._catalog_invocation(sender_content) if sender_message_count == 1 else None
             )
-        except PromptWriteFailed:
+        except (PromptWriteFailed, AdmissionRefused):
             self._turn = None
             raise
         if invocation is not None and invocation.kind is ComposerCatalogEntryKind.command:
@@ -480,7 +502,7 @@ class CodexAppServerBackendChild:
                     invocation=invocation,
                 )
                 turn.turn_id = await self._start_the_turn(parameters, turn)
-        except PromptWriteFailed:
+        except (PromptWriteFailed, AdmissionRefused):
             # No turn started, so there is no ending to report and nothing to settle: the
             # core hears one refusal and the conversation is idle again.
             if self._turn is turn:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import NamedTuple
 
 from planner.conversation.contracts import ConversationBackendKey
@@ -20,6 +20,7 @@ from planner.managers.contracts import (
     ManagerDeletion,
     ManagerLaunchConfiguration,
 )
+from planner.tickets import launch_authority
 
 
 class ManagerRead(NamedTuple):
@@ -212,7 +213,14 @@ def update_manager(
         )
     stored_edits = dict(edits)
     now = clock.now_unix()
-    with _tx(conn):
+    with (
+        _tx(conn),
+        (
+            _manager_workspace_mutation(conn, item_id, stored_edits.get("project_id"))
+            if "project_id" in stored_edits
+            else nullcontext()
+        ),
+    ):
         if admit is not None:
             admit()
         _load_manager(conn, item_id)
@@ -246,6 +254,21 @@ def update_manager(
                     (item.project_id, now, item_id),
                 )
     return _load_manager(conn, item_id)
+
+
+@contextmanager
+def _manager_workspace_mutation(
+    conn: sqlite3.Connection, manager_id: str, destination_project: str | None
+) -> Iterator[None]:
+    _load_manager(conn, manager_id)
+    # Reassignment changes its Tickets' workspace source, not either project's
+    # shared folder. Other Managers in those projects remain independent.
+    keys = {
+        f"ticket:{row[0]}"
+        for row in conn.execute("SELECT id FROM tickets WHERE manager_id=?", (manager_id,))
+    }
+    with launch_authority.mutation_scope(conn, tuple(sorted(keys))) if keys else nullcontext():
+        yield
 
 
 def _require_manager_can_delete(conn: sqlite3.Connection, item_id: str) -> Manager:

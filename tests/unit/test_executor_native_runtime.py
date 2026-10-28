@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -14,6 +15,8 @@ from uuid import uuid4
 import pytest
 from pydantic import TypeAdapter
 
+from planner.conversation.admission.contracts import AdmissionExpectation
+from planner.conversation.admission.service import admission_scope
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -34,6 +37,13 @@ from planner.conversation.contracts import (
 from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.contracts import (
+    CatalogEvidenceReference,
+    CatalogWorkspaceBinding,
+    LaunchContext,
+    ModelSelection,
+    SelectionKind,
+)
 from planner.executor.codec import encode_value
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, ExecutorPaths
 from planner.executor.contracts import (
@@ -65,6 +75,69 @@ from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import MacExecutor, as_object
 from planner.executor.runtime import NativeChildRegistry
 from planner.previews.forward import MacPreviewForwards
+from planner.tickets.contracts import TicketLocale
+
+
+class _FixtureContextObserver:
+    """Exact scripted launch facts for tests that exercise other native boundaries."""
+
+    def __init__(self, context: LaunchContext) -> None:
+        self.context = context
+
+    def verify_context(self, expected: LaunchContext) -> bool:
+        return expected == self.context
+
+
+def _fixture_admission(
+    registry: NativeChildRegistry,
+    reference: ChildReference,
+    resolved: ResolvedConversationStart,
+    *,
+    relative: str | None = None,
+    localized: Path | None = None,
+) -> AdmissionExpectation:
+    """Supply explicit synthetic evidence without bypassing the admission checks."""
+    workspace = CatalogWorkspaceBinding(
+        resolved.workspace_folder, resolved.workspace_path_policy, relative
+    )
+    context = LaunchContext(
+        "fixture-context",
+        TicketLocale.macos,
+        resolved.backend_key,
+        ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
+        ),
+        workspace,
+        localized or resolved.workspace_folder,
+        "fixture-executable",
+        "1",
+        "fixture-provider-scope",
+        None,
+    )
+    attempt_id = str(uuid4())
+    registry.admission_observer = _FixtureContextObserver(context)
+    return AdmissionExpectation(
+        ModelSelection(
+            TicketLocale.macos,
+            resolved.backend_key,
+            resolved.model,
+            SelectionKind.concrete,
+            resolved.reasoning_effort,
+            "fixture-selection",
+        ),
+        workspace,
+        context,
+        CatalogEvidenceReference(
+            "fixture-observation", "fixture-revision", context, int(time.time()), attempt_id, 0.0
+        ),
+        attempt_id,
+        resolved.model,
+        resolved.reasoning_effort,
+        "fixture-policy",
+        resolved.conversation_id,
+        resolved_model_id=resolved.model,
+        child=reference,
+    )
 
 
 def canonical_snapshot() -> CanonicalSkillSnapshot:
@@ -399,8 +472,15 @@ def test_confirmed_exact_stop_allows_exit_without_rewriting_uncertain_compaction
 @pytest.mark.parametrize(
     "missing_evidence",
     [
-        "no_stop", "absent_child", "failed_stop", "unacknowledged", "live_child",
-        "other_incarnation", "other_child", "other_conversation", "outcome_mismatch",
+        "no_stop",
+        "absent_child",
+        "failed_stop",
+        "unacknowledged",
+        "live_child",
+        "other_incarnation",
+        "other_child",
+        "other_conversation",
+        "outcome_mismatch",
         "not_stop",
     ],
 )
@@ -416,6 +496,7 @@ def test_uncertainty_requires_acknowledged_exact_successful_stop_and_no_live_chi
         if missing_evidence == "absent_child":
             registry.children.pop(start.child.child_id)
         elif missing_evidence == "failed_stop":
+
             async def failed_stop() -> None:
                 raise RuntimeError("termination not confirmed")
 
@@ -556,14 +637,19 @@ def test_restart_preserves_uncertain_outcome_bytes_and_receipts_without_old_chil
         sender_id = spool.sender_id
         spool.close()
         executor = MacExecutor(
-            paths=paths, revision="a" * 40, executor_id="owner-mac",
+            paths=paths,
+            revision="a" * 40,
+            executor_id="owner-mac",
             panels_server_url="https://unused",
         )
         try:
             assert executor.spool.sender_id == sender_id
-            assert executor.spool._db.execute(
-                "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
-            ).fetchall() == before
+            assert (
+                executor.spool._db.execute(
+                    "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
+                ).fetchall()
+                == before
+            )
             assert executor.spool.pending_count() == 0
             assert executor.identity.executor_incarnation != start.child.executor_incarnation
             assert executor.registry.children == {}
@@ -623,6 +709,14 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
                 "resolved_start": encode_value(resolved),
             },
         )
+        expectation = _fixture_admission(registry, reference, resolved)
+        start = replace(
+            start,
+            arguments={
+                **start.arguments,
+                "admission_expectation": encode_value(expectation),
+            },
+        )
         caller = asyncio.create_task(registry.execute_command(start))
         await asyncio.sleep(0)
         caller.cancel()
@@ -645,6 +739,13 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
                 "sender_content": encode_value(text_message_content("go")),
                 "sender_label": "Owner",
                 "mode": PromptDeliveryMode.queue.value,
+            },
+        )
+        prompt = replace(
+            prompt,
+            arguments={
+                **prompt.arguments,
+                "admission_expectation": encode_value(replace(expectation, turn=turn)),
             },
         )
         await registry.execute_command(prompt)
@@ -1088,6 +1189,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
             tmp_path,
             ConversationAccess.full,
         )
+        expectation = _fixture_admission(executor.registry, reference, resolved)
         await executor.registry.execute_command(
             ChildCommand(
                 "start",
@@ -1097,6 +1199,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
                 {
                     "canonical_skill_snapshot": encode_value(canonical_snapshot()),
                     "resolved_start": encode_value(resolved),
+                    "admission_expectation": encode_value(expectation),
                 },
             )
         )
@@ -1320,7 +1423,22 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
         remote = RemoteBackendChild(reference, send, lambda start: canonical_snapshot())
-        await remote.start(resolved, vendor_session_cursor="retained-native-session")
+        if backend is ConversationBackendKey.hermes:
+            await remote.start(resolved, vendor_session_cursor="retained-native-session")
+        else:
+            expectation = _fixture_admission(
+                registry,
+                reference,
+                resolved,
+                relative=(
+                    "projects/same-checkout"
+                    if policy is WorkspacePathPolicy.legacy_home_mapping
+                    else None
+                ),
+                localized=workspace,
+            )
+            with admission_scope(expectation):
+                await remote.start(resolved, vendor_session_cursor="retained-native-session")
         if policy is WorkspacePathPolicy.legacy_home_mapping:
             assert forwarded[0].arguments["workspace_home_relative"] == "projects/same-checkout"
         else:
@@ -2764,13 +2882,18 @@ def test_input_progress_socket_failure_closes_original_writer_only(
 
         executor._app_client = cast(ExecutorAppClient, SimpleNamespace(download=download))
         slot = FileTransfer(
-            "a" * 32, "download",
+            "a" * 32,
+            "download",
             FileManifest("publication", FileScope.conversation, "c_one", "file", "a" * 64, 1),
         )
         try:
-            await executor._input(WireMessage(
-                WireMessageKind.file_slot, "input", as_object(InputTransferRequest("command", slot))
-            ))
+            await executor._input(
+                WireMessage(
+                    WireMessageKind.file_slot,
+                    "input",
+                    as_object(InputTransferRequest("command", slot)),
+                )
+            )
             original.close.assert_called_once_with()
             replacement.close.assert_not_called()
             replacement.write.assert_not_called()

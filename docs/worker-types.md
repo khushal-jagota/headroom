@@ -407,25 +407,21 @@ Worker does not restore an earlier set of choices.
 The complete trio may be edited in the Brief controls only while the Ticket is still
 at a pristine Brief and has no conversation yet. One save replaces the whole setup.
 Changing Worker names the new backend's own model in the same save, because a model name
-belongs to the backend that gave it and means nothing to another one; Reasoning is cleared,
-since it belonged to the model being replaced. Changing Model retains an explicit Reasoning
-choice only when the new model still supports it. Starting the Ticket's first conversation,
-or any move past the Brief, removes those controls.
+belongs to the backend that gave it. The configuration writer preserves an explicit
+Reasoning choice when support is unknown and refuses a known incompatibility; it never
+silently clears that choice. Starting the Ticket's first conversation, or any move past
+the Brief, removes those controls. The corresponding presentation changes await approved
+Design.
 
-A backend this machine reported no models for has no model to name, so a save that switches
-to it names none and is refused. That is the honest end of it: the alternative is a Ticket
-whose worker runs on something nobody chose.
+A backend change must name its requested model. An unavailable catalog does not forbid
+that configuration. Panels stores unresolved verification and prevents unverified execution.
 
 Hermes offers Model but not Reasoning. Codex and Claude Code offer Model, and their
 Reasoning choices depend on the selected model.
 
 Every conversation is started on a named model. Panels never lets a backend pick one for
-itself: that is a value nobody chose, nobody here can see, and the tool may change it from
-under us. A Ticket holding no model — one set up before this was so — has chosen nothing
-that can be run, so it starts on its Worker type's own backend and model instead of on a
-model picked for it. A saved launch setting that names no model is repaired the same way,
-to the whole set of values its Worker type or the Chief ships with, and the settings file
-is rewritten so the setting on the screen is the setting that runs.
+itself. Historical missing or ambiguous choices remain unresolved until an explicit
+selection establishes their intent. Conversation resolution does not replace Ticket intent.
 
 Leaving Reasoning at its native value means the backend chooses its own default, which is
 a real answer because some models take none. A missing or unavailable explicit value fails
@@ -435,12 +431,14 @@ Model verification uses destination-scoped evidence and preserves exact requeste
 The shared contracts distinguish explicit concrete choices, aliases, and unknown historical intent.
 See [model choices and destination evidence](conversation-system.md#model-choices-and-destination-evidence).
 
-The current source needs lifecycle and view integration before deployment. Existing unscoped
-callers return unresolved verification. The lifecycle successor must preserve offline configuration
-and use the canonical destination and workspace for validation.
+Canonical Ticket writers preserve offline configuration, exact effort, and durable
+verification state. Execution requires applicable destination and workspace evidence.
+Unknown effort support differs from a known empty support list. An explicit model never
+inherits another model's effort support. Presentation integration remains separately gated.
 
-Saved-choice correction routes also need the contextual caller adaptation before they can verify changes. A correction changes launch choices only. It does not
-grant approval or advance work. See [model correction commands](cli.md#correct-saved-models).
+Saved-choice correction preserves exact tokens and existing compare-before-write authority.
+It does not upgrade concrete models, grant approval, or advance work.
+See [model correction commands](cli.md#correct-saved-models).
 
 Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
 under full access inside its workspace folder; how each backend realises that belongs to its

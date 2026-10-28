@@ -852,6 +852,57 @@ async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, An
     return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
 
 
+@router.post("/backends/model-choices")
+async def read_destination_model_choices(
+    raw: dict[str, Any],
+    runtime: Runtime,
+    ctx: Ctx,
+) -> dict[str, Any]:
+    """Read scoped typed facts from canonical Ticket or draft workspace authority."""
+    from pydantic import TypeAdapter
+
+    from planner.conversation.model_resolution.contracts import CanonicalModelValidation
+    from planner.conversation.model_resolution.picker import serialize_picker_row
+    from planner.core import authority
+    from planner.core.errors import ErrorCode, PlannerError
+    from planner.runtime.conversation_start import verify_ticket_launch
+    from planner.tickets import data as ticket_data
+    from planner.tickets.api import validate_ticket_creation
+
+    with closing(connect(runtime.database_path)) as conn:
+        ticket_id = raw.get("ticket_id")
+        if ticket_id is not None:
+            if not isinstance(ticket_id, str) or set(raw) != {"ticket_id"}:
+                raise PlannerError(
+                    ErrorCode.validation, "model choices require an exact Ticket context", {}
+                )
+            authority.require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
+            validation = await verify_ticket_launch(
+                runtime.system,
+                conn,
+                ticket_data.read_ticket(conn, ticket_id),
+                persist=False,
+                now=int(time.time()),
+            )
+        else:
+            validation = await validate_ticket_creation(
+                raw, conn, runtime.system, principal=ctx.principal
+            )
+        attempt_id = validation.evidence.attempt_id if validation.evidence else "unavailable"
+        return {
+            "validation": TypeAdapter(CanonicalModelValidation).dump_python(
+                validation, mode="json"
+            ),
+            "rows": [
+                serialize_picker_row(row)
+                for row in runtime.system.picker_rows_for_validation(
+                    validation,
+                    attempt_id=attempt_id,
+                )
+            ],
+        }
+
+
 @router.post("/backends/refresh")
 async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
     """Refresh provider usage and resolve it against the current backend catalogues."""
@@ -1219,7 +1270,10 @@ class VideoSendAdmission:
             elif isinstance(payload, PromptDiscardedEventPayload) and payload.suppression_reason:
                 fate = PromptDeliverySuppressed(payload.suppression_reason)
             elif hasattr(payload, "refusal_reason"):
-                fate = PromptDeliveryRefused(payload.refusal_reason)
+                fate = PromptDeliveryRefused(
+                    payload.refusal_reason,
+                    getattr(payload, "model_validation", None),
+                )
         self.finish(fate)
         assert self.recipient is not None
         return MessageDeliveryResult(self.recipient, prior, fate)
@@ -1481,8 +1535,11 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             return {"fate": "queued", "queue_position": position}
         case PromptDeliveryInjected():
             return {"fate": "injected"}
-        case PromptDeliveryRefused(refusal_reason=reason):
-            return {"fate": "refused", "refusal_reason": str(reason)}
+        case PromptDeliveryRefused(refusal_reason=reason, model_validation=validation):
+            result: dict[str, Any] = {"fate": "refused", "refusal_reason": str(reason)}
+            if validation is not None:
+                result["model_validation"] = validation
+            return result
         case PromptDeliverySuppressed(reason=reason):
             return {"fate": "suppressed", "reason": reason}
         case PromptDeliveryUncertain():
@@ -1535,7 +1592,8 @@ def _snapshot_json(
                 "detail": model.detail,
                 "reasoning_effort_options": (
                     list(model.reasoning_effort_options)
-                    if model.reasoning_effort_options is not None else None
+                    if model.reasoning_effort_options is not None
+                    else None
                 ),
                 "enabled": enabled_by_model[model.model_id],
             }
@@ -1737,7 +1795,7 @@ async def preview_model_corrections(
         raise HTTPException(status_code=503, detail="model resolution is unavailable")
     with closing(connect(runtime.database_path)) as conn:
         results = await preview_corrections(
-            conn, ctx.principal, body.targets, runtime.model_resolution
+            conn, ctx.principal, body.targets, runtime.model_resolution, system=runtime.system
         )
     return CorrectionBatch(corrections=results).model_dump(mode="json")
 
@@ -1753,7 +1811,12 @@ async def apply_model_corrections(
         raise HTTPException(status_code=503, detail="model resolution is unavailable")
     with closing(connect(runtime.database_path)) as conn:
         results = await apply_corrections(
-            conn, ctx.principal, body.corrections, runtime.model_resolution, now=int(time.time())
+            conn,
+            ctx.principal,
+            body.corrections,
+            runtime.model_resolution,
+            now=int(time.time()),
+            system=runtime.system,
         )
         if any(item.applied and item.target.kind == "worker-default" for item in results):
             from planner.worker_types.configuration import load_worker_runtime_definitions

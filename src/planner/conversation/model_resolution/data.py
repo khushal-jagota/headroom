@@ -12,6 +12,7 @@ from pydantic import TypeAdapter
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.model_resolution.contracts import (
     CachedModelResolution,
+    CatalogEvidenceReference,
     CatalogObservation,
     CatalogRow,
     LaunchContext,
@@ -67,6 +68,12 @@ class ModelResolutionStore:
         with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
             observations = read_scoped_observations(conn, context, limit=1)
             return observations[0] if observations else None
+
+    def read_exact_observation(
+        self, evidence: CatalogEvidenceReference
+    ) -> CatalogObservation | None:
+        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
+            return read_exact_observation(conn, evidence)
 
     def read_previous_observation(self, context: LaunchContext) -> CatalogObservation | None:
         with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
@@ -287,6 +294,33 @@ def has_catalogue(conn: sqlite3.Connection, backend_key: ConversationBackendKey)
         ).fetchone()
         is not None
     )
+
+
+def read_exact_observation(
+    conn: sqlite3.Connection,
+    evidence: CatalogEvidenceReference,
+) -> CatalogObservation | None:
+    """Read one immutable original observation, never the latest context snapshot."""
+    key = (evidence.observation_id, evidence.observation_revision)
+    row = conn.execute(
+        "SELECT metadata_json FROM scoped_model_catalog_observations "
+        "WHERE observation_id=? AND observation_revision=?",
+        key,
+    ).fetchone()
+    if row is None:
+        return None
+    observation = TypeAdapter(CatalogObservation).validate_json(row[0], strict=True)
+    if observation.evidence != evidence:
+        return None
+    rows = tuple(
+        TypeAdapter(CatalogRow).validate_json(value[0], strict=True)
+        for value in conn.execute(
+            "SELECT row_json FROM scoped_model_catalog_rows "
+            "WHERE observation_id=? AND observation_revision=? ORDER BY row_ordinal",
+            key,
+        )
+    )
+    return replace(observation, rows=rows)
 
 
 def read_scoped_observations(

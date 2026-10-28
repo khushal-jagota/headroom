@@ -43,6 +43,12 @@ from planner.conversation.contracts import (
     backend_supports_steer,
 )
 from planner.conversation.events import UserInputAnswer, UserInputQuestion
+from planner.conversation.launch_intent import (
+    effort_presence,
+)
+from planner.conversation.launch_intent import (
+    reasoning_effort_is_set as effort_presence_is_set,
+)
 from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -199,6 +205,8 @@ class _HeldPrompt:
     queue_reason: PromptQueueReason = PromptQueueReason.requested
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
+    reasoning_effort_is_set: bool = False
+
 
 @dataclass
 class _ConversationState:
@@ -288,6 +296,7 @@ class InMemoryConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -303,6 +312,7 @@ class InMemoryConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            reasoning_effort_is_set=reasoning_effort_is_set,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -313,6 +323,7 @@ class InMemoryConversationSystem:
         )
         return receipt.fate
 
+    @effort_presence
     async def send_with_receipt(
         self,
         conversation_id: str,
@@ -322,6 +333,7 @@ class InMemoryConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -422,7 +434,11 @@ class InMemoryConversationSystem:
         elif mode is PromptDeliveryMode.steer:
             if any(not isinstance(piece, MessageText) for piece in content):
                 queue_reason: PromptQueueReason | None = PromptQueueReason.attachment
-            elif model_change is not None or reasoning_effort_change is not None:
+            elif (
+                model_change is not None
+                or reasoning_effort_change is not None
+                or effort_presence_is_set()
+            ):
                 queue_reason = PromptQueueReason.run_change
             else:
                 steer_fate = self._steer(
@@ -502,6 +518,7 @@ class InMemoryConversationSystem:
         state.held_prompts_created += 1
         state.held_prompts.append(
             _HeldPrompt(
+                reasoning_effort_is_set=effort_presence_is_set(),
                 held_prompt_id=f"held-{state.held_prompts_created}",
                 content=content,
                 sender_label=sender_label,
@@ -984,13 +1001,18 @@ class InMemoryConversationSystem:
             return PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
             )
-        if model_change is not None or reasoning_effort_change is not None:
+        explicit_effort = (
+            recorded_messages[0].reasoning_effort_is_set
+            if recorded_messages
+            else effort_presence_is_set()
+        )
+        if model_change is not None or reasoning_effort_change is not None or explicit_effort:
             # The change lands with the delivery, so it is applied only once the write
             # is known to go through — a refused delivery must change nothing.
             if model_change is not None:
                 state.current_model = model_change
                 established.model = model_change
-            if reasoning_effort_change is not None:
+            if reasoning_effort_change is not None or explicit_effort:
                 state.current_reasoning_effort = reasoning_effort_change
                 established.reasoning_effort = reasoning_effort_change
             state.observations.append(
@@ -1096,6 +1118,7 @@ class InMemoryConversationSystem:
         prompt_senders: dict[Principal, None] = {}
         messages = recorded_messages or (
             _HeldPrompt(
+                reasoning_effort_is_set=effort_presence_is_set(),
                 held_prompt_id="",
                 content=content,
                 sender_label=sender_label,
