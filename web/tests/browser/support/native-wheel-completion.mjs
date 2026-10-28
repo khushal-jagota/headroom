@@ -62,9 +62,16 @@ export function wheelCompletionDecision(s, r) {
     const correction = !close(inset, 0) && close(inset, padding)
       && close(g.anchor - b.anchor, inset - (g.top - b.top));
     const tailOnly = close(inset, 0) && close(g.top, b.top) && close(g.anchor, b.anchor);
+    // A measured padding correction can remain unpaid until tail retirement
+    // forces a native clamp. Credit only restoration of that exact saved line.
+    const pending = s.inset?.before;
+    const paidInset = pending && close(inset, 0) && !close(g.room, b.room)
+      && close(g.origin - pending.origin, g.padding - pending.padding)
+      && close(g.top - pending.top, g.origin - pending.origin)
+      && close(g.anchor, pending.anchor);
     if ((!s.start && !sameGeometry(b, s.dispatchGeometry)) || !close(g.height, b.height) || !close(g.left, b.left) || !close(g.width, b.width)
         || Math.abs((g.extent - b.extent) - (g.room - b.room) - padding) > 1
-        || !(correction || tailOnly)) return fail('BEHAVIOR_WHEEL_CANCELLATION_GEOMETRY');
+        || !(correction || tailOnly || paidInset)) return fail('BEHAVIOR_WHEEL_CANCELLATION_GEOMETRY');
     if (!close(inset, 0)) s.inset = {before: b, after: g};
     s.last = g;
     if (!s.start) s.dispatchGeometry = g;
@@ -113,7 +120,7 @@ export function observeNativeWheel(thread) {
   const token = `wheel-${performance.now()}`;
   const admission = createWheelAdmission({token, thread: token});
   const content = thread.querySelector('[data-conversation-content]');
-  let anchor = null, active = false, stopped = false, nesting = 0;
+  let anchor = null, operationRoom = null, active = false, stopped = false, nesting = 0;
   const restore = [], listeners = [];
   const geometry = () => {
     const bounds = thread.getBoundingClientRect(), css = getComputedStyle(thread);
@@ -123,9 +130,13 @@ export function observeNativeWheel(thread) {
       room: room?.getBoundingClientRect().height ?? 0, anchor: anchor?.getBoundingClientRect().top - bounds.top,
       left: bounds.left, width: bounds.width};
   };
+  const roomUnchanged = () => {
+    const current = thread.querySelector('[data-conversation-reserved-space]');
+    return !current || current === operationRoom;
+  };
   const receive = (kind, extra = {}) => admission.receive({kind, token, thread: token, ms: performance.now(),
     same: thread.isConnected && document.querySelector('[data-conversation-thread]') === thread
-      && (!active || anchor?.isConnected && content.contains(anchor)), geometry: geometry(), ...extra});
+      && (!active || anchor?.isConnected && content.contains(anchor) && roomUnchanged()), geometry: geometry(), ...extra});
   const listen = (node, type, callback, options) => { node.addEventListener(type, callback, options); listeners.push(() => node.removeEventListener(type, callback, options)); };
   const patch = (object, key, descriptor) => {
     const own = Object.getOwnPropertyDescriptor(object, key);
@@ -143,20 +154,14 @@ export function observeNativeWheel(thread) {
   };
   const relevantStyle = style => style === thread.style || style === content.style
     || style === thread.querySelector('[data-conversation-reserved-space]')?.style;
-  try {
-    const scrollTop = descriptor(thread, 'scrollTop');
-    patch(thread, 'scrollTop', {get() { return scrollTop.get.call(this); },
-      set(value) { around('write', () => scrollTop.set.call(this, value), {method: 'scrollTop', value}); }});
-    for (const key of ['scroll', 'scrollTo', 'scrollBy']) {
-      const method = thread[key];
-      patch(thread, key, {value: function(...args) { return around('write', () => method.apply(this, args), {method: key, args}); }, writable: true});
-    }
-    // CSS setters and methods run synchronously around the actual mutation. A
-    // MutationObserver runs too late to recover the previous anchor geometry.
-    const prototype = CSSStyleDeclaration.prototype;
-    const nativeGet = prototype.getPropertyValue, nativeSet = prototype.setProperty;
+  const prototype = CSSStyleDeclaration.prototype;
+  const nativeGet = prototype.getPropertyValue, nativeSet = prototype.setProperty;
+  const observedStyles = new WeakSet();
+  const instrumentStyles = () => {
     const styles = [thread.style, content.style, thread.querySelector('[data-conversation-reserved-space]')?.style].filter(Boolean);
     for (const style of styles) {
+      if (observedStyles.has(style)) continue;
+      observedStyles.add(style);
       for (const key of ['paddingTop', 'paddingBottom', 'padding', 'height', 'marginTop']) {
         // Chromium exposes these named CSS properties as dynamic own data
         // descriptors. Deletion restores that descriptor at its CURRENT value.
@@ -169,6 +174,18 @@ export function observeNativeWheel(thread) {
       const d = descriptor(style, 'cssText');
       patch(style, 'cssText', {...d, set(value) { return around('style', () => d.set.call(this, value)); }});
     }
+  };
+  try {
+    const scrollTop = descriptor(thread, 'scrollTop');
+    patch(thread, 'scrollTop', {get() { return scrollTop.get.call(this); },
+      set(value) { around('write', () => scrollTop.set.call(this, value), {method: 'scrollTop', value}); }});
+    for (const key of ['scroll', 'scrollTo', 'scrollBy']) {
+      const method = thread[key];
+      patch(thread, key, {value: function(...args) { return around('write', () => method.apply(this, args), {method: key, args}); }, writable: true});
+    }
+    // CSS setters and methods run synchronously around the actual mutation. A
+    // MutationObserver runs too late to recover the previous anchor geometry.
+    instrumentStyles();
     for (const key of ['setProperty', 'removeProperty']) {
       const method = prototype[key];
       patch(prototype, key, {value: function(...args) {
@@ -179,6 +196,10 @@ export function observeNativeWheel(thread) {
     listen(document, 'wheel', event => {
       if (!thread.contains(event.target)) { if (active) receive('input'); return; }
       if (active) { receive('input'); return; }
+      // Acceptance can create the room after arm. Capture refreshes its
+      // setters before the direct application wheel handler can mutate them.
+      instrumentStyles();
+      operationRoom = thread.querySelector('[data-conversation-reserved-space]');
       const bounds = thread.getBoundingClientRect();
       anchor = [...content.querySelectorAll('[data-conversation-view-key], [data-conversation-source-key], [data-conversation-outgoing]')]
         .find(node => node.getBoundingClientRect().bottom > bounds.top + 24 && node.getBoundingClientRect().top < bounds.bottom);
@@ -212,7 +233,7 @@ export function observeNativeWheel(thread) {
   return {admission, cleanup, status() { if (active) receive('query'); return {failure: admission.state.failure,
     ready: !!admission.state.completion && admission.state.intervals >= 2, receipts: admission.state.receipts}; },
     consume(callback) {
-      const fresh = {kind: 'consume', token, thread: token, ms: performance.now(), geometry: geometry(), same: thread.isConnected && thread === document.querySelector('[data-conversation-thread]') && anchor?.isConnected && content.contains(anchor)};
+      const fresh = {kind: 'consume', token, thread: token, ms: performance.now(), geometry: geometry(), same: thread.isConnected && thread === document.querySelector('[data-conversation-thread]') && anchor?.isConnected && content.contains(anchor) && roomUnchanged()};
       let value;
       try {
         if (!admission.consume(fresh, () => { value = callback(); })) throw new Error(JSON.stringify(this.status()));
