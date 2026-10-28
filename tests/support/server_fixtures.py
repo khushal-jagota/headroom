@@ -24,6 +24,7 @@ from tests.support.server import (
     JsonObject,
     ServerHandle,
 )
+from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 
 def _free_port() -> int:
@@ -93,11 +94,13 @@ def _start_server(
     log_path = srvdir / "server.log"
     from planner.core.db import connect, create_schema
 
-    with closing(connect(str(db_path))) as bootstrap:
-        create_schema(bootstrap)
-        seed_test_model_catalogue(bootstrap)
-    if seed_db is not None:
-        seed_db(db_path)
+    homes = create_synthetic_homes(srvdir)
+    with synthetic_home_environment(homes):
+        with closing(connect(str(db_path))) as bootstrap:
+            create_schema(bootstrap)
+            seed_test_model_catalogue(bootstrap)
+        if seed_db is not None:
+            seed_db(db_path)
 
     env = _scrubbed_env()
     env.update(
@@ -108,11 +111,6 @@ def _start_server(
             "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
             "PLAN_LOGS_DIR": str(srvdir / "logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
-            # A real server composes the real agents, and composing them puts Panels'
-            # role skills in the agent home. Without this that home is the developer's
-            # own ~/.hermes, and every server started here would re-point their real
-            # skills at a temporary directory that is deleted when the test ends.
-            "PLAN_HERMES_HOME": str(srvdir / "hermes-home"),
         }
     )
     if app_sha is not None:
@@ -121,6 +119,8 @@ def _start_server(
         env.update(
             trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
         )
+
+    env.update(homes)
 
     # Hooks are dormant unless the exact proof activates its runtime scope marker.
     # Install at the ordinary startup boundary; never restart/reset a server for tracing.
@@ -176,7 +176,8 @@ def _start_server(
             root = httpx.get(f"{base}/", timeout=1.0)
             assert root.status_code == 200, root.status_code
             assert "data-svelte-app" in root.text
-            _adopt_the_worker_types_the_server_runs_on(db_path)
+            with synthetic_home_environment(homes):
+                _adopt_the_worker_types_the_server_runs_on(db_path)
             print(f"E2E_SERVER_START {srvdir.name} seconds={time.monotonic() - started_at:.3f}")
             return handle
         time.sleep(0.1)
@@ -295,7 +296,7 @@ def server(
 
 
 @pytest.fixture
-def cli() -> Callable[..., JsonObject]:
+def cli(tmp_path: Path) -> Callable[..., JsonObject]:
     def _cli(
         server: ServerHandle,
         *args: str,
@@ -304,6 +305,7 @@ def cli() -> Callable[..., JsonObject]:
         stdin: str | None = None,
     ) -> JsonObject:
         env = _scrubbed_env()
+        env.update(create_synthetic_homes(tmp_path))
         env["PLAN_SERVER_URL"] = server.base
         if ticket_id is not None:
             # The identity a launched Worker runs under is both variables together:
