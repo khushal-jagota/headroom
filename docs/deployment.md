@@ -213,7 +213,11 @@ Agents still run focused checks before a push. Staging pushes do not start a sui
 
 Repository auto-merge is disabled. The active staging ruleset requires a pull request
 and a successful `mypy (merged tree)` check before merge. Follow the merge procedure
-in AGENTS.md. Main enforcement is separate from this staging rule.
+in AGENTS.md.
+
+Main has no ruleset, branch protection, or required check. The release procedure permits
+a staging-to-main pull request only when Khushal explicitly requests a release.
+The deployment workflow runs its own gates before deployment.
 
 Staging does not require strict freshness. A new commit on the target branch alone
 does not start this workflow. If the owner enables strict freshness, an advanced target
