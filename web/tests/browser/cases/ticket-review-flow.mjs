@@ -19,6 +19,9 @@ import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
 import FilePreviewRoute from '../src/routes/FilePreviewRoute.svelte';
 import { navigationReviewPresentation } from '../src/lib/navigation/presentation';
 import { reviewBadgeDomMatches } from '../src/lib/shellDom';
+import {readComposerDraft,writeComposerDraft} from '../src/lib/conversation/composerDraft';
+(window as any).__writeChiefDraft=(text:string)=>writeComposerDraft('owner:chief',text);
+(window as any).__readChiefDraft=()=>readComposerDraft('owner:chief');
 (window as any).__badgeProof=()=>{
  const link=document.createElement('a');const badge=document.createElement('span');link.append(badge);
  badge.className='count-badge hidden';
