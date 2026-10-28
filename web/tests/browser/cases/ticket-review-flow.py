@@ -1247,7 +1247,11 @@ def run(browser, urls):
     dialog = page.get_by_role('dialog', name='Move Ticket')
     confirm = dialog.get_by_role('button', name='Move Ticket', exact=True)
     expect(confirm).to_be_enabled()
-    select_bounds = dialog.get_by_label('Destination', exact=True).bounding_box()
+    dialog_accessibility = dialog.aria_snapshot()
+    (evidence / 'move-dialog-accessibility.yml').write_text(dialog_accessibility)
+    destination_control = dialog.get_by_role('combobox', name='Destination', exact=True)
+    expect(destination_control).to_be_enabled()
+    select_bounds = destination_control.bounding_box()
     assert select_bounds and select_bounds['width'] >= 24 and select_bounds['height'] >= 24, select_bounds
     assert move_reads == ['t_done']
     confirm.click()
