@@ -45,6 +45,12 @@ One screen per part of the system:
   Open conversation names the exact conversation. Approval and send-back act only on the proposal.
   Each action leaves the card's other pending parts intact.
   Other proposal controls, keyboard shortcuts, and approval routing retain their existing behavior.
+  When the queue ends, Review shows the Settled final screen and the existing reply input for Chief.
+  This screen stays in place after a send or an arrival, even with no draft.
+  New work changes the status to the current count of items that await review.
+  Back to review explicitly returns to the current queue. A fresh visit follows the normal queue flow.
+  The return action uses the existing Approve style when work waits and the quiet Mark read style at zero.
+  The Chief form sends through the normal Chief endpoint. It never loads a transcript or advances a read watermark.
 - **Workspace** — an adjustable rail of manager cards beside the selected conversation
   or Worker. Chief leads, keeps its portrait, and never settles. Ordinary managers
   have Project and Settle above the title. Only the owner settles or reopens one.
@@ -681,6 +687,10 @@ hand-rolling the same shapes per screen. Each does one job:
   durable watermark. It reuses message rendering, file previews, voice capture, and durable
   composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
   Navigation publications carry identity and recap facts, never message bodies.
+- **ReviewReplyInput** — the existing Review input, shared by message cards and the final-screen Chief form.
+  It keeps the attachment, microphone, and send controls. Each parent retains its own delivery and acknowledgement behavior.
+- **ReviewFinalState** — the shared Settled screen at the end of Review, with a stable Chief form and an explicit queue return.
+- **ReviewChiefMessage** — the final-screen Chief send adapter. It retains drafts and correlated attempts without a transcript or read acknowledgement.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
