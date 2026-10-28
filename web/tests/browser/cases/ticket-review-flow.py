@@ -28,7 +28,6 @@ def run(browser, urls):
         manager_title="Kept outcome",
         id="t_review",
         locale="vps",
-        record_sha256="a" * 64,
         title="Review ticket",
         worker_type="coding",
         employee_backend="codex",
@@ -808,7 +807,7 @@ def run(browser, urls):
     runtime_working = True
     page.evaluate("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS · Current Project · Personal")
     expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
         "data-conversation-id", "masthead-current"
     )
@@ -1736,7 +1735,7 @@ def run(browser, urls):
     expect(page.locator('[data-ticket-masthead-id="t_done"]')).to_be_visible()
     expect(page.locator('[data-ticket-backlog-action]')).to_have_count(0)
     expect(page.locator('.machine-heading')).to_have_count(0)
-    expect(page.get_by_role('button', name='Runs on VPS')).to_have_count(0)
+    expect(page.locator('button.machine-identity')).to_have_count(0)
     action = page.get_by_role('button', name='Move to Mac…', exact=True)
     evidence = Path(os.environ.get('PANELS_SIDEBAR_ARTIFACT_DIR', '/tmp/panels-layout')) / 'machine-layout'
     evidence.mkdir(parents=True, exist_ok=True)

@@ -456,7 +456,7 @@ def verify_card_geometry(page, url, fixture, evidence):
                 "conversation_signal": {"working": False, "message_for_owner": False}}
 
     first, second = ticket("geometry_one"), ticket("geometry_two")
-    first["title"] = "Rebuild the Mac and VPS controls to the approved design"
+    first["title"] = "Review a native Mac workspace with Codex"
     first["conversation_signal"]["working"] = True
     chief_ticket = ticket("geometry_chief", None)
     fixture.update(enabled=True, board={"managers": [
@@ -510,7 +510,8 @@ def verify_card_geometry(page, url, fixture, evidence):
             mark_bounds = panel.locator('.machine-identity').bounding_box()
             assert title_bounds and abs(title_bounds['height'] - expected_height) < .1, title_bounds
             assert mark_bounds and mark_bounds['width'] == 15 and mark_bounds['height'] == 15
-            assert panel.locator('.title').evaluate('n => n.firstElementChild.classList.contains("machine-identity")')
+            assert panel.locator('.kicker').evaluate('n => n.firstElementChild.classList.contains("machine-identity")')
+            expect(panel.locator('.title .machine-identity')).to_have_count(0)
             assert panel.locator('.machine-identity').get_attribute('tabindex') is None
             assert panel.locator('.machine-identity').inner_text() == ''
             status_contrast = contrast(panel.locator('.doing'))

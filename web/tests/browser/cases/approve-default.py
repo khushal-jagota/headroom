@@ -427,7 +427,7 @@ def run(browser, urls):
             page.set_viewport_size({"width": width, "height": 1000})
             page.emulate_media(reduced_motion="reduce")
             if host_kind == "ticket":
-                expect(page.locator("[data-ticket-identity]")).to_have_text("Panels · Coding")
+                expect(page.locator("[data-ticket-identity]")).to_have_text("VPS · Panels · Coding")
                 page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
             assert page.evaluate(
                 "Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= innerWidth + 1"

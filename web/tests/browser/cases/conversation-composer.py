@@ -351,6 +351,10 @@ def run(browser, urls):
         picker = page.locator(".picker-proof > [data-conversation-model-picker]")
         trigger = picker.locator("[data-conversation-picker-trigger]")
         assert "opus → claude-opus-5" in trigger.inner_text()
+        trigger.press("ArrowDown")
+        assert picker.locator('[data-conversation-backend="claude"]').get_attribute("aria-pressed") == "true"
+        assert picker.locator('[data-conversation-backend="codex"]').get_attribute("aria-pressed") == "false"
+        picker.get_by_role("listbox").press("Escape")
         assert picker.locator(".listbox-picker-chevron,.listbox-picker-chevron-drawn").count() == 0
         trigger.press("ArrowDown")
         options = picker.get_by_role("option")
@@ -423,6 +427,20 @@ def run(browser, urls):
     picker.locator("[data-conversation-picker-trigger]").click()
     assert picker.locator("[data-model-picker-check]").is_disabled()
     assert page.evaluate("window.__pickerReads.length") == 0
+    # Contradictory legacy metadata cannot supply canonical backend or effort facts.
+    for selection in ["unobserved", "conflict"]:
+        page.goto(urls[0] + "?picker&selection=" + selection, wait_until="domcontentloaded")
+        picker = page.locator(".picker-proof > [data-conversation-model-picker]")
+        trigger = picker.locator("[data-conversation-picker-trigger]")
+        assert "Backend unobserved" in trigger.get_attribute("aria-label")
+        assert "legacy" not in trigger.inner_text()
+        trigger.click()
+        assert picker.locator('[data-conversation-backend][aria-pressed="true"]').count() == 0
+        picker.locator("[data-conversation-picker-reasoning]").click()
+        assert picker.get_by_role("listbox").get_attribute("aria-label") == "Models"
+        assert "Choose a model row first" in picker.locator(".model-picker-summary").inner_text()
+        assert "legacy-effort" not in picker.inner_text()
+        assert page.evaluate("window.__pickerChoices.length") == 0
     assert not errors, errors
     pass  # Shared runner owns the browser lifecycle.
     print("conversation-composer-browser.test.mjs: all assertions passed")

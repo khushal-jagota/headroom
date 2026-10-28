@@ -4103,7 +4103,7 @@ def _machine_evidence(browser, url):
     page.on("pageerror",lambda error:errors.append(str(error)))
     page.goto(url+"?machines",wait_until="domcontentloaded")
     expect(page.locator('[data-machine-notice]')).to_have_count(0)
-    expect(page.get_by_role("button", name="Runs on Mac")).to_have_count(0)
+    expect(page.locator("button.machine-identity")).to_have_count(0)
     expect(page.get_by_role("img", name="Runs on Mac")).to_be_visible()
     expect(page.locator('[data-conversation-id="vps-conversation"] [data-conversation-signal="working"]')).to_be_visible()
     expect(page.locator('[data-conversation-id="machine-conversation"] [data-conversation-signal="working"]')).to_have_count(0)

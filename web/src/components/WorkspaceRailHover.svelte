@@ -99,8 +99,8 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <div class="kicker">{kicker}</div>
-  <div class="title">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span>{kicker}</span></div>
+  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
@@ -120,7 +120,7 @@
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { font-size:12px; color:var(--text-faintest); margin-bottom:5px; }
+  .kicker { display:flex; align-items:center; gap:var(--space-2); font-size:12px; color:var(--text-faintest); margin-bottom:5px; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
   .title { font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }

@@ -20,7 +20,11 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
   import { pickerRows, pickerValidation } from "../tests/fixtures/modelPickerFacts";
   const pickerProof = new URLSearchParams(location.search).has("picker");
   const missingRetry = new URLSearchParams(location.search).has("missingRetry");
-  const view = resolveModelPicker({backendKey: "claude", model: "opus", reasoningEffort: "high", backends: []});
+  const selectionProof = new URLSearchParams(location.search).get("selection");
+  const proofRows = selectionProof ? pickerRows.map((row, index) => ({...row, current_selection: selectionProof === "conflict" && index < 2})) : pickerRows;
+  const proofValidation = selectionProof ? undefined : pickerValidation;
+  const legacyModels = [{model_id: "legacy-model", display_name: "Legacy only", reasoning_effort_options: ["legacy-effort"]}];
+  const view = resolveModelPicker({backendKey: "codex", model: "legacy-model", reasoningEffort: "legacy-effort", backends: [], models: legacyModels});
   (window as any).__pickerReads = [];
   (window as any).__pickerChoices = [];
   const scopedRead = Object.freeze({ticket: "fixture", destination: "macos", token: "opus", effort: "high"});
@@ -54,7 +58,7 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
   {#if pickerProof}
     <div class="picker-proof">
       <WorkerConfigurationSetup ticketId="fixture" destination="macos" employeeBackend="claude" employeeLaunchModel="opus" employeeLaunchReasoningEffort="high" onSave={async () => { throw new Error("No fixture Ticket writes"); }} />
-      <UnifiedModelPicker {view} snapshots={[]} models={[]} backendEffortOptions={[]} canonicalRows={pickerRows} validation={pickerValidation} onRetry={missingRetry ? undefined : retry} scrollPanel chevron="none"
+      <UnifiedModelPicker {view} snapshots={[]} models={legacyModels} backendEffortOptions={["legacy-effort"]} canonicalRows={proofRows} validation={proofValidation} onRetry={missingRetry ? undefined : retry} scrollPanel chevron="none"
         onChooseBackend={() => {}} onChooseModel={(model, effort) => (window as any).__pickerChoices.push({model, effort})} />
     </div>
   {:else}
