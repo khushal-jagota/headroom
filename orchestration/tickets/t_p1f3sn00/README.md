@@ -1,6 +1,8 @@
+This directory preserves the first Implementation review and its failed checks. The revised attribution and final catalog proof are on the [verification ref](https://github.com/khushal-jagota/headroom/tree/ticket/t_p1f3sn00-verification/orchestration/tickets/t_p1f3sn00/revision-review). The Ticket implementation field identifies the exact checked revision.
+
 The shared barriers now prove scrollback and navigation projection state before the shell, recap, and five tab-return branches assert behavior. All 611 original Python assertions and 185 expect expressions remain unchanged.
 
-The worktree starts at current origin/staging `6187155312de4d1b4fd34c272dfa5e2096808b6c`. Final source is `6621efe8efef8fa4274cabb42d9e71eb735189cf`. Source changes cover only the new helper and the three approved case files.
+The worktree starts at current origin/staging `6187155312de4d1b4fd34c272dfa5e2096808b6c`. The first reviewed source is `6621efe8efef8fa4274cabb42d9e71eb735189cf`. Source changes cover only the new helper and the three approved case files.
 
 ## What changed
 
