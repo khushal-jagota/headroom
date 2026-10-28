@@ -85,8 +85,12 @@
     return Number(trimmed);
   }
 
+  function missing(cell: string): boolean {
+    return ["", "—", "–"].includes(cell.trim());
+  }
+
   function numericColumn(index: number): boolean {
-    const filled = block.rows.map((row) => row[index] ?? "").filter((cell) => cell.trim() !== "");
+    const filled = block.rows.map((row) => row[index] ?? "").filter((cell) => !missing(cell));
     return filled.length > 0 && filled.every((cell) => asNumber(cell) !== null);
   }
 
@@ -101,8 +105,8 @@
     return lines.slice().sort((a, b) => {
       const left = a.cells[index] ?? "";
       const right = b.cells[index] ?? "";
-      const leftEmpty = left.trim() === "";
-      const rightEmpty = right.trim() === "";
+      const leftEmpty = missing(left);
+      const rightEmpty = missing(right);
       if (leftEmpty || rightEmpty) {
         if (leftEmpty === rightEmpty) return a.key - b.key;
         return leftEmpty ? 1 : -1;
@@ -371,7 +375,8 @@
                     data-primary={index === 0 ? "" : undefined}
                     data-sorted={sort?.index === index ? "" : undefined}
                     data-numeric={numeric[index] ? "" : undefined}
-                  >{#if context?.updateBlock}<GoalInlineEdit revision={context!.revision} value={cell} ariaLabel={`Edit ${block.columns[index]}`} onSave={(value, revision)=>context!.updateBlock!(block.id,old=>old.type === "table" ? {...old,rows:old.rows.map((row,r)=>r===line.key?row.map((c,i)=>i===index?value:c):row)} : old, revision)} />{:else}{cell}{/if}</td>
+                    data-tone={block.cell_tones?.[line.key]?.[index] ?? undefined}
+                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}{#if context?.updateBlock}<GoalInlineEdit revision={context!.revision} value={cell} ariaLabel={`Edit ${block.columns[index]}`} onSave={(value, revision)=>context!.updateBlock!(block.id,old=>old.type === "table" ? {...old,rows:old.rows.map((row,r)=>r===line.key?row.map((c,i)=>i===index?value:c):row)} : old, revision)} />{:else}{cell}{/if}</div></td>
                 {/each}
               </tr>
             {/each}
@@ -456,6 +461,12 @@
     overflow-wrap: anywhere;
   }
   td[data-primary] { color: var(--text-strong); font-weight: 500; }
+  td[data-tone="good"] { color: var(--accent-done); }
+  td[data-tone="attention"] { color: var(--accent-attention); }
+  td[data-tone="bad"] { color: var(--accent-error); }
+  td[data-tone="neutral"] { color: var(--text-faint); }
+  td[data-tone] .cell-copy { display: flex; align-items: center; gap: var(--space-2); }
+  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
   tbody tr:last-child td { border-bottom: 0; }
   table[data-selectable] tbody tr { cursor: pointer; }
   tbody tr[data-selected] td {

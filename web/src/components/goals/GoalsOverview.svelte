@@ -3,7 +3,7 @@
  import GoalFilter from './GoalFilter.svelte';
  import {columns,emptyFilters,goalMatches} from '../../lib/goals/filters';
  import {queries} from '../../lib/queryCatalogue';
- import {chartData} from '../../lib/charts/presentation';
+ import {chartData,chartHeadline} from '../../lib/charts/presentation';
  import {goalQueries} from '../../lib/goals/queries';
  import {goalStatusText,refreshAtBoundary} from '../../lib/goals/presentation';
  import {workspaceAddress} from '../../lib/workspaceAddress';
@@ -16,14 +16,16 @@
  const projects=createQuery(()=>queries.projects());
  const readings=createQueries(()=>({queries:(goals.data?.goals??[]).map(goal=>({...goalQueries.readings(goal.id),enabled:all&&goal.kind==='quantitative'}))}));
  let filters=$state(emptyFilters());
- let filtered=$derived((goals.data?.goals??[]).filter((g,i)=>goalMatches(g,g.primary_chart?chartData(g.primary_chart,readings[i]?.data?.values??[],'all').at(-1)?.values.actual:undefined,filters)));
+ let summaries=$derived((goals.data?.goals??[]).map((goal,i)=>goal.primary_chart?chartHeadline(goal.primary_chart,chartData(goal.primary_chart,readings[i]?.data?.values??[],'all')):undefined));
+ let filtered=$derived((goals.data?.goals??[]).filter((goal,i)=>goalMatches(goal,summaries[i]?.value,filters,{target:summaries[i]?.target})));
+ function target(goalId:string){return summaries[(goals.data?.goals??[]).findIndex(goal=>goal.id===goalId)]?.target;}
  $effect(()=>{if(goals.data)return refreshAtBoundary(goals.data.next_refresh_at,()=>void goals.refetch());});
 </script>
 <section class="goals-overview" aria-label={all?'All goals':'Active goals'}>
  <header><h1>{all?'All goals':'Active goals'}</h1><a href={workspaceAddress(all?{kind:'chief'}:{kind:'goals'})}>{all?'Overview':'All goals'}</a></header>
  {#if goals.error}<ErrorLine error={goals.error}/>{/if}
  {#if all}
- <div class="table-scroll"><table><thead><tr>{#each columns as [key,label]}<th scope="col"><GoalFilter column={key} {label} {filters} projects={projects.data?.projects??[]} onApply={next=>filters=next}/></th>{/each}</tr></thead><tbody>{#each filtered as goal(goal.id)}<tr><td><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></td><td><GoalReading {goal} reading/></td><td>{goal.primary_chart?.target!==undefined?formatReading(goal.primary_chart,goal.primary_chart.target):goal.kind==='binary'?'Done':'—'}</td><td>{projects.data?.projects.find(project=>project.id===goal.project_id)?.name??'—'}</td><td>{goal.deadline??'—'}</td><td>{goal.active?'Active':'Inactive'}</td></tr>{:else}<tr><td colspan="6"><div class="empty">{goals.data?.goals.length?'No matching goals':'No goals yet'}{#if goals.data?.goals.length}<button onclick={()=>filters=emptyFilters()}>Clear filters</button>{:else}<p>Set your first goal with Chief.</p>{/if}</div></td></tr>{/each}</tbody></table></div>
+ <div class="table-scroll"><table><thead><tr>{#each columns as [key,label]}<th scope="col"><GoalFilter column={key} {label} {filters} projects={projects.data?.projects??[]} onApply={next=>filters=next}/></th>{/each}</tr></thead><tbody>{#each filtered as goal(goal.id)}<tr><td><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></td><td><GoalReading {goal} reading/></td><td>{goal.primary_chart&&target(goal.id)!==undefined?formatReading(goal.primary_chart,target(goal.id)!):goal.kind==='binary'?'Done':'—'}</td><td>{projects.data?.projects.find(project=>project.id===goal.project_id)?.name??'—'}</td><td>{goal.deadline??'—'}</td><td>{goal.active?'Active':'Inactive'}</td></tr>{:else}<tr><td colspan="6"><div class="empty">{goals.data?.goals.length?'No matching goals':'No goals yet'}{#if goals.data?.goals.length}<button onclick={()=>filters=emptyFilters()}>Clear filters</button>{:else}<p>Set your first goal with Chief.</p>{/if}</div></td></tr>{/each}</tbody></table></div>
  <span class="sr-only" role="status">{filtered.length} goals match the filters</span>
  {:else}<div class="goals-grid">{#each goals.data?.goals.filter(g=>g.active)??[] as goal(goal.id)}<GoalCard {goal}/>{:else}<div class="empty"><h2>No active goals</h2><p>Talk with Chief to set your next goal.</p></div>{/each}</div>{/if}
 </section>

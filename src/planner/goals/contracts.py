@@ -9,7 +9,9 @@ from planner.measures.contracts import MeasureValue, SourceHealthSummary
 
 Tone = Literal["neutral", "attention", "bad", "good"]
 GoalKind = Literal["binary", "quantitative"]
-ChartKind = Literal["line", "bar", "gauge", "number", "binary"]
+ChartKind = Literal[
+    "line", "bar", "gauge", "number", "binary", "progress", "time-budget", "allocation"
+]
 
 
 class ChartPoint(TypedDict):
@@ -19,11 +21,13 @@ class ChartPoint(TypedDict):
 
 
 class ChartSeries(TypedDict):
+    color: NotRequired[Literal["blue", "blue-muted", "blue-dark"]]
     name: str
     points: list[ChartPoint]
 
 
 class ChartRange(TypedDict):
+    target: NotRequired[float]
     id: str
     label: str
     series: list[ChartSeries]
@@ -59,6 +63,13 @@ class ChartBlock(TypedDict):
     format: NotRequired[ChartFormat]
     series: NotRequired[list[ChartSeries]]
     ranges: NotRequired[list[ChartRange]]
+    stacked: NotRequired[bool]
+    aggregate: NotRequired[Literal["sum"]]
+    below_target_tone: NotRequired[Literal["attention", "bad"]]
+    target_label: NotRequired[Literal["target", "floor", "limit"]]
+    difference_unit: NotRequired[Literal["pp"]]
+    allocation_mode: NotRequired[Literal["value", "percentage"]]
+    total_label: NotRequired[str]
 
 
 class ChecklistItem(TypedDict):
@@ -88,6 +99,7 @@ class TableBlock(TypedDict):
     id: str
     columns: list[str]
     rows: list[list[str]]
+    cell_tones: NotRequired[list[list[Tone | None]]]
     caption: NotRequired[str]
 
 

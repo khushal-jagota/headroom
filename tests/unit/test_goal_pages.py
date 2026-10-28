@@ -230,3 +230,141 @@ def test_goal_list_revision_tracks_conversation_links_without_document_edits(
     assert reset and reset.revision != linked.revision
     assert cast(GoalsResponse, reset.read())["goals"][0]["conversation_id"] is None
     assert data.read_goal(tmp_db, goal.id).revision == 1
+
+
+def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Connection) -> None:
+    """Saved options and default summaries must agree across API and production renderer."""
+    from planner.goals.logic.status import chart_status, chart_summary
+
+    chart: ChartBlock = {
+        "type": "chart",
+        "id": "summary",
+        "kind": "line",
+        "placement": "primary",
+        "aggregate": "sum",
+        "target": 3,
+        "below_target_tone": "attention",
+        "target_label": "floor",
+        "difference_unit": "pp",
+        "series": [
+            {
+                "name": "Teams",
+                "points": [
+                    {"label": "First", "value": 2},
+                    {"label": "Second", "value": None},
+                    {"label": "Third", "value": 4},
+                ],
+            }
+        ],
+    }
+    assert chart_summary(chart, []) == (6, 9)
+    assert chart_status(chart, []) == "attention"
+    empty = {**chart, "series": [{"name": "Teams", "points": [{"label": "First", "value": None}]}]}
+    assert chart_summary(cast(ChartBlock, empty), []) == (None, 3)
+    assert chart_status(cast(ChartBlock, empty), []) == "neutral"
+    chart["ranges"] = [
+        {
+            "id": "all",
+            "label": "All time",
+            "series": [
+                {"name": "Teams", "points": [{"label": "All", "value": 10}]},
+            ],
+        }
+    ]
+    assert chart_summary(chart, []) == (10, 3)  # all range overrides the static fallback
+    chart["ranges"][0]["target"] = 12
+    assert chart_summary(chart, []) == (10, 12)
+    assert chart_status(chart, []) == "attention"
+    chart["ranges"][0]["id"] = "week"
+    chart["ranges"][0]["target"] = 2
+    assert chart_summary(chart, []) == (6, 9)  # base series wins when all is not authored
+    without_base = cast(ChartBlock, {key: value for key, value in chart.items() if key != "series"})
+    assert chart_summary(without_base, []) == (10, 2)  # fallback range carries its own target
+    del chart["ranges"]
+    document = page()
+    document["blocks"].append(
+        {
+            "type": "table",
+            "columns": ["Experiment", "Outcome"],
+            "rows": [["First", "Keep"], ["Second", "Stop"]],
+            "cell_tones": [[None, "good"], [None, "bad"]],
+        }
+    )
+    goal = create(tmp_db, kind="quantitative", primary_chart=chart, page=document)
+    assert goal.primary_chart == chart
+    saved = data.read_goal(tmp_db, goal.id)
+    assert saved.page["blocks"][-1] == goal.page["blocks"][-1]
+    now = datetime(2026, 10, 28, 12, tzinfo=ZoneInfo("Europe/Berlin"))
+    assert views.readings_json(tmp_db, goal.id, now)["status"] == "attention"
+    invalid = deepcopy(goal.page)
+    cast(Any, invalid["blocks"][-1])["cell_tones"] = [["good"]]
+    with pytest.raises(PlannerError, match="cell tones"):
+        actions.update_goal(
+            tmp_db,
+            goal.id,
+            {"expected_revision": 1, "page": invalid},
+            principal=OWNER_PRINCIPAL,
+            now=NOW + 1,
+        )
+    assert data.read_goal(tmp_db, goal.id).revision == 1
+
+
+def test_sheet_category_totals_share_one_identity_and_meter_denominators() -> None:
+    """A missing category cannot become a false total; meter fractions need a denominator."""
+    from planner.goals.logic.documents import validate_chart
+    from planner.goals.logic.status import chart_status, chart_summary
+
+    chart: ChartBlock = {
+        "type": "chart",
+        "id": "categories",
+        "kind": "allocation",
+        "placement": "supporting",
+        "allocation_mode": "percentage",
+        "total_label": "Planned",
+        "series": [
+            {
+                "name": "Research",
+                "color": "blue",
+                "points": [{"label": "Monday", "value": 3}, {"label": "Tuesday", "value": 4}],
+            },
+            {"name": "Build", "color": "blue-muted", "points": [{"label": "Monday", "value": 4}]},
+            {
+                "name": "Review",
+                "color": "blue-dark",
+                "points": [{"label": "Monday", "value": 1}, {"label": "Tuesday", "value": 2}],
+            },
+        ],
+    }
+    validate_chart(chart)
+    assert chart_summary(chart, []) == (None, None)
+    chart["series"][1]["points"].append({"label": "Tuesday", "value": 3})
+    assert chart_summary(chart, []) == (9, None)
+    assert chart_status(chart, []) == "neutral"
+    chart.update({"kind": "bar", "stacked": True, "target": 10})
+    assert chart_summary(chart, []) == (9, 10)
+    assert chart_status(chart, []) == "bad"
+    chart = {
+        "type": "chart",
+        "id": "budget",
+        "kind": "time-budget",
+        "placement": "primary",
+        "target": 8,
+        "measure_id": "existing",
+    }
+    validate_chart(chart)
+    assert chart_status(chart, [("2026-10-28", 3)]) == "good"
+    assert chart_status(chart, [("2026-10-28", 10)]) == "bad"
+    assert chart_summary(chart, [("2026-10-28", -1)]) == (None, 8)
+    assert chart_status(chart, [("2026-10-28", -1)]) == "neutral"
+    chart.update({"kind": "progress", "target": 12})
+    assert chart_status(chart, [("2026-10-28", 14)]) == "good"
+    assert chart_status(chart, [("2026-10-28", -1)]) == "neutral"
+    chart["target"] = 0
+    with pytest.raises(ValueError, match="positive target"):
+        validate_chart(chart)
+    chart["target"] = 12
+    chart["series"] = [{"name": "Completed", "points": [{"label": "Today", "value": -1}]}]
+    with pytest.raises(ValueError, match="nonnegative"):
+        validate_chart(chart)
+    chart["kind"] = "bar"
+    validate_chart(chart)  # prior signed line/bar contract is unchanged

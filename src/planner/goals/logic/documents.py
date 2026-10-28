@@ -12,6 +12,7 @@ from typing import (
     Literal,
     NotRequired,
     TypeAliasType,
+    Union,
     cast,
     get_args,
     get_origin,
@@ -28,7 +29,7 @@ def validate_shape(value: Any, schema: Any, path: str = "$") -> None:
     origin, args = get_origin(schema), get_args(schema)
     if origin is NotRequired:
         return validate_shape(value, args[0], path)
-    if origin is types.UnionType:
+    if origin in (types.UnionType, Union):
         for option in args:
             try:
                 validate_shape(value, option, path)
@@ -124,6 +125,12 @@ def prepare_document(value: Any, new_identity: Callable[[], str]) -> PageDocumen
             len(row) != len(block["columns"]) for row in block["rows"]
         ):
             raise ValueError("table row must match its columns")
+        if block["type"] == "table" and "cell_tones" in block:
+            tones = block["cell_tones"]
+            if len(tones) != len(block["rows"]) or any(
+                len(row) != len(block["columns"]) for row in tones
+            ):
+                raise ValueError("table cell tones must match its rows and columns")
         if block["type"] == "chart":
             validate_chart(cast(ChartBlock, block))
     return accepted
@@ -139,6 +146,21 @@ def validate_chart(chart: ChartBlock) -> None:
         raise ValueError("decimal places must be nonnegative")
     if "domain" in chart and chart["domain"][0] >= chart["domain"][1]:
         raise ValueError("chart domain minimum must be less than its maximum")
+    if chart["kind"] in ("progress", "time-budget") and (
+        chart.get("target", 0) <= 0
+        or any(group.get("target", chart["target"]) <= 0 for group in chart.get("ranges", []))
+    ):
+        raise ValueError("progress and time-budget charts need a positive target")
+    if chart["kind"] in ("progress", "time-budget", "allocation"):
+        series = chart.get("series", []) + [
+            series for group in chart.get("ranges", []) for series in group["series"]
+        ]
+        if any(
+            point["value"] is not None and point["value"] < 0
+            for item in series
+            for point in item["points"]
+        ):
+            raise ValueError("progress and ring readings must be nonnegative")
     for point in chart.get("reference", []):
         if date.fromisoformat(point["date"]).isoformat() != point["date"]:
             raise ValueError("reference dates must be ISO calendar dates")

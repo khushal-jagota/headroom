@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {chartData,formatReading,inspectedReading} from '../src/lib/charts/presentation';
+import {chartData,chartHeadline,chartTone,comparisonText,missingReadingText,formatReading,inspectedReading} from '../src/lib/charts/presentation';
 import {updatePageBlock} from '../src/lib/goals/presentation';
 import type {ChartBlock,MeasureValue,Block} from '../src/lib/goals/contracts';
 const chart:ChartBlock={type:'chart',id:'balance',kind:'line',placement:'primary',measure_id:'balance',target:0,direction:'atleast',format:{prefix:'€',decimals:2}};
@@ -44,4 +44,43 @@ it('inspection follows a corrected dated value and a corrected gap without a poi
  expect(inspectedReading(corrected,key)?.values.actual).toBe(-2.5);
  const missing=chartData(chart,[value('2026-10-01',null),value('2026-10-02',5)],'all');
  expect(inspectedReading(missing,key)?.values.actual).toBeUndefined();
+});
+
+
+it('preserves sum and composition semantics across ranges, gaps, and inspection',()=>{
+ const aggregate:ChartBlock={...chart,measure_id:undefined,aggregate:'sum',target:3,series:[{name:'Teams',points:[{label:'A',value:2},{label:'B',value:null},{label:'C',value:4}]}]};
+ const data=chartData(aggregate,[],'all');
+ expect(chartHeadline(aggregate,data)).toMatchObject({value:6,target:9,missingCount:1});
+ expect(chartHeadline(aggregate,data,'C')).toMatchObject({value:4,target:3});
+ expect(chartHeadline(aggregate,data,'B').value).toBeUndefined();
+ expect(chartHeadline(aggregate,chartData({...aggregate,series:[{name:'Teams',points:[{label:'A',value:null}]}]},[],'all')).value).toBeUndefined();
+ const composition:ChartBlock={type:'chart',id:'plans',kind:'bar',placement:'primary',stacked:true,series:[{name:'Business',points:[{label:'Jul',value:600},{label:'Aug',value:800}]},{name:'Team',points:[{label:'Jul',value:1300},{label:'Aug',value:1500}]},{name:'Pro',points:[{label:'Jul',value:1600},{label:'Aug',value:1900}]}]};
+ expect(chartHeadline(composition,chartData(composition,[],'all')).value).toBe(4200);
+ expect(chartHeadline(composition,chartData(composition,[],'all'),'Jul').value).toBe(3500);
+ const missing={...composition,series:[...composition.series!.slice(0,2),{name:'Pro',points:[{label:'Jul',value:1600}]}]};
+ expect(chartHeadline(missing,chartData(missing,[],'all')).value).toBeUndefined();
+ const emptyCategory={...composition,series:[...composition.series!,{name:'Unrecorded',points:[]}]};
+ expect(chartHeadline(emptyCategory,chartData(emptyCategory,[],'all')).value).toBeUndefined();
+ const ranged:ChartBlock={...aggregate,aggregate:undefined,target:10,ranges:[{id:'week',label:'Week',target:2,series:[{name:'Teams',points:[{label:'Mon',value:1}]}]},{id:'all',label:'All time',target:12,series:aggregate.series!}]};
+ expect(chartHeadline(ranged,chartData(ranged,[],'week'))).toMatchObject({value:1,target:2});
+ expect(chartHeadline(ranged,chartData(ranged,[],'all'))).toMatchObject({value:4,target:12});
+});
+
+it('reports approved threshold, progress, budget, and missing-reading states without inventing values',()=>{
+ const floor:ChartBlock={...chart,format:{decimals:2},unit:'%',target_label:'floor',difference_unit:'pp'};
+ expect(comparisonText(floor,99.72,99.5)).toBe('0.22 pp above floor');
+ expect(comparisonText(floor,99.36,99.5)).toBe('0.14 pp below floor');
+ expect(chartTone({...chart,below_target_tone:'attention'},4,5)).toBe('attention');
+ expect(chartTone({...chart,reference:[{date:'2026-10-01',value:5}]},4,5)).toBe('bad');
+ expect(comparisonText({...chart,kind:'progress'},12,12)).toBe('Target reached');
+ expect(comparisonText({...chart,kind:'progress',format:undefined},14,12)).toBe('2 beyond target');
+ expect(chartTone({...chart,kind:'time-budget',direction:undefined},3,8)).toBe('good');
+ expect(chartTone({...chart,kind:'time-budget',direction:undefined},10,8)).toBe('bad');
+ const gap=chartData(chart,[value('2026-10-01',4),value('2026-10-02',null)],'all');
+ expect(missingReadingText(gap,'2026-10-02')).toBe('No reading for 2026-10-02');
+ expect(missingReadingText(chartData(chart,[value('2026-10-02',null)],'all'))).toBe('No readings yet');
+ expect(chartHeadline({...chart,kind:'time-budget'},chartData(chart,[value('2026-10-02',-1)],'all')).value).toBeUndefined();
+ const goal={title:'New teams',primary_chart:{...chart,target:3},active:true,completed:false} as GoalResponse;
+ expect(goalMatches(goal,6,{...emptyFilters(),target:{op:'eq',value:'9'}},{target:9})).toBe(true);
+ expect(goalMatches(goal,6,{...emptyFilters(),target:{op:'missing',value:''}},{target:undefined})).toBe(true);
 });

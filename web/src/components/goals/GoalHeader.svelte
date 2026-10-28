@@ -8,7 +8,7 @@
  let {goal,onSave}:{goal:GoalResponse;onSave:(patch:Partial<GoalResponse>,revision?:number)=>Promise<unknown>}=$props();
  const projects=createQuery(()=>queries.projects());
  let draft=$state<GoalResponse|null>(null),error=$state<unknown>(null),saving=$state(false),editButton=$state<HTMLButtonElement>(),titleInput=$state<HTMLTextAreaElement>();
- async function start(){draft=structuredClone($state.snapshot(goal));error=null;await tick();titleInput?.focus();}
+ async function start(){draft=structuredClone($state.snapshot(goal));if(draft.primary_chart&&!draft.primary_chart.direction)draft.primary_chart.direction=draft.primary_chart.kind==='time-budget'?'atmost':'atleast';error=null;await tick();titleInput?.focus();}
  async function cancel(){draft=null;error=null;await tick();editButton?.focus();}
  async function save(){if(!draft)return;saving=true;try{await onSave({title:draft.title,why:draft.why,deadline:draft.deadline||null,project_id:draft.project_id,active:draft.active,primary_chart:draft.primary_chart},draft.revision);await cancel();}catch(e){error=e;}finally{saving=false;}}
 </script>

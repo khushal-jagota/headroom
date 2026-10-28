@@ -12,6 +12,8 @@ from typing import (
     Literal,
     NotRequired,
     TypeAliasType,
+    Union,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -39,17 +41,17 @@ def generate() -> str:
             return "[" + ", ".join(render(part) for part in args) + "]"
         if origin in (list, tuple):
             return f"Array<{render(args[0])}>"
-        if origin is types.UnionType:
+        if origin in (types.UnionType, Union):
             return " | ".join(render(part) for part in args)
         if origin is Literal:
             return " | ".join(json.dumps(part) for part in args)
         if isinstance(value, type) and issubclass(value, enum.Enum):
             return " | ".join(json.dumps(item.value) for item in value)
         if is_typeddict(value) or dataclasses.is_dataclass(value):
-            name = value.__name__
+            name = cast(type, value).__name__
             if name not in declarations:
                 declarations[name] = ""
-                optional = getattr(value, "__optional_keys__", frozenset())
+                optional: frozenset[str] = getattr(value, "__optional_keys__", frozenset())
                 fields = [
                     f"  {key}"
                     f"{'?' if key in optional or get_origin(kind) is NotRequired else ''}: "
@@ -59,7 +61,7 @@ def generate() -> str:
                 declarations[name] = f"export interface {name} {{\n" + "\n".join(fields) + "\n}"
             return name
         return {str: "string", int: "number", float: "number", bool: "boolean", type(None): "null"}[
-            value
+            cast(type, value)
         ]
 
     for value in vars(contracts).values():

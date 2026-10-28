@@ -17,9 +17,8 @@ from planner.goals.contracts import Goal, GoalResponse, GoalsResponse
 from planner.goals.logic.documents import measure_ids
 from planner.goals.logic.status import (
     calendar_projection,
-    chart_target,
+    chart_status,
     goal_status,
-    quantitative_status,
 )
 from planner.measures.actions import read_values
 from planner.measures.contracts import ReadMeasuresBody
@@ -101,8 +100,7 @@ def readings_json(
         _, midnight = reading_calendar(conn, goal, now)
         values: list[JsonDict] = []
         sources = {}
-        current = None
-        current_date = today
+        primary_observations: list[tuple[str, float | None]] = []
         for identifier in identifiers:
             definition = read_measure(conn, identifier)
             last = last_date or now.astimezone(ZoneInfo(definition.timezone)).date().isoformat()
@@ -131,27 +129,11 @@ def readings_json(
             values.extend(asdict(value) for value in reading.values)
             sources.update({source.source_id: asdict(source) for source in reading.sources})
             if goal.primary_chart and goal.primary_chart.get("measure_id") == identifier:
-                current_date = last
-                current = next(
-                    (value.value for value in reading.values if value.date == last), None
-                )
+                primary_observations = [(value.date, value.value) for value in reading.values]
         if goal.kind == "binary":
             status = goal_status(goal.completed, goal.deadline, today)
         else:
-            chart = goal.primary_chart
-            if chart is not None and not chart.get("measure_id"):
-                series = chart.get(
-                    "series", next((item["series"] for item in chart.get("ranges", [])), [])
-                )
-                points = series[0]["points"] if series else []
-                if points:
-                    current = points[-1]["value"]
-                    current_date = points[-1]["label"]
-            status = quantitative_status(
-                current,
-                chart_target(chart, current_date) if chart else None,
-                chart.get("direction", "atleast") if chart else "atleast",
-            )
+            status = chart_status(goal.primary_chart, primary_observations)
         return dict(
             goal_id=goal.id,
             revision=goal.revision,

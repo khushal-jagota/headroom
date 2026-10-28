@@ -7,11 +7,13 @@ export interface ChartPoint {
 }
 
 export interface ChartSeries {
+  color?: "blue" | "blue-muted" | "blue-dark";
   name: string;
   points: Array<ChartPoint>;
 }
 
 export interface ChartRange {
+  target?: number;
   id: string;
   label: string;
   series: Array<ChartSeries>;
@@ -33,7 +35,7 @@ export interface ChartFormat {
 export interface ChartBlock {
   type: "chart";
   id: string;
-  kind: "line" | "bar" | "gauge" | "number" | "binary";
+  kind: "line" | "bar" | "gauge" | "number" | "binary" | "progress" | "time-budget" | "allocation";
   placement: "primary" | "supporting";
   title?: string;
   caption?: string;
@@ -47,6 +49,13 @@ export interface ChartBlock {
   format?: ChartFormat;
   series?: Array<ChartSeries>;
   ranges?: Array<ChartRange>;
+  stacked?: boolean;
+  aggregate?: "sum";
+  below_target_tone?: "attention" | "bad";
+  target_label?: "target" | "floor" | "limit";
+  difference_unit?: "pp";
+  allocation_mode?: "value" | "percentage";
+  total_label?: string;
 }
 
 export interface ChecklistItem {
@@ -76,6 +85,7 @@ export interface TableBlock {
   id: string;
   columns: Array<string>;
   rows: Array<Array<string>>;
+  cell_tones?: Array<Array<"neutral" | "attention" | "bad" | "good" | null>>;
   caption?: string;
 }
 
