@@ -6,10 +6,11 @@ import asyncio
 import json
 from pathlib import Path
 from sqlite3 import Connection
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
-from tests.unit.test_conversation_system import _Harness
+from tests.unit.test_conversation_system import _FakeBackendChild, _Harness
 
 from planner.cli import http
 from planner.cli.main import main
@@ -18,7 +19,13 @@ from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.authctx import RequestContext, _classify
 from planner.core.clock import TestClock as Clock
-from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
+    OWNER_PRINCIPAL,
+    JsonDict,
+    Principal,
+    PrincipalKind,
+)
 from planner.core.errors import PlannerError
 from planner.goals.actions import create_goal
 from planner.goals.conversation import goal_agent_key, resolve_goal
@@ -41,7 +48,7 @@ class GoalHarness(_Harness):
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
-    ):
+    ) -> _FakeBackendChild:
         self.starts.append(resolved_start)
         return super()._make_child(
             resolved_start=resolved_start, event_sink=event_sink, message_files=message_files
@@ -189,7 +196,7 @@ def test_goal_cli_identity_and_address_are_distinct_from_ticket_and_manager(
     )
     sent = []
 
-    def send(method, path, **kwargs):
+    def send(method: str, path: str, **kwargs: Any) -> JsonDict:
         sent.append((method, path, kwargs["json_body"]))
         return {"fate": "started"}
 

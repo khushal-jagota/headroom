@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime
 from sqlite3 import Connection
 from types import SimpleNamespace
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -11,8 +12,9 @@ from starlette.requests import Request
 from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 
 from planner.core.clock import TestClock as FakeClock
-from planner.core.contracts import OWNER_PRINCIPAL, PlannerError, Principal, PrincipalKind
+from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
 from planner.goals import actions, data, views
+from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse
 from planner.goals.logic.status import (
     calendar_projection,
     chart_target,
@@ -23,7 +25,7 @@ from planner.goals.resource_versions import GoalResources
 from planner.measures.contracts import CandidateObservation
 
 
-def page() -> dict:
+def page() -> JsonDict:
     return {
         "kind": "headroom.page",
         "version": 1,
@@ -36,7 +38,7 @@ def page() -> dict:
     }
 
 
-def create(conn: Connection, **extra):
+def create(conn: Connection, **extra: Any) -> Goal:
     return actions.create_goal(
         conn,
         {"project_id": "project_vylo", "title": "Ship the guide", "page": page(), **extra},
@@ -50,7 +52,7 @@ def test_saved_page_race_and_independent_completion_activation(tmp_db: Connectio
     agent = Principal(PrincipalKind.goal, goal.id)
     draft = deepcopy(goal.page)
     draft["blocks"].reverse()
-    draft["blocks"][0]["items"][0]["state"] = "done"
+    cast(ChecklistBlock, draft["blocks"][0])["items"][0]["state"] = "done"
     accepted = actions.update_goal(
         tmp_db,
         goal.id,
@@ -124,11 +126,11 @@ def test_projection_keeps_signed_gaps_and_refresh_does_not_change_document(
     detail = provider.capture(tmp_db, request, f"/api/goals/{goal.id}")
     first = provider.capture(tmp_db, request, f"/api/goals/{goal.id}/readings")
     assert detail and first
-    result = first.read()
+    result = cast(JsonDict, first.read())
     assert [value["value"] for value in result["values"]] == [-2.5, None, -1.25]
     assert result["values"][1]["status"] == "missing_input"
     assert result["status"] == "bad"
-    reference = {
+    reference: ChartBlock = {
         "type": "chart",
         "id": "reference",
         "kind": "line",
@@ -146,8 +148,8 @@ def test_projection_keeps_signed_gaps_and_refresh_does_not_change_document(
     assert refreshed.revision != first.revision
     assert unchanged.revision == detail.revision
     assert data.read_goal(tmp_db, goal.id).page == goal.page
-    assert refreshed.read()["values"][-1]["value"] == -0.5
-    assert refreshed.read()["status"] == "good"
+    assert cast(JsonDict, refreshed.read())["values"][-1]["value"] == -0.5
+    assert cast(JsonDict, refreshed.read())["status"] == "good"
     clock.set(datetime(2026, 10, 28, 0, 5, tzinfo=ZoneInfo("Europe/Berlin")))
     missing = views.readings_json(tmp_db, goal.id, clock.now())
     assert missing["values"][-1]["value"] is None
@@ -160,10 +162,14 @@ def test_binary_midnight_revision_and_dst_calendar(tmp_db: Connection) -> None:
     request = Request({"type": "http", "app": SimpleNamespace(state=SimpleNamespace(clock=clock))})
     provider = GoalResources()
     before = provider.capture(tmp_db, request, f"/api/goals/{goal.id}/readings")
-    assert before and before.read()["status"] == "neutral"
+    assert before and cast(JsonDict, before.read())["status"] == "neutral"
     clock.set(datetime(2026, 10, 28, 0, 0, tzinfo=ZoneInfo("Europe/Berlin")))
     due = provider.capture(tmp_db, request, f"/api/goals/{goal.id}/readings")
-    assert due and due.revision != before.revision and due.read()["status"] == "attention"
+    assert (
+        due
+        and due.revision != before.revision
+        and cast(JsonDict, due.read())["status"] == "attention"
+    )
     assert goal_status(False, "2026-10-28", "2026-10-29") == "bad"
     assert goal_status(True, "2026-10-28", "2026-10-29") == "good"
     before_dst = datetime(2026, 10, 25, 0, 0, tzinfo=ZoneInfo("Europe/Berlin"))
@@ -206,7 +212,7 @@ def test_goal_list_revision_tracks_conversation_links_without_document_edits(
     request = Request({"type": "http", "app": SimpleNamespace(state=SimpleNamespace(clock=clock))})
     provider = GoalResources()
     before = provider.capture(tmp_db, request, "/api/goals")
-    assert before and before.read()["goals"][0]["conversation_id"] is None
+    assert before and cast(GoalsResponse, before.read())["goals"][0]["conversation_id"] is None
     tmp_db.execute(
         "INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)",
         ("goal_" + goal.id, "goal-list-conversation"),
@@ -214,10 +220,13 @@ def test_goal_list_revision_tracks_conversation_links_without_document_edits(
     tmp_db.commit()
     linked = provider.capture(tmp_db, request, "/api/goals")
     assert linked and linked.revision != before.revision
-    assert linked.read()["goals"][0]["conversation_id"] == "goal-list-conversation"
+    assert (
+        cast(GoalsResponse, linked.read())["goals"][0]["conversation_id"]
+        == "goal-list-conversation"
+    )
     tmp_db.execute("UPDATE agents SET conversation_id=NULL WHERE agent_key=?", ("goal_" + goal.id,))
     tmp_db.commit()
     reset = provider.capture(tmp_db, request, "/api/goals")
     assert reset and reset.revision != linked.revision
-    assert reset.read()["goals"][0]["conversation_id"] is None
+    assert cast(GoalsResponse, reset.read())["goals"][0]["conversation_id"] is None
     assert data.read_goal(tmp_db, goal.id).revision == 1

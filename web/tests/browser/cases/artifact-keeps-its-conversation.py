@@ -19,6 +19,7 @@ import json
 import os
 import runpy
 import sys
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -188,6 +189,7 @@ def run(browser, urls):
     }]}
     start_values = {"backend_key": "codex", "model": None, "reasoning_effort": None}
     values = {
+        "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
         "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The Chief's conversation names another Ticket's artifact.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
         "/api/chief/conversation/start-values": start_values,
         f"/api/managers/{MANAGER_ID}/conversation/start-values": start_values,
