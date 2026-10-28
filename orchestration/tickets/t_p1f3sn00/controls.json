@@ -1,0 +1,221 @@
+{
+  "scope": "Focused diagnostic controls only; no catalog or deploy-admissible receipt",
+  "host": "Existing workspace-utility-pane App host and bounded-reader fixture",
+  "new_catalog_cases": 0,
+  "new_hosts": 0,
+  "results": [
+    {
+      "name": "one-suppressed-native-wheel",
+      "status": "expected-setup-failure",
+      "seconds": 5.01
+    },
+    {
+      "name": "valid-native-wheel",
+      "status": "expected-success",
+      "seconds": 0.075
+    },
+    {
+      "name": "baseline-projection",
+      "status": "expected-success",
+      "seconds": 0.049
+    },
+    {
+      "name": "stale-membership",
+      "status": "expected-setup-failure",
+      "seconds": 5.011
+    },
+    {
+      "name": "stale-content",
+      "status": "expected-setup-failure",
+      "seconds": 5.01
+    },
+    {
+      "name": "closed-source",
+      "status": "expected-setup-failure",
+      "seconds": 0.047
+    },
+    {
+      "name": "replaced-source",
+      "status": "expected-setup-failure",
+      "seconds": 0.048
+    },
+    {
+      "name": "held-publication-with-late-delivery-check",
+      "status": "expected-setup-failure",
+      "seconds": 5.008
+    },
+    {
+      "name": "stale-snapshot-recap-content",
+      "status": "expected-setup-failure",
+      "seconds": 5.01
+    },
+    {
+      "name": "delayed-valid-publication-and-DOM-admission",
+      "status": "expected-success",
+      "seconds": 0.412
+    },
+    {
+      "name": "full-existing-recap-pointer-floor",
+      "status": "expected-success",
+      "seconds": 31.883
+    }
+  ],
+  "known_harness_failure": "Initial unsupported delayed-listener wrapper did not yield DOM admission. Supported __navigationDelay control passes and records DOM timestamps. Original log retained.",
+  "fixed_setup_finding": "Initial recap navigation reused stale shell state and replaced active subscription. Implementer added reload and explicit mounted subscription prerequisite. Full existing recap proof passes after repair.",
+  "recap_source_limit": "Smoke module loaded before final one-line touch initial refresh addition. Root catalog checks final source.",
+  "runtime": {
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "platform": "Linux-6.12.96+deb13-amd64-x86_64-with-glibc2.41",
+    "browser": "149.0.7827.55",
+    "diagnostic_only": true,
+    "catalog_receipt": false
+  },
+  "admission_and_cleanup": {
+    "held_cleanup": {
+      "held": 0,
+      "before": 2,
+      "after": 2
+    },
+    "delayed_timing": {
+      "start": 10246.700000047684,
+      "admission": 10611.600000023842,
+      "returned": 10660.800000071526
+    },
+    "page_errors": []
+  },
+  "event_order_correction": {
+    "results": [
+      {
+        "name": "native-PageUp-with-same-position-queued-scroll",
+        "status": "expected-success",
+        "seconds": 0.206
+      },
+      {
+        "name": "distinct-displacement-requires-new-native-completion",
+        "status": "expected-success",
+        "seconds": 0.235
+      }
+    ],
+    "module_path": ".scratch/t_p1f3sn00-evidence/state_barriers.corrected.py",
+    "module_sha256": "553b435a940c0ea6b33d31a9d39df9c4c1e4861d91f285bc67325a3dad81ceeb",
+    "same_position": {
+      "before": 12988,
+      "after": 12988,
+      "syntheticNotification": true,
+      "nativeEndTrusted": true
+    },
+    "native_completion_events": [
+      {
+        "type": "scrollend",
+        "trusted": true,
+        "at": 1292.3000000715256,
+        "scrollTop": 12988
+      },
+      {
+        "type": "scrollend",
+        "trusted": true,
+        "at": 1311.8999999761581,
+        "scrollTop": 12951
+      }
+    ],
+    "immediate_samples_after_displacement": [
+      false,
+      false,
+      false
+    ],
+    "catalog_failure_evidence": "Original once-only catalog false-negative evidence remains separate under root ownership. No complete catalog repeat."
+  },
+  "http503_correction": {
+    "results": [
+      {
+        "name": "explicit-refresh-refuses-HTTP503",
+        "status": "expected-setup-failure",
+        "seconds": 0.038
+      }
+    ],
+    "background_refresh": "Undispatched receipt, status503, snapshot:null. No new pageerror.",
+    "explicit_refresh": "Bounded setup refusal preserves undispatched receipt, status503 and null snapshot.",
+    "details": {
+      "background_receipt": {
+        "sourceId": 3,
+        "refreshId": 2,
+        "url": "/api/navigation/view/events?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%2C%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A30%7D%2C%7B%22section%22%3A%22unread%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A20%7D%2C%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22manager%22%2C%22id%22%3A%22control_manager%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+        "request": {
+          "projection_version": 7,
+          "scope_generation": 1,
+          "locale": "en-US",
+          "selected": null,
+          "selected_conversation_id": null,
+          "review_conversation_ids": [],
+          "review_skipped_keys": [],
+          "review_priority_keys": [],
+          "windows": [
+            {
+              "section": "rail_parents",
+              "owner": null,
+              "group": "all",
+              "child_filter": "all",
+              "anchor": null,
+              "direction": "after",
+              "limit": 60
+            },
+            {
+              "section": "rail_tickets",
+              "owner": {
+                "kind": "chief",
+                "id": "chief"
+              },
+              "group": "all",
+              "child_filter": "all",
+              "anchor": null,
+              "direction": "after",
+              "limit": 30
+            },
+            {
+              "section": "unread",
+              "owner": null,
+              "group": "all",
+              "child_filter": "all",
+              "anchor": null,
+              "direction": "after",
+              "limit": 20
+            },
+            {
+              "section": "rail_tickets",
+              "owner": {
+                "kind": "manager",
+                "id": "control_manager"
+              },
+              "group": "all",
+              "child_filter": "all",
+              "anchor": null,
+              "direction": "after",
+              "limit": 60
+            }
+          ]
+        },
+        "snapshot": null,
+        "dispatched": false,
+        "status": 503,
+        "error": "Navigation snapshot HTTP 503"
+      },
+      "page_errors_before": [],
+      "page_errors_after": [],
+      "http503_responses": 2,
+      "browser": "149.0.7827.55",
+      "fixture_module": ".scratch/t_p1f3sn00-evidence/workspace-utility-pane.http-status.mjs",
+      "helper_module": ".scratch/t_p1f3sn00-evidence/state_barriers.http-status.py",
+      "sha256": {
+        "fixture_module": "1d8a7caf8b3a1f2ec0401b765212623dc0a0f40058af042fb73fcb958c2c71da",
+        "helper_module": "f768776f3218d9256be0eb035b5269e448bc8bd35a54189593f4748e0d1e7bad"
+      }
+    }
+  },
+  "final_full_existing_workspace": {
+    "scope": "Direct existing workspace-utility-pane.run diagnostic; no catalog receipt",
+    "revision": "6621efe8efef8fa4274cabb42d9e71eb735189cf",
+    "status": "passed",
+    "browser": "149.0.7827.55",
+    "seconds": 95.25582031696104
+  }
+}
