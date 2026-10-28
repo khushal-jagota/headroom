@@ -3553,9 +3553,11 @@ def _tab_return(browser, url):
     """A remembered row and its pixel offset survive hidden backlog admission."""
     import json
     import os
+    import runpy
     import time
     from pathlib import Path
 
+    establish_scrollback = runpy.run_path(str(Path(__file__).resolve().parents[1] / "support/state_barriers.py"))["establish_scrollback"]
     started = time.perf_counter()
     output = Path(os.environ.get('PANELS_E2E_FAILURE_DIR', '/tmp'))
     output.mkdir(parents=True, exist_ok=True)
@@ -3615,8 +3617,7 @@ def _tab_return(browser, url):
             _settle_conversation_layout(page)
             if position == 'scrollback':
                 page.locator('[data-conversation-thread]').hover()
-                page.mouse.wheel(0, -750)
-                page.wait_for_timeout(300)
+                establish_scrollback(page, lambda: page.mouse.wheel(0, -750), min_clearance=2)
             held = page.evaluate(reading)
             assert held['key'] and held['scroll'] > 0, held
             page.evaluate(hidden)
