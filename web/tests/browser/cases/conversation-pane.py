@@ -2914,7 +2914,10 @@ def _overlay_menu_bounds(browser, url):
                     elif control=='models':
                         expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
                     else:
-                        expect(picker.locator('[data-conversation-picker-feedback]')).to_have_text('Fixture refresh boundary')
+                        expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
+                        feedback = picker.locator('[data-conversation-picker-feedback]')
+                        expect(feedback.get_by_role('button', name='Why', exact=True)).to_be_visible()
+                        expect(feedback.get_by_role('button', name='Check again', exact=True)).to_be_visible()
                     settle()
                     proof['actions'].append([mode,'runRail',method,control])
                 page.screenshot(path=str(output / (mode+'-run-picker.png')))
