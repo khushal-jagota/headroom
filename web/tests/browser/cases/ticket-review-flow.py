@@ -1212,6 +1212,12 @@ def run(browser, urls):
     page.locator('[data-ticket-id="t_done"]').wait_for()
     expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
     assert page.evaluate("window.__wait()")["status"] == "included"
+    # The real terminal action line passes paint proof. Extra lifecycle controls never do.
+    assert page.evaluate("window.__terminalMoveProof()") == {
+        "valid": True, "extraAction": False, "backlogMarker": False,
+        "unmarkedAction": False, "unrelatedDialog": False, "restored": True,
+    }
+
     assert page.locator("[data-copy]").count() == 0
     assert page.locator(".ticket-operating").count() == 0
     page.evaluate("window.__showTicket('t_personal_pending')")

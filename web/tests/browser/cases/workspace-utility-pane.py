@@ -41,8 +41,10 @@ def run(browser, urls):
         {
             "worker_type": worker_type,
             "label": worker_type.replace("_", " ").title(),
-            "stages": [{"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "ownership_mode": None}],
-            "fields": [], "advance": {}, "ceiling_range": ["done"], "default_ceiling": "done",
+            "stages": [{"id": "needs_implementation", "label": "Implementation", "gating_field": "implementation", "is_terminal": False, "ownership_mode": "worker"},
+                       {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "ownership_mode": None}],
+            "fields": [{"id": "implementation", "label": "Implementation"}],
+            "advance": {"needs_implementation": "done"}, "ceiling_range": ["needs_implementation", "done"], "default_ceiling": "needs_implementation",
             "worker_profile_id": worker_type, "default_backend": "codex",
             "default_model": None, "default_reasoning_effort": None,
         }

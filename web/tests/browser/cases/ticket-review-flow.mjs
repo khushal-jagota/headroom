@@ -19,6 +19,23 @@ import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
 import FilePreviewRoute from '../src/routes/FilePreviewRoute.svelte';
 import { navigationReviewPresentation } from '../src/lib/navigation/presentation';
 import { reviewBadgeDomMatches } from '../src/lib/shellDom';
+import { terminalTicketMoveDomMatches } from '../src/lib/ticketSectionDom';
+(window as any).__terminalMoveProof=()=>{
+ const masthead=document.querySelector('[data-ticket-masthead-id="t_done"]');
+ const controls=masthead.querySelector('[data-ticket-lifecycle]');
+ const locale= masthead.getAttribute('data-ticket-locale');
+ const check=()=>terminalTicketMoveDomMatches(controls,locale);
+ const valid=check();
+ const unrelated=document.createElement('button');unrelated.textContent='Unrelated action';
+ controls.querySelector('.actions').append(unrelated);const extraAction=check();unrelated.remove();
+ const marker=document.createElement('span');marker.setAttribute('data-ticket-backlogged','');
+ controls.append(marker);const backlogMarker=check();marker.remove();
+ const move=controls.querySelector('[data-ticket-move]');move.removeAttribute('data-ticket-move');
+ const unmarkedAction=check();move.setAttribute('data-ticket-move','');
+ const dialog=controls.querySelector('dialog');dialog.removeAttribute('data-ticket-move-dialog');
+ const unrelatedDialog=check();dialog.setAttribute('data-ticket-move-dialog','');
+ return {valid,extraAction,backlogMarker,unmarkedAction,unrelatedDialog,restored:check()};
+};
 (window as any).__badgeProof=()=>{
  const link=document.createElement('a');const badge=document.createElement('span');link.append(badge);
  badge.className='count-badge hidden';

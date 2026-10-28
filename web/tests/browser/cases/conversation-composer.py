@@ -436,7 +436,11 @@ def run(browser, urls):
         assert "legacy" not in trigger.inner_text()
         trigger.click()
         assert picker.locator('[data-conversation-backend][aria-pressed="true"]').count() == 0
-        picker.locator("[data-conversation-picker-reasoning]").click()
+        reasoning = picker.locator("[data-conversation-picker-reasoning]")
+        assert reasoning.get_attribute("aria-disabled") == "true"
+        # Unavailable actions retain a keyboard explanation, without a choice.
+        reasoning.focus()
+        reasoning.press("Enter")
         assert picker.get_by_role("listbox").get_attribute("aria-label") == "Models"
         assert "Choose a model row first" in picker.locator(".model-picker-summary").inner_text()
         assert "legacy-effort" not in picker.inner_text()

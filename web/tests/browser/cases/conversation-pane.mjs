@@ -858,7 +858,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         backendKey="claude"
         current={{ model: "opus", reasoningEffort: "high" }}
         models={[
-          { model_id: "opus", display_name: "Opus", enabled: true },
+          { model_id: "opus", display_name: "Opus", enabled: true, reasoning_effort_options: ["high"] },
           { model_id: "sonnet", display_name: "Sonnet", enabled: true,
             reasoning_effort_options: [] }
         ]}

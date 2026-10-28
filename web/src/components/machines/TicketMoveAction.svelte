@@ -32,7 +32,7 @@
   }
 </script>
 <button type="button" class="text-action" data-ticket-move onclick={open}>Move to {machineName(locale === "macos" ? "vps" : "macos")}…</button>
-<dialog bind:this={dialog} aria-label="Move Ticket" oncancel={(event) => { if (busy) event.preventDefault(); }}>
+<dialog bind:this={dialog} data-ticket-move-dialog aria-label="Move Ticket" oncancel={(event) => { if (busy) event.preventDefault(); }}>
     <h2>Move Ticket</h2>
     <p>{current?.title ?? "Review the current Ticket before moving."}</p>
     <label>Destination <select bind:value={destination} disabled={busy}><option value="macos">Mac</option><option value="vps">VPS</option></select></label>
