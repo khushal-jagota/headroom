@@ -1457,7 +1457,7 @@ def run(browser, urls):
     # on a raw Markdown link in a field leaves the field holding the focus. This link
     # lives in the mounted preview slot, which is contenteditable="false", so it is a real
     # focusable anchor. Do not move this proof back onto one of the raw links.
-    open_link = saved_artifacts.get_by_role("link", name="Open plan.md", exact=True)
+    open_link = saved_artifacts.locator(".pv-name").filter(has_text="plan.md")
     open_link.click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
     expect(viewer).to_be_focused()

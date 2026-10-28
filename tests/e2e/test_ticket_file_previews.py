@@ -255,7 +255,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         if f"/files/tickets/{ticket_id}/" in request.url and request.url.endswith(".html")
         else None,
     )
-    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
     artifact_address = (
         f"{server.base}/#/workspace/{ticket_id}"
         f"?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
@@ -430,7 +430,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     page.goto(f"{server.base}/#/workspace/manager/{manager['id']}")
     page.locator("[data-goal-band]").wait_for(timeout=WAIT_MS)
     page.locator("[data-goal-band]").evaluate("node => { node.open = true; }")
-    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
     for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
         page.set_viewport_size({"width": width, "height": height})
         page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
@@ -459,7 +459,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     )
     expect(page.locator("[data-conversation-unread-preview]")).to_contain_text("Dock artifact")
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
-    page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
+    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
     for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
         page.set_viewport_size({"width": width, "height": height})
         page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
@@ -519,9 +519,10 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
     _open_ticket_field(page, "success_condition")
-    video = page.locator("video").first
-    video.wait_for(timeout=WAIT_MS)
+    play = page.locator('[data-file-preview-kind="video"] [data-media-play]').first
+    play.wait_for(timeout=WAIT_MS)
     page.wait_for_timeout(1500)
+    assert page.locator("video").count() == 0
 
     # Nothing has been asked for: the reader has not asked for it.
     assert asked_for_the_clip == [], asked_for_the_clip
@@ -531,6 +532,8 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
     assert "clip.mp4" in name.inner_text()
 
     # It plays on the first action.
+    play.click()
+    video = page.locator("video").first
     video.evaluate("node => { node.muted = true; return node.play(); }")
     page.wait_for_function(
         "() => { const v = document.querySelector('video');"

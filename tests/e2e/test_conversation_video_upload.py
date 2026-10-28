@@ -93,6 +93,10 @@ def test_video_upload_early_send_and_native_range_playback(
     pending = page.locator("[data-local-video-send]")
     expect(pending).to_contain_text("Show this recording to the agent", timeout=WAIT_MS)
     expect(pending).to_contain_text("not sent yet", timeout=WAIT_MS)
+    # The pending row can paint before the upload request reaches its route.
+    transfer_deadline = time.monotonic() + WAIT_MS / 1000
+    while not held_transfers and time.monotonic() < transfer_deadline:
+        page.wait_for_timeout(50)
     assert len(held_transfers) == 1
     evidence = Path(
         os.environ.get("PANELS_UI_PROOF_DIR", str(REPO_ROOT / "data/verification/video-upload"))
@@ -106,6 +110,7 @@ def test_video_upload_early_send_and_native_range_playback(
         held_transfers.pop().continue_()
     assert transfer.value.status == 200, transfer.value.text()
     expect(pending).to_have_count(0, timeout=WAIT_MS)
+    page.locator("[data-media-play]").last.click()
     player = page.locator("video").last
     expect(player).to_be_visible(timeout=WAIT_MS)
     page.wait_for_function(

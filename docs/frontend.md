@@ -563,36 +563,35 @@ or locale produces identical arbitrary-text ordering.
   stays an ordinary link: a same-page anchor is still an anchor, one
   of this app's own routes still navigates inside the app, and an off-site address still
   goes off-site. An image sitting inside such a link is left alone with it.
-  A preview shows the thing itself, softly rounded, with nothing drawn around it. An image
-  is an image, SVG among them; a video is its own player; audio is its own control. None of
-  the three carries a title, a caption, or anything to click.
-  Markdown and HTML are the only two that keep a header, and the header sits above the
-  document rather than around it: a strip curving over the top, carrying one accent-coloured
-  link that reads "Open plan.md", with the document scrolling underneath it. Markdown renders
-  inline through the same markdown renderer, including nested managed links until a fixed
-  depth or self-link bound turns them into that same "Open" line on its own. HTML renders in
-  a fetched `srcdoc` iframe whose sandbox permits the file's scripts but does not grant
-  same-origin or other host-page privileges. Before HTML enters either iframe lifecycle, the
-  shared preview helper anchors the document's base URL to that HTML file's absolute managed
-  URL, so relative stylesheet, script, image, and root-relative managed-file
-  references resolve as they would if the file were opened from its `/files/...` URL.
-  Every other kind is a line of text in the accent colour, drawn where it was written: a
-  managed file of no recognized kind is "Download archive.bin", and a bare URL handed to the
-  component by a caller with nothing else to show — an agent's resource link — is "Open" that
-  link, unless the address names an image, video, or audio file, in which case it is shown
-  like any other. A markdown or HTML file that turns out not to be there is also a line,
-  saying what the fetch found; nothing else is fetched, so nothing else can say. One file
-  extension names one kind, so no file is offered as two.
-  The header link opens the Panels preview route, whose targets are
-  `#/preview?source=ticket&ticket=<id>&path=<path>`. Wherever that document is drawn, HTML
-  is fetched and given to a sandboxed iframe through a short-lived Blob URL, revoked when
-  the file changes or unmounts, and fills the space it is given. Markdown is fetched as
-  source and rendered directly through `MarkdownBlock`, so managed links keep the same
-  nested-preview and self-link bounds as embedded Markdown, with no header of its own.
-  ACP message and tool links also use the shared generic/Ticket preview adapter.
-  Conversation images and files use conversation-owned managed bytes. Images render
-  inline. Supported documents and data files render as named cards with preview and
-  download actions. PDF uses a document frame. Text and data use a bounded text preview.
+  Embedded documents share a rounded card with a recessed content plane and an identity
+  band below it. The band carries the file name, kind, and any size the host already knows.
+  Conversation documents also carry a separate Download link. The name link covers the
+  card. HTML and PDF keep their own frame interactions, so their name link covers only
+  the band. Markdown and text clip without an internal scrollbar. A dissolve appears
+  only where the content exceeds the window. The skeleton retains the same band and
+  uses its own dissolve. The card stays visible on phones with smaller padding.
+  Markdown uses the same renderer and retains its nested-preview and self-link bounds.
+  Its embedded body is inert beneath the name link, so the keyboard opens the file
+  through its name instead of entering clipped content.
+  Images retain their own shape, with the larger preview radius and the existing chat
+  height cap. Video starts as an empty frame with a Play button. No poster or duration
+  is invented, and no media request starts before Play. Play mounts the native video
+  controls. Audio uses a custom Play/Pause button and a seek slider with pointer and
+  keyboard controls. Its duration stays unknown until playback supplies metadata.
+  Video and audio keep their name link above the control, without an identity band.
+  Download-only files, external links, and Markdown at its expansion bound remain lines.
+  Errors include the file name and message. Existing visibility admission, fetch
+  cancellation, path checks, and test hooks apply to every embedded preview.
+  The name link opens the Panels preview route, whose targets are
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. Full-size rendering remains separate.
+  HTML uses a sandboxed iframe through a short-lived Blob URL, revoked when the file
+  changes or unmounts. The sandbox allows scripts without same-origin privileges.
+  The shared helper anchors the document's base URL to the managed HTML URL, so sibling
+  assets resolve relative to that file. Full-size Markdown renders directly through
+  `MarkdownBlock`, with the same nested-preview bounds and no preview identity band.
+  ACP message and tool links use the shared generic/Ticket preview adapter.
+  Conversation files use conversation-owned managed bytes. Their existing MIME video
+  branch shares the embedded video control without changing the file resolver.
 - **Wherever a conversation is shown, that link opens the file in place.** A Ticket
   screen, a Manager's pane and the Chief's pane each catch the click across the whole
   pane, the conversation included. A managed file clicked in any of them does not go to
