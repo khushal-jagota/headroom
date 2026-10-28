@@ -306,11 +306,12 @@ async def verify_ticket_launch(
     validator = getattr(system, "validate_launch_selection", None)
     if callable(validator):
         stored = read_launch_validation(conn, ticket.id)
-        # The same token on another provider is not the same alias history.
+        # Another backend or selection kind is not the same alias intent.
         history = (
             stored
             if stored is not None
             and stored.validation.selection.backend_key == selection.backend_key
+            and stored.validation.selection.selection_kind == selection.selection_kind
             else None
         )
         validation = await validator(
@@ -333,7 +334,11 @@ async def verify_ticket_launch(
     validation = preserve_alias_history(
         validation,
         None
-        if stored is None or stored.validation.selection.backend_key != selection.backend_key
+        if (
+            stored is None
+            or stored.validation.selection.backend_key != selection.backend_key
+            or stored.validation.selection.selection_kind != selection.selection_kind
+        )
         else stored.validation,
     )
     if persist and not proposed and locale is None:

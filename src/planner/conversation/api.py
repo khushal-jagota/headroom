@@ -917,14 +917,14 @@ async def read_destination_model_choices(
                 raise PlannerError(
                     ErrorCode.validation, "invalid model choices selection", {}
                 ) from error
-            if prior is not None and not changed:
-                if requested_kind is not None and requested_kind is not prior.selection_kind:
-                    raise PlannerError(
-                        ErrorCode.validation, "selection kind conflicts with saved intent", {}
-                    )
-                kind = prior.selection_kind
-            else:
-                kind = requested_kind or SelectionKind.legacy_unclassified
+            kind = (
+                requested_kind
+                if requested_kind is not None
+                else prior.selection_kind
+                if prior is not None and not changed
+                else SelectionKind.legacy_unclassified
+            )
+            changed = changed or (prior is not None and kind is not prior.selection_kind)
             # Supply the complete effective selection: an effort-only preview must not
             # fall through the launch helper's omitted-configuration compatibility path.
             validation = await verify_ticket_launch(

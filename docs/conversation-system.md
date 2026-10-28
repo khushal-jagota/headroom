@@ -795,10 +795,11 @@ changing Ticket settings, claims or launch authority. An existing Ticket request
 `ticket_id` and may supply `locale`, `employee_backend`, `employee_launch_model`,
 `employee_launch_reasoning_effort` and `selection_kind`. Omitted values preserve saved
 intent, including effort when the model changes. An explicit null effort requests the
-provider default. The saved kind cannot be relabelled while backend and token remain
-unchanged. A different backend or token is classified from its own scoped evidence.
-Alias history follows destination changes within the same backend; another backend's
-same-spelled token does not inherit that history. Authority is checked before discovery.
+provider default. Omitted kind preserves saved intent when backend and token are
+unchanged. An explicitly different kind previews a deliberate new selection; a different
+backend or token is classified from its own scoped evidence.
+Alias history follows destination changes within the same backend and selection kind;
+another backend or kind does not inherit that history. Authority is checked before discovery.
 The existing creation-draft request remains supported. These reads may cache metadata;
 their answers are advisory and settings writes and admission still revalidate.
 

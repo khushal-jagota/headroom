@@ -137,6 +137,17 @@ def test_existing_ticket_preview_preserves_presence_authority_and_canonical_stat
         assert metadata.calls[-1][0].reasoning_effort is None
         assert metadata.calls[-1][0].selection_kind is SelectionKind.provider_alias
         assert not metadata.calls[-1][2]
+        reclassified = client.post(
+            "/api/conversation/backends/model-choices",
+            json={**base, "selection_kind": "concrete"},
+        )
+        assert reclassified.status_code == 200
+        assert metadata.calls[-1][0].selection_kind is SelectionKind.concrete
+        assert metadata.calls[-1][2]
+        unchanged = client.post("/api/conversation/backends/model-choices", json=base)
+        assert unchanged.status_code == 200
+        assert metadata.calls[-1][0].selection_kind is SelectionKind.provider_alias
+        assert not metadata.calls[-1][2]
         count = len(metadata.calls)
         for bad in (
             {**base, "ticket_id": None},
@@ -144,7 +155,6 @@ def test_existing_ticket_preview_preserves_presence_authority_and_canonical_stat
             {**base, "employee_backend": 1},
             {**base, "employee_launch_model": None},
             {**base, "employee_launch_reasoning_effort": " "},
-            {**base, "selection_kind": "concrete"},
             {**base, "other": True},
         ):
             # Domain errors are tested without the normal app exception adapter here.
@@ -215,6 +225,14 @@ def test_preview_alias_history_is_backend_scoped_but_survives_destination_change
             same.json()["validation"]["previous_alias_resolution"]["resolved_model_id"]
             == "previous"
         )
+        other_kind = client.post(
+            "/api/conversation/backends/model-choices",
+            json={"ticket_id": ticket.id, "selection_kind": "panels_alias"},
+        )
+        assert other_kind.status_code == 200
+        assert metadata.calls[-1][0].selection_kind is SelectionKind.panels_alias
+        assert metadata.calls[-1][2] and metadata.calls[-1][3] is None
+        assert other_kind.json()["validation"]["previous_alias_resolution"] is None
         metadata.result = replace(
             metadata.result,
             current_alias_resolution=AliasResolutionFact(
