@@ -16,7 +16,7 @@ import json
 import sqlite3
 import zlib
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator, MutableMapping
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -545,17 +545,54 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
 
 
+@contextmanager
+def _scoped_fixture_ticket_creation() -> Iterator[None]:
+    """Isolate Ticket setup for conversation authority and video boundary tests.
+
+    Production legacy callers still refuse. Only this fixture creation uses an
+    explicit scripted destination observation with exact requested model and effort.
+    """
+    from tests.unit.test_current_model_resolution import context, observation, row, selection
+
+    from planner.conversation.model_resolution.contracts import ModelResolution, ModelVariant
+    from planner.conversation.model_resolution.logic.validation import validate_model_selection
+
+    def checked_model(
+        conn: sqlite3.Connection,
+        backend_key: ConversationBackendKey,
+        model: str,
+        reasoning_effort: str | None = None,
+    ) -> ModelResolution:
+        efforts = (reasoning_effort,) if reasoning_effort is not None else ()
+        scoped = context(backend_key=backend_key)
+        desired = selection(model, effort=reasoning_effort, backend_key=backend_key)
+        checked = validate_model_selection(
+            desired,
+            scoped,
+            observation((row(model, efforts=efforts),), launch=scoped),
+            now=1000,
+            attempt_id="fixture-creation",
+        )
+        assert checked.launch_token == model and checked.selection == desired
+        return ModelResolution(ModelVariant(backend_key, model), model, reasoning_effort, efforts)
+
+    with pytest.MonkeyPatch.context() as fixture_patch:
+        fixture_patch.setattr(tickets_data, "resolve_cached_model", checked_model)
+        yield
+
+
 def _associate_ticket_conversations(harness: _Harness, *, active: str, past: str) -> None:
     conn = connect(str(harness.db_path))
     try:
-        ticket = tickets_data.create_ticket(
-            conn,
-            title="Conversation boundary",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-        )
+        with _scoped_fixture_ticket_creation():
+            ticket = tickets_data.create_ticket(
+                conn,
+                title="Conversation boundary",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=200,
+            )
         conn.execute(
             "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
             (past, ticket.id),
@@ -1772,7 +1809,8 @@ def test_suppressed_fate_keeps_its_reason_at_the_http_boundary() -> None:
 # upload-store unit tests cannot prove. They reuse this file's SQLite runtime and fake
 # backend. Range/HEAD assertions exercise ASGI delivery without another browser host.
 def _video_owner_routes(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[VideoUploadService, str]:
     from planner.conversation.video_uploads import config as video_config
     from planner.conversation.video_uploads import service as video_service
@@ -1802,14 +1840,15 @@ def _video_owner_routes(
     harness.app.include_router(tickets_router, prefix="/api")
     conn = connect(str(harness.db_path))
     try:
-        ticket = tickets_data.create_ticket(
-            conn,
-            title="Video admission",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-        )
+        with _scoped_fixture_ticket_creation():
+            ticket = tickets_data.create_ticket(
+                conn,
+                title="Video admission",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=200,
+            )
         with conn:
             conn.execute(
                 "UPDATE tickets SET employee_backend='hermes',employee_launch_model='a-model' "
@@ -2014,8 +2053,10 @@ def test_video_malformed_companion_does_not_pin_and_first_refusal_allows_retry(
             original_factory = harness._make_child
 
             def refused_factory(
-                *, resolved_start: ResolvedConversationStart,
-                event_sink: BackendEventSink, message_files: ConversationMessageFiles,
+                *,
+                resolved_start: ResolvedConversationStart,
+                event_sink: BackendEventSink,
+                message_files: ConversationMessageFiles,
             ) -> _FakeBackendChild:
                 harness.backend(resolved_start.conversation_id).write_fails = True
                 return original_factory(

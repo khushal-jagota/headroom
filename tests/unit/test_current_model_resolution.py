@@ -682,3 +682,53 @@ def test_snapshot_decoration_never_overwrites_identity_or_mutates_legacy_cache(
         assert store.read(variant) == legacy
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure", [TimeoutError, RuntimeError], ids=["timeout", "exception"])
+def test_observer_exception_retains_captured_failure_provenance(
+    tmp_path: Path,
+    failure: type[Exception],
+) -> None:
+    """Failure after capture must not erase known scope or renew retained evidence."""
+
+    class RaisingCatalogue(ScopedCatalogue):
+        async def observe(
+            self,
+            backend_key: Backend,
+            *,
+            workspace: CatalogWorkspaceBinding,
+            attempt_id: str,
+            deadline: float,
+        ) -> CatalogObservation | CatalogUnavailable:
+            raise failure("untrusted secret provider output")
+
+    async def exercise() -> None:
+        stale = observation((row(),), stamp=600)
+        source = RaisingCatalogue(stale)
+        service, store, _ = setup(tmp_path, source)
+        store.keep_observation(stale)
+        desired = selection("sol", SelectionKind.panels_alias)
+        previous = AliasResolutionFact("sol", "gpt-5-sol", observation(stamp=500).evidence)
+        result = await service.validate_selection(
+            desired,
+            workspace=workspace(),
+            attempt_id="failed-attempt",
+            previous_alias_resolution=previous,
+        )
+        assert result.state is ValidationState.unresolved
+        assert result.launch_token is None and result.selection == desired
+        assert result.evidence == stale.evidence
+        assert result.previous_alias_resolution == previous
+        assert result.unavailable is not None
+        assert result.unavailable.attempted_context == context()
+        assert result.unavailable.retained_evidence == stale.evidence
+        assert result.unavailable.retained_evidence.observed_at == 600
+        assert "untrusted" not in (result.unavailable.detail or "")
+        assert result.reason is (
+            ValidationReason.timeout
+            if failure is TimeoutError
+            else ValidationReason.catalog_unavailable
+        )
+        assert store.read_observation(context()) == stale
+
+    asyncio.run(exercise())

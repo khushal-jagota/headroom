@@ -14,6 +14,7 @@ from planner.conversation.model_resolution.config import CATALOGUE_COLD_START_TI
 from planner.conversation.model_resolution.contracts import (
     AliasResolutionFact,
     CanonicalModelValidation,
+    CatalogObservation,
     CatalogUnavailable,
     CatalogWorkspaceBinding,
     CorrectiveAction,
@@ -126,6 +127,8 @@ class ModelResolutionService:
                 timeout=max(0, deadline - time.monotonic()),
             )
 
+        context: LaunchContext | None = None
+        cached: CatalogObservation | None = None
         try:
             context = await capture()
             if (
@@ -200,13 +203,31 @@ class ModelResolutionService:
                 previous_alias_resolution=previous_alias_resolution,
             )
         except TimeoutError:
-            return self._failure(selection, ValidationReason.timeout)
+            return self._failure(
+                selection,
+                ValidationReason.timeout,
+                context=context,
+                observation=cached,
+                previous_alias_resolution=previous_alias_resolution,
+            )
         except Exception:
             # Provider exceptions can carry credentials or environment details.
-            return self._failure(selection, ValidationReason.catalog_unavailable)
+            return self._failure(
+                selection,
+                ValidationReason.catalog_unavailable,
+                context=context,
+                observation=cached,
+                previous_alias_resolution=previous_alias_resolution,
+            )
 
     def _failure(
-        self, selection: ModelSelection, reason: ValidationReason
+        self,
+        selection: ModelSelection,
+        reason: ValidationReason,
+        *,
+        context: LaunchContext | None,
+        observation: CatalogObservation | None,
+        previous_alias_resolution: AliasResolutionFact | None,
     ) -> CanonicalModelValidation:
         return unresolved_validation(
             selection,
@@ -214,13 +235,15 @@ class ModelResolutionService:
             unavailable=CatalogUnavailable(
                 backend_key=selection.backend_key,
                 destination=selection.destination,
-                attempted_context=None,
+                attempted_context=context,
                 reason=reason,
                 corrective_action=CorrectiveAction.refresh_catalog,
                 detail="Destination model verification did not complete.",
                 observed_at=int(self._now()),
-                retained_evidence=None,
+                retained_evidence=observation.evidence if observation else None,
             ),
+            observation=observation,
+            previous_alias_resolution=previous_alias_resolution,
         )
 
 

@@ -106,17 +106,17 @@ class ProductionCatalogObserver:
 
     def _launch(
         self, backend_key: ConversationBackendKey
-    ) -> tuple[Path, dict[str, str]]:
+    ) -> tuple[str, dict[str, str]]:
         launches = self._launches()
         if backend_key is ConversationBackendKey.codex:
-            return Path(launches.codex.argv[0]), child_environment(
+            return launches.codex.argv[0], child_environment(
                 overrides=launches.codex.environment_overrides
             )
         if backend_key is ConversationBackendKey.claude:
             executable = launches.claude.claude_executable
             if executable is None:
                 raise ValueError("The production Claude executable is unspecified")
-            return executable, {**os.environ, **dict(launches.claude.environment_overrides)}
+            return str(executable), {**os.environ, **dict(launches.claude.environment_overrides)}
         raise ValueError("This provider has no scoped catalog observer")
 
     async def capture_context(
@@ -127,7 +127,9 @@ class ProductionCatalogObserver:
         executable_identity: str | None = None
         version: str | None = None
         try:
-            selected = executable.resolve(strict=True)
+            selected = _resolve_launch_executable(executable, environment, localized)
+            if selected is None:
+                raise FileNotFoundError("The launch executable lookup is unresolved")
             info = selected.stat()
             executable_identity = (
                 f"{selected}:{info.st_dev}:{info.st_ino}:{info.st_size}:"
@@ -381,6 +383,7 @@ def _uses_default_codex_account(environment: Mapping[str, str], workspace: Path)
         configuration = tomllib.loads((codex_home(environment) / "config.toml").read_text())
         if (
             configuration.get("model_provider", "openai") != "openai"
+            or configuration.get("cli_auth_credentials_store", "file") != "file"
             or "model_providers" in configuration
             or "profile" in configuration
             or "profiles" in configuration
@@ -408,3 +411,29 @@ def _has_indirect_source(document: object) -> bool:
     elif isinstance(document, list):
         return any(_has_indirect_source(item) for item in document)
     return False
+
+
+def _resolve_launch_executable(
+    executable: str, environment: Mapping[str, str], workspace: Path
+) -> Path | None:
+    """Identify the launch lookup without changing its executable token or policy.
+
+    POSIX exec resolves slash-relative tokens and relative PATH entries against the
+    child cwd. The Panels process cwd cannot establish that binary's identity.
+    """
+    if not executable:
+        return None
+    if os.path.dirname(executable):
+        candidates = [Path(executable)]
+    else:
+        candidates = [Path(entry) / executable for entry in os.get_exec_path(environment)]
+    for candidate in candidates:
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        try:
+            resolved = candidate.resolve(strict=True)
+            if resolved.is_file() and os.access(resolved, os.X_OK):
+                return resolved
+        except OSError:
+            continue
+    return None

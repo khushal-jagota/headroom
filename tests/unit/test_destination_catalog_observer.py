@@ -59,6 +59,7 @@ class ScriptedLaunchEnvironment(SubprocessBackendProbeEnvironment):
 def launch_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ProductionBackendLaunches:
     executable = tmp_path / "selected-cli"
     executable.write_text("fixture, never executed")
+    executable.chmod(0o700)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "provider-home"))
@@ -289,21 +290,20 @@ def test_subprocess_timeout_reaps_its_group_before_return(
 
 
 def test_generation_does_not_claim_continuity_for_alternate_provider_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     from planner.conversation.backends.codex_app_server.login import (
         CodexLoginGeneration,
-        StoredCodexLogin,
     )
 
     generation = CodexLoginGeneration("fixture-account", "fixture-refresh")
-    monkeypatch.setattr(
-        observer, "read_stored_codex_login",
-        lambda home: StoredCodexLogin(True, True, generation=generation),
-    )
     home, workspace = tmp_path / "home", tmp_path / "workspace"
     home.mkdir()
     workspace.mkdir()
+    # A real, nonsecret stale file must not stand in for keyring/auto credentials.
+    (home / "auth.json").write_text(
+        '{"tokens":{"account_id":"fixture-account"},"last_refresh":"fixture-refresh"}'
+    )
     environment = {"CODEX_HOME": str(home)}
     assert observer._account_generation(
         ConversationBackendKey.codex, environment, workspace
@@ -312,11 +312,19 @@ def test_generation_does_not_claim_continuity_for_alternate_provider_sources(
     for document in (
         'model_provider="alternate"', '[model_providers.openai]\nbase_url="https://fixture.invalid"',
         'profile="alternate"',
+        'cli_auth_credentials_store="keyring"',
+        'cli_auth_credentials_store="auto"',
+        'cli_auth_credentials_store="ephemeral"',
     ):
         config.write_text(document)
         assert observer._account_generation(
             ConversationBackendKey.codex, environment, workspace
         ) is None
+        assert not observer._uses_default_codex_account(environment, workspace)
+    config.write_text('cli_auth_credentials_store="file"')
+    assert observer._account_generation(
+        ConversationBackendKey.codex, environment, workspace
+    ) == generation
     config.unlink()
     project = workspace / ".codex" / "config.toml"
     project.parent.mkdir()
@@ -398,5 +406,50 @@ def test_observation_preserves_affirmative_credential_denial_and_unknown_status(
             assert isinstance(result, CatalogObservation)
             assert result.credentials is expected
             assert "private stderr" not in repr(result)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("token", ["bin/fixture-cli", "fixture-cli"])
+def test_executable_identity_uses_launch_cwd_and_relative_effective_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, token: str
+) -> None:
+    launches = launch_fixture(tmp_path, monkeypatch)
+    panels_cwd, workspace = tmp_path / "panels", tmp_path / "workspace"
+    for directory in (panels_cwd, workspace):
+        (directory / "bin").mkdir(parents=True)
+        binary = directory / "bin" / "fixture-cli"
+        binary.write_text("same version, distinct executable")
+        binary.chmod(0o700)
+    monkeypatch.chdir(panels_cwd)
+    launches = replace(
+        launches,
+        codex=replace(launches.codex, argv=(token, "app-server"),
+                      environment_overrides=(("PATH", "bin"),)),
+    )
+    environment = ScriptedLaunchEnvironment()
+
+    async def run() -> None:
+        reader = observer.ProductionCatalogObserver(
+            destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
+            launches=lambda: launches, environment=environment,
+        )
+        first = await reader.capture_context(
+            ConversationBackendKey.codex, workspace=binding(workspace)
+        )
+        assert first.executable_identity is not None
+        assert first.executable_identity.startswith(str(workspace / "bin" / "fixture-cli") + ":")
+        assert str(panels_cwd) not in first.executable_identity
+        assert environment.calls[0][0] == (token, "--version")
+        replacement = workspace / "bin" / "replacement"
+        replacement.write_text("same version, distinct executable")
+        replacement.chmod(0o700)
+        replacement.replace(workspace / "bin" / "fixture-cli")
+        second = await reader.capture_context(
+            ConversationBackendKey.codex, workspace=binding(workspace)
+        )
+        assert first.executable_version == second.executable_version == "1.2.3"
+        assert second.executable_identity != first.executable_identity
+        assert second.context_ref != first.context_ref
 
     asyncio.run(run())
