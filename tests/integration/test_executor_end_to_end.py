@@ -982,21 +982,42 @@ def test_equal_codex_catalogs_never_enter_durable_reconnect_prefix(
                 # or the replay prefix. No queue reset/filter supplies this result.
                 assert harness.mac.spool.pending() == initial
                 monkeypatch.setattr(mac_module, "CLI_RESULT_TIMEOUT_SECONDS", 0.02)
-                response = await harness.mac.handle_ipc(
-                    IpcRequest(
-                        "equal_catalog_reconnect_recap",
-                        IpcOperation.write,
-                        registered.reference.child_id,
-                        registered.capability,
-                        {
-                            "operation": "ticket.edit",
-                            "arguments": {
-                                "ticket_id": registered.ticket_id,
-                                "body": {"recap": "Catalog duplicates do not precede this write"},
-                            },
+                write_request = IpcRequest(
+                    "equal_catalog_reconnect_recap",
+                    IpcOperation.write,
+                    registered.reference.child_id,
+                    registered.capability,
+                    {
+                        "operation": "ticket.edit",
+                        "arguments": {
+                            "ticket_id": registered.ticket_id,
+                            "body": {"recap": "Catalog duplicates do not precede this write"},
                         },
-                    )
+                    },
                 )
+                response = await harness.mac.handle_ipc(write_request)
+                if response.unconfirmed is not None:
+                    # The short observer budget can expire before durable publication.
+                    # Observe that original identity, then use lookup-only retry.
+                    assert response.error is None
+                    assert response.unconfirmed.publication == "preparing"
+                    assert response.unconfirmed.submission_id == write_request.request_id
+                    await eventually(
+                        lambda: any(
+                            row.submission_id == write_request.request_id
+                            for row in harness.mac.spool.pending()
+                        ),
+                        "Canonical write did not reach the durable spool",
+                    )
+                    response = await harness.mac.handle_ipc(
+                        IpcRequest(
+                            write_request.request_id,
+                            IpcOperation.retry,
+                            registered.reference.child_id,
+                            registered.capability,
+                            {"submission_id": write_request.request_id},
+                        )
+                    )
                 assert response.queued is not None and response.error is None
                 write = harness.mac.spool.pending()[-1]
                 assert write.submission_id == response.queued.submission_id

@@ -179,13 +179,13 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
         target = _create(client, "coding")
         parent = _create(client, "probe")
         unrelated = _create(client, "coding")
-        # Even a declared reviewer cannot file another Ticket's own proposal.
+        # Even a declared authority cannot file another Ticket's own proposal.
         monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "probe", (authority.ticket(target),))
         scoped = client.post(
             f"/api/tickets/{target}/accept/brief",
             json={
                 "next_ceiling": "needs_success_condition",
-                "next_holder": {"kind": "ticket", "id": parent},
+                "next_holder": {"kind": "owner"},
             },
         )
         assert scoped.status_code == 200, scoped.text
