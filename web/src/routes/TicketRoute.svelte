@@ -635,6 +635,7 @@
       >
         <div class="conversation-column">
           <LiveConversation locale={masthead.locale}
+            launchValidation={detail.launch_validation ?? null}
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId
