@@ -51,7 +51,9 @@ One screen per part of the system:
   Skip postpones a card for this visit. The final screen counts only skipped cards that still await review.
   If only skipped cards remain, the return control says Back to skipped items. Otherwise it says Back to review.
   Return starts a fresh pass: new cards come first, then previously skipped cards, across every page.
-  A failed return keeps the final screen and Chief draft. A fresh visit starts the normal queue order.
+  A failed return keeps the final screen and Chief draft. If the accumulated skip history exceeds the request limit,
+  Review shows that refusal on the final screen and retains the complete history and Chief draft. It does not retry automatically.
+  A fresh visit starts the normal queue order.
   The return action uses the existing Approve style when work waits and the quiet Mark read style at zero.
   The Chief form sends through the normal Chief endpoint. It never loads a transcript or advances a read watermark.
 - **Workspace** — an adjustable rail of manager cards beside the selected conversation

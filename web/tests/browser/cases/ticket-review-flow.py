@@ -2023,6 +2023,34 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     expect(terminal).to_contain_text('Nothing needs you right now.')
     expect(return_button).to_have_text('Back to review')
+    # Automatic history-demand rejection must expose the same final refusal even
+    # with more cards in the current window. The shared Chief draft survives it;
+    # refusing the demand must not schedule an automatic retry or discard history.
+    chief_input.fill('Keep the demand refusal thought.')
+    final_rows = [{**variant_seed, "id": f"t_final_refusal_{i}", "title": f"Refusal item {i}",
+                   "conversation_id": None, "ticket_status": "awaiting_approval",
+                   "ceiling_holder": {"kind": "owner", "id": "owner"}} for i in range(2)]
+    page.evaluate("window.__showTicket('t_review')")
+    page.evaluate("window.__refresh()")
+    page.evaluate("window.__showReview()")
+    expect(page.locator('.review-ticket-title')).to_contain_text('Refusal item 0')
+    page.evaluate("window.__rejectSkippedReviewDemand=true")
+    page.locator('body').click(position={"x": 1, "y": 1})
+    page.keyboard.press('s')
+    expect(terminal).to_be_visible()
+    expect(terminal.locator('.error-line')).to_contain_text('Navigation view request is too large')
+    expect(page.locator('[data-review-ticket-card]')).to_have_count(0)
+    expect(chief_input).to_have_value('Keep the demand refusal thought.')
+    refused_demands = page.evaluate('window.__refusedReviewDemands')
+    assert len(refused_demands) == 1
+    assert refused_demands[0]['review_skipped_keys'] == [{"kind": "ticket", "id": "t_final_refusal_0"}]
+    page.evaluate("window.__refusalChiefInput=document.querySelector('[data-review-chief-composer] textarea')")
+    page.evaluate("window.__refresh()")
+    expect(terminal.locator('.error-line')).to_be_visible()
+    expect(chief_input).to_have_value('Keep the demand refusal thought.')
+    assert page.evaluate("window.__refusalChiefInput===document.querySelector('[data-review-chief-composer] textarea')")
+    assert page.evaluate('window.__refusedReviewDemands.length') == 1
+    page.evaluate("window.__rejectSkippedReviewDemand=false")
     print(f"Final Review workspace browser coverage: {time.monotonic() - final_started:.2f}s", flush=True)
     page.evaluate("window.__showConfig()")
     stage_table = page.locator("[data-worker-stage-table]")

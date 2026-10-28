@@ -40,6 +40,16 @@ import { tick } from 'svelte';
 import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
 const navigation=provideNavigationApplication();
 (window as any).__navigation=navigation;
+const setDemand=navigation.owner.setDemand;
+(window as any).__refusedReviewDemands=[];
+(window as any).__rejectSkippedReviewDemand=false;
+navigation.owner.setDemand=(name,demand)=>{
+ if((window as any).__rejectSkippedReviewDemand && name==='review' && demand?.review_skipped_keys?.length){
+  (window as any).__refusedReviewDemands.push(JSON.parse(JSON.stringify(demand)));
+  throw new Error('Navigation view request is too large');
+ }
+ return setDemand(name,demand);
+};
 const wait=navigation.owner.waitForVisibility;
 navigation.owner.waitForVisibility=(fence,options)=>{
  (window as any).__commandWait='pending';

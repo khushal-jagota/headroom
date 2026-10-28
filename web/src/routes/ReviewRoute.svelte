@@ -35,7 +35,12 @@
       windows:[viewWindow('review',null,{anchor:reviewAnchor,limit:30})]});
     reviewRequest=navigation.owner.getRequest();
   }
-  $effect(()=>{try {updateReviewDemand();} catch(error) {returnError=error;}});
+  $effect(()=>{try {updateReviewDemand();} catch(error) {
+    // A refused continuation cannot reach another card or the terminal window.
+    // Keep the complete history and expose the existing final-screen refusal.
+    returnError=error;
+    finalLatched=true;
+  }});
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
   let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>({});
