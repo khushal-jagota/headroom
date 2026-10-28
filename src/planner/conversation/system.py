@@ -380,6 +380,7 @@ class _ConversationState:
     executor_initial_commands: tuple[ChildCommand, ...] = ()
     executor_delivery_uncertain: bool = False
     initial_shutdown_task: asyncio.Task[bool] | None = None
+    initial_shutdown_child: BackendChild | None = None
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
     last_touched_monotonic: float = 0.0
@@ -1399,6 +1400,16 @@ class SqliteProcessConversationSystem:
                 if state.executor_child_reference != child.reference:
                     raise RemoteInitialDeliveryCancelled()
                 if command.operation is ChildOperation.write_prompt:
+                    if (
+                        state.reserved_turn is not reservation
+                        or command.turn != reservation.token
+                        or (
+                            state.last_ended_turn_token is not None
+                            and state.last_ended_turn_token.turn_number
+                            >= reservation.token.turn_number
+                        )
+                    ):
+                        raise RemoteInitialDeliveryCancelled()
                     state.executor_initial_commands = tuple(
                         earlier
                         for earlier in state.executor_initial_commands
@@ -1429,11 +1440,35 @@ class SqliteProcessConversationSystem:
         child.record_command = record
 
     def _schedule_remote_retirement(
-        self, state: _ConversationState, child: Any, *, reservation: _ReservedTurn | None = None
+        self,
+        state: _ConversationState,
+        child: Any,
+        *,
+        reservation: _ReservedTurn | None = None,
+        nonadmitted_turn: TurnToken | None = None,
     ) -> asyncio.Task[bool]:
         """Fence the captured identity before its cleanup owner yields the lock."""
+        if nonadmitted_turn is not None:
+            # Only the owner of this exact refused write may remove its circular
+            # reservation dependency. The reservation itself remains unresolved.
+            if (
+                state.child is not child
+                or state.executor_child_reference != child.reference
+                or state.reserved_turn is not reservation
+                or (
+                    reservation is not None
+                    and (reservation.token != nonadmitted_turn or reservation.shutdown_owned)
+                )
+                or (
+                    state.last_ended_turn_token is not None
+                    and state.last_ended_turn_token.turn_number >= nonadmitted_turn.turn_number
+                )
+            ):
+                raise ValueError("Nonadmission does not own this child and turn")
         existing = state.initial_shutdown_task
         if existing is not None and not existing.done():
+            if state.initial_shutdown_child is not child:
+                raise ValueError("Pending retirement belongs to another child")
             return existing
         state.child_is_quarantined = True
         token = next(
@@ -1458,6 +1493,8 @@ class SqliteProcessConversationSystem:
             )
         pending = state.reserved_turn
         dependency = pending if pending is not None and pending.token == token else None
+        if dependency is not None and dependency.token == nonadmitted_turn:
+            dependency = None
         if token is None:
             # Without original metadata there is no identity-safe retirement commit.
             async def unconfirmed() -> bool:
@@ -1501,6 +1538,7 @@ class SqliteProcessConversationSystem:
             child.record_command = record_stop
             task = asyncio.create_task(self._stop_initial_child(state, child, dependency, snapshot))
         state.initial_shutdown_task = task
+        state.initial_shutdown_child = child
         state.settlement_tasks.add(task)
         task.add_done_callback(state.settlement_tasks.discard)
         return task
@@ -3413,8 +3451,10 @@ class SqliteProcessConversationSystem:
             from planner.executor.remote import RemoteInitialDeliveryCancelled
 
             raise RemoteInitialDeliveryCancelled()
+        attempted_child = child
+        attempted_reservation = state.reserved_turn
         try:
-            accepted = await child.write_prompt(
+            accepted = await attempted_child.write_prompt(
                 turn_token,
                 composed,
                 sender_content=content,
@@ -3431,6 +3471,8 @@ class SqliteProcessConversationSystem:
             rebound = await self._rebind_and_write_prompt(
                 state,
                 turn_token,
+                refused_child=attempted_child,
+                reservation=attempted_reservation,
                 content=composed,
                 sender_content=content,
                 sender_label=sender_label,
@@ -3461,6 +3503,8 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         turn_token: TurnToken,
         *,
+        refused_child: BackendChild,
+        reservation: _ReservedTurn | None,
         content: MessageContent,
         sender_content: MessageContent,
         sender_label: str,
@@ -3485,28 +3529,51 @@ class SqliteProcessConversationSystem:
         saying two different things about what it is running on. Dropping it costs one
         lazy respawn and keeps the record the only answer.
         """
-        from planner.executor.remote import RemoteBackendChild
+        from planner.executor.remote import RemoteBackendChild, RemoteInitialDeliveryCancelled
 
-        old_child = state.child
-        if isinstance(old_child, RemoteBackendChild):
-            async with state.lock:
-                cleanup = self._schedule_remote_retirement(state, old_child)
-                matching = any(command.turn == turn_token for command in old_child.initial_commands)
-            if matching or not await asyncio.shield(cleanup):
-                return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
-        elif old_child is not None:
-            state.child = None
-            if not await self._stop_child(state, old_child):
-                state.child = old_child
+        def check_delivery_owner() -> None:
+            if (
+                self._shutting_down
+                or state.reserved_turn is not reservation
+                or (
+                    reservation is not None
+                    and (reservation.token != turn_token or reservation.shutdown_owned)
+                )
+                or (
+                    state.last_ended_turn_token is not None
+                    and state.last_ended_turn_token.turn_number >= turn_token.turn_number
+                )
+            ):
+                raise RemoteInitialDeliveryCancelled()
+
+        old_child = refused_child
+        async with state.lock:
+            check_delivery_owner()
+            if state.child is not old_child:
+                raise RemoteInitialDeliveryCancelled()
+            if isinstance(old_child, RemoteBackendChild):
+                if state.executor_child_reference != old_child.reference:
+                    raise RemoteInitialDeliveryCancelled()
+                cleanup = self._schedule_remote_retirement(
+                    state, old_child, reservation=reservation, nonadmitted_turn=turn_token
+                )
+            else:
                 state.child_is_quarantined = True
+                cleanup = None
+        if cleanup is not None:
+            if not await asyncio.shield(cleanup):
                 return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
-        if (
-            state.last_ended_turn_token is not None
-            and state.last_ended_turn_token.turn_number >= turn_token.turn_number
-        ):
-            from planner.executor.remote import RemoteInitialDeliveryCancelled
-
-            raise RemoteInitialDeliveryCancelled()
+        else:
+            if not await self._stop_child(state, old_child):
+                return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
+            async with state.lock:
+                if state.child is old_child:
+                    state.child = None
+                    state.child_is_quarantined = False
+        async with state.lock:
+            check_delivery_owner()
+            if state.child is not None or state.child_is_quarantined:
+                return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
         try:
             child = await self._ensure_child(
                 state, model=model_change, reasoning_effort=reasoning_effort_change
@@ -3515,10 +3582,10 @@ class SqliteProcessConversationSystem:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
-        from planner.executor.remote import RemoteBackendChild
-
-        if isinstance(child, RemoteBackendChild) and state.reserved_turn is not None:
-            self._configure_initial_command_recording(state, child, state.reserved_turn)
+        async with state.lock:
+            check_delivery_owner()
+            if isinstance(child, RemoteBackendChild) and reservation is not None:
+                self._configure_initial_command_recording(state, child, reservation)
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -3544,6 +3611,10 @@ class SqliteProcessConversationSystem:
                 self._with_native_worker_context(state, child, composed_content),
                 self._reply_senders(messages),
             )
+        async with state.lock:
+            check_delivery_owner()
+            if state.child is not child:
+                raise RemoteInitialDeliveryCancelled()
         try:
             accepted = await child.write_prompt(
                 turn_token,
@@ -4532,6 +4603,7 @@ class SqliteProcessConversationSystem:
             state.executor_delivery_uncertain = False
             if state.initial_shutdown_task is not None and state.initial_shutdown_task.done():
                 state.initial_shutdown_task = None
+                state.initial_shutdown_child = None
             # Retain the original identity even while native start is unacknowledged.
             state.child = child
             if state.reserved_turn is not None:
@@ -4539,8 +4611,21 @@ class SqliteProcessConversationSystem:
         # The pump is running before the child is, so news the child makes while it starts
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
+        start_reservation = state.reserved_turn
         await child.start(resolved_start, vendor_session_cursor=state.record.vendor_session_cursor)
-        if state.reserved_turn is not None and state.reserved_turn.shutdown_owned:
+        if (
+            isinstance(child, RemoteBackendChild)
+            and (
+                self._shutting_down
+                or (
+                    start_reservation is not None
+                    and (
+                        state.reserved_turn is not start_reservation
+                        or start_reservation.shutdown_owned
+                    )
+                )
+            )
+        ) or (state.reserved_turn is not None and state.reserved_turn.shutdown_owned):
             from planner.executor.remote import RemoteInitialDeliveryCancelled
 
             raise RemoteInitialDeliveryCancelled()

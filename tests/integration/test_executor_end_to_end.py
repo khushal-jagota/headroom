@@ -331,7 +331,17 @@ def make_core(endpoint: ExecutorEndpoint) -> SqliteProcessConversationSystem:
     )
 
 
-async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
+async def boot(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    native_factory: Callable[
+        [ResolvedConversationStart, str, ChildReference], BackendChildFactory
+    ] | None = None,
+    backend_key: ConversationBackendKey = ConversationBackendKey.codex,
+    model: str = "scripted",
+    reasoning_effort: str | None = None,
+) -> ExecutorHarness:
     from planner.executor import mac as mac_module
 
     monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.02)
@@ -353,8 +363,8 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
             locale=TicketLocale.macos,
-            employee_backend="codex",
-            employee_launch_model="scripted",
+            employee_backend=backend_key.value,
+            employee_launch_model=model,
         )
         worker_ticket_id = ticket.id
     finally:
@@ -421,7 +431,7 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
         paths=mac.paths,
         incarnation=mac.identity.executor_incarnation,
         spool=mac.spool,
-        factory=factory,
+        factory=native_factory or factory,
         message_files=ConversationMessageFiles(root / "mac/unused"),
     )
     task = asyncio.create_task(mac.run())
@@ -436,7 +446,9 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
         await system.start_conversation(
             ConversationStartRequest(
                 conversation_id="c_scripted",
-                model="scripted",
+                model=model,
+                backend_key=backend_key,
+                reasoning_effort=reasoning_effort,
                 workspace_folder=root,
                 role_materials=ConversationRoleMaterials(
                     "A scripted test worker.",
@@ -459,6 +471,165 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     except BaseException:
         await harness.close()
         raise
+
+
+def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Actual adapter refusal crosses registry/HTTPS/outcome/core before one admission."""
+    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage
+    from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
+
+    from planner.conversation.backends.claude_agent_sdk import (
+        ClaudeAgentSdkBackendChildFactory,
+        ClaudeAgentSdkChildLaunch,
+    )
+    from planner.executor.configuration import NATIVE_WORKER_CONTEXT
+    from planner.executor.contracts import ChildOperation
+
+    async def run() -> None:
+        clients: list[_ScriptedClaudeSdkClient] = []
+        cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
+
+        def client_factory(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+            if clients:
+                assert clients[-1].disconnected, "replacement started before exact cleanup"
+            client = _ScriptedClaudeSdkClient(options)
+            disconnect = client.disconnect
+
+            async def delayed_disconnect() -> None:
+                cleanup_entered.set()
+                await cleanup_release.wait()
+                await disconnect()
+
+            monkeypatch.setattr(client, "disconnect", delayed_disconnect)
+            clients.append(client)
+            return client
+
+        adapter = ClaudeAgentSdkBackendChildFactory(
+            ClaudeAgentSdkChildLaunch(), client_factory=client_factory
+        )
+
+        def native_factory(
+            resolved: ResolvedConversationStart, capability: str, child: ChildReference
+        ) -> BackendChildFactory:
+            assert resolved.backend_key is ConversationBackendKey.claude
+            del capability, child
+            return adapter
+
+        harness = await boot(
+            tmp_path,
+            monkeypatch,
+            native_factory=native_factory,
+            backend_key=ConversationBackendKey.claude,
+            model="claude-old",
+            reasoning_effort="low",
+        )
+        def prompts(client: _ScriptedClaudeSdkClient) -> list[str]:
+            return client.prompts + [
+                "\n".join(block["text"] for block in message["message"]["content"])
+                for message in client.streamed_messages
+            ]
+
+        sending = None
+        try:
+            session = clients[0].options.session_id
+            assert session is not None
+
+            async def finish_turn() -> None:
+                ended = harness.events("turn_ended")
+                clients[-1].say(
+                    ResultMessage(
+                        subtype="success", duration_ms=1, duration_api_ms=1,
+                        is_error=False, num_turns=1, session_id=session,
+                    )
+                )
+                await eventually(
+                    lambda: harness.events("turn_ended") == ended + 1,
+                    "scripted Claude result did not cross to core",
+                )
+                await eventually(
+                    lambda: not harness.mac.spool.pending(), "result receipt did not drain"
+                )
+
+            for index, changes in enumerate(
+                ({"model_change": "claude-new"}, {"reasoning_effort_change": "high"}), 1
+            ):
+                await finish_turn()
+                old = clients[-1]
+                old_prompt = prompts(old)[-1]
+                old_reference = next(iter(harness.mac.registry.children.values())).reference
+                cleanup_entered.clear()
+                cleanup_release.clear()
+                sender_text = f"Keep sender bytes {index}: café\nsecond line"
+                sending = asyncio.create_task(
+                    harness.system.send(
+                        "c_scripted", text_message_content(sender_text),
+                        sender_label="Chief", sender=CHIEF_PRINCIPAL,
+                        recipient=Principal(
+                            PrincipalKind.ticket, old.options.env["PLAN_TICKET_ID"]
+                        ),
+                        **changes,
+                    )
+                )
+                await asyncio.wait_for(cleanup_entered.wait(), 5)
+                assert not sending.done()
+                assert len(clients) == index
+                assert len(prompts(old)) == 1 and prompts(old)[-1] == old_prompt
+                assert not old.disconnected
+                assert harness.endpoint.store.child_assignment(old_reference) is not None
+                cleanup_release.set()
+                await asyncio.wait_for(sending, 5)
+                await eventually(
+                    lambda: not harness.mac.spool.pending(), "rebind outcomes did not drain"
+                )
+                replacement = clients[-1]
+                assert len(clients) == index + 1 and old.disconnected
+                assert replacement.options.resume == session
+                assert replacement.options.model == "claude-new"
+                assert replacement.options.effort == ("low" if index == 1 else "high")
+                assert harness.endpoint.store.child_assignment(old_reference) is None
+                assert len(prompts(replacement)) == 1
+                prompt = prompts(replacement)[0]
+                assert prompt.startswith("[Authenticated Panels reply requirement]\n")
+                assert prompt.count(NATIVE_WORKER_CONTEXT) == 1
+                assert prompt.count(sender_text) == 1
+                assert prompt.index("Chief:") < prompt.index(sender_text)
+
+                writes = [
+                    command for command in harness.mac.registry._commands.values()
+                    if command.operation is ChildOperation.write_prompt
+                    and command.arguments.get("sender_label") == "Chief"
+                    and command.arguments.get("model_change") == changes.get("model_change")
+                    and command.arguments.get("reasoning_effort_change")
+                    == changes.get("reasoning_effort_change")
+                ]
+                assert len(writes) == 2
+                refused, accepted = [harness.mac.registry.outcomes[c.command_id] for c in writes]
+                assert refused.disposition is CommandDisposition.refused
+                assert refused.result["error_type"] == "NeedsRebind"
+                assert accepted.disposition is CommandDisposition.succeeded
+                assert refused.child == old_reference
+                assert accepted.child != old_reference
+                assert writes[0].arguments["content"] == writes[1].arguments["content"]
+                assert (
+                    writes[0].arguments["sender_content"] == writes[1].arguments["sender_content"]
+                )
+                assert all(
+                    harness.endpoint.store.has_accepted_command_outcome(outcome)
+                    for outcome in (refused, accepted)
+                )
+            assert sum(len(prompts(client)) for client in clients) == 3
+        finally:
+            cleanup_release.set()
+            if sending is not None and not sending.done():
+                sending.cancel()
+                await asyncio.gather(sending, return_exceptions=True)
+            await harness.close()
+            for client in clients:
+                await client.disconnect()
+
+    asyncio.run(run())
 
 
 def test_active_child_pending_ask_and_durable_old_answer_survive_link_loss(

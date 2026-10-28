@@ -401,3 +401,178 @@ def test_native_context_scope_and_rebind_do_not_duplicate_composed_content(
             await system.shutdown()
 
     asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "succeeded",
+        "cleanup_failed",
+        "second_refusal",
+        "kill_cleanup",
+        "kill_start",
+        "competing_send",
+    ],
+)
+def test_confirmed_refusal_keeps_reservation_until_exact_child_cleanup(
+    tmp_path: Path, outcome: str
+) -> None:
+    """A refused write cannot deadlock on its own reservation or bypass failed cleanup."""
+    from planner.conversation.contracts import (
+        ConversationStartRequest,
+        PromptDeliveryQueued,
+        PromptDeliveryRefused,
+        PromptDeliverySuppressed,
+        PromptDeliveryUncertain,
+    )
+    from planner.executor.contracts import CommandDisposition
+    from planner.executor.store import ExecutorStore
+
+    async def exercise() -> None:
+        db_path = str(tmp_path / "panels.sqlite")
+        connection = connect(db_path)
+        try:
+            create_schema(connection)
+        finally:
+            connection.close()
+        commands: list[ChildCommand] = []
+        cleanup_entered = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        replacement_start_entered = asyncio.Event()
+        release_start = asyncio.Event()
+        executor_store = ExecutorStore(db_path)
+        snapshot = CanonicalSkillSnapshot(
+            tuple(
+                CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
+                for name in ("panels", "panels-worker")
+            ),
+            ("panels", "panels-worker"),
+        )
+        writes = 0
+        system: SqliteProcessConversationSystem
+
+        async def dispatch(command: ChildCommand) -> CommandOutcome:
+            nonlocal writes
+            commands.append(command)
+            disposition = CommandDisposition.succeeded
+            result: dict[str, Any] = {"composed_content_delivered": True}
+            if command.operation is ChildOperation.write_prompt:
+                writes += 1
+                if writes == 1 or outcome == "second_refusal":
+                    disposition = CommandDisposition.refused
+                    result = {"error_type": "NeedsRebind", "error_message": "model changed"}
+            elif command.operation is ChildOperation.stop and not cleanup_entered.is_set():
+                state = system._conversations["c"]
+                assert state.reserved_turn is not None
+                assert not state.reserved_turn.resolved.is_set()
+                assert state.child is not None and state.child.reference == command.child
+                assert state.child_is_quarantined
+                cleanup_entered.set()
+                await release_cleanup.wait()
+                if outcome == "cleanup_failed":
+                    raise RuntimeError("cleanup did not confirm exit")
+            elif command.operation is ChildOperation.start and cleanup_entered.is_set():
+                replacement_start_entered.set()
+                if outcome == "kill_start":
+                    await release_start.wait()
+            return CommandOutcome(command.command_id, command.child, disposition, result)
+
+        def reference(start: ResolvedConversationStart, sink: Any) -> ChildReference:
+            child = ChildReference("test-incarnation", str(uuid4()), "c")
+            executor_store.register_child(child, "ticket", "t_native", 1)
+            return child
+
+        remote = RemoteBackendChildFactory(
+            reference,
+            dispatch,
+            lambda start: snapshot,
+        )
+        system = SqliteProcessConversationSystem(
+            store=ConversationStore(db_path),
+            message_files=ConversationMessageFiles(db_path),
+            backend_child_factories={key: remote for key in ConversationBackendKey},
+        )
+        try:
+            await system.start_conversation(
+                ConversationStartRequest("c", "model", workspace_folder=tmp_path)
+            )
+            delivery = asyncio.create_task(
+                system.send("c", text_message_content("original bytes"), sender_label="Test")
+            )
+            await cleanup_entered.wait()
+            state = system._conversations["c"]
+            reservation = state.reserved_turn
+            assert reservation is not None
+            assert not delivery.done()
+            assert [command.operation for command in commands] == [
+                ChildOperation.start,
+                ChildOperation.write_prompt,
+                ChildOperation.stop,
+            ]
+            # Cleanup can progress while this exact reservation still owns delivery.
+            assert state.reserved_turn is reservation and not reservation.resolved.is_set()
+            if outcome == "competing_send":
+                competing = await system.send(
+                    "c", text_message_content("queued bytes"), sender_label="Other"
+                )
+                assert isinstance(competing, PromptDeliveryQueued)
+                assert state.reserved_turn is reservation and not reservation.resolved.is_set()
+            if outcome == "kill_cleanup":
+                killed = asyncio.create_task(system.kill("c"))
+                await reservation.resolved.wait()
+                assert reservation.shutdown_owned
+                release_cleanup.set()
+                await killed
+            else:
+                release_cleanup.set()
+            if outcome == "kill_start":
+                await replacement_start_entered.wait()
+                killed = asyncio.create_task(system.kill("c"))
+                await reservation.resolved.wait()
+                assert reservation.shutdown_owned
+                await killed
+                release_start.set()
+            result = await delivery
+            if outcome == "second_refusal":
+                assert state.initial_shutdown_task is not None
+                assert await state.initial_shutdown_task
+            # The detached delivery owner must also finish its post-start check.
+            if outcome == "kill_start":
+                await asyncio.gather(*tuple(state.settlement_tasks))
+            await system.wait_until_quiescent()
+            starts = [c for c in commands if c.operation is ChildOperation.start]
+            written = [c for c in commands if c.operation is ChildOperation.write_prompt]
+            if outcome in {"kill_cleanup", "kill_start"}:
+                expected = (
+                    PromptDeliveryUncertain
+                    if outcome == "kill_cleanup"
+                    else PromptDeliverySuppressed
+                )
+                assert isinstance(result, expected)
+                assert len(starts) == (2 if outcome == "kill_start" else 1)
+                assert len(written) == 1
+                assert state.child is None
+                assert state.running_turn is None and state.reserved_turn is None
+            elif outcome == "cleanup_failed":
+                assert isinstance(result, PromptDeliveryRefused)
+                assert len(starts) == len(written) == 1
+                assert state.child is not None and state.child_is_quarantined
+            else:
+                assert len(starts) == len(written) == 2
+                assert starts[0].child != starts[1].child
+                assert written[0].turn == written[1].turn == reservation.token
+                assert written[0].arguments["content"] == written[1].arguments["content"]
+                if outcome == "second_refusal":
+                    assert isinstance(result, PromptDeliveryRefused)
+                    assert state.child is None
+                else:
+                    assert result == PromptDeliveryStarted()
+                    assert state.running_turn is not None
+                    assert state.running_turn.token == reservation.token
+            assert reservation.resolved.is_set()
+        finally:
+            release_cleanup.set()
+            release_start.set()
+            await system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
