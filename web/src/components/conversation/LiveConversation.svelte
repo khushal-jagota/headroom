@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
@@ -86,6 +87,7 @@
     conversationId = null,
     ownerLoading = false,
     persistenceKey,
+    uploadOwner = null,
     label,
     backends = $bindable([]),
     senderLabel = "owner",
@@ -107,6 +109,7 @@
     ownerLoading?: boolean;
     /** Stable owner identity used before the server assigns a Conversation id. */
     persistenceKey: string;
+    uploadOwner?: Pick<UploadDestination, "kind" | "id"> | null;
     label: string;
     backends?: readonly BackendSnapshot[];
     /** Who the messages sent from here are from. Recorded on the row, display-only. */
@@ -546,13 +549,28 @@
    * its row. No answer at all is neither — the message may have arrived and may not, so
    * the copy stays saying exactly that and the words are not put back.
    */
+  async function reconcileLocalSend(messageId: string): Promise<boolean> {
+    for (const key of new Set([activePersistenceId, openedId, conversationId, persistenceKey])) {
+      if (!key) continue;
+      if ((await recallOutgoingMessages(key)).some(message => message.messageId === messageId)) return true;
+    }
+    if (reader) return (await reader.receipts([messageId])).receipts.some(receipt => receipt.sender_message_id === messageId);
+    if (opening || ownerLoading) throw new Error("Conversation is still loading.");
+    return false;
+  }
+
   async function send(
     content: SentMessagePiece[],
     mode: PromptDeliveryMode,
     picked: RunValues,
-    displayMessageId?: string
+    displayMessageId?: string,
+    sendContext?: ComposerSendContext
   ): Promise<boolean> {
     if (readOnly) return false;
+    if (sendContext?.destination && (sendContext.destination.kind !== uploadOwner?.kind || sendContext.destination.id !== uploadOwner?.id)) {
+      errorNote = "This pending message belongs to another destination. Return it to the original composer.";
+      return false;
+    }
     errorNote = null;
     fateNote = null;
     // Save the words before transport, but draw them only after their destination is known.
@@ -562,7 +580,7 @@
       mode,
       pickedModel: picked.model,
       pickedReasoningEffort: picked.reasoningEffort
-    }), ...(displayMessageId ? {displayMessageId} : {}) };
+    }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}) };
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
@@ -589,7 +607,7 @@
       // this pane has read it, and the dev page puts a name in the address before anything
       // has been started under it — so an id nothing has answered for says none.
       const delivered = await sendMessage(
-        sendBodyFor({ message, current, picked, conversationId: started ? openedId : null })
+        sendBodyFor({ message, current, picked, conversationId: sendContext ? sendContext.expectedConversationId : started ? openedId : null })
       );
       // The answer is the fate, with the conversation it happened in alongside it.
       const fate = delivered;
@@ -933,6 +951,8 @@
   transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
   bind:viewAnchor
   draftKey={persistenceKey}
+  uploadDestination={uploadOwner ? {...uploadOwner, expected_conversation_id: started ? openedId : null} : null}
+  {reconcileLocalSend}
   transcriptVisible={documentIsVisible}
   {rows}
   {visibleRows}
@@ -965,7 +985,7 @@
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
   composerDisabled={busy || opening}
-  onSend={send}
+  onSend={(content, mode, picked, context) => send(content, mode, picked, undefined, context)}
   onStop={() => void stop()}
   onAnswer={(optionId) => void answer(optionId)}
   onSubmitUserInput={(answers) => void submitUserInput(answers)}

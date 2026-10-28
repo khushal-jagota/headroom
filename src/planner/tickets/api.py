@@ -30,6 +30,7 @@ from planner.conversation.api import (
     OwnerSendBody,
     conversation_message_content,
     delivery_fate_json,
+    video_send_admission,
 )
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
@@ -43,6 +44,7 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.conversation.storage import ConversationStore
+from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.core import authority
 from planner.core.authctx import (
     RequestContext,
@@ -1192,6 +1194,7 @@ async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
 @router.post("/chief/conversation/send")
 async def send_to_chief_conversation(
     body: OwnerSendBody,
+    request: Request,
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
@@ -1211,18 +1214,29 @@ async def send_to_chief_conversation(
     require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
+    admission = video_send_admission(
+        request,
+        message_files,
+        body.content,
+        body.sender_message_id,
+        UploadDestination(kind="chief", id="chief", expected_conversation_id=body.conversation_id),
+        CHIEF_PRINCIPAL,
+        ctx.principal,
+    )
     delivered = await message_delivery_service.send_message(
         conversations,
         conn,
         clk,
         ctx,
         CHIEF_PRINCIPAL,
-        partial(
+        admission
+        or partial(
             conversation_message_content,
             message_files,
             sent=body.content,
             sender_message_id=body.sender_message_id,
         ),
+        admission=admission,
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=runs_under,
@@ -1261,6 +1275,7 @@ async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) ->
 async def send_to_ticket_conversation(
     ticket_id: str,
     body: OwnerSendBody,
+    request: Request,
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
@@ -1280,18 +1295,31 @@ async def send_to_ticket_conversation(
     """
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
     created_conversation_id = conversation_start.new_conversation_id()
+    admission = video_send_admission(
+        request,
+        message_files,
+        body.content,
+        body.sender_message_id,
+        UploadDestination(
+            kind="ticket", id=ticket_id, expected_conversation_id=body.conversation_id
+        ),
+        Principal(PrincipalKind.ticket, ticket_id),
+        ctx.principal,
+    )
     delivered = await message_delivery_service.send_message(
         conversations,
         conn,
         clk,
         ctx,
         Principal(PrincipalKind.ticket, ticket_id),
-        partial(
+        admission
+        or partial(
             conversation_message_content,
             message_files,
             sent=body.content,
             sender_message_id=body.sender_message_id,
         ),
+        admission=admission,
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=_what_this_message_runs_under(body),

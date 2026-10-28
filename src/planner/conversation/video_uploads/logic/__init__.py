@@ -1,0 +1,1 @@
+"""Pure upload admission rules."""

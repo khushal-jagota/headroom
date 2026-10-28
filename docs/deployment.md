@@ -13,6 +13,12 @@ Only `app` changes during deployment. `data` and `logs` remain in place through 
 changes, failed deployments, and code rollback. Serving, deployment, rollback, backup,
 and user-service control need no sudo.
 
+Video attachment requires `ffprobe` on the application host's executable path. Its absence
+leaves the application available but refuses new video uploads with a service error.
+The operator supplies that prerequisite before release. Video playback uses the original
+file, without a conversion service. See [conversation attachments](conversation-system.md)
+for storage limits, retention, and codec restrictions. Normal backups exclude these bytes.
+
 ## Recover an older database with cancelled Tickets
 
 An upgrade refuses an older database that contains cancelled Tickets or would produce

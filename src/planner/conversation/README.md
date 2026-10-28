@@ -36,12 +36,18 @@ of the backend is internal to the conversation system and appears nowhere here.
 Permissions are internal too — they have no method, only rules, and those rules are on
 the Protocol's docstring.
 
-A message can contain text, images, and attached documents or data files. Panels accepts
+A message can contain text, images, attached documents, data files, and videos. Panels accepts
 PDF, UTF-8 text, Markdown, CSV, TSV, JSON, and JSONL files. One message can carry at most
 10 MiB of these files. The server validates every attachment before it stores any file.
 It derives each file's media type and byte count rather than trusting browser metadata.
 Conversation send routes reject request bodies above 20 MiB before JSON parsing. This
 ceiling leaves room for the base64 form of both file and image budgets plus JSON metadata.
+
+Video takes a separate bounded upload before message intake. The send carries a ready
+upload reference, which the shared converter adopts as an ordinary durable file piece.
+The destination lock checks the upload before conversation creation. See
+`video_uploads/` and [conversation attachments](../../../docs/conversation-system.md)
+for the transfer, retention, quota, and pending-send rules.
 
 The durable message stores a managed file id, the original file name, the canonical media
 type, and the byte count. Hermes receives an ACP resource link. Codex and Claude receive

@@ -607,6 +607,7 @@
             bind:selectedPastConversationId
             readOnly={selectedPastConversationId !== null}
             persistenceKey={`owner:ticket:${detail.id}`}
+            uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             bind:backends={conversationBackends}

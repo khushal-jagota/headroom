@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
@@ -79,6 +80,8 @@
     viewAnchor = $bindable(null),
     transcriptVisible = true,
     draftKey,
+    uploadDestination = null,
+    reconcileLocalSend,
     transcriptLoading = false,
     onSend,
     onStop,
@@ -98,6 +101,8 @@
     viewAnchor?: ViewReaderAnchor | null;
     transcriptVisible?: boolean;
     draftKey: string;
+    uploadDestination?: UploadDestination | null;
+    reconcileLocalSend?: (messageId: string) => Promise<boolean>;
     transcriptLoading?: boolean;
     conversationId: string;
     roleLabel?: "Worker" | "Manager" | "Chief";
@@ -170,7 +175,8 @@
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
-      picked: RunValues
+      picked: RunValues,
+      context?: ComposerSendContext
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
@@ -522,6 +528,8 @@
   {:else}
     <ConversationComposer
       {draftKey}
+      {uploadDestination}
+      {reconcileLocalSend}
       conversationId={conversationExists ? conversationId : null}
       {backendKey}
       {conversationExists}
