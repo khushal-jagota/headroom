@@ -52,6 +52,7 @@ from planner.executor.contracts import (
     ChildCommand,
     CommandOutcome,
     EnvelopeKind,
+    ExecutorIdentity,
     SourceRetirementRequest,
     WireMessage,
     WireMessageKind,
@@ -111,7 +112,9 @@ class _MoveCatalogObserver(ScriptedCatalogObserver):
             await super().capture_context(backend_key, workspace=workspace),
             context_ref=f"move-fixture-{self.destination.value}",
             destination=self.destination,
-            executor_identity=IDENTITY if self.destination is TicketLocale.macos else None,
+            executor_identity=self.executor_identity
+            if self.destination is TicketLocale.macos
+            else None,
         )
         self.contexts.append(result)
         return result
@@ -159,14 +162,14 @@ async def _wait_for_actual_stop(moving: asyncio.Task[Ticket], began: asyncio.Eve
         await asyncio.gather(waiting, return_exceptions=True)
 
 
-def endpoint(conn: Connection) -> ExecutorEndpoint:
+def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> ExecutorEndpoint:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
     result = ExecutorEndpoint(path, cast(Clock, SimpleNamespace()))
-    result.identity = IDENTITY
+    result.identity = identity
     result.writer = cast(asyncio.StreamWriter, Writer())
     result.ready = True
-    result.store.begin_connection(IDENTITY, 1)
-    result.store.mark_ready(IDENTITY, 2)
+    result.store.begin_connection(identity, 1)
+    result.store.mark_ready(identity, 2)
     return result
 
 
@@ -311,8 +314,10 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
         from planner.runtime import conversation_start
 
         monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
-        remote = endpoint(tmp_db)
-        native_observer = _MoveCatalogObserver(TicketLocale.macos)
+        # Admission uses the strict wire identity parser, unlike retirement-only fixtures.
+        identity = replace(IDENTITY, executor_incarnation="11111111-1111-4111-8111-111111111111")
+        remote = endpoint(tmp_db, identity=identity)
+        native_observer = _MoveCatalogObserver(TicketLocale.macos, identity=identity)
         h = _move_harness(Path(remote.db_path), remote=remote, native=native_observer)
 
         async def observe_catalog(
@@ -321,7 +326,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
             attempt_id: str,
             deadline: float | None = None,
         ) -> CatalogObservation:
-            assert request.expected_context.executor_identity == IDENTITY
+            assert request.expected_context.executor_identity == identity
             return await native_observer.observe(
                 request.backend_key,
                 workspace=request.expected_context.workspace,
@@ -351,7 +356,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
 
         registry = NativeChildRegistry(
             paths=ExecutorPaths(tmp_path / "executor"),
-            incarnation=IDENTITY.executor_incarnation,
+            incarnation=identity.executor_incarnation,
             spool=FilesystemSpool(tmp_path / "spool"),
             factory=native_factory,
             admission_observer=native_observer,
@@ -368,7 +373,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
             assert not tmp_db.in_transaction
             assert kind is WireMessageKind.source_retire
             req = TypeAdapter(SourceRetirementRequest).validate_python(payload)
-            result = await registry.retire_source(str(len(registry._retirements)), req, IDENTITY)
+            result = await registry.retire_source(str(len(registry._retirements)), req, identity)
             return WireMessage(WireMessageKind.source_retired, "move", as_object(result))
 
         monkeypatch.setattr(remote, "_request", request)
@@ -377,7 +382,7 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
 
         async def drain_events() -> None:
             for envelope in registry.spool.pending():
-                receipt = await remote.accept_envelope(envelope, IDENTITY)
+                receipt = await remote.accept_envelope(envelope, identity)
                 registry.spool.acknowledge(receipt)
                 if envelope.kind is EnvelopeKind.command_outcome:
                     registry.confirm_command(str(envelope.payload["command_id"]))
@@ -452,13 +457,13 @@ def test_both_directions_and_return_to_mac_use_fresh_children_preserve_posture_a
             # An explicit fresh source proof can confirm stop; clean the fake native child.
             native.stop_raises_something_unnamed = False
             req = SourceRetirementRequest(
-                IDENTITY,
+                identity,
                 t.id,
                 "c_move",
-                remote.store.assigned_ticket_children(t.id, IDENTITY.executor_incarnation),
+                remote.store.assigned_ticket_children(t.id, identity.executor_incarnation),
             )
             assert (
-                await registry.retire_source("cleanup-proof", req, IDENTITY)
+                await registry.retire_source("cleanup-proof", req, identity)
             ).result.disposition is MoveRetirementDisposition.retired
             state.child = None
             await h.system.shutdown()
@@ -725,7 +730,9 @@ def test_confirmed_local_stop_then_hash_conflict_keeps_locale_and_can_restart_so
     asyncio.run(run())
 
 
-def test_move_link_fence_serializes_send_worker_and_reset(tmp_db: Connection) -> None:
+def test_move_link_fence_serializes_send_worker_and_reset(
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def run() -> None:
         from planner.runtime.conversation_start import (
             conversation_link_lock,
@@ -763,9 +770,33 @@ def test_move_link_fence_serializes_send_worker_and_reset(tmp_db: Connection) ->
             async with conversation_link_lock(f"ticket:{t.id}"):
                 entered.append("send")
 
+        worker_connections: list[Connection] = []
+        claims: list[str] = []
+        original_read = data.read_ticket
+        original_claim = data.claim_ticket_for_worker_step
+
         def worker_db() -> Connection:
-            entered.append("worker")
-            return connect(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+            connection = connect(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+            worker_connections.append(connection)
+            return connection
+
+        def observe_read(connection: Connection, ticket_id: str) -> Ticket:
+            if any(connection is owned for owned in worker_connections) and "worker" not in entered:
+                entered.append("worker")
+            return original_read(connection, ticket_id)
+
+        def observe_claim(
+            connection: Connection,
+            ticket_id: str,
+            *,
+            readiness_check: data._WorkerStepReadinessCheck,
+            now: int,
+        ) -> Ticket | None:
+            claims.append(ticket_id)
+            return original_claim(connection, ticket_id, readiness_check=readiness_check, now=now)
+
+        monkeypatch.setattr(data, "read_ticket", observe_read)
+        monkeypatch.setattr(data, "claim_ticket_for_worker_step", observe_claim)
 
         sending = asyncio.create_task(send())
         worker = asyncio.create_task(
@@ -782,7 +813,12 @@ def test_move_link_fence_serializes_send_worker_and_reset(tmp_db: Connection) ->
         scheduling = asyncio.Event()
         asyncio.get_running_loop().call_soon(scheduling.set)
         await scheduling.wait()
+        # Opening a connection precedes the link lock; canonical reads and claims do not.
+        assert len(worker_connections) == 1
         assert entered == [] and not sending.done() and not worker.done() and not resetting.done()
+        assert claims == []
+        assert data.read_ticket(tmp_db, t.id).worker_step_claim is t.worker_step_claim
+        assert backend.session_starts == 1 and backend.stops == 0
         backend.stops_wait_for_release.set()
         await moving
         await asyncio.gather(sending, worker, resetting)
