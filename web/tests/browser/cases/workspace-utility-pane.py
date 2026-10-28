@@ -1617,8 +1617,8 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         worker["recap"] = "Initial recap"
         page.mouse.move(1200, 650)
         page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
-        expect(row).to_be_visible()
         refresh()
+        expect(row).to_be_visible()
         row.evaluate("node => node.style.marginTop=''")
         page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
         if lower:
