@@ -20,6 +20,10 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+SCENARIO_SELECTORS = (
+    "CONVERSATION_SETTLED_CASE", "CONVERSATION_LATEST_CASE",
+    "CONVERSATION_SCROLL_CASE", "PANELS_CONVERSATION_MENU_ONLY",
+)
 SUITES = (
     "pytest unit at requested source",
     "pytest integration at requested source",
@@ -134,6 +138,19 @@ test('real runtime proof',()=>{const value:number=2;expect(value+2).toBe(4)});
     for name in ("browser/run.mjs", "browser/execute.py", "browser/contracts.mjs",
                  "support/scratch.mjs"):
         write(web / "tests" / name, (ROOT / "web/tests" / name).read_text())
+    # Requested source predates selector admission. The control checkout must
+    # enforce its rule without importing a new export from this candidate.
+    contracts = web / "tests/browser/contracts.mjs"
+    contracts.write_text('import assert from "node:assert/strict";\n\n'
+                         + "export function selectedEntries" + contracts.read_text().split(
+                             "export function selectedEntries", 1)[1])
+    runner = web / "tests/browser/run.mjs"
+    runner.write_text(
+        "import {writeFileSync as markExecution} from 'node:fs';\n"
+        "markExecution(process.env.GATE_RUNNER_MARKER, 'requested runner executed');\n"
+        + runner.read_text().replace("assertCompleteCaseEnvironment, ", "").replace(
+            "    assertCompleteCaseEnvironment(process.env);\n", "")
+    )
     catalog = {"schema": 1, "entries": [{"id": "gate", "path": "web/tests/gate-browser.test.mjs",
                                           "cases": ["gate-case"]}]}
     write(web / "tests/browser/catalog.json", json.dumps(catalog))
@@ -181,7 +198,8 @@ await run(['gate']);
     ).strip()
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("PLAN_", "PANELS_REAL_"))
-                   and key not in ("HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR")}
+                   and key not in ("HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR",
+                                   *SCENARIO_SELECTORS)}
     environment.update({
         "PANELS_CANDIDATE_SOURCE": str(source), "PANELS_GATE_DIR": str(gate),
         "PANELS_REPORT_DIR": str(reports), "PANELS_CODEX_TOOLS": str(temporary / "tools"),
@@ -190,6 +208,7 @@ await run(['gate']);
         "PYTHONPATH": str(source / "src"), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
         "GATE_PROTECTED_MARKER": str(shadow / "marker"),
         "GATE_LEGACY_MARKER": str(gate / "legacy-route"),
+        "GATE_RUNNER_MARKER": str(gate / "requested-runner"),
         # Deliberately poison these inputs: the workflow must scrub them itself.
         "PLAN_DB_PATH": "/never-use-production", "PANELS_REAL_CLAUDE_TESTS": "1",
     })
@@ -220,6 +239,45 @@ def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
     assert Path(gate.environment["GATE_PROTECTED_MARKER"]).read_text() == "suite wrote here"
     assert (gate.gate / "artifact-shadow/marker").read_text() == "browser wrote here"
     assert not Path(gate.environment["GATE_LEGACY_MARKER"]).exists()
+    assert Path(gate.environment["GATE_RUNNER_MARKER"]).exists()
+    assert "assertCompleteCaseEnvironment" not in (
+        gate.source / "web/tests/browser/contracts.mjs"
+    ).read_text()
+
+    # A prior passed receipt must not rescue selector refusal. Both routes stop
+    # before requested JavaScript executes, including old shared source above.
+    receipt_path = gate.gate / "reports/browser.json"
+    passed_receipt = receipt_path.read_bytes()
+    assert json.loads(passed_receipt)["outcome"] == "passed"
+    for browser_format in ("shared-v1", "legacy"):
+        gate.selection["browser_format"] = browser_format
+        for key in SCENARIO_SELECTORS:
+            for value in ("private-value", "0", " "):
+                for marker in ("GATE_LEGACY_MARKER", "GATE_RUNNER_MARKER"):
+                    Path(gate.environment[marker]).unlink(missing_ok=True)
+                gate.environment[key] = value
+                try:
+                    result = gate.run(SUITES[-1])
+                    assert result.returncode != 0, result.stdout + result.stderr
+                    assert f"scenario selector: {key}" in result.stderr
+                    assert "private-value" not in result.stderr
+                    assert "ERR_MODULE_NOT_FOUND" not in result.stderr
+                    assert not Path(gate.environment["GATE_LEGACY_MARKER"]).exists()
+                    assert not Path(gate.environment["GATE_RUNNER_MARKER"]).exists()
+                    assert receipt_path.read_bytes() == passed_receipt
+                finally:
+                    gate.environment.pop(key)
+    gate.selection["browser_format"] = "shared-v1"
+    selected_browser = gate.selection["browser"]
+    gate.selection["browser"] = []
+    gate.environment[SCENARIO_SELECTORS[0]] = "private-value"
+    try:
+        result = gate.run(SUITES[-1])
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not Path(gate.environment["GATE_RUNNER_MARKER"]).exists()
+    finally:
+        gate.selection["browser"] = selected_browser
+        gate.environment.pop(SCENARIO_SELECTORS[0])
 
     for fault, expected in (
         ("missing-report", "No such file"),
@@ -254,10 +312,13 @@ def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
 
     # Old requested source explicitly selects its original exit-code route.
     gate.selection["browser_format"] = "legacy"
+    gate.environment.update(dict.fromkeys(SCENARIO_SELECTORS, ""))
     try:
         result = gate.run(SUITES[-1])
         assert result.returncode == 0, result.stdout + result.stderr
         assert Path(gate.environment["GATE_LEGACY_MARKER"]).read_text() == "legacy route"
     finally:
         gate.selection["browser_format"] = "shared-v1"
+        for key in SCENARIO_SELECTORS:
+            gate.environment.pop(key)
     print(f"Real deployment command proof: {time.monotonic() - started:.2f}s")

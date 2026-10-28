@@ -10,7 +10,7 @@ import { build } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { markdownWorkerPlugins } from "../../build/markdown-worker.mjs";
 import { scratchDirectory, ownedByProcess } from "../support/scratch.mjs";
-import { selectedEntries, validateCompanion } from "./contracts.mjs";
+import { assertCompleteCaseEnvironment, selectedEntries, validateCompanion } from "./contracts.mjs";
 
 const webRoot = fileURLToPath(new URL("../../", import.meta.url));
 const repositoryRoot = dirname(webRoot.replace(/\/$/, ""));
@@ -45,6 +45,7 @@ export async function run(selections = [], options = {}) {
   const receipt = {outcome: "failed", cases: [], companion: null};
   try {
     entries = selectedEntries(catalog, selections);
+    assertCompleteCaseEnvironment(process.env);
     requiredCompanions = [...new Set(entries.flatMap(entry => entry.companions || []))];
     return await runSelected(entries, options, receipt, requiredCompanions);
   } catch (error) {
