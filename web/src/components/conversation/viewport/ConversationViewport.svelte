@@ -594,8 +594,7 @@
       const bounds = released.getBoundingClientRect();
       if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) return false;
     }
-    return [...contentElement.querySelectorAll('[aria-busy="true"], [data-markdown-rendering]')].every(node =>
-      node.closest('[data-visible-content-state="released"], [data-visible-content-state="retained"]') !== null);
+    return presentationReady(contentElement);
   }
 
   function landTheOpen(thread: HTMLDivElement): void {
