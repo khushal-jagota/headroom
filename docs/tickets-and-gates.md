@@ -319,20 +319,17 @@ decide: that is the one rule, in `authority.md`, and anyone standing above the T
 decide a proposal whoever holds it.
 
 The holder is a full principal kind and ID, not a display label or current conversation.
-A Ticket cannot hold its own ceiling: its Worker is the proposal author, so addressing a
-proposal to itself addresses it to nobody. Holder Tickets and Managers must exist
-when the ceiling is written.
+Only the user or the Ticket's direct manager may hold its review. For a Chief-assigned
+Ticket, that direct manager is Chief. An ordinary Manager must exist and match the
+Ticket's assignment. A Ticket cannot hold a review. These limits address reviews;
+general authority to act on the Ticket remains unchanged. See [authority](authority.md).
 
-**The holder must stand above the Ticket.** An address that cannot decide is not an
-address. Authority comes from the Ticket's current Manager, so moving a Ticket to
-another Manager — or out of every Manager — can leave the Manager that holds
-the ceiling below it.
-When a move does that, the ceiling returns to the user in the same transaction. The user stands above
-everything, so the ceiling always has somewhere valid to go, and only the user or the
-Chief can move a Ticket between Managers in the first place. It is the same question on
-every move, whether or not a proposal is parked right now: a wrong address is wrong before
-anything arrives at it. A holder that still stands above the moved Ticket keeps the
-ceiling. A Ticket that was already stranded stays as it is until something moves it.
+Moving a Ticket can leave its holder ineligible: its old Manager no longer owns the
+work, or Chief now answers for work assigned to an ordinary Manager. When a move does
+that, the ceiling returns to the user in the same transaction. It takes the same check
+on every move, whether or not a proposal is parked. An eligible holder keeps the ceiling.
+Existing records remain readable, including completed history; a live invalid address
+needs an ordinary authorized holder edit if no assignment move will release it.
 
 Below the ceiling, any Stage's answer settles the field and the ticket
 advances, and no proposal is recorded at all. At the ceiling it files a proposal, and the
@@ -357,10 +354,11 @@ That answer follows the same ceiling rule: it parks at the default ceiling and
 settles below an explicitly higher ceiling.
 
 A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
-The same breath names who holds it, with `ticket create --holder`. A creator can name any
-holder, including the user, without holding anything itself — that is how a Ticket is
-opened for somebody else to review. Name nobody and the creator holds it, which is the
-ordinary case: a Manager that opens a Ticket holds it.
+The same breath names who holds it, with `ticket create --holder`. An authorized creator
+can name the user or the Ticket's direct manager without holding anything itself. Name
+nobody and the creator holds it only if eligible. Otherwise creation refuses and asks
+for an eligible explicit holder. Chief creating under an ordinary Manager must name
+that Manager or the user. A Manager creating its own Ticket can keep the default.
 Whoever has authority to set the ceiling states it with the Ticket. This avoids a
 second approval for work the user already authorized.
 
@@ -368,8 +366,8 @@ The creation receipt explains this grant in plain words. It lists only the Stage
 remain unsupervised and the first review gate with its recipient.
 If no review gate remains, the receipt opens with:
 "Nothing in this grant ever parks for review." Stage ownership still
-controls user participation. A Ticket holder routes a parked proposal to the owner, and the
-receipt names that actual destination. The receipt changes no ceiling or holder rule.
+controls user participation. Historical Ticket holders still route parked proposals to
+the owner; new holders must satisfy the review rule.
 See `cli.md` for the JSON input and effort choice at creation.
 
 _Code paths:_ `src/planner/tickets/data.py` (creation and supplied Brief text),
@@ -416,16 +414,23 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 ## The approval gate and Ticket leash
 
 Anyone standing above the Ticket can decide a parked proposal, whoever it is addressed
-to. Whenever they approve a step, they must name the next ceiling and holder. The system
-refuses an approval that omits either. Approving is a ceiling-setting moment like any
-other, so the approve row carries the same control the Ticket page does, and the approver
-can hand the Ticket onward rather than only keeping it.
+to. Every acceptance request includes the next ceiling and holder. The server refuses
+a request that omits either. At earlier gates, the reader chooses both through the
+approval control and can hand the Ticket onward. At the final gate, the interface
+supplies both values automatically.
 
-The direct Approve entry starts with the immediate next valid Stage and the owner
-selected. The waiting card uses the same editable stage/reviewer picker as the
-running card. Choosing scope first shows the approval or reroute consequence before
-commit. A new proposal revision restores the draft. Unrelated refreshes retain
-proposal edits and unfinished picker choices.
+At earlier gates, Approve opens the stage/reviewer picker with the immediate next
+valid Stage and the owner selected. When the actual next Stage is terminal in the
+Worker type manifest, Approve immediately accepts the visible proposal with no
+further ceiling (`none`) and the saved holder. Local edits and the visible proposal
+revision go through the same acceptance transaction. There is no extra choice.
+The reviewer heading still lets the reader reroute the final proposal without
+approving it.
+
+The waiting card shares the running card's editable stage/reviewer picker. Choosing
+scope first shows the approval or reroute consequence before commit. A new proposal
+revision restores the draft. Unrelated refreshes retain proposal edits and unfinished
+picker choices.
 
 The ceiling sentence states the saved stage and reviewer and opens both choices
 directly with one click. Controls use User,
@@ -556,4 +561,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-10-18. Brief creation and ceiling explanation checked against code: 2026-10-19._
+_Last verified: 2026-10-28._

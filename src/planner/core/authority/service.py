@@ -28,6 +28,9 @@ from planner.core.authority.logic import (
     stands_above,
     stands_above_or_is_self,
 )
+from planner.core.authority.logic import (
+    can_hold_review as can_hold_review_for_assignment,
+)
 from planner.core.contracts import (
     ErrorCode,
     PlannerError,
@@ -107,6 +110,20 @@ def chain_facts(conn: sqlite3.Connection, caller: Principal, target: Target) -> 
 
 def is_above(conn: sqlite3.Connection, caller: Principal, target: Target) -> bool:
     return stands_above(caller, target, chain_facts(conn, caller, target))
+
+
+def can_hold_review(conn: sqlite3.Connection, holder: Principal, ticket_id: str) -> bool:
+    """Ask the review-holder rule about a Ticket's stored assignment."""
+    row = conn.execute(
+        "SELECT manager_kind, manager_id FROM tickets WHERE id = ?", (ticket_id,)
+    ).fetchone()
+    if row is None:
+        return False
+    return can_hold_review_for_assignment(
+        holder,
+        manager_kind=str(row["manager_kind"]),
+        manager_id=None if row["manager_id"] is None else str(row["manager_id"]),
+    )
 
 
 def is_above_or_self(conn: sqlite3.Connection, caller: Principal, target: Target) -> bool:
@@ -230,6 +247,7 @@ def refuse_manager_re_parenting(caller: Principal, ticket_id: str) -> None:
 
 
 __all__ = [
+    "can_hold_review",
     "chain_facts",
     "is_above",
     "is_above_or_self",

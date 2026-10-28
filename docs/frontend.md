@@ -254,7 +254,9 @@ One screen per part of the system:
   one editable ceiling/reviewer picker that opens directly with one click. A ceiling choice followed by a reviewer choice completes the gesture. An explicit raise past the visible pending stage accepts that exact
   submission through atomic Accept, with the selected onward ceiling and reviewer.
   Same/lower scope preserves the proposal. Reviewer-only changes reroute it without
-  approval. Approve is a direct entry to the same picker and approval action. Send it back opens
+  approval. At an earlier gate, Approve opens the same picker and approval action.
+  At the last gate, Approve immediately accepts the visible proposal, including local
+  edits, with no further ceiling and the saved reviewer. It opens no picker. Send it back opens
   a note and uses the existing revision action. Pristine Kickoff keeps the existing
   Review exception: edit its proposal before approval instead of sending revision
   guidance to a Worker that does not yet have a conversation. A running step states its approved
@@ -563,36 +565,35 @@ or locale produces identical arbitrary-text ordering.
   stays an ordinary link: a same-page anchor is still an anchor, one
   of this app's own routes still navigates inside the app, and an off-site address still
   goes off-site. An image sitting inside such a link is left alone with it.
-  A preview shows the thing itself, softly rounded, with nothing drawn around it. An image
-  is an image, SVG among them; a video is its own player; audio is its own control. None of
-  the three carries a title, a caption, or anything to click.
-  Markdown and HTML are the only two that keep a header, and the header sits above the
-  document rather than around it: a strip curving over the top, carrying one accent-coloured
-  link that reads "Open plan.md", with the document scrolling underneath it. Markdown renders
-  inline through the same markdown renderer, including nested managed links until a fixed
-  depth or self-link bound turns them into that same "Open" line on its own. HTML renders in
-  a fetched `srcdoc` iframe whose sandbox permits the file's scripts but does not grant
-  same-origin or other host-page privileges. Before HTML enters either iframe lifecycle, the
-  shared preview helper anchors the document's base URL to that HTML file's absolute managed
-  URL, so relative stylesheet, script, image, and root-relative managed-file
-  references resolve as they would if the file were opened from its `/files/...` URL.
-  Every other kind is a line of text in the accent colour, drawn where it was written: a
-  managed file of no recognized kind is "Download archive.bin", and a bare URL handed to the
-  component by a caller with nothing else to show — an agent's resource link — is "Open" that
-  link, unless the address names an image, video, or audio file, in which case it is shown
-  like any other. A markdown or HTML file that turns out not to be there is also a line,
-  saying what the fetch found; nothing else is fetched, so nothing else can say. One file
-  extension names one kind, so no file is offered as two.
-  The header link opens the Panels preview route, whose targets are
-  `#/preview?source=ticket&ticket=<id>&path=<path>`. Wherever that document is drawn, HTML
-  is fetched and given to a sandboxed iframe through a short-lived Blob URL, revoked when
-  the file changes or unmounts, and fills the space it is given. Markdown is fetched as
-  source and rendered directly through `MarkdownBlock`, so managed links keep the same
-  nested-preview and self-link bounds as embedded Markdown, with no header of its own.
-  ACP message and tool links also use the shared generic/Ticket preview adapter.
-  Conversation images and files use conversation-owned managed bytes. Images render
-  inline. Supported documents and data files render as named cards with preview and
-  download actions. PDF uses a document frame. Text and data use a bounded text preview.
+  Embedded documents share a rounded card with a recessed content plane and an identity
+  band below it. The band carries the file name, kind, and any size the host already knows.
+  Conversation documents also carry a separate Download link. The name link covers the
+  card. HTML and PDF keep their own frame interactions, so their name link covers only
+  the band. Markdown and text clip without an internal scrollbar. A dissolve appears
+  only where the content exceeds the window. The skeleton retains the same band and
+  uses its own dissolve. The card stays visible on phones with smaller padding.
+  Markdown uses the same renderer and retains its nested-preview and self-link bounds.
+  Its embedded body is inert beneath the name link, so the keyboard opens the file
+  through its name instead of entering clipped content.
+  Images retain their own shape, with the larger preview radius and the existing chat
+  height cap. Video starts as an empty frame with a Play button. No poster or duration
+  is invented, and no media request starts before Play. Play mounts the native video
+  controls. Audio uses a custom Play/Pause button and a seek slider with pointer and
+  keyboard controls. Its duration stays unknown until playback supplies metadata.
+  Video and audio keep their name link above the control, without an identity band.
+  Download-only files, external links, and Markdown at its expansion bound remain lines.
+  Errors include the file name and message. Existing visibility admission, fetch
+  cancellation, path checks, and test hooks apply to every embedded preview.
+  The name link opens the Panels preview route, whose targets are
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. Full-size rendering remains separate.
+  HTML uses a sandboxed iframe through a short-lived Blob URL, revoked when the file
+  changes or unmounts. The sandbox allows scripts without same-origin privileges.
+  The shared helper anchors the document's base URL to the managed HTML URL, so sibling
+  assets resolve relative to that file. Full-size Markdown renders directly through
+  `MarkdownBlock`, with the same nested-preview bounds and no preview identity band.
+  ACP message and tool links use the shared generic/Ticket preview adapter.
+  Conversation files use conversation-owned managed bytes. Their existing MIME video
+  branch shares the embedded video control without changing the file resolver.
 - **Wherever a conversation is shown, that link opens the file in place.** A Ticket
   screen, a Manager's pane and the Chief's pane each catch the click across the whole
   pane, the conversation included. A managed file clicked in any of them does not go to
@@ -663,8 +664,11 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **WorkerProposalCard** — the single approval card on both the Ticket and Review
   screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
-  opens the existing compact ceiling/reviewer rail directly; there is no adjacent
-  ceiling control. The reviewer heading opens the same picker for reviewer-only
+  opens the compact ceiling/reviewer rail at earlier gates. When the manifest marks
+  the actual next Stage terminal, it directly approves with no further ceiling and
+  the saved reviewer. The final Approve is an ordinary button: Enter and Space
+  activate it; arrow keys open nothing. There is no adjacent ceiling control.
+  The reviewer heading opens the same picker for reviewer-only
   routing. A Ticket reviewer is labelled Worker, distinct from its assigned Manager.
   A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
@@ -765,15 +769,13 @@ hand-rolling the same shapes per screen. Each does one job:
   The newest line has a 12px bottom gap. A held top line sits 32px below the edge,
   clear of the 20px fade. The bottom fade appears only when content remains below.
 
-  Cold entry captures the owner-read watermark before the read credit advances.
-  The first visible unread message is admitted through bounded pages and placed before
-  the transcript appears. The existing busy region stays mounted. Failure exposes
-  an error and Retry, rather than an indefinite hidden transcript. An existing
-  anchor survives restoration. With nothing unread, entry uses newest. A fresh open
-  or lens switch commits its position before the transcript appears. Deferred body
-  and Markdown presentation must be ready at the destination. Later layout changes
-  retain the bottom or held message without animated catch-up.
-  A parked unread target survives expansion and arrivals until reader navigation.
+  A fresh conversation opens at the actual newest content. Live requests and the
+  owner-read watermark do not choose its destination. Entry commits its position
+  before the transcript appears. Deferred body and Markdown presentation must be
+  ready at the destination. Later layout changes retain the bottom without animated
+  catch-up. Reader navigation takes control, including while entry settles.
+  Saved text and row positions still restore on tab return and lens changes.
+  Connection failures expose an error and Retry in the existing busy region.
 
   Latest uses confirmed page admission and retains its reader identity through layout
   and focus. It returns focus to the Conversation region after its button disappears,
@@ -833,8 +835,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
-  leaves nothing behind, and only a completed pair reaches the Ticket. The running-step card keeps its own trigger. In a pending proposal, Approve and
-  the reviewer heading are the entry points to that same picker.
+  leaves nothing behind, and only a completed pair reaches the Ticket. The running-step card keeps its own trigger. In a pending proposal, the reviewer heading
+  opens that picker. Approve also opens it when the next Stage is not terminal.
 - **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.

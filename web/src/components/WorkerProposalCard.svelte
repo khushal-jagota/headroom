@@ -28,7 +28,8 @@
   let lastKey: string | null = null;
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
-  let identity = $derived([proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
+  let finalApproval = $derived(newStage !== null && lifecycle.stageIsTerminal[newStage] === true);
+  let identity = $derived([proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
   $effect(() => {
     if (identity === lastKey) return;
     lastKey = identity;
@@ -75,9 +76,9 @@
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="actions">
-    <button type="button" class="primary" data-accept aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls}
-      onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openApproval(event.currentTarget); } }} disabled={disabled || busy || resolved || !nextCeiling}
-      onclick={(event) => scopePicker?.openApproval(event.currentTarget)}>Approve</button>
+    <button type="button" class="primary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
+      onkeydown={(event) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget); } }} disabled={disabled || busy || resolved || !nextCeiling}
+      onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget)}>Approve</button>
     {#if proposal.field !== "brief"}
       <button type="button" class="ghost" data-send-back disabled={disabled || !canReturn || busy || resolved}
         onclick={() => { if (canReturn) returning = true; }}>Send it back</button>

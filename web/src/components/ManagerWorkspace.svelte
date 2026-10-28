@@ -283,6 +283,7 @@
         bind:conversationState
         conversationId={selectedConversationId}
         persistenceKey={`owner:sprint-item:${itemId}`}
+        uploadOwner={{kind:"manager",id:itemId}}
         readOnly={selectedPastConversationId !== null}
         bind:selectedPastConversationId
         label="Manager"

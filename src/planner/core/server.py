@@ -18,7 +18,9 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from planner.conversation.api import router as conversation_router
+from planner.conversation.api import (
+    router as conversation_router,
+)
 from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import ConversationBackendKey, ConversationSystem
@@ -28,6 +30,10 @@ from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddle
 from planner.conversation.usage.api import router as recorded_usage_router
 from planner.conversation.usage.pricing import UsagePricingService
 from planner.conversation.usage.service import RecordedUsageService
+from planner.conversation.video_uploads.api import create_router as create_video_upload_router
+from planner.conversation.video_uploads.config import CLEANUP_INTERVAL_SECONDS
+from planner.conversation.video_uploads.destinations import authorize_destination
+from planner.conversation.video_uploads.service import VideoUploadService
 from planner.conversation.views.api import router as conversation_views_router
 from planner.core import change_signal
 from planner.core.clock import Clock
@@ -171,11 +177,18 @@ def create_app(
 
         recovery_task: asyncio.Task[None] | None = None
         lifecycle_observer: asyncio.Task[None] | None = None
+        video_cleanup_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
+            if video_cleanup_task is not None:
+                video_cleanup_task.cancel()
+                try:
+                    await video_cleanup_task
+                except asyncio.CancelledError:
+                    pass
             if recovery_task is not None:
                 recovery_task.cancel()
                 try:
@@ -238,6 +251,8 @@ def create_app(
                 run_automatic_recovery(conversation.system, conversation.store)
             )
             app.state.conversation = conversation
+            await asyncio.to_thread(video_uploads.recover_and_cleanup)
+            video_cleanup_task = asyncio.create_task(_clean_video_uploads())
             # A test that drives workers wants a conversation system it can hold still, so it
             # passes one in. Nothing else does: production always runs the real one.
             app.state.conversation_system = (
@@ -278,9 +293,17 @@ def create_app(
                 loops.start(config.tick_seconds)
             yield
 
+    video_uploads = VideoUploadService(config.db_path)
+
+    async def _clean_video_uploads() -> None:
+        while True:
+            await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+            await asyncio.to_thread(video_uploads.recover_and_cleanup)
+
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
+    app.state.video_uploads = video_uploads
     app.add_middleware(
         NavigationCommandFenceMiddleware,
         conn_factory=conn_factory,
@@ -352,6 +375,14 @@ def create_app(
     include_router(scoped_navigation.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
+    include_router(
+        create_video_upload_router(
+            video_uploads,
+            lambda destination: authorize_destination(
+                destination, conn_factory=conn_factory, runtime=app.state.conversation
+            ),
+        )
+    )
     include_router(conversation_views_router, prefix="/api/conversation")
     include_router(recorded_usage_router, prefix="/api/conversation")
 

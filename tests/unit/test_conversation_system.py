@@ -3009,6 +3009,8 @@ def test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_deli
 ) -> None:
     from contextlib import closing
 
+    from fastapi import Request
+
     from planner.conversation.api import OwnerSendBody, SentTextPiece
     from planner.core.authctx import RequestContext
     from planner.core.clock import RealClock
@@ -3044,6 +3046,7 @@ def test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_deli
                     sender_message_id="bounded-queued",
                     owner_read_through_sequence=displayed,
                 ),
+                Request({"type": "http"}),
                 conn,
                 RequestContext(OWNER_PRINCIPAL),
                 RealClock(),

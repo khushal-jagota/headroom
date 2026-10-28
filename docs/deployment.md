@@ -13,6 +13,12 @@ Only `app` changes during deployment. `data` and `logs` remain in place through 
 changes, failed deployments, and code rollback. Serving, deployment, rollback, backup,
 and user-service control need no sudo.
 
+Video attachment requires `ffprobe` on the application host's executable path. Its absence
+leaves the application available but refuses new video uploads with a service error.
+The operator supplies that prerequisite before release. Video playback uses the original
+file, without a conversion service. See [conversation attachments](conversation-system.md)
+for storage limits, retention, and codec restrictions. Normal backups exclude these bytes.
+
 ## Recover an older database with cancelled Tickets
 
 An upgrade refuses an older database that contains cancelled Tickets or would produce
@@ -205,13 +211,17 @@ coverage selection, and sandbox isolation. The deployment gate needs its served 
 and isolated browser setup. A pull request cannot assume that production context.
 Agents still run focused checks before a push. Staging pushes do not start a suite workflow.
 
-Repository enforcement is a separate owner action. Until the owner activates the required
-check for both branches, a failed type check does not prevent merge. The settings request
-must use the exact context and app identity from a real pull request check. Its intended
-job name is `mypy (merged tree)`. A new commit on the target branch alone does not start this
-workflow. After the owner enables strict freshness, an advanced target requires an update
-to the pull request head and a fresh check of the proposed merge commit.
-The request adds no bypass actors or extra approval requirement.
+Repository auto-merge is disabled. The active staging ruleset requires a pull request
+and a successful `mypy (merged tree)` check before merge. Follow the merge procedure
+in AGENTS.md.
+
+Main has no ruleset, branch protection, or required check. The release procedure permits
+a staging-to-main pull request only when Khushal explicitly requests a release.
+The deployment workflow runs its own gates before deployment.
+
+Staging does not require strict freshness. A new commit on the target branch alone
+does not start this workflow. If the owner enables strict freshness, an advanced target
+requires an update to the pull request head and a fresh check of the proposed merge commit.
 
 If a required check never arrives or prevents a repair, the owner must change the
 repository ruleset through GitHub Settings, Rules, Rulesets. Correct its check context

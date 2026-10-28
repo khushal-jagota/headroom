@@ -98,12 +98,14 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - The worktree's database and other local state may remain for later use until
   Consequences.
 - At Consequences, push the Ticket branch and open an ordinary pull request into
-  `staging`. Write an ordinary note about the change. Enable auto-merge and verify
-  that the pull request merged. Then remove the Ticket's services, local runtime
+  `staging`. Write an ordinary note about the change. Wait for `mypy (merged tree)`
+  to pass, merge the pull request explicitly, and verify that it merged.
+  Then remove the Ticket's services, local runtime
   state, worktree, and branch. If an old direct push to `origin/staging` is rejected,
   use this pull request route. If GitHub refuses the merge because of conflicts,
   bring current `staging` into the Ticket branch. Resolve the conflicts, verify the
-  resulting revision, push the branch, and enable auto-merge again.
+  resulting revision, and push the branch. Wait for a fresh `mypy (merged tree)`
+  pass, merge the pull request explicitly, and verify that it merged.
 - Open a `staging` → `main` pull request only when the user explicitly requests a
   release. Deployment from `main` remains a later user action.
 

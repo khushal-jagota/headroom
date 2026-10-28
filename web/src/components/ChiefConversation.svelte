@@ -156,6 +156,7 @@
     bind:selectedPastConversationId
     readOnly={selectedPastConversationId !== null}
     persistenceKey="owner:chief"
+    uploadOwner={{kind:"chief",id:"chief"}}
     label="Chief of Staff"
     bind:backends
     startValues={startValues.data ?? null}

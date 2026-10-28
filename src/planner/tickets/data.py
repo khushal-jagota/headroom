@@ -22,6 +22,7 @@ from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.model_resolution.contracts import ModelResolutionUnavailable
 from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.core import authority, ticket_blocks
+from planner.core.authority.logic import can_hold_review
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
@@ -125,25 +126,21 @@ def _validate_ceiling_holder(
         )
 
 
-def _validate_explicit_ceiling_holder(
+def _validate_review_holder(
     conn: sqlite3.Connection,
     holder: Principal,
     *,
     ticket_id: str,
+    manager_kind: str,
     manager_id: str | None,
 ) -> None:
-    """Validate the explicitly selected address against the resulting assignment."""
+    """Validate a selected or default address against the resulting assignment."""
     _validate_ceiling_holder(conn, holder, ticket_id=ticket_id)
-    target = authority.ticket(ticket_id)
-    facts = replace(
-        authority.chain_facts(conn, holder, target),
-        target_parent_manager_id=manager_id,
-        target_is_itself_a_principal=True,
-    )
-    if not authority.stands_above(holder, target, facts):
+    if not can_hold_review(holder, manager_kind=manager_kind, manager_id=manager_id):
         raise PlannerError(
             ErrorCode.validation,
-            "ceiling holder must have authority to decide this Ticket",
+            "ceiling holder must be the user or the Ticket's direct manager; "
+            "name an eligible holder explicitly",
             {
                 "holder": {"kind": holder.kind.value, "id": holder.id},
                 "ticket_id": ticket_id,
@@ -1042,10 +1039,13 @@ def create_ticket(
             authority.require_above_a_ticket_being_created(
                 conn, principal, ticket_id=ticket_id, parent_manager_id=manager_id
             )
-        if stated_holder is not None:
-            _validate_explicit_ceiling_holder(
-                conn, stated_holder, ticket_id=ticket_id, manager_id=manager_id
-            )
+        _validate_review_holder(
+            conn,
+            ceiling_holder,
+            ticket_id=ticket_id,
+            manager_kind=manager_kind,
+            manager_id=manager_id,
+        )
         ceiling = (
             default_ceiling
             if stated_ceiling is None
@@ -1459,8 +1459,12 @@ def accept_proposal(
             worker_type_definition=worker_type_definition,
             approval=_explicit_approval(conn, principal),
         )
-        _validate_explicit_ceiling_holder(
-            conn, next_holder, ticket_id=ticket.id, manager_id=ticket.manager_id
+        _validate_review_holder(
+            conn,
+            next_holder,
+            ticket_id=ticket.id,
+            manager_kind=ticket.manager_kind,
+            manager_id=ticket.manager_id,
         )
         updated = _apply_decision(conn, ticket, decision, now)
         _give_back_worker_step_claim(conn, updated, now=now)
@@ -1685,17 +1689,11 @@ def _release_a_holder_the_move_left_below(
     *,
     now: int,
 ) -> None:
-    """Return the ceiling to Khushal when a move leaves its holder no longer above.
+    """Return the ceiling to Khushal when a move leaves its holder ineligible.
 
-    Authority is derived from the Ticket's current Manager and the ceiling holder is a
-    stored address, so a move can leave the two disagreeing: the Ticket goes on asking a
-    holder that every write door now refuses, and nothing says so. Khushal stands above
-    everything, so the ceiling always has somewhere valid to go, and only Khushal or the
-    Chief can make this move in the first place.
-
-    The rule is re-asked rather than restated. This does not test whether the holder was
-    the Manager just left: it asks whether the holder still stands above the Ticket as the
-    Ticket now is. A holder that does keeps the ceiling, whatever kind of thing it is.
+    The stored address is checked against the Ticket's new assignment using the review
+    rule, rather than general authority. This catches Chief as well as an old Manager
+    when a Ticket moves under another Manager. Khushal can always hold the review.
 
     Asked on every move, not only while a proposal is parked. A wrong address is wrong
     before anything arrives at it.
@@ -1706,7 +1704,7 @@ def _release_a_holder_the_move_left_below(
     # Read back rather than trust the Ticket loaded before the move: one edit can set the
     # holder and move the Manager together, and the holder that matters is the stored one.
     holder = _principal_from_json(str(row["ceiling_holder"]))
-    if authority.is_above(conn, holder, authority.ticket(ticket_id)):
+    if authority.can_hold_review(conn, holder, ticket_id):
         return
     conn.execute(
         "UPDATE tickets SET ceiling_holder = ?, updated_at = ? WHERE id = ?",
@@ -1903,10 +1901,11 @@ def edit_ticket(
 
         if "ceiling_holder" in edit:
             holder_decision = resolution.decide_set_ceiling_holder(ticket, edit["ceiling_holder"])
-            _validate_explicit_ceiling_holder(
+            _validate_review_holder(
                 conn,
                 holder_decision.ceiling_holder,
                 ticket_id=ticket.id,
+                manager_kind=manager_kind,
                 manager_id=manager_id,
             )
             if holder_decision.ceiling_holder != ticket.ceiling_holder:

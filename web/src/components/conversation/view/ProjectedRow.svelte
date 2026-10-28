@@ -24,7 +24,7 @@
   const presentationAttempt = $derived(reader.restorationAnchor?.key === item.key ? reader.restorationAttempt : 0);
   const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
   const row = $derived(body === null ? null : rowForBody(item, body));
-  $effect(() => { if (body !== null) { reader.entryBodyReady(item.key); reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); } if (error && reader.entryTarget?.key === item.key) reader.failEntry(); });
+  $effect(() => { if (body !== null) { reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); } });
   $effect(() => {
       if (item.body.kind === 'deferred' && body?.kind === 'turn_ended' && body.ending === 'completed' && body.automatic_compaction_result !== 'not_compacted')
           onEmptyEnding(item.body.reference);
