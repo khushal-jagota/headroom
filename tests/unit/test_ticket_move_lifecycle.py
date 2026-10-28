@@ -93,9 +93,14 @@ class _MoveCatalogObserver(ScriptedCatalogObserver):
     """Scoped metadata validation around the existing fake child transports."""
 
     def __init__(
-        self, destination: TicketLocale, native: _MoveCatalogObserver | None = None
+        self,
+        destination: TicketLocale,
+        native: _MoveCatalogObserver | None = None,
+        *,
+        identity: ExecutorIdentity = IDENTITY,
     ) -> None:
-        super().__init__(lambda: IDENTITY)
+        super().__init__(lambda: identity)
+        self.executor_identity = identity
         self.destination = destination
         self.native = native
         self.model = "test"
