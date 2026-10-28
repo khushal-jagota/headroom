@@ -2178,7 +2178,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
         resolved_model_id="fable",
         identity_preserving_launch_token="fable",
     )
-    source = ScopedCatalogue(observation((alias, concrete), launch=launch, stamp=stamp))
+    source = ScopedCatalogue(observation((alias,), launch=launch, stamp=stamp))
     service, _, path = setup(tmp_path, source)
     service._now = time.time
     harness = _Harness(path)
@@ -2214,6 +2214,13 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
                     )
                 conversation_id = first.conversation_id
                 assert conversation_id is not None
+            # The provider now advertises this exact token as concrete. Conflicting
+            # simultaneous alias/concrete rows are deliberately refused by the contract.
+            source.value = replace(
+                source.value,
+                rows=(concrete,),
+                evidence=replace(source.value.evidence, observation_revision="2"),
+            )
             body = OwnerSendBody(
                 content=[SentTextPiece(piece="text", text="Explicit concrete choice")],
                 model="fable",
@@ -2234,6 +2241,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
             )
             assert response["fate"] == ("started" if initial else "queued")
             if not initial:
+                assert conversation_id is not None
                 replay = await ticket_api.send_to_ticket_conversation(
                     ticket.id,
                     body,
