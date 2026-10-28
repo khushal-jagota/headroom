@@ -53,7 +53,7 @@ from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
-from planner.executor.configuration import ExecutorPaths
+from planner.executor.configuration import PROTOCOL_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AskKind,
@@ -2949,7 +2949,7 @@ def test_historical_inventory_confirmation_unblocks_real_mac_replay(
         finally:
             connection.close()
         endpoint = ExecutorEndpoint(db_path, RealClock())
-        current = ExecutorIdentity(8, "a" * 40, 2, "current", 2)
+        current = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "current", 2)
         old = ChildReference("historical", "old-child", "old-conversation")
         command = ChildCommand("old-stop", old, ChildOperation.stop, None, {})
         outcome = CommandOutcome(

@@ -481,7 +481,7 @@ class ExecutorEndpoint:
             )
             if state.response not in done:
                 raise RemoteInputTransferFailed("input transfer deadline expired")
-            response = cast(WireMessage, state.response.result())
+            response = state.response.result()
             if not state.deadline.active():
                 raise RemoteInputTransferFailed("input transfer deadline expired")
             if response.kind is not WireMessageKind.file_accepted or response.payload != _object(
