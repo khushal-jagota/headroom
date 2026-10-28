@@ -1490,6 +1490,12 @@ async def send_to_chief_conversation(
     does not pass it on leaves that browser drawing a message the record already has.
     """
     require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
+    if body.selection_kind is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "explicit selection_kind requires a Ticket launch context",
+            {},
+        )
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
     admission = video_send_admission(

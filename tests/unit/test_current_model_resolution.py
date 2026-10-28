@@ -2234,6 +2234,28 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
             )
             assert response["fate"] == ("started" if initial else "queued")
             if not initial:
+                replay = await ticket_api.send_to_ticket_conversation(
+                    ticket.id,
+                    body,
+                    Request({"type": "http", "app": FastAPI()}),
+                    conn,
+                    RequestContext(OWNER_PRINCIPAL),
+                    TestClock(datetime.fromtimestamp(stamp, UTC)),
+                    harness.system,
+                    harness.message_files,
+                )
+                assert replay["fate"] == "queued"
+                with pytest.raises(ValueError, match="different message"):
+                    await ticket_api.send_to_ticket_conversation(
+                        ticket.id,
+                        body.model_copy(update={"selection_kind": SelectionKind.provider_alias}),
+                        Request({"type": "http", "app": FastAPI()}),
+                        conn,
+                        RequestContext(OWNER_PRINCIPAL),
+                        TestClock(datetime.fromtimestamp(stamp, UTC)),
+                        harness.system,
+                        harness.message_files,
+                    )
                 state = await harness.system._conversation_state(conversation_id)
                 assert state is not None
                 held = encode_value(state.held_prompts[0])
@@ -2262,7 +2284,26 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
                 # The old absent field retains its historical semantics on new readers.
                 held.pop("selection_kind")
                 assert TypeAdapter(_HeldPrompt).validate_python(held).selection_kind is None
-                await harness.complete_turn(conversation_id)
+                from planner.conversation.contracts import (
+                    HeldPromptPromotionMode,
+                    PromptDeliveryQueued,
+                    PromptDeliveryStarted,
+                )
+
+                held_id = restored.held_prompt_id
+                retained = await harness.system.promote_held_prompt(
+                    conversation_id,
+                    held_id,
+                    HeldPromptPromotionMode.steer,
+                )
+                assert isinstance(retained, PromptDeliveryQueued)
+                assert state.held_prompts[0] == restored
+                promoted = await harness.system.promote_held_prompt(
+                    conversation_id,
+                    held_id,
+                    HeldPromptPromotionMode.send_now,
+                )
+                assert isinstance(promoted, PromptDeliveryStarted)
             selection = read_launch_selection(conn, ticket.id)
             assert selection.selection_kind is SelectionKind.concrete
             assert selection.submitted_token == "fable"

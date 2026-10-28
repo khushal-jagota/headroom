@@ -678,6 +678,13 @@ class InMemoryConversationSystem:
         if position is None:
             return None
         held = state.held_prompts[position]
+        if mode is HeldPromptPromotionMode.steer and (
+            held.model_change is not None
+            or held.reasoning_effort_change is not None
+            or held.reasoning_effort_is_set
+            or held.selection_kind is not None
+        ):
+            return PromptDeliveryQueued(queue_position=position + 1)
         del state.held_prompts[position]
 
         fate: HeldPromptPromotionFate
@@ -691,6 +698,7 @@ class InMemoryConversationSystem:
                 PromptDeliveryMode.send_now,
                 held.model_change,
                 held.reasoning_effort_change,
+                recorded_messages=(held,),
                 sender_message_id=held.sender_message_id,
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                 sender=held.sender,

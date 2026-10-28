@@ -827,6 +827,10 @@ class SqliteProcessConversationSystem:
                                 or held.sender != sender
                                 or held.recipient != recipient
                                 or held.recovery_references != recovery_references
+                                or held.model_change != model_change
+                                or held.reasoning_effort_change != reasoning_effort_change
+                                or held.reasoning_effort_is_set != effort_presence_is_set()
+                                or held.selection_kind != authored_selection_kind()
                             ):
                                 raise ValueError(
                                     "sender_message_id already names a different message"
@@ -1879,6 +1883,15 @@ class SqliteProcessConversationSystem:
                 self._publish_held_prompts_changed(state)
                 reservation = await self._reserve_turn(state)
             else:
+                # A deliberate model identity choice needs a new admitted turn.
+                # Steering bypasses launch admission, so keep its exact queue entry.
+                if (
+                    held.model_change is not None
+                    or held.reasoning_effort_change is not None
+                    or held.reasoning_effort_is_set
+                    or held.selection_kind is not None
+                ):
+                    return PromptDeliveryQueued(queue_position=position + 1)
                 durable_held = await self._begin_held_deliveries(state, (held,))
                 del state.held_prompts[position]
                 self._publish_held_prompts_changed(state)
