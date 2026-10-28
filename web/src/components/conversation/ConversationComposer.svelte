@@ -111,6 +111,7 @@
     current = { model: null, reasoningEffort: null },
     canonicalRows,
     validation = null,
+    refusalValidation = null,
     onRetryModelChoices,
     onPreviewRunSelection,
     models = [],
@@ -166,6 +167,7 @@
     /** What this conversation's own backend offers. */
     canonicalRows?: readonly import("../../lib/conversation/modelResolutionWire").PickerRow[];
     validation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
+    refusalValidation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
     onRetryModelChoices?: () => Promise<void>;
     onPreviewRunSelection?: (selection: ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
@@ -390,6 +392,7 @@
     selection: runSelection,
     canonicalRows,
     validation,
+    refusalValidation,
     backendKey,
     conversationExists,
     running,
@@ -530,6 +533,7 @@
       attachmentOrder,
       pickedModel: runSelection.pickedModel,
       pickedReasoningEffort: runSelection.pickedReasoningEffort,
+      pickedBackend: runSelection.pickedBackend,
       selectionKind: runSelection.selectionKind,
       effortIsSet: runSelection.effortIsSet,
       compositionRevision
@@ -546,6 +550,7 @@
     runSelection = {
       ...runSelection,
       pickedModel: draft.pickedModel,
+      pickedBackend: draft.pickedBackend ?? null,
       pickedReasoningEffort: draft.pickedReasoningEffort,
       selectionKind: draft.selectionKind,
       effortIsSet: draft.effortIsSet

@@ -26,6 +26,7 @@
   let {
     canonicalRows,
     validation,
+    refusalValidation,
     onRetry,
     scrollPanel = false,
     view,
@@ -45,6 +46,8 @@
   }: {
     canonicalRows?: readonly PickerRow[];
     validation?: CanonicalModelValidation | null;
+    /** Historical delivery outcome, separate from this advisory selection read. */
+    refusalValidation?: CanonicalModelValidation | null;
     onRetry?: () => Promise<void>;
     scrollPanel?: boolean;
     view: ModelPickerView;
@@ -99,7 +102,7 @@
   let rows = $derived((showing === "models" ? factualRows ?? view.models : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? canonicalRows ? currentRows.length === 1 ? `canonical-${canonicalRows.indexOf(currentRows[0])}` : null : view.modelValue : currentEffort);
   let triggerFace = $derived(canonicalRows ? currentRows.length > 1 ? "Selection unresolved" : canonicalSelection ? pickerRowName(canonicalSelection) : effectiveValidation?.selection.submitted_token ?? "Selection unobserved" : view.face);
-  let foot = $derived(feedback ?? (effectiveValidation && effectiveValidation.state !== "compatible" ? validationSummary(effectiveValidation) : null) ?? (canonicalRows ? null : view.staleModelReason ?? view.catalogueWarning));
+  let foot = $derived(feedback ?? (effectiveValidation && effectiveValidation.state !== "compatible" ? validationSummary(effectiveValidation) : null) ?? (refusalValidation ? "Recorded delivery refusal." : null) ?? (canonicalRows ? null : view.staleModelReason ?? view.catalogueWarning));
   let pickerBusy = $derived(disabled || refreshing);
   let refreshControl = $derived(backendRefreshControl(refreshing));
 
@@ -377,7 +380,7 @@
           <button type="button" data-listbox-picker-action data-model-picker-check disabled={canonicalRows !== undefined && !onRetry} aria-disabled={refreshing} aria-busy={refreshing} onmousedown={(event) => event.preventDefault()} onclick={() => void runRefresh()}>Check again</button>
         </div>
         {#if whyOpen}
-          <div class="model-picker-detail">{effectiveValidation ? validationDetail(effectiveValidation) : `${foot} Observation context and corrective action are unavailable${canonicalRows !== undefined ? " in these canonical facts" : " in this legacy read"}. This does not establish a native destination failure. Check again repeats the same read.`}</div>
+          <div class="model-picker-detail">{effectiveValidation ? validationDetail(effectiveValidation) : `${foot} Observation context and corrective action are unavailable${canonicalRows !== undefined ? " in these canonical facts" : " in this legacy read"}. This does not establish a native destination failure. Check again repeats the same read.`}{refusalValidation ? ` Recorded delivery refusal for ${refusalValidation.selection.submitted_token} (${refusalValidation.selection.selection_kind}), selection revision ${refusalValidation.selection.selection_revision}. ${validationDetail(refusalValidation)}` : ""}</div>
         {/if}
       </div>
       {/if}

@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { applyComposerRunSelectionIntent, resolveComposerRunControls } from "../src/lib/conversation/runControls/logic/runSelection";
 import type { ComposerRunControlsInput } from "../src/lib/conversation/runControls/contracts";
+import { sendBodyFor } from "../src/lib/conversation/composer";
+import { mintOutgoingMessage, rememberOutgoingMessages, recallOutgoingMessages, resetOutgoingImageReservationsForTest } from "../src/lib/conversation/outgoing";
+import { rowForBody } from "../src/lib/conversation/view/presentation";
 import { pickerRows, pickerValidation } from "./fixtures/modelPickerFacts";
 
 const input: ComposerRunControlsInput = {
@@ -33,4 +36,36 @@ describe("canonical composer intent", () => {
     expect(view.carriedRunValues).toEqual({model: row.submitted_token, reasoningEffort: null, backendKey: null, selectionKind: row.selection_kind, effortIsSet: true});
     expect(view.carriedRunValues.model).not.toBe(row.resolved_model_id);
   });
+});
+
+// The outgoing store is the actual durable browser boundary used after transport
+// uncertainty. Pure draft tests cannot prove its decoder retains explicit null/kind.
+it("reopens an uncertain outgoing send with the same exact run intent and old absent fields", async () => {
+  const stored = new Map<string, string>();
+  vi.stubGlobal("window", {sessionStorage: {
+    get length() {return stored.size;}, key: (index: number) => [...stored.keys()][index] ?? null,
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key)
+  }});
+  resetOutgoingImageReservationsForTest();
+  try {
+    const message = mintOutgoingMessage({content:[{piece:"text",text:"exact words"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, selectionKind:"provider_alias", pickedBackend:"claude"});
+    const old = mintOutgoingMessage({content:[{piece:"text",text:"old words"}], senderLabel:"owner", mode:"queue"});
+    await rememberOutgoingMessages("canonical-retry", [message, old]);
+    const [reopened, historical] = await recallOutgoingMessages("canonical-retry");
+    expect(reopened).toMatchObject({pickedModel:"opus",pickedReasoningEffort:null,effortIsSet:true,selectionKind:"provider_alias",pickedBackend:"claude",knownFate:"sent_before_this_page"});
+    const body = sendBodyFor({message:reopened, current:{model:"opus",reasoningEffort:"high"}, picked:{model:reopened.pickedModel ?? null, reasoningEffort:reopened.pickedReasoningEffort ?? null, effortIsSet:reopened.effortIsSet,selectionKind:reopened.selectionKind, backendKey:reopened.pickedBackend}, conversationId:null});
+    expect(body).toMatchObject({model:"opus",selection_kind:"provider_alias",reasoning_effort:null,backend_key:"claude",sender_message_id:message.messageId});
+    const oldBody = sendBodyFor({message:historical,current:{model:"opus",reasoningEffort:"high"},picked:{model:null,reasoningEffort:null},conversationId:"c"});
+    expect(oldBody).not.toHaveProperty("selection_kind");
+    expect(oldBody).not.toHaveProperty("reasoning_effort");
+  } finally {resetOutgoingImageReservationsForTest();vi.unstubAllGlobals();}
+});
+
+it("projects a recorded refusal without calling it current selection validation", () => {
+  const row = rowForBody({key:"refused",source_sequence:4,created_at:1}, {
+    kind:"prompt_refused",content:[{piece:"text",text:"refused words"}],sender_label:"owner",reason:"model_resolution_failed",refusal_detail:null,model_validation:pickerValidation
+  });
+  expect(row.kind).toBe("prompt_refused");
+  if (row.kind === "prompt_refused") expect(row.modelValidation).toEqual(pickerValidation);
 });

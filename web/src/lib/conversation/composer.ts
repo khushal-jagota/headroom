@@ -157,12 +157,14 @@ export function armedChangeFor(
   current: RunValues,
   picked: RunValues,
   _mode: PromptDeliveryMode
-): { model_change?: string; reasoning_effort_change?: string } {
-  const change: { model_change?: string; reasoning_effort_change?: string } = {};
-  if (picked.model !== null && picked.model !== current.model) {
+): { model_change?: string; reasoning_effort_change?: string | null; selection_kind?: RunValues["selectionKind"] } {
+  const change: { model_change?: string; reasoning_effort_change?: string | null; selection_kind?: RunValues["selectionKind"] } = {};
+  const explicitKind = picked.selectionKind !== undefined && picked.selectionKind !== "legacy_unclassified";
+  if (picked.model !== null && (picked.model !== current.model || explicitKind)) {
     change.model_change = picked.model;
   }
-  if (picked.reasoningEffort !== null && picked.reasoningEffort !== current.reasoningEffort) {
+  if (change.model_change !== undefined && explicitKind) change.selection_kind = picked.selectionKind;
+  if (picked.effortIsSet === true || (picked.effortIsSet === undefined && picked.reasoningEffort !== null && picked.reasoningEffort !== current.reasoningEffort)) {
     change.reasoning_effort_change = picked.reasoningEffort;
   }
   return change;
@@ -216,10 +218,11 @@ export function whatThisMessageRunsUnder(
   current: RunValues,
   picked: RunValues,
   mode: PromptDeliveryMode
-): { model?: string; reasoning_effort?: string } {
+): { model?: string; reasoning_effort?: string | null; selection_kind?: RunValues["selectionKind"] } {
   const armed = armedChangeFor(current, picked, mode);
-  const runsUnder: { model?: string; reasoning_effort?: string } = {};
+  const runsUnder: { model?: string; reasoning_effort?: string | null; selection_kind?: RunValues["selectionKind"] } = {};
   if (armed.model_change !== undefined) runsUnder.model = armed.model_change;
+  if (armed.selection_kind !== undefined) runsUnder.selection_kind = armed.selection_kind;
   if (armed.reasoning_effort_change !== undefined) {
     runsUnder.reasoning_effort = armed.reasoning_effort_change;
   }

@@ -56,6 +56,7 @@
     current = { model: null, reasoningEffort: null },
     canonicalRows,
     validation = null,
+    refusalValidation = null,
     onRetryModelChoices,
     onPreviewRunSelection,
     models = [],
@@ -144,6 +145,7 @@
     current?: RunValues;
     canonicalRows?: readonly import("../../lib/conversation/modelResolutionWire").PickerRow[];
     validation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
+    refusalValidation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
     onRetryModelChoices?: () => Promise<void>;
     onPreviewRunSelection?: (selection: import("../../lib/conversation/runControls/contracts").ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
@@ -560,6 +562,7 @@
       {current}
       {canonicalRows}
       {validation}
+      {refusalValidation}
       {onRetryModelChoices}
       {onPreviewRunSelection}
       {models}

@@ -59,6 +59,7 @@ export type TranscriptRow =
       senderLabel: string;
       senderMessageId?: string | null;
       reason: PromptDeliveryRefusalReason;
+      modelValidation?: import("./modelResolutionWire").CanonicalModelValidation | null;
       sentence: string;
     }
   | {
@@ -323,6 +324,7 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label,
           senderMessageId: event.payload.sender_message_id ?? null,
           reason: event.payload.refusal_reason,
+          modelValidation: event.payload.model_validation ?? null,
           sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail)
         });
         break;

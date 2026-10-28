@@ -164,7 +164,10 @@
   let refusalValidation = $state<import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null>(null);
   let proposedSelection = $state<import("../../lib/conversation/runControls/contracts").ComposerRunSelection | null>(null);
   let previewBackend = $state<ConversationBackendKey | null>(null);
+  let pickerReadError = $state<string | null>(null);
   let pickerReadGeneration = 0;
+  let pickerMounted = true;
+  onMount(() => () => {pickerMounted = false; pickerReadGeneration += 1;});
   let capturedPickerRequest: import("../../lib/conversation/modelResolutionWire").TicketModelChoicesRequest | null = null;
   let pickerOwnerKey = "";
   let pickerContextKey = "";
@@ -173,14 +176,14 @@
     const generation = ++pickerReadGeneration;
     const context = pickerContextKey;
     scopedChoices = null;
-    refusalValidation = null;
     try {
       const result = await readDestinationModelChoices(request);
-      if (generation !== pickerReadGeneration || context !== pickerContextKey) return;
+      if (!pickerMounted || generation !== pickerReadGeneration || context !== pickerContextKey) return;
       scopedChoices = result;
+      pickerReadError = null;
     } catch (error) {
-      if (generation !== pickerReadGeneration || context !== pickerContextKey) return;
-      errorNote = sentenceFor(error);
+      if (!pickerMounted || generation !== pickerReadGeneration || context !== pickerContextKey) return;
+      pickerReadError = sentenceFor(error);
     }
   }
 
@@ -195,11 +198,12 @@
 
   $effect(() => {
     const owner = pickerTicketId;
-    const ownerKey = JSON.stringify([owner]);
+    const ownerKey = JSON.stringify([uploadOwner?.kind, uploadOwner?.id]);
     if (ownerKey !== pickerOwnerKey) {
       pickerOwnerKey = ownerKey;
       proposedSelection = null;
       previewBackend = null;
+      refusalValidation = null;
     }
     const selection = proposedSelection;
     const backend = previewBackend ?? selection?.pickedBackend ?? undefined;
@@ -217,7 +221,7 @@
     capturedPickerRequest = request;
     pickerReadGeneration += 1;
     scopedChoices = null;
-    refusalValidation = null;
+    pickerReadError = null;
     if (request) untrack(() => void readScopedChoices(request));
   });
 
@@ -274,6 +278,11 @@
   let rows = $derived((reader?.pages ?? []).flatMap(page=>page.items.flatMap(item=>
     item.kind==='row'&&item.body.kind==='inline' ? [rowForBody(item,item.body.value)] : [])));
   let visibleRows = $derived(rows);
+  let recordedRefusalValidation = $derived.by(() => {
+    if (reader?.id !== openedId) return null;
+    const latestOutcome = [...rows].reverse().find(row => row.kind === "prompt" || row.kind === "prompt_refused" || row.kind === "prompt_uncertain" || row.kind === "prompt_discarded");
+    return latestOutcome?.kind === "prompt_refused" ? latestOutcome.modelValidation ?? null : null;
+  });
   let ask = $derived.by(()=>{
     if(reader?.status?.pending_permission===null)return null;
     const row=liveAskFrom(visibleRows);if(row!==null)return row;
@@ -659,6 +668,7 @@
     sendContext?: ComposerSendContext
   ): Promise<boolean> {
     if (readOnly) return false;
+    const attemptOwnerKey = pickerOwnerKey;
     if (sendContext?.destination && (sendContext.destination.kind !== uploadOwner?.kind || sendContext.destination.id !== uploadOwner?.id)) {
       errorNote = "This pending message belongs to another destination. Return it to the original composer.";
       return false;
@@ -671,7 +681,10 @@
       senderLabel,
       mode,
       pickedModel: picked.model,
-      pickedReasoningEffort: picked.reasoningEffort
+      pickedReasoningEffort: picked.reasoningEffort,
+      selectionKind: picked.selectionKind,
+      effortIsSet: picked.effortIsSet,
+      pickedBackend: picked.backendKey
     }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}) };
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
@@ -703,7 +716,7 @@
       );
       // The answer is the fate, with the conversation it happened in alongside it.
       const fate = delivered;
-      if (fate.fate === "refused") refusalValidation = fate.model_validation ?? null;
+      if (attemptOwnerKey === pickerOwnerKey) refusalValidation = fate.fate === "refused" ? fate.model_validation ?? null : null;
       if (
         delivered.conversation_id !== null
         && delivered.conversation_id !== persistenceConversationId
@@ -825,7 +838,10 @@
     await stopDrawing(senderMessageId, true);
     const away = await send(uncertain.content, uncertain.mode, {
       model: uncertain.pickedModel ?? null,
-      reasoningEffort: uncertain.pickedReasoningEffort ?? null
+      reasoningEffort: uncertain.pickedReasoningEffort ?? null,
+      selectionKind: uncertain.selectionKind,
+      effortIsSet: uncertain.effortIsSet,
+      backendKey: uncertain.pickedBackend
     }, uncertain.displayMessageId ?? uncertain.messageId);
     if (away) return;
     // The server turned it away, so the words are nowhere. Put the copy back rather than
@@ -885,12 +901,13 @@
   async function promote(heldPromptId: string, mode: "send_now" | "steer"): Promise<void> {
     if (readOnly || openedId === null) return;
     errorNote = null;
+    const attemptOwnerKey = pickerOwnerKey;
     try {
       const promotedMessageId = view?.held_prompts.find(
         (held) => held.held_prompt_id === heldPromptId
       )?.sender_message_id ?? null;
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
-      if (result.promoted && result.fate === "refused") refusalValidation = result.model_validation ?? null;
+      if (result.promoted && attemptOwnerKey === pickerOwnerKey) refusalValidation = result.fate === "refused" ? result.model_validation ?? null : null;
       if (result.promoted && (result.fate === "started" || result.fate === "injected") && promotedMessageId !== null) {
         await holdOnTo(sentMessages.map(message => message.messageId === promotedMessageId ? {...message, accepted: true} : message));
       }
@@ -1072,7 +1089,8 @@
   {activityUncertain}
   {current}
   canonicalRows={pickerTicketId === null ? undefined : scopedChoices?.rows ?? []}
-  validation={refusalValidation ?? scopedChoices?.validation ?? null}
+  validation={scopedChoices?.validation ?? null}
+  refusalValidation={refusalValidation ?? recordedRefusalValidation}
   onRetryModelChoices={pickerTicketId === null ? undefined : retryScopedChoices}
   onPreviewRunSelection={pickerTicketId === null ? undefined : previewRunSelection}
   models={backendSnapshot?.available_models ?? []}
@@ -1082,7 +1100,7 @@
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState
   fateNote={visibleFateNote}
-  {errorNote}
+  errorNote={errorNote ?? pickerReadError}
   {connectionTrouble}
   {readOnly}
   {historyOwner}

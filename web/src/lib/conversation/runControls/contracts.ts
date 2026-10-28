@@ -19,6 +19,7 @@ export type ComposerRunControlsInput = Readonly<{
   selection: ComposerRunSelection;
   canonicalRows?: readonly PickerRow[];
   validation?: CanonicalModelValidation | null;
+  refusalValidation?: CanonicalModelValidation | null;
   backendKey: ConversationBackendKey | null;
   conversationExists: boolean;
   running: boolean;
@@ -46,6 +47,7 @@ export type ComposerRunControlsView = Readonly<{
   picker: ModelPickerView;
   canonicalRows?: readonly PickerRow[];
   validation?: CanonicalModelValidation | null;
+  refusalValidation?: CanonicalModelValidation | null;
   pickerSource: Readonly<{
     backends: readonly BackendSnapshot[];
     models: readonly BackendModel[];

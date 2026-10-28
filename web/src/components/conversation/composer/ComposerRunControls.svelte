@@ -25,6 +25,7 @@
 <UnifiedModelPicker
   canonicalRows={view.canonicalRows}
   validation={view.validation}
+  refusalValidation={view.refusalValidation}
   {onRetry}
   chevron="drawn"
   view={view.picker}
