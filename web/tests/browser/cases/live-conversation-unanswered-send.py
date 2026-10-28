@@ -11,6 +11,7 @@ _ARM_MOTION = r"""({owner, suppressWheel=false})=>{
   window.__nativeMotion?.cleanup();
   const thread=document.querySelector('[data-conversation-thread]'),frames=[],events=[];
   let stopped=false;
+  const completion=window.__observeNativeWheel(thread);
   const read=()=>({ms:performance.now(),top:thread.scrollTop,
     owner:thread.dataset.conversationPositionOwner,
     motion:!!thread.closest('[data-conversation-pane]')?.hasAttribute('data-conversation-motion'),
@@ -39,7 +40,7 @@ _ARM_MOTION = r"""({owner, suppressWheel=false})=>{
   };
   document.addEventListener('wheel',wheel,true);
   thread.addEventListener('scroll',scroll);thread.addEventListener('scrollend',scroll);
-  window.__nativeMotion={frames,events,capture,cleanup(){stopped=true;document.removeEventListener('wheel',wheel,true);thread.removeEventListener('scroll',scroll);thread.removeEventListener('scrollend',scroll);}};
+  window.__nativeMotion={frames,events,capture,completion,cleanup(){stopped=true;completion.cleanup();document.removeEventListener('wheel',wheel,true);thread.removeEventListener('scroll',scroll);thread.removeEventListener('scrollend',scroll);}};
   requestAnimationFrame(sample);
 }"""
 
@@ -55,28 +56,30 @@ def _await_motion(page, code):
         raise AssertionError((code, page.evaluate("window.__nativeMotion.capture('missing-phase')"))) from error
 
 
-def _motion_wheel(page, delta, code, *, late=False, defer_behavior=False):
-    _await_motion(page, code)
-    if late:
-        page.wait_for_function("!window.__nativeMotion.capture('late').motion")
-    page.mouse.wheel(0, delta)
+def _motion_wheel(page, delta, code, *, late=False, consume="()=>null"):
     try:
-        page.wait_for_function("window.__nativeMotion.events.some(e=>e.kind==='after-wheel')", timeout=5_000)
-    except Exception as error:
-        raise AssertionError((code, page.evaluate("window.__nativeMotion.events"))) from error
-    events = page.evaluate("window.__nativeMotion.events")
-    delivered = next(event for event in events if event["kind"] == "wheel")
-    assert delivered["valid"], (code, events)
-    after = next(event for event in events if event["kind"] == "after-wheel")
-    if not defer_behavior:
+        _await_motion(page, code)
+        if late:
+            page.wait_for_function("!window.__nativeMotion.capture('late').motion")
+        page.mouse.wheel(0, delta)
+        try:
+            page.wait_for_function("window.__nativeMotion.events.some(e=>e.kind==='after-wheel')", timeout=5_000)
+        except Exception as error:
+            raise AssertionError((code, page.evaluate("window.__nativeMotion.events"))) from error
+        events = page.evaluate("window.__nativeMotion.events")
+        delivered = next(event for event in events if event["kind"] == "wheel")
+        assert delivered["valid"], (code, events)
+        after = next(event for event in events if event["kind"] == "after-wheel")
         assert after["same"] and after["owner"] == "manual", ("BEHAVIOR_WHEEL_CANCELLATION", events)
-    # Observe native completion instead of waiting through the automatic travel
-    # that a broken cancellation must leave visible to the preservation checks.
-    try:
-        page.wait_for_function("window.__nativeMotion.events.some(e=>e.kind==='scrollend'&&e.trusted)", timeout=5_000)
-    except Exception as error:
-        raise AssertionError(('SETUP_NATIVE_SCROLLEND', page.evaluate("window.__nativeMotion.events"))) from error
-    return page.evaluate("window.__nativeMotion.events")
+        # The browser decision owns the deadline, including this ownership check
+        # and baseline consumption. This wait only observes its terminal state.
+        page.wait_for_function("""()=>{const s=window.__nativeMotion.completion.status();return s.failure||s.ready;}""", timeout=5_000)
+        status = page.evaluate("window.__nativeMotion.completion.status()")
+        assert not status['failure'], (status['failure']['reason'] if status['failure'] else 'SETUP_NATIVE_WHEEL', status)
+        page.evaluate("window.__nativeWheelBaseline=window.__nativeMotion.completion.consume(" + consume + ")")
+        return page.evaluate("[...window.__nativeMotion.events, ...window.__nativeMotion.completion.status().receipts.map(r=>({...r,kind:'native-wheel-'+r.kind}))]")
+    finally:
+        page.evaluate("window.__nativeMotion?.completion.cleanup()")
 
 
 def run_retirement(browser, urls, *, control=""):
@@ -108,6 +111,8 @@ def run_retirement(browser, urls, *, control=""):
       const last=content.lastElementChild;
       const anchor=window.__retirementAnchor;
       const sent=[...t.querySelectorAll('[data-conversation-outgoing]')].at(-1);
+      const expectedSendId=window.__retirementSupersedingSendId??null;
+      const exactSend=expectedSendId===null?null:[...t.querySelectorAll('[data-conversation-outgoing]')].find(node=>node.getAttribute('data-conversation-outgoing')===expectedSendId);
       const css=getComputedStyle(t),height=room?.getBoundingClientRect().height??0;
       const gap=room?parseFloat(css.rowGap)+parseFloat(getComputedStyle(room).marginTop)+parseFloat(getComputedStyle(room).marginBottom):0;
       // Geometry alone remains valid when scroll chaining moves the entire host
@@ -145,6 +150,8 @@ def run_retirement(browser, urls, *, control=""):
         contentBottom:content.getBoundingClientRect().bottom-bounds.top,
         room:height,gap,totalTail:height+gap,paddingTop:parseFloat(css.paddingTop),paddingBottom:parseFloat(css.paddingBottom),
         sentTop:sent?sent.getBoundingClientRect().top-bounds.top:null,
+        supersedingSend:{expectedId:expectedSendId,id:exactSend?.getAttribute('data-conversation-outgoing')??null,
+          accepted:exactSend?.getAttribute('data-conversation-accepted')??null,top:exactSend?exactSend.getBoundingClientRect().top-bounds.top:null},
         anchor:anchor?.isConnected?{key:anchor.getAttribute('data-conversation-view-key')??anchor.getAttribute('data-conversation-row'),offset:anchor.getBoundingClientRect().top-bounds.top}:null,
         latest:!!document.querySelector('[aria-label="Jump to latest message"]'),
         placementReady:t.dataset.conversationPlacementReady,owner:t.dataset.conversationPositionOwner??null,paint};
@@ -158,6 +165,26 @@ def run_retirement(browser, urls, *, control=""):
         checks.append((label + ' has no intermediate position snap', all(abs(frame['top'] - before['top']) <= 1 for frame in frames), before, after))
         if before['anchor']:
             checks.append((label + ' preserves the reading line before each paint', all(frame['anchor'] and frame['anchor']['key'] == before['anchor']['key'] and abs(frame['anchor']['offset'] - before['anchor']['offset']) <= 1 for frame in frames), before, after))
+
+    def supersession_frame_contract(acceptance, after, send_id):
+        frames = [*frames_between(acceptance, after), after]
+
+        def at_target(frame):
+            sent = frame['supersedingSend']
+            return (sent['expectedId'] == send_id and sent['id'] == send_id
+                    and sent['accepted'] == 'true' and sent['top'] is not None
+                    and abs(sent['top'] - 32) < 2)
+
+        # Placement can move until this exact accepted send first reaches 32px.
+        # A later recovery cannot erase a departure or restart this boundary.
+        first_arrival = next((index for index, frame in enumerate(frames) if at_target(frame)), None)
+        held = frames[first_arrival:] if first_arrival is not None else []
+        violations = [frame for frame in held if not at_target(frame)]
+        return {'kind': 'accepted-send-frame-contract', 'sendId': send_id, 'target': 32,
+                'strictTolerance': 2, 'acceptance': acceptance, 'through': after,
+                'firstArrival': held[0] if held else None, 'framesAfterArrival': len(held),
+                'firstViolation': violations[0] if violations else None,
+                'violations': len(violations), 'passed': bool(held) and not violations}
 
     def sample(label):
         page.evaluate("label=>window.__retirementPhase=label", label)
@@ -383,16 +410,37 @@ def run_retirement(browser, urls, *, control=""):
         page.mouse.move(cancel_box['x'] + cancel_box['width'] / 2, cancel_box['y'] + cancel_box['height'] / 2)
         page.evaluate("window.__retirementPhase='latest-cancel-gesture'")
         delta = -100000 if control == 'zero-tail' else -1 if control == 'positive-tail' else -120
-        wheel_events = _motion_wheel(page, delta, 'SETUP_LATEST_WHEEL', late=control == 'late-wheel', defer_behavior=True)
+        # Capture and emit together inside the admission callback. Python keeps
+        # the original observations and checks after this atomic baseline task.
+        consume = """()=>{
+          const read=(""" + probe + """);
+          window.__retirementPhase='cancel-predecessor';
+          const predecessor=read();
+          const t=document.querySelector('[data-conversation-thread]'),b=t.getBoundingClientRect();
+          window.__retirementAnchor=[...t.querySelectorAll('[data-conversation-view-key], [data-conversation-outgoing]')].find(n=>n.getBoundingClientRect().bottom>b.top+30&&n.getBoundingClientRect().top<b.bottom)??t.querySelector('[data-conversation-outgoing]');
+          window.__retirementPhase='latest-canceled-notification-before';
+          const before=read();
+          window.__pulse();
+          return {predecessor,before};
+        }"""
+        wheel_events = _motion_wheel(page, delta, 'SETUP_LATEST_WHEEL', late=control == 'late-wheel', consume=consume)
         native_events.extend(wheel_events)
-        predecessor = sample('cancel-predecessor')
+        baseline = page.evaluate("window.__nativeWheelBaseline")
+        predecessor = baseline['predecessor']
+        samples.append({"label": 'cancel-predecessor', **predecessor})
         native_events.append({"kind": "predecessor", "totalTail": predecessor['totalTail']})
         if control == 'zero-tail':
             assert predecessor['totalTail'] == 0, ('CONTROL_ZERO_TAIL', predecessor)
         if control == 'positive-tail':
             assert predecessor['totalTail'] > 0, ('CONTROL_POSITIVE_TAIL', predecessor)
-        remember_anchor()
-        canceled = pulse('latest-canceled-notification')
+        before = baseline['before']
+        samples.append({"label": 'latest-canceled-notification-before', **before})
+        page.wait_for_timeout(260)
+        canceled = sample('latest-canceled-notification-after')
+        fixed_reading_frames(before, canceled, 'latest-canceled-notification')
+        checks.append(("notification cannot snap the manual reader", abs(canceled['top'] - before['top']) <= 1, before, canceled))
+        if before['anchor'] and canceled['anchor']:
+            checks.append(("notification preserves the reading line", abs(canceled['anchor']['offset'] - before['anchor']['offset']) <= 1, before, canceled))
         page.wait_for_timeout(300)
         after = sample('latest-canceled-settled')
         assert abs(after['top'] - canceled['top']) <= 1, ('BEHAVIOR_WHEEL_CANCELLATION', canceled, after)
@@ -419,6 +467,7 @@ def run_retirement(browser, urls, *, control=""):
             page.evaluate('window.__nativeDisableSupersession=true')
         page.locator('[data-conversation-input]').press('Enter')
         page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
+        superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
         if control == 'late-acceptance':
             page.wait_for_function("!window.__nativeMotion.capture('late').motion")
         page.evaluate('window.__resolveDelivery()')
@@ -435,10 +484,16 @@ def run_retirement(browser, urls, *, control=""):
         page.wait_for_timeout(200)
         remember_anchor()
         latest_send = sample('accepted-send')
+        frame_contract = supersession_frame_contract(acceptance, latest_send, superseding_send_id)
+        native_events.append(frame_contract)
         assert abs(latest_send['sentTop'] - 32) < 2 and latest_send['totalTail'] > 100, ('BEHAVIOR_SEND_SUPERSESSION', latest_send)
         page.wait_for_timeout(300)
-        assert abs(sample('new-send-still-owns')['sentTop'] - 32) < 2
+        try:
+            assert abs(sample('new-send-still-owns')['sentTop'] - 32) < 2
+        finally:
+            frame_contract.update(supersession_frame_contract(acceptance, samples[-1], superseding_send_id))
         native_events.append({'kind': 'original-supersession-checks', 'passed': True})
+        assert frame_contract['passed'], ('BEHAVIOR_SEND_SUPERSESSION', frame_contract)
         assert send_owner != 'latest', ('BEHAVIOR_SEND_SUPERSESSION_NEW_ONLY', send_owner, acceptance)
         if control:
             for check in checks:
