@@ -134,15 +134,15 @@ Create accepts `employee_launch_reasoning_effort` with the selected backend and 
 }
 ```
 
-The model must be enabled and offer the requested effort. A blank, non-string, or
-unsupported effort fails before Ticket creation. If the catalogue cannot validate an
-explicit effort, creation fails with a clear error. No effort is silently replaced.
+The current source returns unresolved verification from legacy creation callers without
+canonical destination context. The lifecycle integration must preserve offline configuration
+and distinguish known incompatibility from missing evidence. No effort can be silently replaced.
 
 An omitted or null effort keeps the existing creation defaults. The Worker type's
 effort applies only to its own backend and model. Other selections store null.
 Null means no effort override: Claude receives no effort option, Codex receives null,
 and Hermes receives no effort configuration. The backend controls the effort in that
-case. The existing catalogue-unavailable fallback remains for omitted effort.
+case. Legacy unscoped evidence cannot authorize a launch.
 
 The creation response adds `supervision_receipt`, a plain-language explanation of the
 effective grant. Normal CLI output prints it, and `--json` retains it beside the Ticket
@@ -180,8 +180,9 @@ commands because they have effects beyond a Ticket field edit.
 
 ## Correct saved models
 
-The administrative `model-corrections` commands repair saved models within their selected
-variant. Preview accepts explicit targets. Repeat target flags to inspect several records.
+The administrative `model-corrections` commands address explicit saved-choice targets. Their
+legacy resolver calls currently return unresolved verification until contextual integration.
+Repeat target flags to inspect several records.
 
 ```sh
 panels model-corrections preview --ticket t_example --manager si_example --chief --worker-default coding > corrections.json

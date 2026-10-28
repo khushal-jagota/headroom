@@ -745,47 +745,33 @@ delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
 
-### Current models within a variant
+### Model choices and destination evidence
 
-A model choice selects a variant, such as Sol or Opus. Before each turn, Panels
-resolves that variant against the backend's current catalogue. Codex uses the newest
-enabled version within the selected variant. Claude keeps its native aliases, including
-their context suffixes. Hermes keeps its provider-qualified choices. A provider hint
-cannot select a different variant. Panels preserves an explicit reasoning effort and
-refuses the turn if the resolved model does not support it.
+Model verification keeps the requested token and effort separate from the provider's
+resolved identity. Exact concrete choices stay fixed. Aliases follow the destination
+catalog automatically. Their current and previous targets remain facts for visible views.
 
-Catalogue failure does not stop a variant with a last known-good resolution. Panels
-uses that resolution and reports that the catalogue is unavailable. Without a last
-known-good resolution, it refuses the turn with a clear error. The shared picker
-keeps that catalogue warning visible. Its closed face shows the readable resolved model
-and its applicable effort, for example “Opus 5.5 medium.” Context qualifiers remain
-visible. Models without effort show only their name. If resolution is unavailable, the
-face uses the available name without an invented version. Each option in the open
-list shows the same resolved model name on one line, without an alias or detail row.
-The effort has its own selection step. The selected value remains unchanged.
+Discovery uses the actual launch executable, workspace, and provider configuration.
+Mac observations come from the authenticated executor. Server metadata cannot establish
+native availability. Catalog presence describes advertised support, not execution entitlement.
+List omission alone does not establish incompatibility.
 
-Ticket creation also tries to resolve its model. If no usable catalogue or cached
-resolution exists, creation preserves the requested model and reasoning effort. It
-reports unavailable resolution without writing a successful cache entry. Missing
-evidence does not block a fresh installation. Available evidence still rejects an
-unknown or disabled selection, or an unsupported effort. This exception applies to
-creation only. A later turn still requires a successful resolution.
+Scoped evidence lasts less than 300 seconds and requires matching current context.
+Without account-generation evidence, each attempt requires its own fresh observation.
+Legacy backend-only rows retain their original values and timestamps, without verification authority.
 
-This rule covers Workers, Chief, ordinary Managers, new conversations, reused
-conversations and queued messages. Steering retains the active turn's model. Saved legacy
-versions resolve within their own variant. New managers use the managed launch
-defaults instead of a model pinned by a database trigger.
+The destination contracts, discovery, validation, and picker facts are implemented here.
+Lifecycle callers and views do not yet consume that boundary throughout the product.
+Unscoped creation, correction, and dispatch callers now return unresolved verification.
+That refusal does not mean that the provider or requested model is unavailable.
+This source is an intermediate integration candidate, not a deployable combined feature.
 
-An explicit correction action previews saved choices and applies selected corrections.
-It works for idle Workers and user-owned Stages without a restart or a message.
-It preserves backend and reasoning choices. Active turns finish on their current model.
-The next turn resolves the corrected model within the same conversation.
-The action does not approve work, change a Stage, clear a claim, or start a turn.
-Both preview and apply resolve models outside a write transaction. Each accepted
-correction acquires a short writer transaction, checks current authority again, and
-compares the saved selection before its update. No resolver await crosses that
-transaction. Failed targets retain their individual errors in the batch.
-See [model correction commands](cli.md#correct-saved-models).
+The lifecycle integration must supply canonical workspace and selection context through
+existing authority. It must preserve offline configuration, show alias changes, and recheck
+current evidence before execution. The combined discovery/admission review follows that integration.
+Existing correction commands require the same caller adaptation before they can verify saved choices.
+
+Code: `src/planner/conversation/model_resolution/`, `src/planner/executor/`.
 
 Code: `src/planner/conversation/`, `src/planner/runtime/`.
 

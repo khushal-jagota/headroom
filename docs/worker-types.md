@@ -431,24 +431,15 @@ Leaving Reasoning at its native value means the backend chooses its own default,
 a real answer because some models take none. A missing or unavailable explicit value fails
 visibly instead of silently selecting something else.
 
-The unified launch picker uses a durable catalog for the backend and candidate model. A
-catalog stays fresh for 24 hours across a server restart. Catalogue refresh belongs on the
-Backends screen with the rest of the machine state. A failed ordinary read keeps the saved
-picker value visible and offers a retry.
+Model verification uses destination-scoped evidence and preserves exact requested choices.
+The shared contracts distinguish explicit concrete choices, aliases, and unknown historical intent.
+See [model choices and destination evidence](conversation-system.md#model-choices-and-destination-evidence).
 
-The stored backend, model and reasoning preserve the Ticket's selected variant and effort.
-Each turn resolves the current enabled model within that variant. Chief and ordinary
-managers use the same rule, including after a server restart. Catalogue failures use
-the last known-good resolution when one exists. See
-[current models within a variant](conversation-system.md#current-models-within-a-variant).
+The current source needs lifecycle and view integration before deployment. Existing unscoped
+callers return unresolved verification. The lifecycle successor must preserve offline configuration
+and use the canonical destination and workspace for validation.
 
-On a fresh installation without model evidence, Ticket creation preserves its requested
-model and reasoning effort and reports unavailable resolution. It writes no invented
-catalogue or resolution. Available model evidence still enforces valid selections.
-The next turn follows the ordinary resolution rules.
-
-Saved choices can also be corrected without a Worker restart, including while the Ticket
-is idle or at a user-owned Stage. A correction changes launch choices only. It does not
+Saved-choice correction routes also need the contextual caller adaptation before they can verify changes. A correction changes launch choices only. It does not
 grant approval or advance work. See [model correction commands](cli.md#correct-saved-models).
 
 Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
