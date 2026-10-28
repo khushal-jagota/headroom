@@ -60,6 +60,8 @@ Possible transmission or incomplete older evidence retains unknown prompt delive
 Known native acceptance remains factual. Shutdown never promises to undo its effects.
 
 Local shutdown and native termination remain separate facts.
+If local backend cleanup fails, shutdown retains the exact child in quarantine and closes local callback authority.
+Claude retains its cleanup handles until the adapter confirms cleanup. Reader cancellation alone does not prove native termination.
 Shutdown during an unsettled initial delivery can return its local disposition before the original child stops.
 Ordinary remote shutdown waits outside the conversation lock for confirmed retirement before it returns.
 The original reference remains quarantined until its exact stop outcome receives canonical acceptance.
