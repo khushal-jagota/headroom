@@ -1,0 +1,11 @@
+{
+  "diagnostic": "native-cancellation",
+  "controls": [
+    {
+      "control": "clean",
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/vps/projects/panels/worktrees/t_ebrebdek/web/tests/browser/diagnostic-native-cancellation.py\", line 51, in main\n    assert failure is None, f\"Unexpected assertion: {failure}\"\n           ^^^^^^^^^^^^^^^\nAssertionError: Unexpected assertion: {'barrier': 'scrollback', 'evidence': {'failure': 'insufficient bottom clearance', 'before': {'connected': True, 'visible': True, 'ready': 'true', 'entry': 'complete', 'busy': 'false', 'owner': 'sent', 'motion': False, 'scrollTop': 3829, 'scrollHeight': 4329, 'clientHeight': 500, 'top': 72, 'left': 170, 'width': 760, 'height': 500, 'gap': 0}, 'after': {'connected': True, 'visible': True, 'ready': 'true', 'entry': 'complete', 'busy': 'false', 'owner': 'manual', 'motion': False, 'scrollTop': 3741, 'scrollHeight': 4241, 'clientHeight': 500, 'top': 72, 'left': 170, 'width': 760, 'height': 500, 'gap': 0}, 'events': [{'type': 'wheel', 'trusted': True, 'key': None, 'deltaY': -80, 'target': {'tag': 'DIV', 'thread': True}, 'at': 19292.399999976158, 'defaultPrevented': False}, {'type': 'scroll', 'at': 19312.299999952316, 'scrollTop': 3741}, {'type': 'scrollend', 'trusted': True, 'at': 19312.5, 'scrollTop': 3741}, {'type': 'scroll', 'at': 19337.799999952316, 'scrollTop': 3741}], 'ended': True, 'endedPosition': [3741, 0], 'stableIntervals': 0, 'sameTranscript': True, 'requiredClearance': 2}}\n",
+      "seconds": 29.115
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "revision": "5e76bbf49407798402fdee354eb32281a4b76eb4",
+  "seconds": 17.8,
+  "new_hosts": 0,
+  "timing_limits_ms": [
+    150,
+    340
+  ],
+  "minimum_moving_frames_exclusive": 3,
+  "cases": [
+    {
+      "outcome": "unanswered retry confirmed queue",
+      "settled": null
+    },
+    {
+      "outcome": "unanswered",
+      "settled": {
+        "same": true,
+        "top": 412.75,
+        "bottom": 12.0625,
+        "room": 0,
+        "text": "\u00d7\nno answer came\nSend again\n\nHave a look at the bundle and tell me what changed."
+      }
+    },
+    {
+      "outcome": "refused",
+      "settled": {
+        "same": true,
+        "top": 418.75,
+        "bottom": 11.65625,
+        "room": 0,
+        "text": "not delivered \u00b7 the turn had already ended\n\nHave a look at the bundle and tell me what changed."
+      }
+    },
+    {
+      "outcome": "uncertain",
+      "settled": {
+        "same": true,
+        "top": 418.75,
+        "bottom": 11.65625,
+        "room": 0,
+        "text": "delivery uncertain \u00b7 do not resend\n\nHave a look at the bundle and tell me what changed."
+      }
+    },
+    {
+      "outcome": "prompt",
+      "settled": {
+        "same": true,
+        "top": 31.75,
+        "bottom": 420.25,
+        "room": 408,
+        "text": "Have a look at the bundle and tell me what changed."
+      },
+      "moving_frames": 16,
+      "duration_ms": 265.7999999523163
+    },
+    {
+      "outcome": "stream crosses held answer room",
+      "settled": null
+    },
+    {
+      "outcome": "accepted",
+      "settled": {
+        "same": true,
+        "top": 31.75,
+        "bottom": 420.25,
+        "room": 408,
+        "text": "Have a look at the bundle and tell me what changed."
+      },
+      "moving_frames": 16,
+      "duration_ms": 256
+    },
+    {
+      "outcome": "restored",
+      "settled": {
+        "same": true,
+        "top": 31.75,
+        "bottom": 420.25,
+        "room": 408,
+        "text": "Have a look at the bundle and tell me what changed."
+      },
+      "moving_frames": 15,
+      "duration_ms": 250.5
+    },
+    {
+      "outcome": "record-first",
+      "settled": {
+        "same": true,
+        "top": 31.75,
+        "bottom": 420.25,
+        "room": 408,
+        "text": "Have a look at the bundle and tell me what changed."
+      },
+      "moving_frames": 15,
+      "duration_ms": 262.5
+    },
+    {
+      "outcome": "http-first",
+      "settled": {
+        "same": true,
+        "top": 31.75,
+        "bottom": 420.25,
+        "room": 408,
+        "text": "Have a look at the bundle and tell me what changed."
+      },
+      "moving_frames": 16,
+      "duration_ms": 266.5
+    },
+    {
+      "outcome": "queued",
+      "settled": null
+    },
+    {
+      "outcome": "cancelled",
+      "settled": {
+        "same": true,
+        "top": 508.75,
+        "bottom": -56.75,
+        "room": 0,
+        "text": "Have a look at the bundle and tell me what changed."
+      }
+    }
+  ]
+}

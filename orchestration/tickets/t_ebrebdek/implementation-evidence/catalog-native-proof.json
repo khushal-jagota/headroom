@@ -1,0 +1,994 @@
+{
+  "revision": "5e76bbf49407798402fdee354eb32281a4b76eb4",
+  "invocationId": "34fb40bc-46d4-44b4-9c0f-466d99611a49",
+  "retirement": {
+    "seconds": 29.741,
+    "errors": [],
+    "native": {
+      "control": "",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19407.399999976158,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19425.199999928474,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19425.5,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19445.199999928474,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "wheel",
+          "ms": 19590.799999952316,
+          "top": 3686,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19558.299999952316,
+              "top": 3732,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19575,
+              "top": 3709,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -120
+        },
+        {
+          "ms": 19594.799999952316,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19594.899999976158,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19595.799999952316,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "kind": "predecessor",
+          "totalTail": 273.125
+        },
+        {
+          "kind": "original-cancellation-checks",
+          "passed": true
+        },
+        {
+          "kind": "send-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3901,
+              "scrollHeight": 4401,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3813,
+              "scrollHeight": 4313,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 20974,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 20992.600000023842,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 20992.699999928474,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scroll",
+                "at": 21012.799999952316,
+                "scrollTop": 3813
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3813,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "acceptance",
+          "ms": 21167.799999952316,
+          "top": 3734,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 21147.600000023842,
+              "top": 3779,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 21165.100000023842,
+              "top": 3756,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ]
+        },
+        {
+          "kind": "original-supersession-checks",
+          "passed": true
+        }
+      ],
+      "motion": [
+        {
+          "kind": "wheel",
+          "ms": 22240.5,
+          "top": 3973,
+          "owner": "sent",
+          "motion": false,
+          "same": true,
+          "valid": false,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 22207.799999952316,
+              "top": 3973,
+              "owner": "sent",
+              "motion": false,
+              "same": true
+            },
+            {
+              "ms": 22223.899999976158,
+              "top": 3973,
+              "owner": "sent",
+              "motion": false,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -50
+        },
+        {
+          "ms": 22241.899999976158,
+          "top": 3973,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 22258.199999928474,
+          "top": 3915,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22258.199999928474,
+          "top": 3915,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22277.199999928474,
+          "top": 3915,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22314.799999952316,
+          "top": 3629,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22314.799999952316,
+          "top": 3629,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22340.299999952316,
+          "top": 3645,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22340.299999952316,
+          "top": 3645,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22357.100000023842,
+          "top": 3674,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22357.100000023842,
+          "top": 3674,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22373.899999976158,
+          "top": 3702,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22374,
+          "top": 3702,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22390.600000023842,
+          "top": 3731,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22390.600000023842,
+          "top": 3731,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22407.299999952316,
+          "top": 3760,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22407.299999952316,
+          "top": 3760,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22424,
+          "top": 3789,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22424,
+          "top": 3789,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22440.699999928474,
+          "top": 3818,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22440.699999928474,
+          "top": 3818,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22457.299999952316,
+          "top": 3847,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22457.299999952316,
+          "top": 3847,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22473.799999952316,
+          "top": 3876,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22473.799999952316,
+          "top": 3876,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22490.600000023842,
+          "top": 3905,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22490.600000023842,
+          "top": 3905,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22507.100000023842,
+          "top": 3934,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22507.100000023842,
+          "top": 3934,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22523.799999952316,
+          "top": 3963,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22523.799999952316,
+          "top": 3963,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22540.600000023842,
+          "top": 3991,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22540.600000023842,
+          "top": 3991,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22557.199999928474,
+          "top": 4020,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22557.199999928474,
+          "top": 4020,
+          "owner": "sent",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 22574.299999952316,
+          "top": 4045,
+          "owner": "sent",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 22574.299999952316,
+          "top": 4045,
+          "owner": "sent",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "kind": "wheel",
+          "ms": 23340.199999928474,
+          "top": 4045,
+          "owner": "sent",
+          "motion": false,
+          "same": true,
+          "valid": false,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 23311.100000023842,
+              "top": 4045,
+              "owner": "sent",
+              "motion": false,
+              "same": true
+            },
+            {
+              "ms": 23323.5,
+              "top": 4045,
+              "owner": "sent",
+              "motion": false,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -90
+        },
+        {
+          "ms": 23341.899999976158,
+          "top": 4045,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 23358.299999952316,
+          "top": 3947,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 23358.399999976158,
+          "top": 3947,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 23377.399999976158,
+          "top": 3947,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 24126.799999952316,
+          "top": 2720,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "kind": "wheel",
+          "ms": 24757,
+          "top": 2720,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "valid": false,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 24723.799999952316,
+              "top": 2720,
+              "owner": "manual",
+              "motion": false,
+              "same": true
+            },
+            {
+              "ms": 24740.199999928474,
+              "top": 2720,
+              "owner": "manual",
+              "motion": false,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -100000
+        },
+        {
+          "ms": 24758,
+          "top": 2720,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 24774.399999976158,
+          "top": 0,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 24774.600000023842,
+          "top": 0,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        }
+      ]
+    },
+    "checks": [
+      {
+        "name": "retirement keeps the wheel-selected reading line across inset normalization",
+        "passed": true
+      },
+      {
+        "name": "retirement has no transient clamp or second anchor correction",
+        "passed": true
+      },
+      {
+        "name": "retirement preserves the exact wheel-selected reading line",
+        "passed": true
+      },
+      {
+        "name": "retired support permits no extra downward empty-space excursion",
+        "passed": true
+      },
+      {
+        "name": "excursion-1-notification has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "excursion-1-notification preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "retirement keeps the wheel-selected reading line across inset normalization",
+        "passed": true
+      },
+      {
+        "name": "retirement has no transient clamp or second anchor correction",
+        "passed": true
+      },
+      {
+        "name": "retirement preserves the exact wheel-selected reading line",
+        "passed": true
+      },
+      {
+        "name": "excursion-2-notification has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "excursion-2-notification preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "obsolete tail fully retires after upward navigation",
+        "passed": true
+      },
+      {
+        "name": "both primary excursions stay visibly painted through every ancestor and text hit",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-24 has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-24 preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-7 has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-7 preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-1 has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-1 preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-0 has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "tiny-notification-0 preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "reply growth before zero has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "reply growth before zero preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "fractional-tiny-notification has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "fractional-tiny-notification preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "reply growth to zero has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "reply growth to zero preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "growth-after-zero has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "growth-after-zero preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "reply growth after zero has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "reply growth after zero preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "latest-canceled-notification has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "latest-canceled-notification preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "replacement-send-notification has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "replacement-send-notification preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "resize-notification has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "resize-notification preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      },
+      {
+        "name": "shrink-notification has no intermediate position snap",
+        "passed": true
+      },
+      {
+        "name": "shrink-notification preserves the reading line before each paint",
+        "passed": true
+      },
+      {
+        "name": "notification cannot snap the manual reader",
+        "passed": true
+      },
+      {
+        "name": "notification preserves the reading line",
+        "passed": true
+      }
+    ]
+  }
+}

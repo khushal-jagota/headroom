@@ -1,0 +1,11 @@
+{
+  "base": "e38d5988fc29c9c23abf8810266322b72c491df7",
+  "original_assertions": 86,
+  "current_assertions": 97,
+  "missing_original_expressions": [],
+  "source_sha256": "f8cfc66e75ad97f8ee775e21a54807a4c1410e6b0e3ca7800c152e16e08e42c5",
+  "original_deferred_conditions": 10,
+  "current_deferred_conditions": 10,
+  "missing_deferred_conditions": [],
+  "source_revision": "5e76bbf49407798402fdee354eb32281a4b76eb4"
+}

@@ -1,0 +1,440 @@
+{
+  "base": "e38d5988fc29c9c23abf8810266322b72c491df7",
+  "file": "web/tests/browser/cases/live-conversation-unanswered-send.py",
+  "sha256": "f9fca2706daae421900658c38b6a7f9a6305554ea382ece79a91aafde0c0a653",
+  "assertions": [
+    {
+      "line": 380,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Name(id='INPUT', ctx=Load())]), attr='get_attribute', ctx=Load()), args=[Constant(value='placeholder')]), ops=[Eq()], comparators=[Constant(value='Message Worker...')])",
+      "source": "page.locator(INPUT).get_attribute('placeholder') == 'Message Worker...'"
+    },
+    {
+      "line": 391,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-held-stack]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "page.locator(\"[data-conversation-held-stack]\").count() == 0"
+    },
+    {
+      "line": 394,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-held-promote=\"send_now\"]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "page.locator('[data-conversation-held-promote=\"send_now\"]').count() == 0"
+    },
+    {
+      "line": 395,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-held-promote=\"steer\"]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "page.locator('[data-conversation-held-promote=\"steer\"]').count() == 0"
+    },
+    {
+      "line": 408,
+      "expression": "Compare(left=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value='window.__sends[1].sender_message_id')]), ops=[NotEq()], comparators=[Name(id='sent_id', ctx=Load())])",
+      "source": "page.evaluate(\"window.__sends[1].sender_message_id\") != sent_id"
+    },
+    {
+      "line": 409,
+      "expression": "Compare(left=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value='window.__sends[1].content[0].text')]), ops=[Eq()], comparators=[Constant(value='did this arrive')])",
+      "source": "page.evaluate(\"window.__sends[1].content[0].text\") == \"did this arrive\""
+    },
+    {
+      "line": 410,
+      "expression": "Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value='document.querySelector(\\'[data-conversation-outgoing=\"\\' + window.__sends[1].sender_message_id + \\'\"]\\') === window.__firstBubble')])",
+      "source": "page.evaluate(\"document.querySelector('[data-conversation-outgoing=\\\"' + window.__sends[1].sender_message_id + '\\\"]') === window.__firstBubble\")"
+    },
+    {
+      "line": 431,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='get_by_text', ctx=Load()), args=[Constant(value='in flight when the page went')], keywords=[keyword(arg='exact', value=Constant(value=True))]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "page.get_by_text(\"in flight when the page went\", exact=True).count() == 0"
+    },
+    {
+      "line": 432,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-held-stack]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "page.locator(\"[data-conversation-held-stack]\").count() == 0"
+    },
+    {
+      "line": 592,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Name(id='INPUT', ctx=Load())]), attr='get_attribute', ctx=Load()), args=[Constant(value='placeholder')]), ops=[Eq()], comparators=[Constant(value='Send the first message to start it...')])",
+      "source": "page.locator(INPUT).get_attribute('placeholder')=='Send the first message to start it...'"
+    },
+    {
+      "line": 595,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Name(id='INPUT', ctx=Load())]), attr='get_attribute', ctx=Load()), args=[Constant(value='placeholder')]), ops=[Eq()], comparators=[Constant(value='Write a custom message')])",
+      "source": "page.locator(INPUT).get_attribute('placeholder')=='Write a custom message'"
+    },
+    {
+      "line": 138,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='initial', ctx=Load()), slice=Constant(value='sentTop'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)]), Compare(left=Subscript(value=Name(id='initial', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=100)])])",
+      "source": "abs(initial['sentTop'] - 32) < 2 and initial['totalTail'] > 100"
+    },
+    {
+      "line": 139,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-outgoing]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=1)])",
+      "source": "page.locator('[data-conversation-outgoing]').count() == 1"
+    },
+    {
+      "line": 178,
+      "expression": "Compare(left=Subscript(value=Name(id='returned', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "returned['totalTail'] == 0"
+    },
+    {
+      "line": 179,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='returned', ctx=Load()), slice=Constant(value='contentHeight'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='bottom', ctx=Load()), slice=Constant(value='contentHeight'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=1)])",
+      "source": "abs(returned['contentHeight'] - bottom['contentHeight']) <= 1"
+    },
+    {
+      "line": 180,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='returned', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='bottom', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=9)])",
+      "source": "abs(returned['scrollHeight'] - bottom['scrollHeight']) <= 9"
+    },
+    {
+      "line": 199,
+      "expression": "Compare(left=Subscript(value=Name(id='previous', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "previous['totalTail'] == 0"
+    },
+    {
+      "line": 211,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Subscript(value=Name(id='short', ctx=Load()), slice=Constant(value='anchor'), ctx=Load()), slice=Constant(value='offset'), ctx=Load()), op=Sub(), right=Subscript(value=Subscript(value=Name(id='held', ctx=Load()), slice=Constant(value='anchor'), ctx=Load()), slice=Constant(value='offset'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=1)])",
+      "source": "abs(short['anchor']['offset'] - held['anchor']['offset']) <= 1"
+    },
+    {
+      "line": 212,
+      "expression": "Compare(left=Constant(value=0), ops=[Lt(), Lt()], comparators=[Subscript(value=Name(id='short', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), Subscript(value=Name(id='held', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load())])",
+      "source": "0 < short['totalTail'] < held['totalTail']"
+    },
+    {
+      "line": 213,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='short', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), op=Sub(), right=Call(func=Name(id='round', ctx=Load()), args=[Subscript(value=Name(id='short', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load())]))]), ops=[Gt()], comparators=[Constant(value=0.01)])",
+      "source": "abs(short['totalTail'] - round(short['totalTail'])) > .01"
+    },
+    {
+      "line": 215,
+      "expression": "Compare(left=Constant(value=7), ops=[LtE(), Lt()], comparators=[Subscript(value=Name(id='fractional', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), Constant(value=8.1)])",
+      "source": "7 <= fractional['totalTail'] < 8.1"
+    },
+    {
+      "line": 216,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='fractional', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), op=Sub(), right=Call(func=Name(id='round', ctx=Load()), args=[Subscript(value=Name(id='fractional', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load())]))]), ops=[Gt()], comparators=[Constant(value=0.01)])",
+      "source": "abs(fractional['totalTail'] - round(fractional['totalTail'])) > .01"
+    },
+    {
+      "line": 220,
+      "expression": "Compare(left=Subscript(value=Name(id='fractional_down', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[LtE()], comparators=[BinOp(left=Subscript(value=Name(id='held', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Add(), right=Constant(value=1))])",
+      "source": "fractional_down['top'] <= held['top'] + 1"
+    },
+    {
+      "line": 226,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='long', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Subscript(value=Name(id='long', ctx=Load()), slice=Constant(value='anchor'), ctx=Load()), slice=Constant(value='offset'), ctx=Load()), op=Sub(), right=Subscript(value=Subscript(value=Name(id='held', ctx=Load()), slice=Constant(value='anchor'), ctx=Load()), slice=Constant(value='offset'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=1)])])",
+      "source": "long['totalTail'] == 0 and abs(long['anchor']['offset'] - held['anchor']['offset']) <= 1"
+    },
+    {
+      "line": 231,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='after', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Subscript(value=Name(id='after', ctx=Load()), slice=Constant(value='anchor'), ctx=Load()), slice=Constant(value='offset'), ctx=Load()), op=Sub(), right=Subscript(value=Subscript(value=Name(id='held', ctx=Load()), slice=Constant(value='anchor'), ctx=Load()), slice=Constant(value='offset'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=1)])])",
+      "source": "after['totalTail'] == 0 and abs(after['anchor']['offset'] - held['anchor']['offset']) <= 1"
+    },
+    {
+      "line": 238,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='arrival', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=BinOp(left=Subscript(value=Name(id='arrival', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='arrival', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load())), op=Add(), right=Subscript(value=Name(id='arrival', ctx=Load()), slice=Constant(value='clientHeight'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=2)])])",
+      "source": "arrival['totalTail'] == 0 and abs(arrival['top'] - arrival['scrollHeight'] + arrival['clientHeight']) <= 2"
+    },
+    {
+      "line": 242,
+      "expression": "Compare(left=Subscript(value=Name(id='arrival_follow', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[Gt()], comparators=[BinOp(left=Subscript(value=Name(id='arrival', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Add(), right=Constant(value=20))])",
+      "source": "arrival_follow['top'] > arrival['top'] + 20"
+    },
+    {
+      "line": 243,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=BinOp(left=Subscript(value=Name(id='arrival_follow', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='arrival_follow', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load())), op=Add(), right=Subscript(value=Name(id='arrival_follow', ctx=Load()), slice=Constant(value='clientHeight'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=3)])",
+      "source": "abs(arrival_follow['top'] - arrival_follow['scrollHeight'] + arrival_follow['clientHeight']) <= 3"
+    },
+    {
+      "line": 252,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), UnaryOp(op=Not(), operand=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='latest'), ctx=Load()))])",
+      "source": "latest['totalTail'] == 0 and not latest['latest']"
+    },
+    {
+      "line": 255,
+      "expression": "Compare(left=Call(func=Name(id='len', ctx=Load()), args=[Name(id='movement', ctx=Load())]), ops=[Gt()], comparators=[Constant(value=3)])",
+      "source": "len(movement) > 3"
+    },
+    {
+      "line": 256,
+      "expression": "Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=Compare(left=Subscript(value=Name(id='b', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[GtE()], comparators=[BinOp(left=Subscript(value=Name(id='a', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Constant(value=1))]), generators=[comprehension(target=Tuple(elts=[Name(id='a', ctx=Store()), Name(id='b', ctx=Store())], ctx=Store()), iter=Call(func=Name(id='zip', ctx=Load()), args=[Name(id='motion', ctx=Load()), Subscript(value=Name(id='motion', ctx=Load()), slice=Slice(lower=Constant(value=1)), ctx=Load())], keywords=[keyword(arg='strict', value=Constant(value=False))]), is_async=0)])])",
+      "source": "all(b['top'] >= a['top'] - 1 for a, b in zip(motion, motion[1:], strict=False))"
+    },
+    {
+      "line": 257,
+      "expression": "Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=Compare(left=Subscript(value=Name(id='frame', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[LtE()], comparators=[BinOp(left=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Add(), right=Constant(value=1))]), generators=[comprehension(target=Name(id='frame', ctx=Store()), iter=Name(id='motion', ctx=Load()), is_async=0)])])",
+      "source": "all(frame['top'] <= latest['top'] + 1 for frame in motion)"
+    },
+    {
+      "line": 258,
+      "expression": "Compare(left=Call(func=Name(id='max', ctx=Load()), args=[GeneratorExp(elt=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='b', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='a', ctx=Load()), slice=Constant(value='top'), ctx=Load()))]), generators=[comprehension(target=Tuple(elts=[Name(id='a', ctx=Store()), Name(id='b', ctx=Store())], ctx=Store()), iter=Call(func=Name(id='zip', ctx=Load()), args=[Name(id='motion', ctx=Load()), Subscript(value=Name(id='motion', ctx=Load()), slice=Slice(lower=Constant(value=1)), ctx=Load())], keywords=[keyword(arg='strict', value=Constant(value=False))]), is_async=0)])]), ops=[Lt()], comparators=[BinOp(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='latest_start', ctx=Load()), slice=Constant(value='top'), ctx=Load()))]), op=Mult(), right=Constant(value=0.45))])",
+      "source": "max(abs(b['top'] - a['top']) for a, b in zip(motion, motion[1:], strict=False)) < abs(latest['top'] - latest_start['top']) * .45"
+    },
+    {
+      "line": 259,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=BinOp(left=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='clientHeight'), ctx=Load())))]), ops=[LtE()], comparators=[Constant(value=2)])",
+      "source": "abs(latest['top'] - (latest['scrollHeight'] - latest['clientHeight'])) <= 2"
+    },
+    {
+      "line": 263,
+      "expression": "Compare(left=Subscript(value=Name(id='following', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[Gt()], comparators=[BinOp(left=Subscript(value=Name(id='latest', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Add(), right=Constant(value=20))])",
+      "source": "following['top'] > latest['top'] + 20"
+    },
+    {
+      "line": 264,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='following', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=BinOp(left=Subscript(value=Name(id='following', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='following', ctx=Load()), slice=Constant(value='clientHeight'), ctx=Load())))]), ops=[LtE()], comparators=[Constant(value=3)])",
+      "source": "abs(following['top'] - (following['scrollHeight'] - following['clientHeight'])) <= 3"
+    },
+    {
+      "line": 270,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='page', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-view-key=\"incomplete-newest\"]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "page.locator('[data-conversation-view-key=\"incomplete-newest\"]').count() == 0"
+    },
+    {
+      "line": 277,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='incomplete', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), UnaryOp(op=Not(), operand=Subscript(value=Name(id='incomplete', ctx=Load()), slice=Constant(value='latest'), ctx=Load()))])",
+      "source": "incomplete['totalTail'] == 0 and not incomplete['latest']"
+    },
+    {
+      "line": 278,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='incomplete', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=BinOp(left=Subscript(value=Name(id='incomplete', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='incomplete', ctx=Load()), slice=Constant(value='clientHeight'), ctx=Load())))]), ops=[LtE()], comparators=[Constant(value=2)])",
+      "source": "abs(incomplete['top'] - (incomplete['scrollHeight'] - incomplete['clientHeight'])) <= 2"
+    },
+    {
+      "line": 283,
+      "expression": "Compare(left=Subscript(value=Name(id='residual', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=0)])",
+      "source": "residual['totalTail'] > 0"
+    },
+    {
+      "line": 288,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='residual_arrival', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), UnaryOp(op=Not(), operand=Subscript(value=Name(id='residual_arrival', ctx=Load()), slice=Constant(value='latest'), ctx=Load()))])",
+      "source": "residual_arrival['totalTail'] == 0 and not residual_arrival['latest']"
+    },
+    {
+      "line": 289,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=BinOp(left=Subscript(value=Name(id='residual_arrival', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='residual_arrival', ctx=Load()), slice=Constant(value='scrollHeight'), ctx=Load())), op=Add(), right=Subscript(value=Name(id='residual_arrival', ctx=Load()), slice=Constant(value='clientHeight'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=2)])",
+      "source": "abs(residual_arrival['top'] - residual_arrival['scrollHeight'] + residual_arrival['clientHeight']) <= 2"
+    },
+    {
+      "line": 290,
+      "expression": "Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=Compare(left=Subscript(value=Name(id='b', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[LtE()], comparators=[BinOp(left=Subscript(value=Name(id='a', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Add(), right=Constant(value=1))]), generators=[comprehension(target=Tuple(elts=[Name(id='a', ctx=Store()), Name(id='b', ctx=Store())], ctx=Store()), iter=Call(func=Name(id='zip', ctx=Load()), args=[Name(id='residual_motion', ctx=Load()), Subscript(value=Name(id='residual_motion', ctx=Load()), slice=Slice(lower=Constant(value=1)), ctx=Load())], keywords=[keyword(arg='strict', value=Constant(value=False))]), is_async=0)])])",
+      "source": "all(b['top'] <= a['top'] + 1 for a, b in zip(residual_motion, residual_motion[1:], strict=False))"
+    },
+    {
+      "line": 291,
+      "expression": "Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=Compare(left=Subscript(value=Name(id='frame', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[GtE()], comparators=[BinOp(left=Subscript(value=Name(id='residual_arrival', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Constant(value=1))]), generators=[comprehension(target=Name(id='frame', ctx=Store()), iter=Name(id='residual_motion', ctx=Load()), is_async=0)])])",
+      "source": "all(frame['top'] >= residual_arrival['top'] - 1 for frame in residual_motion)"
+    },
+    {
+      "line": 293,
+      "expression": "Compare(left=Call(func=Name(id='len', ctx=Load()), args=[ListComp(elt=Name(id='step', ctx=Load()), generators=[comprehension(target=Name(id='step', ctx=Store()), iter=Name(id='residual_steps', ctx=Load()), ifs=[Compare(left=Name(id='step', ctx=Load()), ops=[Gt()], comparators=[Constant(value=0.5)])], is_async=0)])]), ops=[Gt()], comparators=[Constant(value=3)])",
+      "source": "len([step for step in residual_steps if step > .5]) > 3"
+    },
+    {
+      "line": 294,
+      "expression": "Compare(left=Call(func=Name(id='max', ctx=Load()), args=[Name(id='residual_steps', ctx=Load())]), ops=[Lt()], comparators=[BinOp(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='residual_arrival', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='residual', ctx=Load()), slice=Constant(value='top'), ctx=Load()))]), op=Mult(), right=Constant(value=0.45))])",
+      "source": "max(residual_steps) < abs(residual_arrival['top'] - residual['top']) * .45"
+    },
+    {
+      "line": 304,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='after', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Subscript(value=Name(id='canceled', ctx=Load()), slice=Constant(value='top'), ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=1)])",
+      "source": "abs(after['top'] - canceled['top']) <= 1"
+    },
+    {
+      "line": 308,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='latest_send', ctx=Load()), slice=Constant(value='sentTop'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)]), Compare(left=Subscript(value=Name(id='latest_send', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=100)])])",
+      "source": "abs(latest_send['sentTop'] - 32) < 2 and latest_send['totalTail'] > 100"
+    },
+    {
+      "line": 310,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Call(func=Name(id='sample', ctx=Load()), args=[Constant(value='new-send-still-owns')]), slice=Constant(value='sentTop'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)])",
+      "source": "abs(sample('new-send-still-owns')['sentTop'] - 32) < 2"
+    },
+    {
+      "line": 316,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='replacement', ctx=Load()), slice=Constant(value='sentTop'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)]), Compare(left=Subscript(value=Name(id='replacement', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=100)])])",
+      "source": "abs(replacement['sentTop'] - 32) < 2 and replacement['totalTail'] > 100"
+    },
+    {
+      "line": 318,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Call(func=Name(id='sample', ctx=Load()), args=[Constant(value='replacement-send-held')]), slice=Constant(value='sentTop'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)])",
+      "source": "abs(sample('replacement-send-held')['sentTop'] - 32) < 2"
+    },
+    {
+      "line": 326,
+      "expression": "Compare(left=Subscript(value=Call(func=Name(id='sample', ctx=Load()), args=[Constant(value='resize-settled')]), slice=Constant(value='totalTail'), ctx=Load()), ops=[LtE()], comparators=[BinOp(left=Subscript(value=Name(id='resized', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), op=Add(), right=Constant(value=1))])",
+      "source": "sample('resize-settled')['totalTail'] <= resized['totalTail'] + 1"
+    },
+    {
+      "line": 333,
+      "expression": "Compare(left=Subscript(value=Call(func=Name(id='sample', ctx=Load()), args=[Constant(value='shrink-settled')]), slice=Constant(value='totalTail'), ctx=Load()), ops=[LtE()], comparators=[BinOp(left=Subscript(value=Name(id='shrunk', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), op=Add(), right=Constant(value=1))])",
+      "source": "sample('shrink-settled')['totalTail'] <= shrunk['totalTail'] + 1"
+    },
+    {
+      "line": 352,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='top', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), Compare(left=Subscript(value=Name(id='top', ctx=Load()), slice=Constant(value='paddingTop'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=32)]), Compare(left=Subscript(value=Name(id='top', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)])])",
+      "source": "top['top'] == 0 and top['paddingTop'] == 32 and top['totalTail'] == 0"
+    },
+    {
+      "line": 356,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='top_after', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), Compare(left=Subscript(value=Name(id='top_after', ctx=Load()), slice=Constant(value='paddingTop'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=32)]), Compare(left=Subscript(value=Name(id='top_after', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)])])",
+      "source": "top_after['top'] == 0 and top_after['paddingTop'] == 32 and top_after['totalTail'] == 0"
+    },
+    {
+      "line": 357,
+      "expression": "UnaryOp(op=Not(), operand=Name(id='errors', ctx=Load()))",
+      "source": "not errors"
+    },
+    {
+      "line": 483,
+      "expression": "Compare(left=Name(id='pending', ctx=Load()), ops=[Eq()], comparators=[Dict(keys=[Constant(value='bubbles'), Constant(value='queue')], values=[Constant(value=0), Constant(value=False)])])",
+      "source": "pending == {\"bubbles\": 0, \"queue\": False}"
+    },
+    {
+      "line": 511,
+      "expression": "BoolOp(op=And(), values=[Subscript(value=Name(id='settled', ctx=Load()), slice=Constant(value='same'), ctx=Load()), Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=BoolOp(op=And(), values=[Subscript(value=Name(id='row', ctx=Load()), slice=Constant(value='same'), ctx=Load()), Compare(left=Subscript(value=Name(id='row', ctx=Load()), slice=Constant(value='count'), ctx=Load()), ops=[LtE()], comparators=[Constant(value=1)]), UnaryOp(op=Not(), operand=Subscript(value=Name(id='row', ctx=Load()), slice=Constant(value='queue'), ctx=Load()))]), generators=[comprehension(target=Name(id='row', ctx=Store()), iter=Name(id='frames', ctx=Load()), is_async=0)])])])",
+      "source": "settled[\"same\"] and all(row['same'] and row['count'] <= 1 and not row['queue'] for row in frames)"
+    },
+    {
+      "line": 512,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-error], [data-conversation-fate]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "case.locator(\"[data-conversation-error], [data-conversation-fate]\").count() == 0"
+    },
+    {
+      "line": 167,
+      "expression": "Subscript(value=Name(id='check', ctx=Load()), slice=Constant(value=1), ctx=Load())",
+      "source": "check[1]"
+    },
+    {
+      "line": 190,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='current', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), op=Sub(), right=Name(id='target', ctx=Load()))]), ops=[LtE()], comparators=[Constant(value=1)])",
+      "source": "abs(current['totalTail'] - target) <= 1"
+    },
+    {
+      "line": 193,
+      "expression": "Compare(left=Subscript(value=Name(id='current', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[LtE()], comparators=[BinOp(left=Subscript(value=Name(id='previous', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), op=Add(), right=Constant(value=1))])",
+      "source": "current['totalTail'] <= previous['totalTail'] + 1"
+    },
+    {
+      "line": 359,
+      "expression": "Subscript(value=Name(id='check', ctx=Load()), slice=Constant(value=1), ctx=Load())",
+      "source": "check[1]"
+    },
+    {
+      "line": 493,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-thread] [data-conversation-outgoing]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "case.locator('[data-conversation-thread] [data-conversation-outgoing]').count() == 0"
+    },
+    {
+      "line": 496,
+      "expression": "Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=Compare(left=Subscript(value=Name(id='row', ctx=Load()), slice=Constant(value='count'), ctx=Load()), ops=[LtE()], comparators=[Constant(value=1)]), generators=[comprehension(target=Name(id='row', ctx=Store()), iter=Name(id='frames', ctx=Load()), is_async=0)])])",
+      "source": "all(row['count'] <= 1 for row in frames)"
+    },
+    {
+      "line": 514,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='settled', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)]), Compare(left=Subscript(value=Name(id='settled', ctx=Load()), slice=Constant(value='room'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=100)])])",
+      "source": "abs(settled[\"top\"] - 32) < 2 and settled[\"room\"] > 100"
+    },
+    {
+      "line": 517,
+      "expression": "Compare(left=Call(func=Name(id='len', ctx=Load()), args=[Name(id='moving', ctx=Load())]), ops=[Gt()], comparators=[Constant(value=3)])",
+      "source": "len(moving)>3"
+    },
+    {
+      "line": 519,
+      "expression": "Compare(left=Constant(value=150), ops=[LtE(), LtE()], comparators=[Name(id='duration', ctx=Load()), Constant(value=340)])",
+      "source": "150 <= duration <= 340"
+    },
+    {
+      "line": 520,
+      "expression": "Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=Compare(left=Subscript(value=Name(id='b', ctx=Load()), slice=Constant(value='scrollTop'), ctx=Load()), ops=[GtE()], comparators=[BinOp(left=Subscript(value=Name(id='a', ctx=Load()), slice=Constant(value='scrollTop'), ctx=Load()), op=Sub(), right=Constant(value=1))]), generators=[comprehension(target=Tuple(elts=[Name(id='a', ctx=Store()), Name(id='b', ctx=Store())], ctx=Store()), iter=Call(func=Name(id='zip', ctx=Load()), args=[Name(id='visible', ctx=Load()), Subscript(value=Name(id='visible', ctx=Load()), slice=Slice(lower=Constant(value=1)), ctx=Load())], keywords=[keyword(arg='strict', value=Constant(value=False))]), is_async=0)])])",
+      "source": "all(b['scrollTop'] >= a['scrollTop']-1 for a,b in zip(visible,visible[1:],strict=False))"
+    },
+    {
+      "line": 525,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Name(id='gap', ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)])",
+      "source": "abs(gap-32)<2"
+    },
+    {
+      "line": 544,
+      "expression": "Call(func=Name(id='all', ctx=Load()), args=[GeneratorExp(elt=BoolOp(op=Or(), values=[UnaryOp(op=Not(), operand=Subscript(value=Name(id='row', ctx=Load()), slice=Constant(value='queue'), ctx=Load())), Compare(left=Subscript(value=Name(id='row', ctx=Load()), slice=Constant(value='thread'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)])]), generators=[comprehension(target=Name(id='row', ctx=Store()), iter=Name(id='retry_frames', ctx=Load()), is_async=0)])])",
+      "source": "all(not row['queue'] or row['thread']==0 for row in retry_frames)"
+    },
+    {
+      "line": 545,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-thread] [data-conversation-outgoing]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "case.locator('[data-conversation-thread] [data-conversation-outgoing]').count()==0"
+    },
+    {
+      "line": 552,
+      "expression": "Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='locator', ctx=Load()), args=[Constant(value='[data-conversation-reserved-space]')]), attr='count', ctx=Load())), ops=[Eq()], comparators=[Constant(value=0)])",
+      "source": "case.locator('[data-conversation-reserved-space]').count() == 0"
+    },
+    {
+      "line": 559,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value=\"window.__sentBubble.getBoundingClientRect().top-window.__sentBubble.closest('[data-conversation-thread]').getBoundingClientRect().top\")]), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)])",
+      "source": "abs(case.evaluate(\"window.__sentBubble.getBoundingClientRect().top-window.__sentBubble.closest('[data-conversation-thread]').getBoundingClientRect().top\")-32)<2"
+    },
+    {
+      "line": 562,
+      "expression": "Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value=\"window.__sentBubble===document.querySelector('[data-conversation-outgoing]')\")])",
+      "source": "case.evaluate(\"window.__sentBubble===document.querySelector('[data-conversation-outgoing]')\")"
+    },
+    {
+      "line": 568,
+      "expression": "Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value=\"window.__sentBubble === document.querySelector('[data-conversation-outgoing]')\")])",
+      "source": "case.evaluate(\"window.__sentBubble === document.querySelector('[data-conversation-outgoing]')\")"
+    },
+    {
+      "line": 569,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value=\"window.__sentBubble.getBoundingClientRect().top-window.__sentBubble.closest('[data-conversation-thread]').getBoundingClientRect().top\")]), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)])",
+      "source": "abs(case.evaluate(\"window.__sentBubble.getBoundingClientRect().top-window.__sentBubble.closest('[data-conversation-thread]').getBoundingClientRect().top\") - 32) < 2"
+    },
+    {
+      "line": 574,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='short', ctx=Load()), slice=Constant(value='gap'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Lt()], comparators=[Constant(value=2)]), Compare(left=Subscript(value=Name(id='short', ctx=Load()), slice=Constant(value='room'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=100)])])",
+      "source": "abs(short['gap']-32)<2 and short['room']>100"
+    },
+    {
+      "line": 581,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Call(func=Name(id='len', ctx=Load()), args=[Name(id='moving', ctx=Load())]), ops=[Gt()], comparators=[Constant(value=3)]), Compare(left=Subscript(value=Subscript(value=Name(id='moving', ctx=Load()), slice=UnaryOp(op=USub(), operand=Constant(value=1)), ctx=Load()), slice=Constant(value='ms'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=300)])])",
+      "source": "len(moving)>3 and moving[-1]['ms']>300"
+    },
+    {
+      "line": 582,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Subscript(value=Name(id='crossing', ctx=Load()), slice=UnaryOp(op=USub(), operand=Constant(value=1)), ctx=Load()), slice=Constant(value='room'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), Compare(left=UnaryOp(op=USub(), operand=Constant(value=2)), ops=[LtE(), LtE()], comparators=[Subscript(value=Subscript(value=Name(id='crossing', ctx=Load()), slice=UnaryOp(op=USub(), operand=Constant(value=1)), ctx=Load()), slice=Constant(value='gap'), ctx=Load()), Constant(value=18)])])",
+      "source": "crossing[-1]['room']==0 and -2<=crossing[-1]['gap']<=18"
+    },
+    {
+      "line": 192,
+      "expression": "Compare(left=Subscript(value=Name(id='current', ctx=Load()), slice=Constant(value='totalTail'), ctx=Load()), ops=[Gt()], comparators=[Constant(value=0)])",
+      "source": "current['totalTail'] > 0"
+    },
+    {
+      "line": 196,
+      "expression": "Compare(left=Subscript(value=Name(id='down', ctx=Load()), slice=Constant(value='top'), ctx=Load()), ops=[LtE()], comparators=[BinOp(left=Subscript(value=Name(id='held', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Add(), right=Constant(value=1))])",
+      "source": "down['top'] <= held['top'] + 1"
+    },
+    {
+      "line": 528,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='settled', ctx=Load()), slice=Constant(value='top'), ctx=Load()), op=Sub(), right=Constant(value=32))]), ops=[Gt()], comparators=[Constant(value=20)])",
+      "source": "abs(settled['top']-32)>20"
+    },
+    {
+      "line": 531,
+      "expression": "Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Call(func=Attribute(value=Name(id='case', ctx=Load()), attr='evaluate', ctx=Load()), args=[Constant(value='window.__sentBubble.getBoundingClientRect().top')]), op=Sub(), right=Name(id='after', ctx=Load()))]), ops=[Lt()], comparators=[Constant(value=2)])",
+      "source": "abs(case.evaluate('window.__sentBubble.getBoundingClientRect().top')-after)<2"
+    },
+    {
+      "line": 533,
+      "expression": "BoolOp(op=And(), values=[Compare(left=Subscript(value=Name(id='settled', ctx=Load()), slice=Constant(value='room'), ctx=Load()), ops=[Eq()], comparators=[Constant(value=0)]), Compare(left=Call(func=Name(id='abs', ctx=Load()), args=[BinOp(left=Subscript(value=Name(id='settled', ctx=Load()), slice=Constant(value='bottom'), ctx=Load()), op=Sub(), right=Constant(value=12))]), ops=[Lt()], comparators=[Constant(value=2)])])",
+      "source": "settled[\"room\"] == 0 and abs(settled[\"bottom\"] - 12) < 2"
+    },
+    {
+      "line": 534,
+      "expression": "Compare(left=Subscript(value=Dict(keys=[Constant(value='unanswered'), Constant(value='refused'), Constant(value='uncertain')], values=[Constant(value='no answer came'), Constant(value='not delivered'), Constant(value='delivery uncertain')]), slice=Name(id='outcome', ctx=Load()), ctx=Load()), ops=[In()], comparators=[Subscript(value=Name(id='settled', ctx=Load()), slice=Constant(value='text'), ctx=Load())])",
+      "source": "{\"unanswered\": \"no answer came\", \"refused\": \"not delivered\", \"uncertain\": \"delivery uncertain\"}[outcome] in settled[\"text\"]"
+    }
+  ],
+  "count": 86,
+  "interpreter": "/home/vps/projects/panels/worktrees/t_ebrebdek/.venv/bin/python",
+  "source_root": "/home/vps/projects/panels/worktrees/t_ebrebdek"
+}

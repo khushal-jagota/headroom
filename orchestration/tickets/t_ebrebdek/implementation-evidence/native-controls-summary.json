@@ -1,0 +1,1919 @@
+{
+  "command": "node web/tests/browser/diagnostic-native-cancellation.mjs --report /home/vps/projects/panels/task-tmp/t_ebrebdek/native-controls.json",
+  "source_sha256": {
+    "web/tests/browser/cases/live-conversation-unanswered-send.py": "f8cfc66e75ad97f8ee775e21a54807a4c1410e6b0e3ca7800c152e16e08e42c5",
+    "web/tests/browser/cases/live-conversation-unanswered-send.mjs": "f66161ef2824f3f0577bc79cf1c0639206df36f65b5df59095838faa303a3909",
+    "web/tests/browser/diagnostic-native-cancellation.py": "4fb21c978368376d741c5f9b40a7d26fe4b2f6a30a07a9a135379f437d1e26e6",
+    "web/tests/browser/diagnostic-native-cancellation.mjs": "cae2db6760cacb8d9676152a9d3f8f3f9b0a7909c870fabda7aef7bea61a9dfb"
+  },
+  "controls": [
+    {
+      "control": "clean",
+      "status": "passed",
+      "seconds": 26.678,
+      "expectedFailure": null,
+      "rejection": "",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19057.100000023842,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19075,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19075.199999928474,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19096.100000023842,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "wheel",
+          "ms": 19240.399999976158,
+          "top": 3685,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19207.699999928474,
+              "top": 3730,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19224.199999928474,
+              "top": 3707,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -120
+        },
+        {
+          "ms": 19244.199999928474,
+          "top": 3685,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19244.199999928474,
+          "top": 3685,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19245.299999952316,
+          "top": 3685,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "kind": "predecessor",
+          "totalTail": 272.125
+        },
+        {
+          "kind": "original-cancellation-checks",
+          "passed": true
+        },
+        {
+          "kind": "send-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3901,
+              "scrollHeight": 4401,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3813,
+              "scrollHeight": 4313,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 20640.299999952316,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 20658.600000023842,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 20658.600000023842,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scroll",
+                "at": 20685.199999928474,
+                "scrollTop": 3813
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3813,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "acceptance",
+          "ms": 20832.100000023842,
+          "top": 3742,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 20810.600000023842,
+              "top": 3787,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 20825.600000023842,
+              "top": 3764,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ]
+        },
+        {
+          "kind": "original-supersession-checks",
+          "passed": true
+        }
+      ],
+      "delivery_events": [],
+      "failed_behavior_checks": []
+    },
+    {
+      "control": "zero-tail",
+      "status": "passed",
+      "seconds": 26.824,
+      "expectedFailure": null,
+      "rejection": "",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19281.899999976158,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19300.399999976158,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19300.5,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19323.299999952316,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "wheel",
+          "ms": 19465,
+          "top": 3686,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19432.5,
+              "top": 3732,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19448.799999952316,
+              "top": 3709,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -100000
+        },
+        {
+          "ms": 19468.199999928474,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19468.199999928474,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19469.299999952316,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "kind": "predecessor",
+          "totalTail": 0
+        },
+        {
+          "kind": "original-cancellation-checks",
+          "passed": true
+        },
+        {
+          "kind": "send-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3901,
+              "scrollHeight": 4401,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3813,
+              "scrollHeight": 4313,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 20848.5,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 20866.5,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 20866.599999904633,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scroll",
+                "at": 20887.099999904633,
+                "scrollTop": 3813
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3813,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "acceptance",
+          "ms": 21054.699999928474,
+          "top": 3734,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 21035.899999976158,
+              "top": 3780,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 21052.599999904633,
+              "top": 3757,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ]
+        },
+        {
+          "kind": "original-supersession-checks",
+          "passed": true
+        }
+      ],
+      "delivery_events": [],
+      "failed_behavior_checks": []
+    },
+    {
+      "control": "positive-tail",
+      "status": "passed",
+      "seconds": 27.242,
+      "expectedFailure": null,
+      "rejection": "",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19686.300000071526,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19704.400000095367,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19704.5,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19725.900000095367,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "wheel",
+          "ms": 19889.200000047684,
+          "top": 3686,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19859.700000047684,
+              "top": 3731,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19876.300000071526,
+              "top": 3709,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -1
+        },
+        {
+          "ms": 19892.600000023842,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19892.600000023842,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19893.600000023842,
+          "top": 3686,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 19904.5,
+          "top": 3685,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19904.5,
+          "top": 3685,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "kind": "predecessor",
+          "totalTail": 272.125
+        },
+        {
+          "kind": "original-cancellation-checks",
+          "passed": true
+        },
+        {
+          "kind": "send-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3901,
+              "scrollHeight": 4401,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3813,
+              "scrollHeight": 4313,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 21319.900000095367,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 21339.5,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 21339.5,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scroll",
+                "at": 21360.300000071526,
+                "scrollTop": 3813
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3813,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "acceptance",
+          "ms": 21511.800000071526,
+          "top": 3758,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 21486.900000095367,
+              "top": 3804,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 21503.300000071526,
+              "top": 3781,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ]
+        },
+        {
+          "kind": "original-supersession-checks",
+          "passed": true
+        }
+      ],
+      "delivery_events": [],
+      "failed_behavior_checks": []
+    },
+    {
+      "control": "late-wheel",
+      "status": "passed",
+      "seconds": 23.368,
+      "expectedFailure": "SETUP_LATEST_WHEEL",
+      "rejection": "('SETUP_LATEST_WHEEL', [{'kind': 'wheel', 'ms': 19522.5, 'top': 3413, 'owner': 'following', 'motion': False, 'same': True, 'valid': False, 'expectedOwner': 'latest', 'frames': [{'ms': 19491.600000023842, 'top': 3413, 'owner': 'following', 'motion': False, 'same': True}, {'ms': 19505.600000023842, 't",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19105.799999952316,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19124.200000047684,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19124.299999952316,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19149.100000023842,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        }
+      ],
+      "delivery_events": [
+        {
+          "kind": "wheel",
+          "ms": 19522.5,
+          "top": 3413,
+          "owner": "following",
+          "motion": false,
+          "same": true,
+          "valid": false,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19491.600000023842,
+              "top": 3413,
+              "owner": "following",
+              "motion": false,
+              "same": true
+            },
+            {
+              "ms": 19505.600000023842,
+              "top": 3413,
+              "owner": "following",
+              "motion": false,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -120
+        },
+        {
+          "ms": 19523.299999952316,
+          "top": 3413,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 20313.299999952316,
+          "top": 3293,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 20313.700000047684,
+          "top": 3293,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        }
+      ],
+      "failed_behavior_checks": []
+    },
+    {
+      "control": "late-acceptance",
+      "status": "passed",
+      "seconds": 26.148,
+      "expectedFailure": "SETUP_LATEST_ACCEPTANCE",
+      "rejection": "('SETUP_LATEST_ACCEPTANCE', {'kind': 'acceptance', 'ms': 21635.100000023842, 'top': 3485, 'owner': 'following', 'motion': False, 'same': True, 'valid': False, 'expectedOwner': 'latest', 'frames': [{'ms': 21609.700000047684, 'top': 3529, 'owner': 'latest', 'motion': True, 'same': True}, {'ms': 21626.",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19659.700000047684,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19677.600000023842,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19677.800000071526,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19699.5,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "wheel",
+          "ms": 19842.900000095367,
+          "top": 3688,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19811.700000047684,
+              "top": 3733,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19828.600000023842,
+              "top": 3710,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -120
+        },
+        {
+          "ms": 19847.100000023842,
+          "top": 3688,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19847.100000023842,
+          "top": 3688,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19848.200000047684,
+          "top": 3688,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "kind": "predecessor",
+          "totalTail": 155.125
+        },
+        {
+          "kind": "original-cancellation-checks",
+          "passed": true
+        },
+        {
+          "kind": "send-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3901,
+              "scrollHeight": 4401,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3813,
+              "scrollHeight": 4313,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 21242.800000071526,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 21260.800000071526,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 21260.900000095367,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scroll",
+                "at": 21282.600000023842,
+                "scrollTop": 3813
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3813,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "acceptance",
+          "ms": 21635.100000023842,
+          "top": 3485,
+          "owner": "following",
+          "motion": false,
+          "same": true,
+          "valid": false,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 21609.700000047684,
+              "top": 3529,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 21626.100000023842,
+              "top": 3506,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ]
+        }
+      ],
+      "delivery_events": [],
+      "failed_behavior_checks": []
+    },
+    {
+      "control": "broken-wheel",
+      "status": "passed",
+      "seconds": 23.685,
+      "expectedFailure": "BEHAVIOR_WHEEL_CANCELLATION",
+      "rejection": "('BEHAVIOR_WHEEL_CANCELLATION', ('latest-canceled-notification has no intermediate position snap', False, {'ms': 19302.100000023842, 'phase': 'latest-canceled-notification-before', 'top': 3615, 'scrollHeight': 4115, 'clientHeight': 500, 'viewportHeight': 500, 'contentHeight': 3876.875, 'contentBotto",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19078.300000071526,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19097.200000047684,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19097.300000071526,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19118.700000047684,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "wheel",
+          "ms": 19263.600000023842,
+          "top": 3683,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19231.399999976158,
+              "top": 3729,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19246.200000047684,
+              "top": 3706,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -120
+        },
+        {
+          "ms": 19264.200000047684,
+          "top": 3683,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19264.300000071526,
+          "top": 3683,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19265.800000071526,
+          "top": 3660,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 19279.800000071526,
+          "top": 3540,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19279.800000071526,
+          "top": 3540,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "kind": "predecessor",
+          "totalTail": 225.125
+        }
+      ],
+      "delivery_events": [
+        {
+          "kind": "wheel",
+          "ms": 19263.600000023842,
+          "top": 3683,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19231.399999976158,
+              "top": 3729,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19246.200000047684,
+              "top": 3706,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -120
+        },
+        {
+          "ms": 19264.200000047684,
+          "top": 3683,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19264.300000071526,
+          "top": 3683,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19265.800000071526,
+          "top": 3660,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 19279.800000071526,
+          "top": 3540,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19279.800000071526,
+          "top": 3540,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19298.100000023842,
+          "top": 3638,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19298.100000023842,
+          "top": 3638,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19318.700000047684,
+          "top": 3615,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19318.700000047684,
+          "top": 3615,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19335,
+          "top": 3592,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19335,
+          "top": 3592,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19351,
+          "top": 3570,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19351,
+          "top": 3570,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19366.600000023842,
+          "top": 3547,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19366.600000023842,
+          "top": 3547,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19382.5,
+          "top": 3524,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19382.5,
+          "top": 3524,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19401.5,
+          "top": 3501,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19401.5,
+          "top": 3501,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19418.600000023842,
+          "top": 3478,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19418.600000023842,
+          "top": 3478,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19436.200000047684,
+          "top": 3456,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19436.200000047684,
+          "top": 3456,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19452.100000023842,
+          "top": 3433,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19452.100000023842,
+          "top": 3433,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19462.200000047684,
+          "top": 3413,
+          "owner": "following",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19462.200000047684,
+          "top": 3413,
+          "owner": "following",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        }
+      ],
+      "failed_behavior_checks": [
+        "latest-canceled-notification has no intermediate position snap",
+        "latest-canceled-notification preserves the reading line before each paint",
+        "notification cannot snap the manual reader",
+        "notification preserves the reading line"
+      ]
+    },
+    {
+      "control": "broken-supersession",
+      "status": "passed",
+      "seconds": 26.599,
+      "expectedFailure": "BEHAVIOR_SEND_SUPERSESSION",
+      "rejection": "('BEHAVIOR_SEND_SUPERSESSION', {'ms': 21843.100000023842, 'phase': 'accepted-send', 'top': 3574, 'scrollHeight': 4074, 'clientHeight': 500, 'viewportHeight': 500, 'contentHeight': 4020.875, 'contentBottom': 470.875, 'room': 17.125, 'gap': 0, 'totalTail': 17.125, 'paddingTop': 24, 'paddingBottom': 12",
+      "events": [
+        {
+          "kind": "gesture-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3829,
+              "scrollHeight": 4329,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3741,
+              "scrollHeight": 4241,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 19281.200000047684,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 19299.600000023842,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 19299.700000047684,
+                "scrollTop": 3741
+              },
+              {
+                "type": "scroll",
+                "at": 19322.5,
+                "scrollTop": 3741
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3741,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "wheel",
+          "ms": 19514.399999976158,
+          "top": 3642,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 19481.100000023842,
+              "top": 3688,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 19497.700000047684,
+              "top": 3665,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ],
+          "trusted": true,
+          "delta": -120
+        },
+        {
+          "ms": 19520.5,
+          "top": 3642,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19520.5,
+          "top": 3642,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "ms": 19522.100000023842,
+          "top": 3642,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "after-wheel"
+        },
+        {
+          "ms": 19533.600000023842,
+          "top": 3522,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scroll",
+          "trusted": true
+        },
+        {
+          "ms": 19533.700000047684,
+          "top": 3522,
+          "owner": "manual",
+          "motion": false,
+          "same": true,
+          "kind": "scrollend",
+          "trusted": true
+        },
+        {
+          "kind": "predecessor",
+          "totalTail": 109.125
+        },
+        {
+          "kind": "original-cancellation-checks",
+          "passed": true
+        },
+        {
+          "kind": "send-setup",
+          "barrier": {
+            "failure": null,
+            "before": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "sent",
+              "motion": false,
+              "scrollTop": 3901,
+              "scrollHeight": 4401,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "after": {
+              "connected": true,
+              "visible": true,
+              "ready": "true",
+              "entry": "complete",
+              "busy": "false",
+              "owner": "manual",
+              "motion": false,
+              "scrollTop": 3813,
+              "scrollHeight": 4313,
+              "clientHeight": 500,
+              "top": 72,
+              "left": 170,
+              "width": 760,
+              "height": 500,
+              "gap": 0
+            },
+            "events": [
+              {
+                "type": "wheel",
+                "trusted": true,
+                "key": null,
+                "deltaY": -80,
+                "target": {
+                  "tag": "DIV",
+                  "thread": true
+                },
+                "at": 20964.600000023842,
+                "defaultPrevented": false
+              },
+              {
+                "type": "scroll",
+                "at": 20982.399999976158,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scrollend",
+                "trusted": true,
+                "at": 20982.5,
+                "scrollTop": 3813
+              },
+              {
+                "type": "scroll",
+                "at": 21005,
+                "scrollTop": 3813
+              }
+            ],
+            "ended": true,
+            "endedPosition": [
+              3813,
+              0
+            ],
+            "stableIntervals": 2,
+            "sameTranscript": true,
+            "requiredClearance": 0
+          }
+        },
+        {
+          "kind": "acceptance",
+          "ms": 21173.600000023842,
+          "top": 3733,
+          "owner": "latest",
+          "motion": true,
+          "same": true,
+          "valid": true,
+          "expectedOwner": "latest",
+          "frames": [
+            {
+              "ms": 21159.100000023842,
+              "top": 3779,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            },
+            {
+              "ms": 21165.100000023842,
+              "top": 3756,
+              "owner": "latest",
+              "motion": true,
+              "same": true
+            }
+          ]
+        }
+      ],
+      "delivery_events": [],
+      "failed_behavior_checks": []
+    }
+  ]
+}
