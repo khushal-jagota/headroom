@@ -1,0 +1,46 @@
+{
+  "pull_request": {
+    "number": 327,
+    "url": "https://github.com/khushal-jagota/headroom/pull/327",
+    "target": "staging",
+    "state": "MERGED",
+    "merged_at": "2026-10-28T13:15:07Z",
+    "merge_commit": "1f3735aba92a8d0fcb726b72c5e958d3a845050d",
+    "parents": [
+      "e38d5988fc29c9c23abf8810266322b72c491df7",
+      "5e76bbf49407798402fdee354eb32281a4b76eb4"
+    ]
+  },
+  "verification": {
+    "catalog_checked_source": "5e76bbf49407798402fdee354eb32281a4b76eb4",
+    "catalog_seconds": 422.103095761,
+    "all_14_cases_and_typed_companion_pass": true,
+    "source_tree": "5320aaa4e1aacb1ef33172554ad073da59d5a7d1",
+    "landed_tree": "5320aaa4e1aacb1ef33172554ad073da59d5a7d1",
+    "staging_unchanged_before_landing": true,
+    "catalog_rerun_required": false,
+    "mypy": {
+      "name": "mypy (merged tree)",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/khushal-jagota/headroom/actions/runs/40694081470/job/122836086689",
+      "checked_merge_revision": "ad67f082a7526c8d661dd201e31979304c2015d4",
+      "checked_tree": "5320aaa4e1aacb1ef33172554ad073da59d5a7d1",
+      "base": "e38d5988fc29c9c23abf8810266322b72c491df7",
+      "head": "5e76bbf49407798402fdee354eb32281a4b76eb4",
+      "source_files": 644
+    }
+  },
+  "cleanup": {
+    "source_worktree_removed": true,
+    "fresh_environment_and_node_dependencies_removed": true,
+    "raw_ticket_runtime_removed": true,
+    "local_source_branch_removed": true,
+    "remote_source_branch_absent": true,
+    "active_ticket_processes": [],
+    "implementation_evidence_retained": "8148921df6eb33b4997e17dae57f8d71111ef6e5"
+  },
+  "release": {
+    "main_changed_by_this_ticket": false,
+    "deployed": false
+  }
+}

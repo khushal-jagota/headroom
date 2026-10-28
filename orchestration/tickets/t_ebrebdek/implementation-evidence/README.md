@@ -65,3 +65,9 @@ env -u CONVERSATION_SETTLED_CASE -u CONVERSATION_LATEST_CASE -u CONVERSATION_SCR
 The static and pytest commands used an environment without live Panels runtime paths. The browser runners remove those paths themselves. Assertion preservation uses Python AST expressions with multiplicity, against the pinned base. The raw inventory includes each original expression and its source.
 
 After Implementation approval, Consequences will use one staging pull request, require `mypy (merged tree)`, and merge explicitly. No pull request merge, main change, or deployment occurred during Implementation.
+
+## Verified staging integration
+
+[PR #327](https://github.com/khushal-jagota/headroom/pull/327) merged explicitly into staging as `1f3735aba92a8d0fcb726b72c5e958d3a845050d` after `mypy (merged tree)` passed. Staging stayed at the catalog-tested base until merge. The landed tree, the catalog-checked source tree, and the CI-checked tree are identical.
+
+The source worktree, local environment, raw runtime state, and source branches are removed. [Integration and cleanup receipt](integration.json) records the commit, tree identities, check, and cleanup. Nothing reached main or deployment.
