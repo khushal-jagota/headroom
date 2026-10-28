@@ -26,6 +26,12 @@
   let currentWorker = $derived(worker);
   let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
+  let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);
+  let pointerVisit = $state<{ target: HTMLElement | null; recapIdentity: string | null } | null>(null);
+  let holdRecapHeight = $derived(visible && pointerVisit !== null && pointerVisit.target === target && pointerVisit.recapIdentity === recapIdentity);
+  $effect(() => {
+    if (!visible || (pointerVisit && (pointerVisit.target !== target || pointerVisit.recapIdentity !== recapIdentity))) pointerVisit = null;
+  });
   let recapElement = $state<HTMLDivElement | null>(null);
   let recapLines = $state(1);
   // Measure the fixed content, never the clamped recap. This keeps the budget
@@ -86,7 +92,12 @@
   });
 </script>
 <div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
-  onpointerenter={() => onKeepOpen?.()} onpointerleave={() => onLeave?.()}
+  onpointerenter={(event) => {
+    if (visible && event.pointerType !== "touch" && window.matchMedia("(hover: hover) and (pointer: fine)").matches)
+      pointerVisit = { target, recapIdentity };
+    onKeepOpen?.();
+  }}
+  onpointerleave={() => { pointerVisit = null; onLeave?.(); }}
   onfocusin={() => onKeepOpen?.()}
   onfocusout={(event) => {
     // Focus landing somewhere outside is someone leaving. Focus landing nowhere is the
@@ -100,8 +111,8 @@
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
     <div bind:this={recapElement} class="recap" class:no-space={recapLines === 0 && !recapTarget}>
-      {#key recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null}
-        <RecapSlot>
+      {#key recapIdentity}
+        <RecapSlot holdHeight={holdRecapHeight}>
           {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
         </RecapSlot>
       {/key}

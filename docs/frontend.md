@@ -101,9 +101,14 @@ One screen per part of the system:
   stage stay visible. Dense list rows retain their concise recap preview.
 
   The recessed recap also holds the ask for a fresh one, under the line it replaces.
-  Pressing it empties that line, so the popup closes the space and the agent's working
-  mark is what says a new recap is coming. Where there is no room for a recap at all,
-  only the ask remains.
+  Pressing it empties that line. While a fine pointer rests on the panel, the recap
+  space retains its largest height for that visit. A shorter reply leaves empty space.
+  A taller reply grows the space. The floor survives the animation's 260 millisecond
+  settle and releases on pointer exit, panel closure, or a change of target.
+  The next visit starts from the current content. Keyboard focus and touch alone do
+  not hold the height. Other recap surfaces retain their ordinary resize animation.
+  The agent's working mark says that a new recap is coming. Where there is no room
+  for a recap at all, only the ask remains.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
   moves without a card size change take 360–560 milliseconds according to distance. A new row opens space before
