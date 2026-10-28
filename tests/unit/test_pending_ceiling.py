@@ -173,20 +173,26 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
         assert response.json()["error"]["code"] == "validation"
         assert data.read_ticket(tmp_db, original.id) == original
         body["expected_proposal_revision"] = original.pending_proposal_revision
-        stranger = managers_data.create_manager(
-            tmp_db, title="Unrelated Manager", project_id="project_vylo", clock=build_clock(config)
+        manager = managers_data.create_manager(
+            tmp_db, title="Direct Manager", project_id="project_vylo", clock=build_clock(config)
         )
+        data.edit_ticket(
+            tmp_db, original.id, edit=TicketEdit(manager_id=manager.id),
+            principal=OWNER_PRINCIPAL, title_max_chars=TITLE_MAX_CHARS, now=3,
+        )
+        body["next_holder"] = {"kind": "owner", "id": "owner"}
         tmp_db.execute("UPDATE tickets SET worker_step_claim='out' WHERE id=?", (original.id,))
         tmp_db.commit()
         before = tuple(tmp_db.iterdump())
         refused = client.post(
             f"/api/tickets/{original.id}/accept/success_condition",
-            json={**body, "next_holder": {"kind": "manager", "id": stranger.id}},
+            json={**body, "next_holder": {"kind": "chief", "id": "chief"}},
         )
         assert refused.status_code == 400, refused.text
         assert refused.json()["error"]["code"] == "validation"
         assert refused.json()["error"]["message"] == (
-            "ceiling holder must have authority to decide this Ticket"
+            "ceiling holder must be the user or the Ticket's direct manager; "
+            "name an eligible holder explicitly"
         )
         # The proposal, revision, extant claim, attention, and wake rows stay untouched.
         assert tuple(tmp_db.iterdump()) == before
@@ -195,5 +201,5 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
         accepted = response.json()
         assert accepted["stage"] == "needs_what_changes"
         assert accepted["ceiling"] == "needs_implementation"
-        assert accepted["ceiling_holder"] == {"kind": "chief", "id": "chief"}
+        assert accepted["ceiling_holder"] == {"kind": "owner", "id": "owner"}
         assert accepted["field_values"]["success_condition"] == original.pending_proposal.body

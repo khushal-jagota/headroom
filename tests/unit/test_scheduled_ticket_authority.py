@@ -222,7 +222,7 @@ def test_schedule_routes_require_consistent_actor_identity(
     assert _snapshot(tmp_db) == before
 
 
-def test_assignment_allows_direct_creation_but_denied_schedules_cannot_change_due_work(
+def test_direct_creation_checks_holder_and_denied_schedules_cannot_change_due_work(
     tmp_db: Connection,
     client: TestClient,
     chain: tuple[str, str, str],
@@ -251,12 +251,25 @@ def test_assignment_allows_direct_creation_but_denied_schedules_cannot_change_du
     )
     for headers in headers_by_actor:
         direct = {"title": "Direct work", "worker_type": "coding"}
-        allowed = client.post(
+        before_direct = _snapshot(tmp_db)
+        direct_response = client.post(
             "/api/tickets",
             json={**direct, "manager": {"kind": "manager", "id": own}},
             headers=headers,
         )
-        assert allowed.status_code == 200, allowed.text
+        if headers["X-Plan-Actor"] == "manager":
+            assert direct_response.status_code == 200, direct_response.text
+            assert direct_response.json()["ceiling_holder"] == {"kind": "manager", "id": own}
+        else:
+            # Same-chain creation authority does not make a Worker an eligible reviewer.
+            assert direct_response.status_code == 400, direct_response.text
+            error = direct_response.json()["error"]
+            assert error["code"] == "validation"
+            assert error["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            assert _snapshot(tmp_db) == before_direct
         denied = client.post(
             "/api/tickets",
             json={**direct, "manager": {"kind": "manager", "id": unrelated}},

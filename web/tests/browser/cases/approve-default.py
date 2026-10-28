@@ -124,7 +124,7 @@ def run(browser, urls):
         ),
         "t_stale": ticket("t_stale", "coding", "needs_plan", "plan", "Original stale plan", 6),
         "t_failure": ticket(
-            "t_failure", "coding", "needs_what_changes", "what_changes", "Retry me", 4
+            "t_failure", "coding", "needs_consequences", "consequences", "Retry me", 4
         ),
     }
     approvals = []
@@ -557,31 +557,71 @@ def run(browser, urls):
     wait_count(approvals, 2)
     assert approvals[-1]["body"]["expected_proposal_revision"] == 1
     assert approvals[-1]["body"]["next_ceiling"] == "needs_answer"
-    page.evaluate("window.__showTicket('t_consequences')")
-    expect(block()).to_have_attribute("data-field", "consequences")
-    choose("done")
-    wait_count(approvals, 3)
-    assert approvals[-1]["body"]["next_ceiling"] == "done"
-    page.evaluate("window.__showTicket('t_failure')")
-    expect(block()).to_have_attribute("data-field", "what_changes")
-    proposal = block().locator("[contenteditable]")
-    proposal.fill("Edited retry")
-    proposal.press("Tab")
-    open_approval()
-    page.locator('[data-ceiling-picker-choice="needs_plan"]').click()
-    page.locator('[data-ceiling-picker-choice="owner"]').evaluate(
-        "(button) => { button.click(); button.click(); }"
-    )
-    expect(block()).to_contain_text("approval failed")
-    assert len([item for item in accept_attempts if item["ticket_id"] == "t_failure"]) == 1
-    choose("needs_plan")
-    wait_count(approvals, 4)
-    assert approvals[-1]["body"] == {
-        "next_ceiling": "needs_plan",
-        "next_holder": {"kind": "owner", "id": "owner"},
-        "expected_proposal_revision": 1,
-        "edited_body": "Edited retry",
-    }
+    # Terminal approval uses the exact visible revision, edited text, and saved reviewer
+    # in both real card hosts, without another ceiling or reviewer choice.
+    tickets["t_consequences"]["pending_proposal"]["revision"] = 7
+    tickets["t_consequences"]["pending_proposal_revision"] = 7
+    for host_kind, ticket_id in [("ticket", "t_consequences"), ("review", "t_failure")]:
+        if host_kind == "ticket":
+            page.evaluate("window.__showTicket('t_consequences')")
+        else:
+            tickets[ticket_id]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
+            page.evaluate("window.__showReview('t_failure', 'consequences')")
+        expect(block()).to_have_attribute("data-field", "consequences")
+        # Reviewer-only routing stays available at the final gate and never approves.
+        count = len(approvals)
+        if host_kind == "ticket":
+            scope_count = len(scope_writes)
+            block().locator("[data-reviewer-heading]").click()
+            expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
+            page.locator('[data-ceiling-picker-choice="chief"]').click()
+            wait_count(scope_writes, scope_count + 1)
+            page.evaluate("window.__refresh()")
+            expect(block().locator("[data-reviewer-heading]")).to_have_text("Chief")
+            assert len(approvals) == count
+        expected_holder = dict(tickets[ticket_id]["ceiling_holder"])
+        expected_revision = tickets[ticket_id]["pending_proposal"]["revision"]
+        proposal = block().locator("[contenteditable]")
+        edited_body = "Edited terminal result" if host_kind == "ticket" else "Edited retry"
+        proposal.fill(edited_body)
+        proposal.press("Tab")
+        approve = block().locator("[data-accept]")
+        for attribute in ["aria-haspopup", "aria-expanded", "aria-controls"]:
+            assert approve.get_attribute(attribute) is None
+        approve.focus()
+        approve.press("ArrowDown")
+        approve.press("ArrowUp")
+        expect(page.get_by_role("listbox")).to_have_count(0)
+        assert len(approvals) == count
+        if artifact_dir:
+            path = f"{host_kind}-terminal-approval.png"
+            page.screenshot(path=str(Path(artifact_dir) / path), full_page=True)
+            evidence.append(path)
+        if host_kind == "review":
+            approve.evaluate("(button) => { button.click(); button.click(); }")
+            expect(block()).to_contain_text("approval failed")
+            expect(page.get_by_role("listbox")).to_have_count(0)
+            assert len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == 1
+            expect(proposal).to_have_text(edited_body)
+            expect(approve).to_be_enabled()
+            # Native Space activation retries the same direct action after failure.
+            approve.press("Space")
+        else:
+            # Native Enter activation follows the same direct action.
+            approve.press("Enter")
+        wait_count(approvals, count + 1)
+        expect(page.get_by_role("listbox")).to_have_count(0)
+        assert approvals[-1] == {
+            "ticket_id": ticket_id,
+            "field": "consequences",
+            "body": {
+                "next_ceiling": "none",
+                "next_holder": expected_holder,
+                "expected_proposal_revision": expected_revision,
+                "edited_body": edited_body,
+            },
+        }
+        assert len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == (2 if host_kind == "review" else 1)
     page.evaluate("window.__showTicket('t_stale')")
     expect(block()).to_have_attribute("data-field", "plan")
     choose("needs_implementation")

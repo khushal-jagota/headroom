@@ -253,21 +253,26 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
 
         with connect(str(db_path)) as conn:
             before_invalid_holder = tuple(conn.iterdump())
-        invalid_holder = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={
-                "manager": {"kind": "manager", "id": personal_item["id"]},
-                "ceiling_holder": {"kind": "manager", "id": vylo_item["id"]},
-                "recap": "Must not persist",
-            },
-        )
-        assert invalid_holder.status_code == 400, invalid_holder.text
-        assert invalid_holder.json()["error"]["code"] == "validation"
-        assert invalid_holder.json()["error"]["message"] == (
-            "ceiling holder must have authority to decide this Ticket"
-        )
-        with connect(str(db_path)) as conn:
-            assert tuple(conn.iterdump()) == before_invalid_holder
+        for holder in (
+            {"kind": "manager", "id": vylo_item["id"]},
+            {"kind": "chief", "id": "chief"},
+        ):
+            invalid_holder = client.patch(
+                f"/api/tickets/{ticket_id}",
+                json={
+                    "manager": {"kind": "manager", "id": personal_item["id"]},
+                    "ceiling_holder": holder,
+                    "recap": "Must not persist",
+                },
+            )
+            assert invalid_holder.status_code == 400, invalid_holder.text
+            assert invalid_holder.json()["error"]["code"] == "validation"
+            assert invalid_holder.json()["error"]["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            with connect(str(db_path)) as conn:
+                assert tuple(conn.iterdump()) == before_invalid_holder
 
         moved = client.patch(
             f"/api/tickets/{ticket_id}",

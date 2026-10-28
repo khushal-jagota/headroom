@@ -63,6 +63,7 @@ export type Lifecycle = {
   fieldLabel: Record<string, string>;
   stageLabel: Record<string, string>;
   stageOwnershipMode: Record<string, StageOwnershipMode | null>;
+  stageIsTerminal: Record<string, boolean>;
 };
 
 export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
@@ -70,9 +71,11 @@ export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
   const gatedStage: Record<string, string> = {};
   const stageLabel: Record<string, string> = {};
   const stageOwnershipMode: Record<string, StageOwnershipMode | null> = {};
+  const stageIsTerminal: Record<string, boolean> = {};
   for (const stage of m.stages) {
     stageLabel[stage.id] = stage.label;
     stageOwnershipMode[stage.id] = stage.ownership_mode;
+    stageIsTerminal[stage.id] = stage.is_terminal;
     if (!stage.is_terminal && stage.gating_field) {
       gatingField[stage.id] = stage.gating_field;
       gatedStage[stage.gating_field] = stage.id;
@@ -93,7 +96,8 @@ export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
     ceilingRange: [...m.ceiling_range],
     fieldLabel,
     stageLabel,
-    stageOwnershipMode
+    stageOwnershipMode,
+    stageIsTerminal
   };
 }
 

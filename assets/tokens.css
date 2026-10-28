@@ -44,10 +44,11 @@
    * ask. Nothing else is this bright, so "only you can answer this" reads at a glance. */
   --accent-needs-me: #fff;
 
-  /* Radius scale — even 4/8/12 progression */
+  /* Radius scale — the preview card adds the approved 24px step. */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-xl: 24px;
   --radius-pill: 999px;
 
   /* Motion durations — entrances ease out, nothing bounces */
@@ -85,7 +86,7 @@
   --space-page-tail: 128px;
   /* Shared title/text channel; conversation cards start and end on these same edges. */
   --document-channel-measure: 720px;
-  --file-preview-markdown-max-height: 32rem;
+  --file-preview-markdown-max-height: 24rem;
   /* The shell's nav bar. A screen that has to be exactly as tall as the space it was
      given works it out from the viewport, so its height has to be a value and not a
      number written twice. */
