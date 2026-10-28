@@ -54,24 +54,35 @@ _SCROLL_READY = "()=>{" + _SCROLL_READ + "return ready(read(document.querySelect
 _SCROLL_ARM = """args=>{""" + _SCROLL_READ + """
   const e=document.querySelector('[data-conversation-thread]'),before=read(e),events=[];
   if(!ready(before))throw Error('Transcript readiness changed before action');
-  let ended=false,last=null,stable=0;
+  let ended=false,endedPosition=null,last=null,stable=0;
   const input=event=>{
-    ended=false;stable=0;last=null;
+    ended=false;endedPosition=null;stable=0;last=null;
     const record={type:event.type,trusted:event.isTrusted,key:event.key,deltaY:event.deltaY,
       target:{tag:event.target?.tagName,thread:!!event.target?.closest?.('[data-conversation-thread]')},
       at:performance.now(),defaultPrevented:event.defaultPrevented};
     queueMicrotask(()=>{record.defaultPrevented=event.defaultPrevented});
     if(events.length<20)events.push(record);
   };
-  const scroll=()=>{ended=false;if(events.length<20)events.push({type:'scroll',at:performance.now(),scrollTop:e.scrollTop});};
-  const end=()=>{ended=true;if(events.length<20)events.push({type:'scrollend',at:performance.now(),scrollTop:e.scrollTop});};
+  const position=()=>[e.scrollTop,e.scrollLeft];
+  const completed=()=>ended&&JSON.stringify(position())===JSON.stringify(endedPosition);
+  const scroll=()=>{
+    // Chromium can queue a final scroll event after scrollend at the same position.
+    // Only another displacement invalidates that completed native scroll.
+    if(ended&&!completed()){ended=false;endedPosition=null;}
+    if(events.length<20)events.push({type:'scroll',at:performance.now(),scrollTop:e.scrollTop});
+  };
+  const end=event=>{
+    if(event.target!==e||!event.isTrusted)return;
+    ended=true;endedPosition=position();
+    if(events.length<20)events.push({type:'scrollend',trusted:event.isTrusted,at:performance.now(),scrollTop:e.scrollTop});
+  };
   e.addEventListener(args.kind==='wheel'?'wheel':'keydown',input,true);
   e.addEventListener('scroll',scroll);
   e.addEventListener('scrollend',end);
   window[args.token]={
     sample(){const after=read(e),same=e===document.querySelector('[data-conversation-thread]');
       const native=events.some(event=>event.trusted&&event.type===args.kind&&(!args.key||event.key===args.key));
-      const valid=same&&ready(after)&&native&&ended&&after.scrollTop<before.scrollTop-1&&after.gap>=args.clearance;
+      const valid=same&&ready(after)&&native&&completed()&&after.scrollTop<before.scrollTop-1&&after.gap>=args.clearance;
       const geometry=JSON.stringify([after.scrollTop,after.scrollHeight,after.clientHeight,after.top,after.left,after.width,after.height]);
       stable=valid&&geometry===last?stable+1:0;last=geometry;
       return valid&&stable>=2;},
@@ -79,9 +90,9 @@ _SCROLL_ARM = """args=>{""" + _SCROLL_READ + """
       const native=events.some(event=>event.trusted&&event.type===args.kind&&(!args.key||event.key===args.key));
       const failure=!native?'no native input delivered':!ready(after)?'transcript no longer ready':
         e!==document.querySelector('[data-conversation-thread]')?'transcript replaced':
-        after.scrollTop>=before.scrollTop-1?'no upward displacement':!ended?'no scrollend':
+        after.scrollTop>=before.scrollTop-1?'no upward displacement':!completed()?'no scrollend':
         after.gap<args.clearance?'insufficient bottom clearance':stable<2?'geometry not stable':null;
-      return {failure,before,after,events,ended,stableIntervals:stable,
+      return {failure,before,after,events,ended:completed(),endedPosition,stableIntervals:stable,
       sameTranscript:e===document.querySelector('[data-conversation-thread]'),requiredClearance:args.clearance};},
     cleanup(){e.removeEventListener(args.kind==='wheel'?'wheel':'keydown',input,true);e.removeEventListener('scroll',scroll);e.removeEventListener('scrollend',end);}
   };
