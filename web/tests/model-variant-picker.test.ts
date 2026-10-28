@@ -4,7 +4,13 @@ import type { BackendModel } from "../src/lib/conversation/wire";
 
 function picker(models: BackendModel[], model = "gpt-6.1-sol") {
   return resolveModelPicker({
-    backendKey: "codex", model, reasoningEffort: "medium", backends: [], models,
+    backendKey: "codex", model, reasoningEffort: "medium", backends: [],
+    models: models.map((entry) => ({
+      ...entry,
+      // These label fixtures declare known support. Unknown support is tested below.
+      reasoning_effort_options: "reasoning_effort_options" in entry
+        ? entry.reasoning_effort_options : ["medium"],
+    })),
     backendEffortOptions: ["medium"]
   });
 }
@@ -19,6 +25,15 @@ describe("current model variants in the shared picker", () => {
     expect(view.modelValue).toBe("gpt-6.1-sol");
     expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "GPT 6.1 Sol" }]);
     expect(view.catalogueWarning).toBeNull();
+  });
+
+  it("does not manufacture effort support from a backend union", () => {
+    const view = picker([{
+      model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
+      reasoning_effort_options: null,
+    }]);
+    expect(view.efforts).toEqual([]);
+    expect(view.face).toBe("GPT 6.1 Sol");
   });
 
   it("keeps the last known-good model selectable and reports the catalogue failure", () => {

@@ -1,21 +1,22 @@
 """What codex says it can be run as, asked of the app-server and nothing else.
 
-Codex is the one backend whose catalog cannot be written down anywhere. Its models are
-whatever the account is entitled to today, and its reasoning efforts are not a fixed list
-at all — the protocol calls an effort "a non-empty reasoning effort value advertised by the
-model", and every model carries its own set. So the only honest answer comes from asking.
+Codex advertises model metadata through its local app-server. Each model carries its
+own advertised reasoning efforts. Catalog presence does not establish execution
+entitlement. Catalog absence does not establish an authoritative refusal.
 
-Asking costs one short-lived child and one request. No thread is started and no turn is
-run, so nothing here reaches an agent API or spends anything.
+A probe starts one short-lived child and reads the catalog pages. It starts no thread
+or turn and sends no provider prompt.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+import anyio
 from pydantic import BaseModel, ValidationError
 
 from planner import __version__
@@ -30,10 +31,14 @@ from planner.conversation.backends.codex_app_server.client import (
     CodexAppServerError,
     child_environment,
 )
+from planner.conversation.backends.probe_lifetime import owned_probe
 
 # The whole probe — spawn, handshake, one request, stop — against a local child. Long
 # enough for a cold start on a slow machine, short enough that a card is never left waiting.
 MODEL_CATALOG_TIMEOUT_SECONDS: Final = 30.0
+# One absolute reply budget leaves time for normal child shutdown. Cleanup still
+# settles physically if it exceeds this reserve or the outer discovery deadline.
+MODEL_CATALOG_REPLY_CLEANUP_RESERVE_SECONDS: Final = 1.0
 
 
 class CodexModelCatalogUnavailable(Exception):
@@ -66,6 +71,8 @@ class CodexModelCatalog:
     # Codex flags both itself, per model, so neither is worked out here.
     default_model_id: str | None = None
     default_reasoning_effort: str | None = None
+    complete: bool = True
+    visibility_limited: bool = True
 
 
 class _SaysNothing:
@@ -88,7 +95,12 @@ class _SaysNothing:
         return
 
 
-async def probe_codex_model_catalog(codex_executable: str) -> CodexModelCatalog:
+async def probe_codex_model_catalog(
+    codex_executable: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+    working_directory: Path | None = None,
+) -> CodexModelCatalog:
     """Ask this machine's codex what it can be run as.
 
     Raises ``CodexModelCatalogUnavailable`` when the child would not start, would not
@@ -96,8 +108,11 @@ async def probe_codex_model_catalog(codex_executable: str) -> CodexModelCatalog:
     here but it did not say, so nothing is listed.
     """
     try:
-        return await asyncio.wait_for(
-            _ask_codex(codex_executable), timeout=MODEL_CATALOG_TIMEOUT_SECONDS
+        return await owned_probe(
+            lambda: _ask_codex(
+                codex_executable, environment=environment, working_directory=working_directory
+            ),
+            timeout_seconds=MODEL_CATALOG_TIMEOUT_SECONDS,
         )
     except TimeoutError as did_not_answer:
         raise CodexModelCatalogUnavailable(
@@ -106,13 +121,24 @@ async def probe_codex_model_catalog(codex_executable: str) -> CodexModelCatalog:
         ) from did_not_answer
 
 
-async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
+async def _ask_codex(
+    codex_executable: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+    working_directory: Path | None = None,
+) -> CodexModelCatalog:
     client = CodexAppServerClient(handler=_SaysNothing(), description="model-catalog")
+    pages: list[bindings.Model1] = []
+    complete = False
+    loop = asyncio.get_running_loop()
+    reply_deadline = loop.time() + max(
+        0, MODEL_CATALOG_TIMEOUT_SECONDS - MODEL_CATALOG_REPLY_CLEANUP_RESERVE_SECONDS
+    )
     try:
         await client.start(
             argv=(codex_executable, "app-server"),
-            environment=child_environment(),
-            working_directory=Path.home(),
+            environment=child_environment() if environment is None else environment,
+            working_directory=Path.home() if working_directory is None else working_directory,
         )
         await client.request(
             "initialize",
@@ -124,18 +150,41 @@ async def _ask_codex(codex_executable: str) -> CodexModelCatalog:
                 # Every field here is one this probe sets, so there is no absent-versus-null
                 # question for codex to answer: dropping the unset ones is the whole rule.
             ).model_dump(mode="json", exclude_none=True, by_alias=True),
+            timeout_seconds=max(0, reply_deadline - loop.time()),
         )
         await client.notify("initialized")
-        answered = await client.request("model/list", {})
-        listed = bindings.ModelListResponse.model_validate(answered)
+        cursor: str | None = None
+        seen: set[str] = set()
+        while True:
+            try:
+                answered = await client.request(
+                    "model/list", {} if cursor is None else {"cursor": cursor},
+                    timeout_seconds=max(0, reply_deadline - loop.time()),
+                )
+                listed = bindings.ModelListResponse.model_validate(answered)
+            except (CodexAppServerError, ValidationError):
+                if not pages:
+                    raise
+                break
+            pages.extend(listed.data)
+            cursor = listed.nextCursor
+            if cursor is None:
+                complete = True
+                break
+            if cursor in seen:
+                break
+            seen.add(cursor)
     except (CodexAppServerError, ValidationError) as would_not_say:
         raise CodexModelCatalogUnavailable(str(would_not_say)) from would_not_say
     finally:
-        await client.stop()
-    return _catalog(listed)
+        with anyio.CancelScope(shield=True):
+            await client.stop()
+    return _catalog(bindings.ModelListResponse(data=pages), complete=complete)
 
 
-def _catalog(listed: bindings.ModelListResponse) -> CodexModelCatalog:
+def _catalog(
+    listed: bindings.ModelListResponse, *, complete: bool = True
+) -> CodexModelCatalog:
     """The answer as a catalog. Hidden models are left out: codex hides its own.
 
     The efforts are collected in the order they were listed and de-duplicated, so the list
@@ -162,6 +211,7 @@ def _catalog(listed: bindings.ModelListResponse) -> CodexModelCatalog:
     default = next((model for model in models if model.is_default), None)
     return CodexModelCatalog(
         models=tuple(models),
+        complete=complete,
         reasoning_effort_options=tuple(efforts),
         default_model_id=None if default is None else default.model_id,
         default_reasoning_effort=None if default is None else default.default_reasoning_effort,

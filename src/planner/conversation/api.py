@@ -1533,7 +1533,10 @@ def _snapshot_json(
                 "resolved_model_id": model.resolved_model_id,
                 "catalogue_warning": model.catalogue_warning,
                 "detail": model.detail,
-                "reasoning_effort_options": list(model.reasoning_effort_options),
+                "reasoning_effort_options": (
+                    list(model.reasoning_effort_options)
+                    if model.reasoning_effort_options is not None else None
+                ),
                 "enabled": enabled_by_model[model.model_id],
             }
             for model in snapshot.available_models

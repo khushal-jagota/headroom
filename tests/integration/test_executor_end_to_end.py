@@ -353,20 +353,31 @@ async def boot(
     connection = connect(db_path)
     try:
         create_schema(connection)
+        from planner.conversation.model_resolution.contracts import ModelResolution, ModelVariant
         from planner.tickets import data
         from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
-        ticket = data.create_ticket(
-            connection,
-            title="Reconnect worker",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=TITLE_MAX_CHARS,
-            locale=TicketLocale.macos,
-            employee_backend=backend_key.value,
-            employee_launch_model=model,
-        )
+        # This transport rig supplies its own scripted provider. Its exact model
+        # fact is test input, not production backend-only cache authority.
+        def scripted_resolution(
+            conn: Any, backend: ConversationBackendKey, token: str, effort: str | None = None
+        ) -> ModelResolution:
+            del conn
+            return ModelResolution(ModelVariant(backend, token), token, effort, ())
+
+        with monkeypatch.context() as scripted_model:
+            scripted_model.setattr(data, "resolve_cached_model", scripted_resolution)
+            ticket = data.create_ticket(
+                connection,
+                title="Reconnect worker",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=TITLE_MAX_CHARS,
+                locale=TicketLocale.macos,
+                employee_backend=backend_key.value,
+                employee_launch_model=model,
+            )
         worker_ticket_id = ticket.id
     finally:
         connection.close()
@@ -2205,7 +2216,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     asyncio.run(run())
 
 
-def test_vps_refuses_protocol_eight_before_replay_without_fencing_current_peer(
+def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_peer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from uuid import uuid4
@@ -2229,7 +2240,7 @@ def test_vps_refuses_protocol_eight_before_replay_without_fencing_current_peer(
             peer = await ws_context.__aenter__()
             stream = ControlWebSocket(peer)
             old = ExecutorHealth(
-                ExecutorIdentity(8, "a" * 40, 2, str(uuid4()), 1),
+                ExecutorIdentity(PROTOCOL_VERSION - 1, "a" * 40, 2, str(uuid4()), 1),
                 42,
                 ConnectionState.disconnected,
                 False,
@@ -3323,5 +3334,108 @@ def test_historical_inventory_confirmation_unblocks_real_mac_replay(
             tmp_path, db_path, current, outcome, command, envelope
         )
         assert result["new_publications"] == 1
+
+    asyncio.run(run())
+
+
+def test_authenticated_catalog_exchange_timeout_preserves_active_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TLS metadata reads share transport safely and allocate no child/journal work."""
+    import time
+
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
+    from planner.conversation.contracts import WorkspacePathPolicy
+    from planner.conversation.model_resolution.contracts import (
+        CatalogExpectedContext,
+        CatalogObservation,
+        CatalogRequest,
+        CatalogUnavailable,
+        CatalogWorkspaceBinding,
+        ValidationReason,
+    )
+    from planner.executor import mac as mac_module
+    from planner.executor import vps as vps_module
+
+    async def run() -> None:
+        started = time.monotonic()
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            assert harness.endpoint.identity is not None
+            identity = harness.endpoint.identity
+            writer = harness.endpoint.writer
+            observer = ScriptedCatalogObserver(lambda: harness.mac.identity)
+            harness.mac._catalog_observer = observer
+            request = CatalogRequest(
+                ConversationBackendKey.codex,
+                CatalogExpectedContext(
+                    identity,
+                    CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.native_absolute, None),
+                ),
+            )
+            children_before = tuple(harness.mac.registry.children)
+            commands_before = tuple(harness.mac.registry._commands)
+            starts_before = harness.native.start_count
+            prompts_before = harness.native.prompt_count
+            journal_additions: list[EnvelopeKind] = []
+            mint = harness.mac.spool.mint_envelope
+
+            def count_journal(**arguments: Any) -> QueuedEnvelope:
+                journal_additions.append(arguments["kind"])
+                return mint(**arguments)
+
+            monkeypatch.setattr(harness.mac.spool, "mint_envelope", count_journal)
+            result = await harness.endpoint.observe_catalog(request, attempt_id="connected-first")
+            assert isinstance(result, CatalogObservation)
+            assert result.rows[0].submitted_token == "gpt-scripted"
+            assert result.evidence.context.executor_identity == identity
+            assert result.evidence.context.workspace == request.expected_context.workspace
+            assert result.evidence.attempt_id == "connected-first"
+            assert result.evidence.observed_at == observer.observed_at
+
+            # A still-running scripted child shares this real authenticated link.
+            observer.block = True
+            monkeypatch.setattr(vps_module, "CATALOG_TIMEOUT_SECONDS", 0.05)
+            monkeypatch.setattr(mac_module, "CATALOG_TIMEOUT_SECONDS", 0.2)
+            timed_out = await harness.endpoint.observe_catalog(
+                request, attempt_id="connected-second"
+            )
+            assert isinstance(timed_out, CatalogUnavailable)
+            assert timed_out.reason is ValidationReason.timeout
+            await asyncio.wait_for(observer.cancelled.wait(), 2)
+            await eventually(
+                lambda: not harness.mac._catalog_tasks, "Catalog cleanup did not settle"
+            )
+            assert tuple(harness.mac.registry.children) == children_before
+            assert tuple(harness.mac.registry._commands) == commands_before
+            assert harness.native.start_count == starts_before
+            assert harness.native.prompt_count == prompts_before
+            assert journal_additions == []
+            assert harness.endpoint.identity == identity
+            assert harness.endpoint.writer is writer and harness.endpoint.ready
+            assert harness.mac.identity == identity
+            assert harness.native.stop_count == 0
+
+            # The native child emits after the timeout. The event crosses the
+            # registry, spool, authenticated transport and canonical VPS writer.
+            assert harness.native.sink is not None and harness.native.turn is not None
+            before = harness.events("tool_call_finished")
+            await harness.native.sink.tool_call_finished(
+                harness.native.turn,
+                tool_call_id="after-catalog-timeout",
+                tool_call_status=ToolCallStatus.completed,
+                detail="Transport remains active.",
+            )
+            await eventually(
+                lambda: harness.events("tool_call_finished") == before + 1,
+                "Child event did not reach VPS after catalog timeout",
+            )
+            assert journal_additions == [EnvelopeKind.backend_event]
+            assert harness.endpoint.identity == identity and harness.endpoint.ready
+            print(f"catalog TLS scenario elapsed: {time.monotonic() - started:.3f}s")
+        finally:
+            await harness.close()
 
     asyncio.run(run())

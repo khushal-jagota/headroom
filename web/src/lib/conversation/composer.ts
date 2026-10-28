@@ -265,19 +265,18 @@ export function preselectedValue(
 
 /** The reasoning efforts on offer for the model actually in force.
  *
- * Effort is a per-backend list until a backend says otherwise per model — claude's
- * smallest models take none at all. A model that names its own list is believed, including
- * when that list is empty, because "this model takes no effort" is an answer. A model that
- * names nothing falls back to the backend's list, which is where every backend started.
+ * A selected model uses only its own capability metadata. Unknown support does not
+ * inherit a sibling model's efforts. Without a selected model, backend defaults remain
+ * available for the unselected control.
  */
 export function effortOptionsFor(
-  models: readonly { model_id: string; reasoning_effort_options?: string[] }[],
+  models: readonly { model_id: string; reasoning_effort_options?: string[] | null }[],
   modelInForce: string | null,
   backendOptions: readonly string[]
 ): readonly string[] {
   if (modelInForce === null) return backendOptions;
   const model = models.find((candidate) => candidate.model_id === modelInForce);
-  return model?.reasoning_effort_options ?? backendOptions;
+  return model?.reasoning_effort_options ?? [];
 }
 
 // --- what shape of ask this is -------------------------------------------------------------

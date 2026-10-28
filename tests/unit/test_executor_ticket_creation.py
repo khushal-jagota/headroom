@@ -15,12 +15,22 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from tests.unit.test_current_model_resolution import Catalogue
+from tests.unit.test_current_model_resolution import (
+    Catalogue,
+    ScopedCatalogue,
+    context,
+    observation,
+    row,
+    selection,
+    workspace,
+)
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.model_resolution.contracts import ModelResolution, ModelVariant
 from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.logic.validation import validate_model_selection
 from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.snapshot import BackendModel
 from planner.core.clock import RealClock
@@ -45,9 +55,7 @@ class ScriptedPreparation:
         self.path = path
         self.calls = 0
         self.refuse = refuse
-        self.catalogue = Catalogue(
-            (BackendModel("gpt-6-sol", reasoning_effort_options=("high",)),)
-        )
+        self.catalogue = Catalogue((BackendModel("gpt-6-sol", reasoning_effort_options=("high",)),))
         self.service = ModelResolutionService(
             snapshots=self.catalogue,
             store=ModelResolutionStore(path),
@@ -68,13 +76,50 @@ class ScriptedPreparation:
             other.close()
         if self.refuse:
             raise PlannerError(ErrorCode.validation, "scripted permanent model refusal", {})
-        return await self.service.resolve(*args, **kwargs)
+        backend_key, model, effort = args
+        desired = selection(model, effort=effort, backend_key=backend_key)
+        # This explicit scripted boundary supplies scoped facts. Production lifecycle
+        # adaptation belongs to its successor Ticket, not this ingestion test.
+        result = await self.service.validate_selection(
+            desired,
+            workspace=workspace(),
+            attempt_id="scripted-creation",
+            observer=ScopedCatalogue(observation((row(model),))),
+        )
+        assert result.launch_token == model
+        return ModelResolution(ModelVariant(backend_key, model), model, effort, ("high",))
 
 
 def _setup(
-    conn: sqlite3.Connection, tmp_path: Path, *, refuse: bool = False
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    refuse: bool = False,
 ) -> tuple[ExecutorEndpoint, ScriptedPreparation, QueuedEnvelope, ExecutorIdentity]:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
+
+    def scoped_scripted_cached(
+        connection: sqlite3.Connection,
+        backend_key: ConversationBackendKey,
+        model: str,
+        reasoning_effort: str | None = None,
+    ) -> ModelResolution:
+        # Isolate the executor receipt boundary from unadapted production lifecycle
+        # callers. The real legacy refusal has its own fake-factory assertion.
+        desired = selection(model, effort=reasoning_effort, backend_key=backend_key)
+        checked = validate_model_selection(
+            desired,
+            context(),
+            observation((row(model),)),
+            now=1000,
+            attempt_id="scripted",
+        )
+        assert checked.launch_token == model
+        return ModelResolution(ModelVariant(backend_key, model), model, reasoning_effort, ("high",))
+
+    monkeypatch.setattr("planner.tickets.api.resolve_cached_model", scoped_scripted_cached)
+    monkeypatch.setattr("planner.tickets.data.resolve_cached_model", scoped_scripted_cached)
     conn.execute("DELETE FROM model_variant_resolutions")
     conn.execute(
         "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
@@ -83,9 +128,7 @@ def _setup(
     )
     conn.commit()
     endpoint = ExecutorEndpoint(path, RealClock())
-    identity = ExecutorIdentity(
-        PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
-    )
+    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
     endpoint.store.begin_connection(identity, 1000)
     endpoint.store.mark_ready(identity, 1001)
     child = ChildReference("incarnation", "child", "source-conversation")
@@ -103,7 +146,7 @@ def _setup(
                     "manager": {"kind": "manager", "id": "manager"},
                     "ceiling_holder": {"kind": "manager", "id": "manager"},
                     "employee_backend": "codex",
-                    "employee_launch_model": "gpt-5-sol",
+                    "employee_launch_model": "gpt-6-sol",
                     "employee_launch_reasoning_effort": "high",
                 }
             },
@@ -123,9 +166,9 @@ def _setup(
 
 @pytest.mark.parametrize("refuse", [False, True], ids=["accepted", "permanent-refusal"])
 def test_creation_preparation_receipt_and_replay_share_canonical_semantics(
-    tmp_db: sqlite3.Connection, tmp_path: Path, refuse: bool
+    tmp_db: sqlite3.Connection, tmp_path: Path, refuse: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    endpoint, resolver, envelope, identity = _setup(tmp_db, tmp_path, refuse=refuse)
+    endpoint, resolver, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch, refuse=refuse)
     receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
     assert resolver.calls == 1
     assert receipt.disposition is (
@@ -164,9 +207,9 @@ def test_creation_preparation_receipt_and_replay_share_canonical_semantics(
 
 
 def test_receipt_insert_failure_rolls_back_the_real_creation_writer(
-    tmp_db: sqlite3.Connection, tmp_path: Path
+    tmp_db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    endpoint, resolver, envelope, identity = _setup(tmp_db, tmp_path)
+    endpoint, resolver, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch)
     tmp_db.execute(
         "CREATE TRIGGER refuse_receipt BEFORE INSERT ON executor_receipts "
         "BEGIN SELECT RAISE(ABORT,'receipt fault'); END"

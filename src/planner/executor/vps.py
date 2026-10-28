@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import tempfile
 import time
@@ -23,6 +24,16 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import UserInputAnswer
+from planner.conversation.model_resolution.contracts import (
+    CatalogObservation,
+    CatalogRequest,
+    CatalogResponse,
+    CatalogResult,
+    CatalogUnavailable,
+    CorrectiveAction,
+    LaunchContext,
+    ValidationReason,
+)
 from planner.core import db
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
@@ -30,6 +41,8 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.executor.codec import encode_value
 from planner.executor.configuration import (
+    CATALOG_CANCEL_TIMEOUT_SECONDS,
+    CATALOG_TIMEOUT_SECONDS,
     INPUT_CANCEL_TIMEOUT_SECONDS,
     INPUT_PROGRESS_TIMEOUT_SECONDS,
     REQUEST_TIMEOUT_SECONDS,
@@ -93,6 +106,7 @@ from planner.executor.wire import (
     write_frame,
 )
 from planner.previews.forward import PreviewForwards
+from planner.tickets.contracts import TicketLocale
 
 
 def _generation_root() -> tempfile.TemporaryDirectory[str]:
@@ -211,6 +225,9 @@ class ExecutorEndpoint:
         self.file_receiver: Any = None
         self._input_exchanges: dict[str, InputTransferExchange] = {}
         self._responses: dict[str, asyncio.Future[WireMessage]] = {}
+        self._catalog_responses: dict[
+            str, tuple[CatalogRequest, FrameWriter, asyncio.Future[WireMessage]]
+        ] = {}
         self.clock_sample: ClockSample | None = None
         self.process_id: int | None = None
         self.observed_at_ms: int | None = None
@@ -240,6 +257,7 @@ class ExecutorEndpoint:
         writer, self.writer = self.writer, None
         if writer is not None:
             writer.close()
+        self._fail_catalogs()
         for exchange in self._input_exchanges.values():
             if not exchange.response.done():
                 exchange.response.set_exception(ConnectionError("executor app stopped"))
@@ -416,6 +434,226 @@ class ExecutorEndpoint:
             raise
         finally:
             self._responses.pop(request_id, None)
+
+    def _fail_catalogs(self, writer: FrameWriter | None = None) -> None:
+        for _, captured_writer, future in self._catalog_responses.values():
+            if (writer is None or writer is captured_writer) and not future.done():
+                future.set_exception(ConnectionError("executor catalog connection lost"))
+
+    async def observe_catalog(
+        self,
+        request: CatalogRequest,
+        *,
+        attempt_id: str,
+        deadline: float | None = None,
+    ) -> CatalogResult:
+        """Read scoped metadata without child authority or transport timeout effects."""
+        identity, writer = self.identity, self.writer
+        failure_reason = ValidationReason.catalog_unavailable
+        if not attempt_id:
+            raise ValueError("catalog attempt ID must be nonempty")
+        if (
+            identity is None
+            or writer is None
+            or not self.ready
+            or request.expected_context.executor_identity != identity
+        ):
+            return self._catalog_failure(request, ValidationReason.offline)
+        request_id = str(uuid4())
+        future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
+        self._catalog_responses[request_id] = (request, writer, future)
+        expires = asyncio.get_running_loop().time() + CATALOG_TIMEOUT_SECONDS
+        if deadline is not None:
+            expires = min(expires, deadline)
+        completed = False
+        try:
+            async with asyncio.timeout_at(expires):
+                async with self._send_lock:
+                    if self.writer is not writer or self.identity != identity or not self.ready:
+                        raise ConnectionError("catalog generation changed")
+                    await write_frame(
+                        writer,
+                        WireMessage(WireMessageKind.catalog_request, request_id, _object(request)),
+                    )
+                response = await future
+                if self.writer is not writer or self.identity != identity or not self.ready:
+                    raise ConnectionError("catalog generation changed")
+                if response.kind is not WireMessageKind.catalog_response:
+                    raise ValueError("unexpected catalog reply")
+                self._catalog_raw_identities(response.payload)
+                parsed = TypeAdapter(CatalogResponse).validate_json(
+                    json.dumps(response.payload), strict=True
+                )
+                if parse_identity(response.payload.get("executor_identity")) != identity:
+                    raise ValueError("catalog reply identity changed")
+                failure_reason = ValidationReason.context_changed
+                if (
+                    parsed.backend_key != request.backend_key
+                    or parsed.executor_identity != identity
+                ):
+                    raise ValueError("catalog reply backend changed")
+                result = self._catalog_result(parsed.result, request, request_id, attempt_id)
+                completed = True
+                return result
+        except TimeoutError:
+            failure_reason = ValidationReason.timeout
+        except (ConnectionError, OSError):
+            failure_reason = ValidationReason.offline
+        except (ValueError, TypeError, KeyError):
+            pass
+        finally:
+            self._catalog_responses.pop(request_id, None)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                future.exception()
+            if not completed:
+                # Cancellation is a bounded read-only frame on the original
+                # writer. A lost frame leaves the native deadline in force.
+                task = asyncio.create_task(
+                    self._cancel_catalog(request_id, request, identity, writer)
+                )
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+        return self._catalog_failure(request, failure_reason)
+
+    def _catalog_failure(
+        self, request: CatalogRequest, reason: ValidationReason
+    ) -> CatalogUnavailable:
+        return CatalogUnavailable(
+            backend_key=request.backend_key,
+            destination=TicketLocale.macos,
+            attempted_context=None,
+            reason=reason,
+            corrective_action=CorrectiveAction.reconnect_destination
+            if reason is ValidationReason.offline
+            else CorrectiveAction.refresh_catalog,
+            detail="The destination catalog could not be verified.",
+            observed_at=int(time.time()),
+            retained_evidence=None,
+        )
+
+    @staticmethod
+    def _catalog_raw_identities(payload: JsonObject) -> None:
+        # Existing ExecutorIdentity predates extra="forbid". Validate the raw
+        # dictionaries before a dataclass parser can discard an unknown field.
+        parse_identity(payload.get("executor_identity"))
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("catalog result must be an object")
+        contexts: list[object] = []
+        if result.get("kind") == "observation":
+            evidence = result.get("evidence")
+            if not isinstance(evidence, dict):
+                raise ValueError("catalog evidence must be an object")
+            contexts.append(evidence.get("context"))
+        elif result.get("kind") == "unavailable":
+            if result.get("attempted_context") is not None:
+                contexts.append(result["attempted_context"])
+            retained = result.get("retained_evidence")
+            if retained is not None:
+                if not isinstance(retained, dict):
+                    raise ValueError("retained catalog evidence must be an object")
+                contexts.append(retained.get("context"))
+        for context in contexts:
+            if not isinstance(context, dict):
+                raise ValueError("catalog context must be an object")
+            parse_identity(context.get("executor_identity"))
+            generation = context.get("account_generation")
+            if generation is not None:
+                if (
+                    not isinstance(generation, dict)
+                    or set(generation) != {"account_id", "last_refresh"}
+                    or any(type(value) is not str or not value for value in generation.values())
+                ):
+                    raise ValueError("invalid catalog account generation fields")
+
+    def _catalog_context(self, context: LaunchContext, request: CatalogRequest) -> None:
+        if (
+            context.backend_key != request.backend_key
+            or context.destination is not TicketLocale.macos
+            or context.executor_identity != request.expected_context.executor_identity
+            or context.workspace != request.expected_context.workspace
+            or not context.localized_workspace_folder.is_absolute()
+        ):
+            raise ValueError("catalog context differs from request")
+        # Nested identity uses the same strict field and version validation as hello.
+        if parse_identity(_object(context.executor_identity)) != self.identity:
+            raise ValueError("catalog nested identity differs from connection")
+        workspace = context.workspace
+        from planner.conversation.contracts import WorkspacePathPolicy
+
+        if workspace.workspace_path_policy is WorkspacePathPolicy.native_absolute:
+            if workspace.workspace_home_relative is not None:
+                raise ValueError("native catalog workspace cannot use home mapping")
+        elif workspace.workspace_home_relative is not None:
+            relative = Path(workspace.workspace_home_relative)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("unsafe catalog workspace mapping")
+        # The authenticated native observer resolves symlinks and directory
+        # existence with the same helper as execution. VPS cannot resolve that
+        # host's paths or infer its home from a returned canonical directory.
+
+    def _catalog_result(
+        self, result: CatalogResult, request: CatalogRequest, request_id: str, attempt_id: str
+    ) -> CatalogResult:
+        if isinstance(result, CatalogObservation):
+            self._catalog_context(result.evidence.context, request)
+            if result.evidence.attempt_id != request_id:
+                raise ValueError("catalog attempt differs from request")
+            uncertainty: float | None = None
+            sample = self.clock_sample
+            if sample is not None and result.evidence.clock_uncertainty_seconds is not None:
+                lower = sample.mac_sent_at_ms - sample.vps_received_at_ms
+                upper = sample.mac_received_at_ms - sample.vps_sent_at_ms
+                if (
+                    sample.vps_received_at_ms >= sample.vps_sent_at_ms
+                    and sample.mac_sent_at_ms >= sample.mac_received_at_ms
+                    and lower <= upper
+                ):
+                    uncertainty = (
+                        result.evidence.clock_uncertainty_seconds
+                        + max(abs(lower), abs(upper)) / 1000
+                        + 1.0
+                    )
+            return replace(
+                result,
+                evidence=replace(
+                    result.evidence,
+                    attempt_id=attempt_id,
+                    clock_uncertainty_seconds=uncertainty,
+                ),
+            )
+        if (
+            result.backend_key != request.backend_key
+            or result.destination is not TicketLocale.macos
+        ):
+            raise ValueError("catalog failure differs from request")
+        if result.attempted_context is not None:
+            self._catalog_context(result.attempted_context, request)
+        if result.retained_evidence is not None:
+            self._catalog_context(result.retained_evidence.context, request)
+        return result
+
+    async def _cancel_catalog(
+        self,
+        request_id: str,
+        request: CatalogRequest,
+        identity: ExecutorIdentity,
+        writer: FrameWriter,
+    ) -> None:
+        try:
+            async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
+                async with self._send_lock:
+                    if self.writer is writer and self.identity == identity and self.ready:
+                        await write_frame(
+                            writer,
+                            WireMessage(
+                                WireMessageKind.catalog_cancel, request_id, _object(request)
+                            ),
+                        )
+        except (ConnectionError, OSError, ValueError, TimeoutError):
+            pass
 
     async def _input_exchange(self, request: InputTransferRequest) -> None:
         identity, writer = self.identity, self.writer
@@ -1300,6 +1538,8 @@ class ExecutorEndpoint:
             self.observed_at_ms = now_ms()
             self.lost_at_ms = None
             old_previews = self._preview_forwards
+            self._fail_catalogs(old_writer)
+            self.clock_sample = None
             self.identity, self.writer, self.ready = identity, writer, False
             self.last_contact_at_ms = now_ms()
 
@@ -1380,6 +1620,7 @@ class ExecutorEndpoint:
                 self.writer = None
                 self.lost_at_ms = now_ms()
                 self.store.mark_lost(identity, now_ms())
+                self._fail_catalogs(writer)
                 for exchange in self._input_exchanges.values():
                     if exchange.writer is writer and not exchange.response.done():
                         exchange.response.set_exception(ConnectionError("executor link lost"))
@@ -1400,10 +1641,13 @@ class ExecutorEndpoint:
                         await self._close_transport(identity)
 
     async def _measure_clock(self) -> None:
+        identity, writer = self.identity, self.writer
         sent = now_ms()
         response = await self._request(
             WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": sent}}
         )
+        if self.identity != identity or self.writer is not writer:
+            return
         self.clock_sample = ClockSample(
             sent,
             int(cast(int, response.payload["mac_received_at_ms"])),
@@ -1439,6 +1683,13 @@ class ExecutorEndpoint:
         try:
             if self._receive_input_frame(message, identity, writer):
                 return
+            catalog = self._catalog_responses.get(message.request_id)
+            if catalog is not None and catalog[1] is writer:
+                if not catalog[2].done():
+                    catalog[2].set_result(message)
+                return
+            if message.kind is WireMessageKind.catalog_response:
+                return  # Revoked, expired, or superseded observations stay revoked.
             pending_response = self._responses.get(message.request_id)
             if pending_response is not None:
                 if not pending_response.done():

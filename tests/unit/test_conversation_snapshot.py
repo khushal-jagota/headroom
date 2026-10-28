@@ -132,7 +132,7 @@ def _codex_that_answers(
         del codex_executable
         efforts: list[str] = []
         for model in models:
-            for effort in model.reasoning_effort_options:
+            for effort in model.reasoning_effort_options or ():
                 if effort not in efforts:
                     efforts.append(effort)
         default = next((model for model in models if model.is_default), None)
@@ -184,7 +184,7 @@ def _claude_that_answers(
         del claude_executable
         efforts: list[str] = []
         for model in answered:
-            for effort in model.reasoning_effort_options:
+            for effort in model.reasoning_effort_options or ():
                 if effort not in efforts:
                     efforts.append(effort)
         return ClaudeModelCatalog(

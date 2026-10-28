@@ -12,12 +12,15 @@ sent, so nothing here starts a turn.
 
 from __future__ import annotations
 
-import asyncio
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+from planner.conversation.backends.probe_lifetime import owned_probe
 
 # The whole probe — spawn, init handshake, stop — against a local child. Long enough
 # for a cold start on a slow machine, short enough that a card is never left waiting.
@@ -43,7 +46,7 @@ class ClaudeModel:
     model_id: str
     display_name: str
     resolved_model_id: str
-    reasoning_effort_options: tuple[str, ...]
+    reasoning_effort_options: tuple[str, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +63,8 @@ class ClaudeModelCatalog:
     # pseudo-entry called "default" that is not itself selectable, so what is kept is the
     # real entry it resolves to. Absent when nothing in the list matches it.
     default_model_id: str | None = None
+    complete: bool = True
+    visibility_limited: bool = True
 
 
 def versioned_display_name(resolved_model_id: str) -> str:
@@ -84,11 +89,19 @@ def versioned_display_name(resolved_model_id: str) -> str:
     return f"{shown} (1M)" if large_context else shown
 
 
-async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatalog:
+async def probe_claude_model_catalog(
+    claude_executable: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+    working_directory: Path | None = None,
+) -> ClaudeModelCatalog:
     """Ask the installed claude what it can be run as. Raises when it will not say."""
     try:
-        reported = await asyncio.wait_for(
-            _read_models_from_init(claude_executable), MODEL_CATALOG_TIMEOUT_SECONDS
+        reported = await owned_probe(
+            lambda: _read_models_from_init(
+                claude_executable, environment=environment, working_directory=working_directory
+            ),
+            timeout_seconds=MODEL_CATALOG_TIMEOUT_SECONDS,
         )
     except TimeoutError as never_answered:
         raise ClaudeModelCatalogUnavailable(
@@ -101,11 +114,11 @@ async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatal
     efforts_in_listed_order: list[str] = []
     default_resolves_to: str | None = None
     for entry in reported:
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or entry.get("hidden") is True:
             continue
         value = entry.get("value")
         resolved = entry.get("resolvedModel")
-        if not isinstance(value, str) or not isinstance(resolved, str):
+        if not isinstance(value, str) or not value or not isinstance(resolved, str) or not resolved:
             continue
         if value == _DEFAULT_PSEUDO_MODEL_VALUE:
             # Not an option — "default" is not a model anybody can be shown as running.
@@ -113,10 +126,13 @@ async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatal
             default_resolves_to = resolved
             continue
         raw_efforts = entry.get("supportedEffortLevels")
-        efforts = tuple(
-            effort for effort in (raw_efforts or ()) if isinstance(effort, str)
+        efforts = (
+            tuple(raw_efforts)
+            if isinstance(raw_efforts, list)
+            and all(isinstance(effort, str) and effort for effort in raw_efforts)
+            else None
         )
-        for effort in efforts:
+        for effort in efforts or ():
             if effort not in efforts_in_listed_order:
                 efforts_in_listed_order.append(effort)
         models.append(
@@ -152,8 +168,18 @@ def _default_model_id(models: list[ClaudeModel], resolves_to: str | None) -> str
     return None
 
 
-async def _read_models_from_init(claude_executable: str) -> list[object]:
-    options = ClaudeAgentOptions(cli_path=claude_executable, max_turns=1)
+async def _read_models_from_init(
+    claude_executable: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+    working_directory: Path | None = None,
+) -> list[object]:
+    options = ClaudeAgentOptions(
+        cli_path=claude_executable,
+        max_turns=1,
+        cwd=working_directory,
+        env={} if environment is None else dict(environment),
+    )
     async with ClaudeSDKClient(options=options) as client:
         info = await client.get_server_info()
     if not isinstance(info, dict):

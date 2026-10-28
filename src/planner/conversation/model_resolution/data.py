@@ -1,13 +1,22 @@
-"""Durable successful variant resolutions, independent of process lifetime."""
+"""Immutable scoped catalog observations beside untouched legacy variant evidence."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
 from contextlib import closing
+from dataclasses import replace
+
+from pydantic import TypeAdapter
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.model_resolution.contracts import CachedModelResolution, ModelVariant
+from planner.conversation.model_resolution.contracts import (
+    CachedModelResolution,
+    CatalogObservation,
+    CatalogRow,
+    LaunchContext,
+    ModelVariant,
+)
 from planner.core.db import connect
 
 
@@ -15,6 +24,54 @@ class ModelResolutionStore:
     def __init__(self, db_path: str, *, busy_timeout_ms: int = 5000) -> None:
         self._db_path = db_path
         self._busy_timeout_ms = busy_timeout_ms
+
+    def keep_observation(self, observation: CatalogObservation) -> None:
+        """Persist immutable evidence and every source ordinal in one transaction."""
+        evidence = observation.evidence
+        metadata = TypeAdapter(CatalogObservation).dump_json(replace(observation, rows=())).decode()
+        rows = [TypeAdapter(CatalogRow).dump_json(row).decode() for row in observation.rows]
+        key = (evidence.observation_id, evidence.observation_revision)
+        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT metadata_json FROM scoped_model_catalog_observations "
+                "WHERE observation_id=? AND observation_revision=?",
+                key,
+            ).fetchone()
+            if existing is not None:
+                stored_rows = [
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT row_json FROM scoped_model_catalog_rows "
+                        "WHERE observation_id=? AND observation_revision=? ORDER BY row_ordinal",
+                        key,
+                    )
+                ]
+                if existing[0] != metadata or stored_rows != rows:
+                    raise ValueError("observation identity already names different evidence")
+                return
+            conn.execute(
+                "INSERT INTO scoped_model_catalog_observations "
+                "(observation_id,observation_revision,context_ref,observed_at,metadata_json) "
+                "VALUES (?,?,?,?,?)",
+                (*key, evidence.context.context_ref, evidence.observed_at, metadata),
+            )
+            conn.executemany(
+                "INSERT INTO scoped_model_catalog_rows "
+                "(observation_id,observation_revision,row_ordinal,row_json) VALUES (?,?,?,?)",
+                [(*key, ordinal, row) for ordinal, row in enumerate(rows)],
+            )
+            conn.commit()
+
+    def read_observation(self, context: LaunchContext) -> CatalogObservation | None:
+        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
+            observations = read_scoped_observations(conn, context, limit=1)
+            return observations[0] if observations else None
+
+    def read_previous_observation(self, context: LaunchContext) -> CatalogObservation | None:
+        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
+            observations = read_scoped_observations(conn, context, limit=2)
+            return observations[1] if len(observations) > 1 else None
 
     def read(self, variant: ModelVariant) -> CachedModelResolution | None:
         with closing(connect(self._db_path, self._busy_timeout_ms)) as conn, conn:
@@ -222,8 +279,39 @@ def read_catalogue_models(
 
 
 def has_catalogue(conn: sqlite3.Connection, backend_key: ConversationBackendKey) -> bool:
-    """A backend catalogue provides negative evidence; unrelated cached families do not."""
-    return conn.execute(
-        "SELECT 1 FROM model_catalogue_models WHERE backend_key=? LIMIT 1",
-        (backend_key.value,),
-    ).fetchone() is not None
+    """Legacy row presence only. It grants no scoped compatibility or absence authority."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM model_catalogue_models WHERE backend_key=? LIMIT 1",
+            (backend_key.value,),
+        ).fetchone()
+        is not None
+    )
+
+
+def read_scoped_observations(
+    conn: sqlite3.Connection, context: LaunchContext, *, limit: int
+) -> tuple[CatalogObservation, ...]:
+    """An opaque reference is an index, never a substitute for exact context equality."""
+    result: list[CatalogObservation] = []
+    for row in conn.execute(
+        "SELECT observation_id,observation_revision,metadata_json "
+        "FROM scoped_model_catalog_observations WHERE context_ref=? "
+        "ORDER BY observed_at DESC, rowid DESC",
+        (context.context_ref,),
+    ):
+        observation = TypeAdapter(CatalogObservation).validate_json(row[2], strict=True)
+        if observation.evidence.context != context:
+            continue
+        rows = tuple(
+            TypeAdapter(CatalogRow).validate_json(value[0], strict=True)
+            for value in conn.execute(
+                "SELECT row_json FROM scoped_model_catalog_rows "
+                "WHERE observation_id=? AND observation_revision=? ORDER BY row_ordinal",
+                (row[0], row[1]),
+            )
+        )
+        result.append(replace(observation, rows=rows))
+        if len(result) >= limit:
+            break
+    return tuple(result)

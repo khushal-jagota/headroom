@@ -119,6 +119,7 @@ def test_unexpected_request_task_failure_closes_original_generation(failure: str
         endpoint.identity = identity
         endpoint.writer = original
         endpoint._responses = {}
+        endpoint._catalog_responses = {}
         if failure == "operation":
 
             async def fail(*args: object) -> None:
@@ -198,5 +199,351 @@ def test_late_response_after_timeout_is_ignored(monkeypatch: pytest.MonkeyPatch)
         with pytest.raises(asyncio.IncompleteReadError):
             await executor._read_loop(reader)
         assert not executor._pending
+
+    asyncio.run(run())
+
+
+# Catalog reads have different failure authority than durable operations. These
+# cases reuse the request fixtures above to prove the separate resource boundary.
+def catalog_endpoint(writer: Any) -> ExecutorEndpoint:
+    endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
+    endpoint.writer = writer
+    endpoint.identity = ExecutorIdentity(
+        PROTOCOL_VERSION, "a" * 40, 2, "12345678-1234-5678-1234-567812345678", 1
+    )
+    endpoint.ready = True
+    endpoint._catalog_responses = {}
+    endpoint._responses = {}
+    endpoint._input_exchanges = {}
+    endpoint._send_lock = asyncio.Lock()
+    endpoint._tasks = set()
+    endpoint.clock_sample = None
+    return endpoint
+
+
+def catalog_request(identity: ExecutorIdentity) -> Any:
+    from pathlib import Path
+
+    from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
+    from planner.conversation.model_resolution.contracts import (
+        CatalogExpectedContext,
+        CatalogRequest,
+        CatalogWorkspaceBinding,
+    )
+
+    return CatalogRequest(
+        ConversationBackendKey.codex,
+        CatalogExpectedContext(
+            identity,
+            CatalogWorkspaceBinding(Path("/workspace"), WorkspacePathPolicy.native_absolute, None),
+        ),
+    )
+
+
+async def settle_cancels(endpoint: ExecutorEndpoint) -> None:
+    await asyncio.gather(*tuple(endpoint._tasks))
+
+
+@pytest.mark.parametrize("blocked", ["response", "drain", "lock"])
+def test_catalog_absolute_deadline_never_closes_shared_writer(
+    monkeypatch: pytest.MonkeyPatch, blocked: str
+) -> None:
+    from planner.conversation.model_resolution.contracts import CatalogUnavailable, ValidationReason
+    from planner.executor import vps
+
+    async def run() -> None:
+        monkeypatch.setattr(vps, "CATALOG_TIMEOUT_SECONDS", 0.02)
+        monkeypatch.setattr(vps, "CATALOG_CANCEL_TIMEOUT_SECONDS", 0.02)
+        writer = peer()
+        endpoint = catalog_endpoint(writer)
+        assert endpoint.identity is not None
+        if blocked == "drain":
+            writer.drain.side_effect = asyncio.Event().wait
+        if blocked == "lock":
+            await endpoint._send_lock.acquire()
+        result = await endpoint.observe_catalog(catalog_request(endpoint.identity), attempt_id="a")
+        assert isinstance(result, CatalogUnavailable)
+        assert result.reason is ValidationReason.timeout
+        assert not endpoint._catalog_responses
+        writer.close.assert_not_called()
+        if blocked == "lock":
+            endpoint._send_lock.release()
+        await settle_cancels(endpoint)
+        writer.close.assert_not_called()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("revocation", ["cancel", "generation"])
+def test_catalog_revocation_cannot_write_replacement_or_accept_late_reply(
+    revocation: str,
+) -> None:
+    from dataclasses import replace
+
+    from planner.executor.mac import as_object
+
+    async def run() -> None:
+        original, replacement = peer(), peer()
+        endpoint = catalog_endpoint(original)
+        assert endpoint.identity is not None
+        identity = endpoint.identity
+        request = catalog_request(identity)
+        await endpoint._send_lock.acquire()
+        task = asyncio.create_task(endpoint.observe_catalog(request, attempt_id="caller"))
+        while not endpoint._catalog_responses:
+            await asyncio.sleep(0)
+        request_id = next(iter(endpoint._catalog_responses))
+        if revocation == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            endpoint.writer = replacement
+            endpoint.identity = replace(identity, connection_generation=2)
+        endpoint._send_lock.release()
+        if revocation == "generation":
+            result = await task
+            assert result.kind == "unavailable"
+        await settle_cancels(endpoint)
+        assert endpoint.writer is not None
+        await endpoint._handle_message(
+            WireMessage(WireMessageKind.catalog_response, request_id, as_object(request)),
+            endpoint.identity,
+            endpoint.writer,
+        )
+        assert not endpoint._catalog_responses
+        replacement.write.assert_not_called()
+        original.close.assert_not_called()
+        replacement.close.assert_not_called()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        None,
+        "workspace",
+        "backend",
+        "nested_identity",
+        "nested_identity_extra",
+        "account_extra",
+        "kind",
+    ],
+)
+def test_catalog_reply_binds_context_schema_and_attempt_without_refreshing_time(
+    mismatch: str | None,
+) -> None:
+    from dataclasses import replace
+
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.model_resolution.contracts import CatalogObservation, CatalogResponse
+    from planner.executor.contracts import ClockSample
+    from planner.executor.mac import as_object
+
+    async def run() -> None:
+        writer = peer()
+        endpoint = catalog_endpoint(writer)
+        assert endpoint.identity is not None
+        identity = endpoint.identity
+        request = catalog_request(identity)
+        observer = ScriptedCatalogObserver(lambda: identity)
+        endpoint.clock_sample = ClockSample(1000, 1002, 1003, 1005)
+        task = asyncio.create_task(endpoint.observe_catalog(request, attempt_id="caller"))
+        while not writer.write.called:
+            await asyncio.sleep(0)
+        request_id = next(iter(endpoint._catalog_responses))
+        result = await observer.observe(
+            request.backend_key,
+            workspace=request.expected_context.workspace,
+            attempt_id=request_id,
+            deadline=0,
+        )
+        if mismatch == "workspace":
+            context = result.evidence.context
+            result = replace(
+                result,
+                evidence=replace(
+                    result.evidence,
+                    context=replace(
+                        context,
+                        workspace=replace(context.workspace, workspace_home_relative="different"),
+                    ),
+                ),
+            )
+        if mismatch == "backend":
+            result = replace(
+                result,
+                evidence=replace(
+                    result.evidence,
+                    context=replace(
+                        result.evidence.context, backend_key=ConversationBackendKey.claude
+                    ),
+                ),
+            )
+        payload = as_object(CatalogResponse(request.backend_key, identity, result))
+        if mismatch in ("nested_identity", "nested_identity_extra"):
+            # Nested identity must not coerce values or silently discard extras.
+            raw: Any = payload["result"]
+            nested = raw["evidence"]["context"]["executor_identity"]
+            if mismatch == "nested_identity":
+                nested["connection_generation"] = "1"
+            else:
+                nested["unrecognized"] = "must not disappear"
+        if mismatch == "account_extra":
+            account_payload: Any = payload["result"]
+            account_payload["evidence"]["context"]["account_generation"] = {
+                "account_id": "account",
+                "last_refresh": "generation",
+                "credential": "reject",
+            }
+        kind = WireMessageKind.health if mismatch == "kind" else WireMessageKind.catalog_response
+        await endpoint._handle_message(WireMessage(kind, request_id, payload), identity, writer)
+        received = await task
+        if mismatch is None:
+            assert isinstance(received, CatalogObservation)
+            assert received.evidence.attempt_id == "caller"
+            assert received.evidence.observed_at == observer.observed_at
+            assert received.evidence.clock_uncertainty_seconds == pytest.approx(1.002)
+        else:
+            assert received.kind == "unavailable"
+        await settle_cancels(endpoint)
+        writer.close.assert_not_called()
+
+    asyncio.run(run())
+
+
+def catalog_native(writer: Any) -> MacExecutor:
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
+    from planner.executor.contracts import ConnectionState
+
+    executor = requester(writer)
+    executor.identity = ExecutorIdentity(
+        PROTOCOL_VERSION, "a" * 40, 2, "12345678-1234-5678-1234-567812345678", 1
+    )
+    executor.state = ConnectionState.ready
+    executor._handshake_accepted = True
+    executor._transport_admission_stopped = False
+    executor._catalog_tasks = {}
+    executor._catalog_observer = ScriptedCatalogObserver(lambda: executor.identity)
+    executor.server_url = "https://unused.example"
+    return executor
+
+
+@pytest.mark.parametrize("invalid", ["non_ready", "stale_identity", "command", "workspace"])
+def test_native_catalog_admission_rejects_unready_or_unscoped_authority(invalid: str) -> None:
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
+    from planner.executor.contracts import ConnectionState
+    from planner.executor.mac import as_object
+
+    async def run() -> None:
+        writer = peer()
+        executor = catalog_native(writer)
+        observer = executor._catalog_observer
+        assert isinstance(observer, ScriptedCatalogObserver)
+        payload: Any = as_object(catalog_request(executor.identity))
+        if invalid == "non_ready":
+            executor.state = ConnectionState.reconciling
+        elif invalid == "stale_identity":
+            payload["expected_context"]["executor_identity"]["connection_generation"] += 1
+        elif invalid == "command":
+            payload["executable"] = "/arbitrary/provider"
+        else:
+            payload["expected_context"]["workspace"]["workspace_home_relative"] = "../escape"
+        executor._catalog_frame(WireMessage(WireMessageKind.catalog_request, "untrusted", payload))
+        await asyncio.sleep(0)
+        assert observer.calls == 0
+        assert not executor._catalog_tasks
+        writer.write.assert_not_called()
+        writer.close.assert_not_called()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        "cancel",
+        "deadline",
+        "deadline_then_cancel",
+        "disconnect",
+        "quiescence",
+        "replacement_writer",
+    ],
+)
+def test_native_catalog_capacity_survives_cancellation_until_physical_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    cause: str,
+) -> None:
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
+    from planner.executor.contracts import ConnectionState
+    from planner.executor.mac import as_object
+
+    async def run() -> None:
+        monkeypatch.setattr(mac, "MAX_CATALOG_OBSERVATIONS", 1)
+        monkeypatch.setattr(
+            mac, "CATALOG_TIMEOUT_SECONDS", 0.02 if cause.startswith("deadline") else 5
+        )
+        writer = peer()
+        executor = catalog_native(writer)
+        observer = executor._catalog_observer
+        assert isinstance(observer, ScriptedCatalogObserver)
+        observer.block = True
+        observer.cleanup_release.clear()
+        request = catalog_request(executor.identity)
+        frame = WireMessage(WireMessageKind.catalog_request, "one", as_object(request))
+        executor._catalog_frame(frame)
+        task = executor._catalog_tasks["one"][2]
+        await observer.entered.wait()
+        cleanup: asyncio.Task[None] | None = None
+        if cause == "cancel":
+            cancel = WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload)
+            # A mismatched workspace has no authority over the active observation.
+            wrong: Any = as_object(request)
+            wrong["expected_context"]["workspace"]["workspace_folder"] = "/different"
+            executor._catalog_frame(WireMessage(WireMessageKind.catalog_cancel, "one", wrong))
+            assert not observer.cancelled.is_set()
+            executor._catalog_frame(cancel)
+        elif cause == "replacement_writer":
+            replacement = peer()
+            executor._writer = replacement
+            executor._catalog_frame(
+                WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload)
+            )
+            assert not task.cancelling()
+            cleanup = asyncio.create_task(executor._settle_catalogs())
+        elif cause in ("disconnect", "quiescence"):
+            if cause == "disconnect":
+                executor.state = ConnectionState.disconnected
+            else:
+                executor._transport_admission_stopped = True
+            cleanup = asyncio.create_task(executor._settle_catalogs())
+        await observer.cancelled.wait()
+        assert len(executor._catalog_tasks) == 1
+        # Duplicate/late cancellation must not cancel the cleanup await itself.
+        if cause in ("cancel", "deadline_then_cancel"):
+            cancel = WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload)
+            executor._catalog_frame(cancel)
+            executor._catalog_frame(cancel)
+        executor._catalog_frame(WireMessage(WireMessageKind.catalog_request, "two", frame.payload))
+        await asyncio.sleep(0)
+        assert observer.calls == 1
+        assert len(executor._catalog_tasks) == 1
+        observer.cleanup_release.set()
+        if cleanup is not None:
+            await cleanup
+        from planner.executor.transfers import wait_for_settlement
+
+        await wait_for_settlement(task)
+        await asyncio.sleep(0)
+        assert writer.write.call_count == (1 if cause == "deadline" else 0)
+        assert not executor._catalog_tasks
+        executor._catalog_frame(WireMessage(WireMessageKind.catalog_cancel, "one", frame.payload))
+        writer.close.assert_not_called()
 
     asyncio.run(run())

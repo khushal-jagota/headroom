@@ -37,7 +37,7 @@ def test_policy_bounds_and_protocol_are_explicit() -> None:
     assert configuration.INPUT_PROGRESS_TIMEOUT_SECONDS == 30
     assert configuration.INPUT_FINALIZATION_TIMEOUT_SECONDS == 120
     assert configuration.INPUT_CANCEL_TIMEOUT_SECONDS == 5
-    assert configuration.PROTOCOL_VERSION == 9
+    assert configuration.PROTOCOL_VERSION == 10
     assert configuration.SPOOL_FORMAT_VERSION == 2
 
 
@@ -273,6 +273,7 @@ def test_failed_input_removes_only_commands_without_possible_native_admission(
         endpoint._possibly_emitted_commands = {"command"} if possibly_emitted else set()
         endpoint._input_exchanges = {}
         endpoint._responses = {}
+        endpoint._catalog_responses = {}
         endpoint._send_lock = asyncio.Lock()
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
@@ -354,6 +355,7 @@ def test_canceled_input_command_preserves_only_possible_native_outcome(
         endpoint._input_tasks = {}
         endpoint._input_transfer_locks = {}
         endpoint._responses = {}
+        endpoint._catalog_responses = {}
         endpoint._send_lock = asyncio.Lock()
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()

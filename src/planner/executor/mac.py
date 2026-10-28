@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import math
 import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -20,8 +22,20 @@ from planner.conversation.backends.claude_agent_sdk import ClaudeAgentSdkBackend
 from planner.conversation.backends.codex_app_server import CodexAppServerBackendChildFactory
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.backends.hermes_acp import HermesAcpBackendChildFactory
-from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ResolvedConversationStart,
+    WorkspacePathPolicy,
+)
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.contracts import (
+    CatalogRequest,
+    CatalogResponse,
+    CatalogUnavailable,
+    CorrectiveAction,
+    ProviderCatalogObserver,
+    ValidationReason,
+)
 from planner.conversation.production_backends import production_backend_launches
 from planner.executor.app_transport import (
     ControlWebSocket,
@@ -31,7 +45,10 @@ from planner.executor.app_transport import (
 )
 from planner.executor.codec import encode_value
 from planner.executor.configuration import (
+    CATALOG_CANCEL_TIMEOUT_SECONDS,
+    CATALOG_TIMEOUT_SECONDS,
     CLI_RESULT_TIMEOUT_SECONDS,
+    MAX_CATALOG_OBSERVATIONS,
     MAX_ENVELOPE_BYTES,
     MAX_TRANSFERS,
     PROTOCOL_VERSION,
@@ -94,6 +111,7 @@ from planner.executor.wire import (
     read_typed_frame,
 )
 from planner.previews.forward import MacPreviewForwards
+from planner.tickets.contracts import TicketLocale
 
 
 def as_object(value: object) -> JsonObject:
@@ -123,6 +141,7 @@ class MacExecutor:
         panels_server_url: str,
         session_factory: Callable[[], aiohttp.ClientSession] = create_client_session,
         registry: NativeChildRegistry | None = None,
+        catalog_observer: ProviderCatalogObserver | None = None,
     ) -> None:
         self.paths = paths
         self.server_url = validate_server_url(panels_server_url)
@@ -158,6 +177,8 @@ class MacExecutor:
         self._input_workers: dict[str, asyncio.Task[None]] = {}
         self._transfer_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
+        self._catalog_observer = catalog_observer
+        self._catalog_tasks: dict[str, tuple[CatalogRequest, FrameWriter, asyncio.Task[None]]] = {}
         self.registry = registry or NativeChildRegistry(
             paths=paths,
             incarnation=self.identity.executor_incarnation,
@@ -257,6 +278,9 @@ class MacExecutor:
     async def _read_loop(self, reader: FrameReader) -> None:
         while True:
             message = await read_frame(reader)
+            if message.kind in (WireMessageKind.catalog_request, WireMessageKind.catalog_cancel):
+                self._catalog_frame(message)
+                continue
             if message.kind in (
                 WireMessageKind.preview_bind,
                 WireMessageKind.preview_release,
@@ -362,6 +386,149 @@ class MacExecutor:
                         self.lost_at_ms = None
                         self.state = ConnectionState.ready
                     future.set_result(message)
+
+    def _catalog_frame(self, message: WireMessage) -> None:
+        # Metadata never enters the child registry or the durable journal.
+        try:
+            request = TypeAdapter(CatalogRequest).validate_json(
+                json.dumps(message.payload), strict=True
+            )
+            context = message.payload["expected_context"]
+            assert isinstance(context, dict)
+            identity = parse_identity(context.get("executor_identity"))
+        except (ValueError, TypeError, KeyError):
+            return
+        if (
+            identity != self.identity
+            or request.expected_context.executor_identity != identity
+            or not self._handshake_accepted
+            or self.state != ConnectionState.ready
+            or self._writer is None
+        ):
+            return
+        workspace = request.expected_context.workspace
+        if workspace.workspace_path_policy is WorkspacePathPolicy.native_absolute:
+            if (
+                workspace.workspace_home_relative is not None
+                or not workspace.workspace_folder.is_absolute()
+            ):
+                return
+        elif workspace.workspace_home_relative is not None:
+            relative = Path(workspace.workspace_home_relative)
+            if relative.is_absolute() or ".." in relative.parts:
+                return
+        existing = self._catalog_tasks.get(message.request_id)
+        if message.kind is WireMessageKind.catalog_cancel:
+            if existing is not None and existing[0] == request and existing[1] is self._writer:
+                # Repeated cancellation must not interrupt physical cleanup.
+                if not existing[2].cancelling():
+                    existing[2].cancel()
+            return
+        if existing is not None or self._transport_admission_stopped:
+            return
+        if len(self._catalog_tasks) >= MAX_CATALOG_OBSERVATIONS:
+            # The caller's bounded read yields unresolved evidence. No queue can
+            # reserve unbounded tasks while an earlier probe physically settles.
+            return
+        writer = self._writer
+        deadline = asyncio.get_running_loop().time() + CATALOG_TIMEOUT_SECONDS
+        task = asyncio.create_task(self._catalog(message, request, identity, writer, deadline))
+        self._catalog_tasks[message.request_id] = (request, writer, task)
+
+        def settled(completed: asyncio.Task[None]) -> None:
+            current = self._catalog_tasks.get(message.request_id)
+            if current is not None and current[2] is completed:
+                self._catalog_tasks.pop(message.request_id, None)
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(settled)
+
+    async def _catalog(
+        self,
+        message: WireMessage,
+        request: CatalogRequest,
+        identity: ExecutorIdentity,
+        writer: FrameWriter,
+        deadline: float,
+    ) -> None:
+        observer = self._catalog_observer
+        if observer is None:
+            from planner.conversation.model_resolution.observer import ProductionCatalogObserver
+
+            observer = ProductionCatalogObserver(
+                destination=TicketLocale.macos,
+                panels_server_url=self.server_url,
+                executor_identity=identity,
+            )
+        owner = asyncio.current_task()
+        assert owner is not None
+        work = asyncio.create_task(
+            observer.observe(
+                request.backend_key,
+                workspace=request.expected_context.workspace,
+                attempt_id=message.request_id,
+                deadline=deadline,
+            )
+        )
+        try:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    result = await asyncio.shield(work)
+            except BaseException as error:
+                work.cancel()
+                await wait_for_settlement(work)
+                if isinstance(error, asyncio.CancelledError):
+                    raise
+                result = CatalogUnavailable(
+                    backend_key=request.backend_key,
+                    destination=TicketLocale.macos,
+                    attempted_context=None,
+                    reason=ValidationReason.timeout
+                    if isinstance(error, TimeoutError)
+                    else ValidationReason.catalog_unavailable,
+                    corrective_action=CorrectiveAction.refresh_catalog,
+                    detail="The destination catalog observation did not complete.",
+                    observed_at=int(time.time()),
+                    retained_evidence=None,
+                )
+            # A catalog result has no authority after cancellation or generation
+            # replacement. In particular, never write through self._send here.
+            async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
+                async with self._write_lock:
+                    if (
+                        self._writer is not writer
+                        or self.identity != identity
+                        or self.state != ConnectionState.ready
+                        or self._transport_admission_stopped
+                        or owner.cancelling()
+                    ):
+                        return
+                    writer.write(
+                        encode_frame(
+                            WireMessage(
+                                WireMessageKind.catalog_response,
+                                message.request_id,
+                                as_object(CatalogResponse(request.backend_key, identity, result)),
+                            )
+                        )
+                    )
+                    await writer.drain()
+        except (ConnectionError, OSError, ValueError, TimeoutError):
+            # A read-only failure does not disturb a shared execution connection.
+            return
+        finally:
+            if not work.done():
+                work.cancel()
+            await wait_for_settlement(work)
+
+    async def _settle_catalogs(self) -> None:
+        tasks = tuple(task for _, _, task in self._catalog_tasks.values())
+        for task in tasks:
+            if not task.cancelling():
+                task.cancel()
+        for task in tasks:
+            await wait_for_settlement(task)
 
     async def _retire_source(self, message: WireMessage) -> None:
         request = TypeAdapter(SourceRetirementRequest).validate_python(message.payload)
@@ -743,6 +910,7 @@ class MacExecutor:
                 for task in (reader_task, session_task, stop_task, *self._transfer_tasks)
                 if task is not None
             ]
+            await self._settle_catalogs()
             for cleanup_task in tasks:
                 cleanup_task.cancel()
             try:
@@ -770,6 +938,7 @@ class MacExecutor:
                     ):
                         raise ValueError("quiesce identity changed; obtain fresh health")
                     self._transport_admission_stopped = True
+                    await self._settle_catalogs()
                     if self._preview_streams is not None:
                         await self._preview_streams.close()
                     quiescence = await self.registry.quiesce()

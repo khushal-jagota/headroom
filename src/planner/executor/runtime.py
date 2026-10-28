@@ -10,7 +10,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import cast
 
 from pydantic import TypeAdapter
@@ -65,6 +65,7 @@ from planner.executor.contracts import (
 )
 from planner.executor.files import safe_component, snapshot_ticket
 from planner.executor.skills import install_native_skill_snapshot, validate_skill_snapshot
+from planner.executor.workspace import localize_workspace
 
 
 def now_ms() -> int:
@@ -406,26 +407,14 @@ class NativeChildRegistry:
         arguments: JsonObject,
     ) -> ResolvedConversationStart:
         try:
-            if "workspace_home_relative" in arguments:
-                relative = arguments["workspace_home_relative"]
-                if (
-                    not isinstance(relative, str)
-                    or "\\" in relative
-                    or (relative and any(part in ("", ".", "..") for part in relative.split("/")))
-                    or (isinstance(relative, str) and PurePosixPath(relative).is_absolute())
-                ):
-                    raise ValueError("unsafe home-relative workspace")
-                home = self.workspace_home.resolve(strict=True)
-                workspace = (home / relative).resolve(strict=True)
-                workspace.relative_to(home)
-            else:
-                # An explicit absolute native path is usable only if that exact
-                # directory exists; never substitute cwd or another checkout.
-                if not resolved.workspace_folder.is_absolute():
-                    raise ValueError("workspace needs absolute native path or home mapping")
-                workspace = resolved.workspace_folder.resolve(strict=True)
-            if not workspace.is_dir():
-                raise ValueError("mapped workspace is not a directory")
+            relative = arguments.get("workspace_home_relative")
+            if "workspace_home_relative" in arguments and not isinstance(relative, str):
+                raise ValueError("unsafe home-relative workspace")
+            workspace = localize_workspace(
+                resolved.workspace_folder,
+                workspace_home=self.workspace_home,
+                workspace_home_relative=relative if isinstance(relative, str) else None,
+            )
         except (OSError, ValueError) as error:
             raise BackendSpawnFailed(f"Mac workspace unavailable: {error}") from error
         original = resolved.role_materials

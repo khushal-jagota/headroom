@@ -36,6 +36,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Protocol
 
+import anyio
 import httpx
 
 from planner.conversation.backends.claude_model_catalog import (
@@ -54,6 +55,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
     CodexModelCatalogUnavailable,
     probe_codex_model_catalog,
 )
+from planner.conversation.backends.probe_lifetime import owned_probe
 from planner.conversation.contracts import ConversationBackendKey
 
 # How codex and claude are asked what they can be run as. Named as parameters because
@@ -129,13 +131,13 @@ class BackendModel:
     ``reasoning_effort_options`` are the efforts THIS model takes, which is not always
     the backend's whole list: codex and claude both say so per model, and a picker that
     offered a model the efforts of its siblings would offer values that model refuses.
-    Empty means the model said nothing about it, and the backend's own list applies.
+    Null means unknown metadata. An empty tuple means known empty support.
     """
 
     model_id: str
     display_name: str | None = None
     detail: str | None = None
-    reasoning_effort_options: tuple[str, ...] = ()
+    reasoning_effort_options: tuple[str, ...] | None = None
     selected_variant: str | None = None
     resolved_model_id: str | None = None
     catalogue_warning: str | None = None
@@ -254,6 +256,11 @@ class SubprocessBackendProbeEnvironment:
     """The real machine: PATH, real paths, child processes, and the npm registry."""
 
     def executable_path(self, executable_name: str) -> str | None:
+        if executable_name == "claude":
+            from planner.conversation.production_backends import production_backend_launches
+
+            selected = production_backend_launches(panels_server_url="").claude.claude_executable
+            return str(selected) if selected is not None and selected.is_file() else None
         return shutil.which(executable_name)
 
     def configured_executable_path(self, executable_name: str) -> str | None:
@@ -300,49 +307,44 @@ class SubprocessBackendProbeEnvironment:
         *,
         timeout_seconds: float,
         environment_overrides: Mapping[str, str] | None = None,
+        working_directory: Path | None = None,
     ) -> CommandOutcome:
         environment = dict(os.environ)
         if environment_overrides is not None:
             environment.update(environment_overrides)
+
+        async def operation() -> CommandOutcome:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=environment,
+                    cwd=working_directory,
+                    start_new_session=True,
+                )
+            except (OSError, ValueError) as error:
+                return CommandOutcome(-1, "", str(error))
+            try:
+                standard_output, standard_error = await process.communicate()
+                return CommandOutcome(
+                    process.returncode if process.returncode is not None else -1,
+                    standard_output.decode("utf-8", errors="replace"),
+                    standard_error.decode("utf-8", errors="replace"),
+                )
+            except BaseException:
+                with anyio.CancelScope(shield=True):
+                    _end_the_whole_process_group(process)
+                    await process.wait()
+                raise
+
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=environment,
-                # Its own process group, so that everything this command starts can be
-                # stopped with it. An installer is a script that runs other programs, and
-                # killing only the script it was launched as would leave those still
-                # writing to this machine after Panels had reported the update failed.
-                start_new_session=True,
-            )
-        except (OSError, ValueError) as error:
-            return CommandOutcome(exit_code=-1, standard_output="", standard_error=str(error))
-        try:
-            standard_output, standard_error = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_seconds
-            )
+            return await owned_probe(operation, timeout_seconds=timeout_seconds)
         except TimeoutError:
-            _end_the_whole_process_group(process)
-            await process.wait()
             return CommandOutcome(
-                exit_code=-1,
-                standard_output="",
-                standard_error=f"{argv[0]} did not answer within {timeout_seconds:g}s",
+                -1, "", f"{argv[0]} did not answer within {timeout_seconds:g}s"
             )
-        except asyncio.CancelledError:
-            # An HTTP caller going away must not leave an installer working after its
-            # request is canceled. End the whole group before cancellation leaves this
-            # boundary, just as a timeout does.
-            _end_the_whole_process_group(process)
-            await process.wait()
-            raise
-        return CommandOutcome(
-            exit_code=process.returncode if process.returncode is not None else -1,
-            standard_output=standard_output.decode("utf-8", errors="replace"),
-            standard_error=standard_error.decode("utf-8", errors="replace"),
-        )
 
     async def latest_released_version(
         self, package_name: str, *, timeout_seconds: float
@@ -377,7 +379,7 @@ def _end_the_whole_process_group(process: asyncio.subprocess.Process) -> None:
     still killed rather than left running.
     """
     try:
-        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        os.killpg(process.pid, signal.SIGKILL)
         return
     except (ProcessLookupError, PermissionError):
         pass
@@ -1006,6 +1008,24 @@ def read_codex_login_standing(
         stored.generation
     )
     return CodexLoginStanding(stored=stored, rejected=rejected)
+
+
+def read_backend_identity_status(
+    backend_key: ConversationBackendKey,
+    outcome: CommandOutcome,
+    *,
+    codex_login: CodexLoginStanding | None = None,
+    now: datetime | None = None,
+) -> BackendIdentityStatus:
+    """Project the existing local identity parser without leaking provider output."""
+    reader = _BACKEND_PROBE_RECIPES[backend_key].read_identity
+    if reader is None:
+        return BackendIdentityStatus.unknown
+    return reader(_IdentityRequest(
+        outcome=outcome,
+        codex_login=codex_login,
+        now=now if now is not None else datetime.now(UTC),
+    )).status
 
 
 async def probe_backend(

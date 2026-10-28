@@ -22,22 +22,46 @@ from tests.integration.test_navigation_cumulative_migration import (
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "merge_mac_vps_video"
+FINAL_HEAD = "scoped_model_catalogs"
 SENTINELS: dict[str, tuple[object, ...]] = {
     "executor_receipts": (
-        "sender", "submission", "current", 1, "digest", "accepted",
-        json.dumps({"accepted": True, "opaque": "Exact α bytes"}), 123,
+        "sender",
+        "submission",
+        "current",
+        1,
+        "digest",
+        "accepted",
+        json.dumps({"accepted": True, "opaque": "Exact α bytes"}),
+        123,
     ),
     "executor_child_assignments": (
-        "incarnation", "child", "current", "ticket", "ticket-sentinel", 123, None,
+        "incarnation",
+        "child",
+        "current",
+        "ticket",
+        "ticket-sentinel",
+        123,
+        None,
     ),
     "executor_command_outcomes": (
-        "incarnation", "command", '{"status":"uncertain","opaque":"Exact α bytes"}',
+        "incarnation",
+        "command",
+        '{"status":"uncertain","opaque":"Exact α bytes"}',
     ),
     "conversation_video_uploads": (
-        "upload", '{"kind":"ticket","id":"ticket-sentinel"}', "Exact α.mp4",
-        8, 4, "reserved", "video/mp4", 456, "preserved error", "sender-message",
-        "current", "stored-file", "accepted",
+        "upload",
+        '{"kind":"ticket","id":"ticket-sentinel"}',
+        "Exact α.mp4",
+        8,
+        4,
+        "reserved",
+        "video/mp4",
+        456,
+        "preserved error",
+        "sender-message",
+        "current",
+        "stored-file",
+        "accepted",
     ),
 }
 
@@ -136,5 +160,86 @@ def test_retained_source_heads_join_without_losing_authority(
             assert list(conn.iterdump()) == first_startup
         finally:
             conn.close()
+    finally:
+        engine.dispose()
+
+
+def test_scoped_catalog_migration_keeps_legacy_evidence_unverified(tmp_path: Path) -> None:
+    """Legacy values survive byte-for-byte and grant neither positive nor negative proof."""
+    from tests.unit.test_current_model_resolution import context, observation, row, selection
+
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.model_resolution.data import ModelResolutionStore
+    from planner.conversation.model_resolution.logic.validation import validate_model_selection
+    from planner.conversation.model_resolution.service import resolve_cached_model
+    from planner.core.contracts import PlannerError
+
+    path = tmp_path / "catalogs.db"
+    _seed_pre_lifecycle(path).dispose()
+    engine = _migration_engine(str(path), 1000)
+    legacy_resolution = ("codex", "sol", "gpt-5-sol", '["high"]', 123)
+    legacy_catalog = ("codex", "sol", "gpt-5-sol", '["high"]', 122, "gpt-5-sol")
+    try:
+        with engine.begin() as connection:
+            config = _alembic_config(connection)
+            command.upgrade(config, "merge_mac_vps_video")
+            conn = _raw(connection)
+            conn.execute(
+                "INSERT INTO model_variant_resolutions VALUES (?,?,?,?,?)", legacy_resolution
+            )
+            conn.execute("INSERT INTO model_catalogue_models VALUES (?,?,?,?,?,?)", legacy_catalog)
+            command.upgrade(config, "head")
+            assert [
+                tuple(value) for value in conn.execute("SELECT * FROM model_variant_resolutions")
+            ] == [legacy_resolution]
+            assert [
+                tuple(value) for value in conn.execute("SELECT * FROM model_catalogue_models")
+            ] == [legacy_catalog]
+            assert conn.execute("SELECT * FROM scoped_model_catalog_observations").fetchall() == []
+            assert (
+                validate_model_selection(
+                    selection(),
+                    context(),
+                    None,
+                    now=1000,
+                    attempt_id="a",
+                ).state.value
+                == "unresolved"
+            )
+            with pytest.raises(PlannerError, match="verification is unresolved"):
+                resolve_cached_model(conn, ConversationBackendKey.codex, "gpt-5-sol")
+        store = ModelResolutionStore(str(path))
+        duplicate = row()
+        scoped = observation((duplicate, duplicate))
+        store.keep_observation(scoped)
+        assert store.read_observation(context()) == scoped
+        assert (
+            validate_model_selection(
+                selection(),
+                context(),
+                scoped,
+                now=1000,
+                attempt_id="a",
+            ).state.value
+            == "compatible"
+        )
+        with engine.begin() as connection:
+            conn = _raw(connection)
+            assert [
+                tuple(value) for value in conn.execute("SELECT * FROM model_variant_resolutions")
+            ] == [legacy_resolution]
+            assert [
+                tuple(value) for value in conn.execute("SELECT * FROM model_catalogue_models")
+            ] == [legacy_catalog]
+            assert [
+                value[0]
+                for value in conn.execute(
+                    "SELECT row_ordinal FROM scoped_model_catalog_rows ORDER BY row_ordinal"
+                )
+            ] == [0, 1]
+        with pytest.raises(ValueError, match="different evidence"):
+            from dataclasses import replace
+
+            store.keep_observation(replace(scoped, rows=(row("gpt-7-sol"),)))
     finally:
         engine.dispose()
