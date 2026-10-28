@@ -101,6 +101,8 @@
   .ring-chart [data-segment] { cursor:default; }
   @container goal-chart (max-width:420px) {
     .metric-card:not(.compact),.hero-card { padding:24px; border-radius:24px; --text-3xl:36px; }
+    /* The page's own card already holds this inset. Two would stack. */
+    .integrated-card:not(.compact) { padding:0; border-radius:0; }
     .metric-card:not(.compact):not(.gauge-card) .metric-top h2 { flex-basis:100%; font-size:17px; }
     .metric-card:not(.compact) .ranges { width:100%; justify-content:space-between; }
     .metric-card:not(.compact) .ranges button { flex:1; padding:7px 8px; }

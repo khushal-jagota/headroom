@@ -218,13 +218,20 @@
                   </span>
                 </button>
                 <div class="step-main">
-                  <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
-                    <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
-                  </button>
+                  <!-- The item's wording is written once. An open item carries the shared
+                       editable text in that one place; a closed one is the disclosure control. -->
+                  {#if expanded === step.id && context?.updateBlock}
+                    <div class="step-title editing" data-title tabindex="-1">
+                      <span id="{uid}-{step.id}-title" class="title-text"><GoalInlineEdit revision={context!.revision} value={step.title} ariaLabel="Edit checklist item" onSave={(label, revision) => context!.updateBlock!(block.id, old => old.type === "checklist" ? {...old, items: old.items.map(item => item.id === step.id ? {...item, label} : item)} : old, revision)} /></span>
+                    </div>
+                  {:else}
+                    <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
+                      <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
+                    </button>
+                  {/if}
                   {#if expanded === step.id}
-                    <div id="{uid}-{step.id}-panel" class="panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
-                      <div class="panel-inner">
-                        {#if context?.updateBlock}<GoalInlineEdit revision={context!.revision} value={step.title} ariaLabel="Edit checklist item" onSave={(label, revision) => context!.updateBlock!(block.id, old => old.type === "checklist" ? {...old, items: old.items.map(item => item.id === step.id ? {...item, label} : item)} : old, revision)} />{/if}
+                    <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
+                      <div class="step-panel-inner">
                     {#if step.detail}<p class="detail">{step.detail}</p>{/if}
                         {#if step.blocked && !done.includes(step.id)}<p class="blocked">Blocked</p>{/if}
                         {#if step.action}
@@ -426,6 +433,8 @@
     text-align: left;
   }
   .step-title { cursor: pointer; border-radius: var(--radius-md); }
+  .step-title.editing { cursor: auto; }
+  .step-title.editing:focus-visible { outline: none; }
   .title-text {
     background-image: linear-gradient(currentColor, currentColor);
     background-position: 0 60%;
@@ -434,8 +443,9 @@
     transition: background-size var(--motion-slow) var(--motion-ease), color var(--motion-base) var(--motion-ease);
   }
   .step.struck .title-text { background-size: 100% 1px; color: var(--text-faint); }
-  .panel { overflow: hidden; }
-  .panel-inner { padding: 0 0 var(--space-3); }
+  /* Named for this disclosure, so the application-wide .panel card cannot style it. */
+  .step-panel { overflow: hidden; }
+  .step-panel-inner { padding: 0 0 var(--space-3); }
   .detail { max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 400; line-height: 1.45; }
   .blocked { margin: var(--space-2) 0 0; color: var(--accent-error); font-size: var(--type-sm); }
   .action {
