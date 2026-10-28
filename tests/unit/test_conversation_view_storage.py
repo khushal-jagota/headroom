@@ -686,10 +686,12 @@ def test_owner_preview_is_null_without_a_reply_and_private_in_latest_rest_event(
 def test_refusal_view_projects_canonical_validation_and_rebuilds_only_cache() -> None:
     """The selected view must retain the real corrective action and old absent history."""
     from pydantic import TypeAdapter
+    from tests.unit.test_current_model_resolution import context
 
     from planner.conversation.contracts import ConversationBackendKey
     from planner.conversation.model_resolution.contracts import (
         CanonicalModelValidation,
+        CatalogEvidenceReference,
         CorrectiveAction,
         ModelSelection,
         SelectionKind,
@@ -714,7 +716,14 @@ def test_refusal_view_projects_canonical_validation_and_rebuilds_only_cache() ->
         CorrectiveAction.authenticate_provider,
         None,
         None,
-        None,
+        CatalogEvidenceReference(
+            "original-observation",
+            "revision-7",
+            context(backend_key=ConversationBackendKey.claude),
+            1,
+            "original-attempt",
+            0.0,
+        ),
         None,
         None,
         None,
