@@ -173,5 +173,5 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
         assert (
             conn.execute("SELECT ordering_generation FROM navigation_view_meta")
             .fetchone()[0]
-            .endswith("review-v3")
+            .endswith("review-v4")
         )

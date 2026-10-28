@@ -1333,11 +1333,8 @@ def run(browser, urls):
     expect(page.locator('[data-review-empty]')).to_be_visible()
     expect(page.locator("[data-review-card]")).to_have_count(0)
     page.locator('[data-review-return]').click()
-    # Explicit return resets skipped cards too; skip the unrelated personal ask
-    # again if it sorts before this Ticket's newly published proposal.
+    # The newly published proposal precedes the previously skipped personal ask.
     expect(page.locator("[data-review-card]")).to_have_count(1)
-    if remaining.count():
-        remaining.locator('[data-skip]').click()
     expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_be_visible()
     navigation_proposal = dict(ticket["pending_proposal"])
     ticket["title"] = "Canonical Review title"
@@ -1407,6 +1404,8 @@ def run(browser, urls):
     assert approvals[1]["edited_body"] == "Edited replacement body"
     assert approvals[1]["next_ceiling"] == "none"
     assert approvals[1]["next_holder"] == {"kind": "owner", "id": "owner"}
+    expect(remaining).to_have_count(1)
+    remaining.locator('[data-skip]').click()
     expect(page.locator("[data-review-card]")).to_have_count(0)
     runtime_working = True
     page.evaluate("window.__refresh()")
@@ -1961,6 +1960,69 @@ def run(browser, urls):
     page.locator('body').click(position={"x": 1, "y": 1})
     page.keyboard.press('s')
     expect(terminal).to_be_visible()
+    # The skipped ledger survives every continuation window and one whole return.
+    # This extends the existing host: real Svelte demand, server projection, cursor,
+    # and DOM admission must agree before the final screen changes its label.
+    return_button = page.locator('[data-review-return]')
+    expect(return_button).to_have_text('Back to skipped items')
+    final_capture('review-final-all-skipped.png')
+    return_button.click()
+    for index in range(31):
+        expect(page.locator('.review-ticket-title')).to_contain_text(f'Window item {index:02}')
+        page.locator('body').click(position={"x": 1, "y": 1})
+        page.keyboard.press('s')
+    expect(terminal).to_be_visible()
+    expect(return_button).to_have_text('Back to skipped items')
+    chief_input.fill('Keep the skipped review thought.')
+    chief_input.focus()
+    page.evaluate("window.__skippedChiefInput=document.querySelector('[data-review-chief-composer] textarea')")
+    # Removed identities do not count as skipped work. A new, later-sorted cohort
+    # spans two windows and still comes before the oldest skipped item.
+    skipped_rows = final_rows[1:]
+    fresh_rows = [{**variant_seed, "id": f"t_final_new_{i:02}", "title": f"New arrival {i:02}",
+                   "conversation_id": None, "ticket_status": "awaiting_approval",
+                   "ceiling_holder": {"kind": "owner", "id": "owner"}} for i in range(31)]
+    final_rows = fresh_rows
+    page.evaluate("window.__refresh()")
+    expect(return_button).to_have_text('Back to review')
+    final_rows = skipped_rows + fresh_rows
+    page.evaluate("window.__refresh()")
+    expect(terminal).to_contain_text('61 things await review')
+    expect(return_button).to_have_text('Back to review')
+    expect(chief_input).to_be_focused()
+    expect(chief_input).to_have_value('Keep the skipped review thought.')
+    assert page.evaluate("window.__skippedChiefInput===document.querySelector('[data-review-chief-composer] textarea')")
+    final_capture('review-final-mixed.png')
+    # Failed authoritative admission retains the same draft and final workspace.
+    snapshot_unavailable = True
+    return_button.click()
+    expect(terminal.locator('.error-line')).to_be_visible()
+    expect(chief_input).to_have_value('Keep the skipped review thought.')
+    assert page.evaluate("window.__skippedChiefInput===document.querySelector('[data-review-chief-composer] textarea')")
+    snapshot_unavailable = False
+    return_button.click()
+    for index in range(31):
+        expect(page.locator('.review-ticket-title')).to_contain_text(f'New arrival {index:02}')
+        if index == 0:
+            final_capture('review-return-new-before-skipped.png')
+        page.locator('body').click(position={"x": 1, "y": 1})
+        page.keyboard.press('s')
+    # The old first skipped item was removed. The next skipped item, rather than
+    # another new cohort or an early final screen, starts the lower-priority cohort.
+    expect(page.locator('.review-ticket-title')).to_contain_text('Window item 01')
+    final_capture('review-return-skipped-after-new.png')
+    for index in range(1, 31):
+        expect(page.locator('.review-ticket-title')).to_contain_text(f'Window item {index:02}')
+        page.locator('body').click(position={"x": 1, "y": 1})
+        page.keyboard.press('s')
+    expect(terminal).to_be_visible()
+    expect(return_button).to_have_text('Back to skipped items')
+    expect(chief_input).to_have_value('Keep the skipped review thought.')
+    # Once every still-pending identity disappears, history cannot claim work.
+    final_rows = []
+    page.evaluate("window.__refresh()")
+    expect(terminal).to_contain_text('Nothing needs you right now.')
+    expect(return_button).to_have_text('Back to review')
     print(f"Final Review workspace browser coverage: {time.monotonic() - final_started:.2f}s", flush=True)
     page.evaluate("window.__showConfig()")
     stage_table = page.locator("[data-worker-stage-table]")
