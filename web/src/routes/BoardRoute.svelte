@@ -467,7 +467,7 @@
      mounted in, beside a text-only status node. */
   .board-workspace-utility > :global(div) { flex:1 0 auto; min-height:0; }
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); border-right:0; }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
   .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
