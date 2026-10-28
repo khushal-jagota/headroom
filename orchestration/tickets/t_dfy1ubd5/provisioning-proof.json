@@ -1,0 +1,22 @@
+{
+  "scope": "isolated scratch only; no actual provider home or live row writes",
+  "manifest_skill_count": 1,
+  "no_managed_frontend_design": true,
+  "frontend_sha256": "9c4dff4c20509bfc9a2fd30405276508474dafbd2e865731281d1dab8f2d4a15",
+  "results": [
+    {
+      "backend": "codex",
+      "provision_runs": 2,
+      "user_owned_frontend_link_unchanged": true,
+      "frontend_bytes_unchanged": true,
+      "worker_source_exact": true
+    },
+    {
+      "backend": "claude",
+      "provision_runs": 2,
+      "user_owned_frontend_link_unchanged": true,
+      "frontend_bytes_unchanged": true,
+      "worker_source_exact": true
+    }
+  ]
+}
