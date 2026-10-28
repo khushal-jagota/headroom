@@ -784,9 +784,11 @@ backend, or all model-policy changes when even the backend is unknown. That exce
 barrier preserves startup and reads, and reports the evidence or settlement needed.
 Turning a model off does not undo prompts already emitted or cancel an active turn.
 
-The strict executor protocol is 11. Spool format 2 retains the existing container and
-opaque command arguments. Legacy commands receive no invented verification authority.
-Known outcomes replay as recorded. Unknown outcomes never authorize redispatch.
+The strict executor protocol is 11. The native spool keeps outcome envelopes in its
+existing format 2 container. The VPS keeps command arguments in the existing
+`executor_core_turns.runtime_json` record. Legacy commands receive no invented
+verification authority. Known outcomes replay as recorded. Unknown outcomes never
+authorize redispatch.
 
 Backend reads expose typed picker facts and structured validation. Presentation remains
 subject to the separately approved compact-controls Design. This source requires the
