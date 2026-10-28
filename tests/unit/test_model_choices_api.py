@@ -142,8 +142,9 @@ def test_existing_ticket_preview_preserves_presence_authority_and_canonical_stat
             json={**base, "selection_kind": "concrete"},
         )
         assert reclassified.status_code == 200
-        assert metadata.calls[-1][0].selection_kind is SelectionKind.concrete
-        assert metadata.calls[-1][2]
+        reclassified_selection, _, reclassified_new, _ = metadata.calls[-1]
+        assert reclassified_selection.selection_kind is SelectionKind.concrete
+        assert reclassified_new
         unchanged = client.post("/api/conversation/backends/model-choices", json=base)
         assert unchanged.status_code == 200
         assert metadata.calls[-1][0].selection_kind is SelectionKind.provider_alias
