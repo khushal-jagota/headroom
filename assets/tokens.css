@@ -62,6 +62,9 @@
   --motion-enter: 320ms;
   --motion-enter-step: 40ms;
 
+  /* The hidden rail grip starts at this vertical scale before its reveal. */
+  --rail-grip-rest-scale: 0.6;
+
   /* Skeleton fills and the shared swap duration. */
   --skeleton-line:rgba(255,255,255,.045);
   --skeleton-block:rgba(255,255,255,.028);

@@ -328,7 +328,8 @@ The workspace keeps its resize handle within its own visual layer. Open shell me
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
 The handle shows no painted line at rest. A short, rounded neutral bar appears at its
-center on hover, keyboard focus, and during a drag. The full-height hit area stays intact.
+center on hover and keyboard focus, then strengthens during a drag. Reduced motion removes
+the reveal animation. The full-height hit area stays intact.
 
 Every destination shares one persistent Workspace rail and one pane. The rail keeps its
 scroll, width preference, Settled section, and running conversations while the pane changes.
