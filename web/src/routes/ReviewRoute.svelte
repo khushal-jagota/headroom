@@ -13,6 +13,8 @@
   import ReviewMessageCard from "../components/ReviewMessageCard.svelte";
   import ReviewFinalState from "../components/ReviewFinalState.svelte";
   import { reviewMessageHref } from "../lib/review/messages";
+  import {reviewHistoryKey,reviewReturnLabel,sameReviewHistory} from "../lib/review/return";
+  import type {ReviewHistoryKey} from "../lib/navigation/contracts";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
   const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`,impact => {
@@ -25,12 +27,26 @@
 
   let reviewAnchor=$state<string|null>(null);
   let queueWindow=$derived(navigationWindow(displayed?navigation.presentationFor(displayed):undefined,'review'));
-  $effect(()=>navigation.owner.setDemand('review',{
-    review_conversation_ids:heldCard ? heldCard.review_item_type==='message' ? [heldCard.conversation_id] : heldCard.messages.map(message=>message.conversation_id) : [],
-    windows:[viewWindow('review',null,{anchor:reviewAnchor,limit:30})]}));
+  let reviewRequest=$state.raw(navigation.owner.getRequest());
+  function updateReviewDemand():void {
+    navigation.owner.setDemand('review',{
+      review_skipped_keys:skippedHistory,review_priority_keys:returnCohort,
+      review_conversation_ids:heldCard ? heldCard.review_item_type==='message' ? [heldCard.conversation_id] : heldCard.messages.map(message=>message.conversation_id) : [],
+      windows:[viewWindow('review',null,{anchor:reviewAnchor,limit:30})]});
+    reviewRequest=navigation.owner.getRequest();
+  }
+  $effect(()=>{try {updateReviewDemand();} catch(error) {
+    // A refused continuation cannot reach another card or the terminal window.
+    // Keep the complete history and expose the existing final-screen refusal.
+    returnError=error;
+    finalLatched=true;
+  }});
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
   let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>({});
+  let skippedHistory=$state<ReviewHistoryKey[]>([]);
+  let returnCohort=$state<ReviewHistoryKey[]>([]);
+  let returnLabel=$derived.by(()=>{void reviewRequest;return reviewReturnLabel(displayed,navigation.owner.getRequest(),skippedHistory);});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
   // card mounted by another screen at the same time can never be the one a Review
   // keystroke reaches.
@@ -40,7 +56,7 @@
     return item.review_item_type === "message" ? `message:${item.conversation_id}` : `ticket:${item.ticket_id}`;
   }
 
-  let items = $derived(queueWindow?(review?.items ?? []).filter(item=>queueWindow?.members.some(key=>key.kind===(item.review_item_type === "message" ? 'address' : 'ticket') && key.id===(item.review_item_type === "message" ? item.address_id : item.ticket_id))):review?.items ?? []);
+  let items = $derived(queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'message' ? 'address' : 'ticket') && key.id===(item.review_item_type === 'message' ? item.address_id : item.ticket_id))) : review?.items ?? []);
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
   let waitingCount = $derived(displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null);
   let finalLatched = $state(false);
@@ -108,7 +124,6 @@
   $effect(()=>{
     if(!showFinal && queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
       reviewAnchor=queueWindow.next;
-      skipped={};
     }
   });
 
@@ -116,6 +131,7 @@
     if (returning) return;
     returning = true;
     returnError = null;
+    returnCohort = [...skippedHistory];
     reviewAnchor = null;
     skipped = {};
     heldCard = null;
@@ -123,9 +139,13 @@
       // Let the reset window demand reach the owner before requesting a fresh view.
       // Keep the composer mounted until that read succeeds, even for an empty result.
       await tick();
+      updateReviewDemand();
       await navigation.owner.recover();
       await tick();
-      if (displayed?.runtimeCurrent && queueWindow?.request.anchor === null && currentItem) finalLatched = false;
+      const request=navigation.owner.getRequest();
+      if (displayed?.runtimeCurrent && displayed.publication.view?.scopeGeneration===request.scope_generation
+        && sameReviewHistory(request.review_priority_keys,returnCohort) && sameReviewHistory(request.review_skipped_keys,skippedHistory)
+        && queueWindow?.request.anchor === null && currentItem) finalLatched = false;
     } catch (error) {
       returnError = error;
     } finally {
@@ -135,6 +155,8 @@
 
   function skip(item: ReviewItem): void {
     if(messageBusy)return;
+    const key=reviewHistoryKey(item);
+    if(!skippedHistory.some(previous=>previous.kind===key.kind && previous.id===key.id))skippedHistory=[...skippedHistory,key];
     skipped = { ...skipped, [itemKey(item)]: true };
     heldCard=null;
   }
@@ -244,7 +266,7 @@
 <section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement}>
   <ResourceState shape="block" error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
     {#if showFinal}
-      <ReviewFinalState {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
+      <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
     {:else if currentItem}
       {#if currentItem.review_item_type === "message"}
         {@const message = currentItem}
