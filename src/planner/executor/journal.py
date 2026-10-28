@@ -22,6 +22,7 @@ from planner.executor.contracts import (
     EnvelopeKind,
     FileManifest,
     FileSnapshot,
+    JournalPublication,
     JsonObject,
     QueuedEnvelope,
     WireMessage,
@@ -301,6 +302,19 @@ class FilesystemSpool:
                 digest.update(block)
         if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
             raise ValueError("corrupt immutable snapshot")
+
+    def lookup_publication(self, submission_id: str) -> JournalPublication | None:
+        """Inspect retained identity without recapture, requeue, or sequence allocation."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT envelope_json,pending FROM envelopes WHERE submission_id=?",
+                (submission_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return JournalPublication(
+                TypeAdapter(QueuedEnvelope).validate_json(row[0]), bool(row[1])
+            )
 
     def pending(self) -> tuple[QueuedEnvelope, ...]:
         with self._lock:

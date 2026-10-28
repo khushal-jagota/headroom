@@ -108,7 +108,7 @@ def test_bad_expected_format_never_creates_state(tmp_path: Path, expected: objec
     assert not root.exists()
 
 
-@pytest.mark.parametrize("operation", ["iterdir", "stat"])
+@pytest.mark.parametrize("operation", ["iterdir", "lstat"])
 def test_inspection_oserror_propagates_and_preserves_existing_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -127,23 +127,23 @@ def test_inspection_oserror_propagates_and_preserves_existing_tree(
     spool.close()
     before = tree(root)
     original_iterdir = Path.iterdir
-    original_stat = Path.stat
+    original_lstat = Path.lstat
 
     def denied_iterdir(path: Path) -> Iterator[Path]:
         if path == root / "spool":
             raise OSError(5, "directory inspection failed")
         return original_iterdir(path)
 
-    def denied_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+    def denied_lstat(path: Path) -> os.stat_result:
         if path == root / "spool":
             raise PermissionError(13, "state inspection denied")
-        return original_stat(path, follow_symlinks=follow_symlinks)
+        return original_lstat(path)
 
     with monkeypatch.context() as injected:
         if operation == "iterdir":
             injected.setattr(Path, "iterdir", denied_iterdir)
         else:
-            injected.setattr(Path, "stat", denied_stat)
+            injected.setattr(Path, "lstat", denied_lstat)
         # There is no successful None result when inspection cannot establish safety.
         with pytest.raises(OSError):
             check_spool_compatibility(root, SPOOL_FORMAT_VERSION)

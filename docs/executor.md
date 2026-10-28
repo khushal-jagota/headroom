@@ -75,10 +75,45 @@ first receipt together. If a receipt disappears, replay returns that first resul
 Separate conversations retain separate order. The one retry timer drains existing
 work and does not create Tickets or other application work.
 
-A CLI write can outlast its connection. Its queued result means acceptance is
-unconfirmed, including when the VPS already committed but the receipt was lost.
-It never supplies a fabricated domain result. Application reads still require the
-VPS. The journal is not a fallback view of a Ticket.
+A CLI write can outlast its connection. The client keeps its original request ID as
+the submission ID after any possible send, including partial-send failure, timeout,
+EOF, or an invalid reply. Acceptance stays unconfirmed. The CLI exits 3 instead of
+reporting a connection refusal. A failure before send keeps its ordinary error.
+Reads still require the VPS and never use the journal as a fallback view.
+
+Preparation and receipt observation share one 30-second response deadline. The
+client carries that local monotonic deadline over IPC and allows five seconds for
+response delivery. Each socket operation uses the remaining transport budget.
+A larger margin does not restart the response budget after preparation. Admitted
+publication retains its source ownership until physical snapshot and journal work
+settle, even after a response deadline or caller disconnect.
+
+Use `panels executor retry SUBMISSION_ID` to inspect the original submission.
+Add `--json` for structured output. This command requires the original child's
+capability. It only observes existing work. It never captures artifacts, creates a
+replacement write, or requeues an acknowledged entry. The ordinary replay loop owns
+transport retries. Do not repeat the original write after an uncertain result.
+
+| Output | Evidence | Exit |
+| --- | --- | --- |
+| `preparing` | The source task still owns preparation or publication. | 3 |
+| `queued` | The original envelope is durable and pending. | 3 |
+| `acknowledged` | A VPS receipt arrived, but its disposition and result are unavailable locally. | 3 |
+| `unknown` | Response delivery failed, or no tracked task or retained journal entry proves the state. | 3 |
+
+Unconfirmed output carries the original submission identity. Structured uncertainty
+also carries the IPC request identity. The existing initial queued output retains
+its submission ID, disposition, and acceptance fields. A retry has a separate IPC
+request ID and retains its target submission ID. An exact observed receipt returns
+the original result or refusal. An acknowledged entry alone does not prove success.
+
+After an executor restart, an old capability can receive a canonical refusal. A
+missing entry does not prove that the write never reached the executor or VPS.
+Preserve the reported identity and the existing spool. Use the ordinary operator
+inspection and reconciliation procedure before any deliberate replacement write.
+Do not delete the journal or change stored outcomes to force another attempt.
+Local capability and admission refusals use the canonical code, message, and detail
+error envelope in both human and JSON CLI output.
 
 Only registered operations reach canonical writers. Worker authority comes from
 the VPS child assignment, not headers supplied by a Mac process. Unsupported

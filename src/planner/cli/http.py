@@ -9,12 +9,15 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import httpx
 
 from planner.cli.errors import exit_with_human_error
 from planner.core.authctx import normalize_manager_identity
+
+if TYPE_CHECKING:
+    from planner.executor.contracts import IpcResponse
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:8767"
 _TIMEOUT = 30.0
@@ -206,8 +209,6 @@ def _fail_response(resp: httpx.Response, data: Any, as_json: bool) -> NoReturn:
 def _executor_send(
     method: str, path: str, *, as_json: bool, json_body: Any, params: dict[str, Any] | None
 ) -> Any:
-    from dataclasses import asdict
-
     from planner.executor.contracts import IpcOperation
     from planner.executor.ipc_client import request
     from planner.executor.mutations import cli_mutation
@@ -222,12 +223,35 @@ def _executor_send(
         fail_validation(str(error), as_json)
     except (OSError, ConnectionError) as error:
         _fail_connection(httpx.ConnectError(str(error)), as_json)
+    return executor_response(response, as_json)
+
+
+def executor_response(response: IpcResponse, as_json: bool) -> Any:
+    """Render the same native uncertainty and refusal for writes and lookup-only retry."""
+    from dataclasses import asdict
+
+    if response.unconfirmed is not None:
+        outcome = response.unconfirmed
+        if as_json:
+            print(json.dumps(asdict(outcome)))
+        else:
+            print(
+                f"Submission {outcome.submission_id}: {outcome.publication}; "
+                "VPS acceptance is unconfirmed. "
+                f"Inspect with panels executor retry {outcome.submission_id}. "
+                "Do not repeat the original write."
+            )
+        sys.exit(3)
     if response.queued is not None:
         payload = asdict(response.queued)
         if as_json:
             print(json.dumps(payload))
         else:
-            print(f"Queued {response.queued.submission_id}; VPS acceptance is unconfirmed.")
+            print(
+                f"Queued {response.queued.submission_id}; VPS acceptance is unconfirmed. "
+                f"Inspect with panels executor retry {response.queued.submission_id}. "
+                "Do not repeat the original write."
+            )
         sys.exit(3)
     if response.error is not None:
         _fail_response(httpx.Response(400), {"error": response.error}, as_json)

@@ -768,21 +768,23 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
             await catalog()
             # Submit through the authenticated native Worker path while reconnect
             # is paused at a real inventory response, before either replay pass.
-            monkeypatch.setattr(mac_module, "CLI_RESULT_TIMEOUT_SECONDS", 0.02)
-            response = await harness.mac.handle_ipc(
-                IpcRequest(
-                    "queued_reconnect_recap",
-                    IpcOperation.write,
-                    child.reference.child_id,
-                    child.capability,
-                    {
-                        "operation": "ticket.edit",
-                        "arguments": {
-                            "ticket_id": child.ticket_id,
-                            "body": {"recap": "Durable reconnect result"},
-                        },
+            from planner.executor import ipc_client
+
+            monkeypatch.setattr(mac_module, "CLI_RESULT_TIMEOUT_SECONDS", 0.2)
+            monkeypatch.setattr(ipc_client, "CLI_RESULT_TIMEOUT_SECONDS", 0.2)
+            monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(harness.mac.paths.root))
+            monkeypatch.setenv("PLAN_EXECUTOR_CHILD_ID", child.reference.child_id)
+            monkeypatch.setenv("PLAN_EXECUTOR_CAPABILITY", child.capability)
+            response = await asyncio.to_thread(
+                ipc_client.request,
+                IpcOperation.write,
+                {
+                    "operation": "ticket.edit",
+                    "arguments": {
+                        "ticket_id": child.ticket_id,
+                        "body": {"recap": "Durable reconnect result"},
                     },
-                )
+                },
             )
             assert response.queued is not None and response.error is None
             write = next(
@@ -790,6 +792,13 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
                 for entry in harness.mac.spool.pending()
                 if entry.submission_id == response.queued.submission_id
             )
+            # Lookup-only retry cannot change the envelope or allocate a sequence.
+            retry = await asyncio.to_thread(
+                ipc_client.request, IpcOperation.retry, {"submission_id": write.submission_id}
+            )
+            assert retry.unconfirmed is not None and retry.unconfirmed.publication == "queued"
+            publication = harness.mac.spool.lookup_publication(write.submission_id)
+            assert publication is not None and publication.envelope == write
             release_inventory.set()
             await eventually(
                 lambda: harness.mac.state is ConnectionState.ready and bool(retained_at_ready),
@@ -819,6 +828,12 @@ def test_continuous_catalog_production_cannot_starve_either_reconnect_replay_pas
             receipt = harness.endpoint.store.lookup_receipt(write.sender_id, write.submission_id)
             assert receipt is not None and receipt.disposition is ReceiptDisposition.accepted
             assert receipt.payload_sha256 == write.payload_sha256
+            assert sum(entry.submission_id == write.submission_id for entry, _ in accepted) == 1
+            retry = await asyncio.to_thread(
+                ipc_client.request, IpcOperation.retry, {"submission_id": write.submission_id}
+            )
+            assert retry.unconfirmed is not None
+            assert retry.unconfirmed.publication == "acknowledged"
             connection = connect(harness.endpoint.db_path)
             try:
                 ticket = data.read_ticket(connection, child.ticket_id)

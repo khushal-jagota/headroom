@@ -1135,7 +1135,11 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         executor.registry.admission_stopped = True
         count = executor.spool.pending_count()
         refused = await executor.handle_ipc(replace(request, request_id="after-closure"))
-        assert refused.error == {"message": "executor admission stopped", "type": "PermissionError"}
+        assert refused.error == {
+            "code": "agent_forbidden",
+            "message": "executor admission stopped",
+            "detail": {},
+        }
         assert executor.spool.pending_count() == count
         executor.spool.close()
 
@@ -2186,10 +2190,14 @@ def test_cancelled_source_publication_remains_counted_until_durable_completion(
             await asyncio.sleep(0)
             blocked = await executor.registry.quiesce()
             assert blocked.uncertain_operation_count == 1
-            assert not blocked.ready and not task.done()
+            assert not blocked.ready
+            # The observer can cancel. Its separate owner must retain the physical thread.
+            publication = executor._publications["admitted-write"]
+            assert not publication.task.done()
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
+            await publication.task
             settled = await executor.registry.quiesce()
             assert settled.uncertain_operation_count == 0
             assert settled.unsent_entry_count == 1
@@ -2197,6 +2205,8 @@ def test_cancelled_source_publication_remains_counted_until_durable_completion(
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
+            if executor._publications:
+                await asyncio.gather(*(row.task for row in executor._publications.values()))
             executor.spool.close()
 
     asyncio.run(run())

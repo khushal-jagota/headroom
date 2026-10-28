@@ -53,6 +53,25 @@ def run(executor_id: str, application_revision: str, panels_server_url: str) -> 
     )
 
 
+@executor_group.command("retry")
+@click.argument("submission_id")
+@click.option("--json", "as_json", is_flag=True)
+def retry(submission_id: str, as_json: bool) -> None:
+    """Inspect the original submission. Never repeat or replace its write."""
+    import httpx
+
+    from planner.cli.http import _fail_connection, emit, executor_response, fail_validation
+
+    try:
+        response = request(IpcOperation.retry, {"submission_id": submission_id})
+    except ValueError as error:
+        fail_validation(str(error), as_json)
+    except OSError as error:
+        _fail_connection(httpx.ConnectError(str(error)), as_json)
+    result = executor_response(response, as_json)
+    emit(result, as_json, "The original submission returned its receipt.")
+
+
 @executor_group.command("health")
 def health() -> None:
     response = request(IpcOperation.health, {})

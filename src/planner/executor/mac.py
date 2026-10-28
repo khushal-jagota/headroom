@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
+import time
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
-from typing import Any, cast
+from dataclasses import dataclass, replace
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import aiohttp
@@ -61,6 +63,9 @@ from planner.executor.contracts import (
     IpcOperation,
     IpcRequest,
     IpcResponse,
+    IpcRetryPayload,
+    IpcWritePayload,
+    JournalPublication,
     JsonObject,
     LiveReadRequest,
     QueuedCliResult,
@@ -71,6 +76,7 @@ from planner.executor.contracts import (
     ReconciliationInventory,
     ReconciliationResult,
     SourceRetirementRequest,
+    UnconfirmedCliResult,
     WireMessage,
     WireMessageKind,
 )
@@ -92,6 +98,19 @@ from planner.previews.forward import MacPreviewForwards
 
 def as_object(value: object) -> JsonObject:
     return cast(JsonObject, encode_value(value))
+
+
+class _IpcConflict(ValueError):
+    """A conflicting reuse is refused before this attempt can publish."""
+
+
+@dataclass
+class _IpcPublication:
+    write: CliWrite
+    task: asyncio.Task[JournalPublication]
+    receipt: asyncio.Future[AcceptanceReceipt]
+    observers: int = 0
+    admitted: bool = False
 
 
 class MacExecutor:
@@ -126,8 +145,11 @@ class MacExecutor:
         self._write_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[WireMessage]] = {}
         self._receipts: dict[str, asyncio.Future[AcceptanceReceipt]] = {}
+        self._publications: dict[str, _IpcPublication] = {}
+        self._ipc_lookups: set[asyncio.Task[JournalPublication | None]] = set()
         self._stop = asyncio.Event()
         self.exit_committed = False
+        self._ipc_stopping = False
         self.inputs = IncomingFiles(
             paths.root / "artifacts" / "files", paths.run / "input-quarantine"
         )
@@ -736,6 +758,8 @@ class MacExecutor:
 
     async def handle_ipc(self, request: IpcRequest) -> IpcResponse:
         try:
+            if self._ipc_stopping:
+                raise ConnectionError("executor IPC is stopping")
             if request.operation == IpcOperation.health:
                 return IpcResponse(request.request_id, as_object(self.health()), None)
             if request.operation == IpcOperation.quiesce:
@@ -762,6 +786,16 @@ class MacExecutor:
                         raise ValueError(
                             "quiesce identity changed while draining; obtain fresh health"
                         )
+                    # Include reserved IPC tasks even before source_work gets CPU.
+                    ipc_count = sum(not row.task.done() for row in self._publications.values())
+                    ipc_count += len(self._ipc_lookups)
+                    if ipc_count:
+                        quiescence = replace(
+                            quiescence,
+                            uncertain_operation_count=max(
+                                quiescence.uncertain_operation_count, ipc_count
+                            ),
+                        )
                     exit_committed = quiescence.ready and expected.exit_when_ready
                     if exit_committed:
                         self.exit_committed = True
@@ -786,61 +820,205 @@ class MacExecutor:
                 )
                 return IpcResponse(request.request_id, response.payload, None)
 
-            async def publish_write() -> QueuedEnvelope:
-                payload = as_object(
-                    CliWrite(
-                        str(request.payload["operation"]),
-                        cast(JsonObject, request.payload["arguments"]),
-                        child.reference,
-                        child.active_turn,
+            deadline = time.monotonic() + CLI_RESULT_TIMEOUT_SECONDS
+            if request.response_deadline is not None:
+                if not math.isfinite(request.response_deadline):
+                    raise ValueError("invalid IPC response deadline")
+                deadline = min(deadline, request.response_deadline)
+            if request.operation is IpcOperation.retry:
+                retry = TypeAdapter(IpcRetryPayload).validate_python(request.payload)
+                safe_component(retry.submission_id)
+                publication = self._publications.get(retry.submission_id)
+                if publication is not None:
+                    if publication.write.child != child.reference:
+                        raise PermissionError("submission belongs to another executor child")
+                    return await self._observe_publication(
+                        request.request_id, retry.submission_id, publication, deadline
                     )
+                lookup = asyncio.create_task(
+                    asyncio.to_thread(self.spool.lookup_publication, retry.submission_id)
                 )
-                snapshots: tuple[FileSnapshot, ...] = ()
-                if child.ticket_id is not None:
-                    snapshots = await asyncio.to_thread(
-                        snapshot_ticket, self.paths, child.ticket_id
-                    )
-                return await asyncio.to_thread(
-                    self.spool.mint_envelope,
-                    conversation_id=child.reference.conversation_id,
-                    kind=EnvelopeKind.cli_write,
-                    payload=payload,
-                    snapshots=snapshots,
-                    submission_id=request.request_id,
-                )
+                self._ipc_lookups.add(lookup)
 
-            if request.request_id in self._receipts:
-                return IpcResponse(
-                    request.request_id, None, None, QueuedCliResult(request.request_id)
-                )
-            future: asyncio.Future[AcceptanceReceipt] = asyncio.get_running_loop().create_future()
-            # Publication can become replayable before source_work returns.
-            self._receipts[request.request_id] = future
-            try:
-                envelope = await self.registry.source_work(
-                    child.reference, publish_write, new_work=True
-                )
+                def looked_up(task: asyncio.Task[JournalPublication | None]) -> None:
+                    self._ipc_lookups.discard(task)
+                    if not task.cancelled():
+                        task.exception()
+
+                lookup.add_done_callback(looked_up)
                 try:
-                    receipt = await asyncio.wait_for(
-                        asyncio.shield(future), CLI_RESULT_TIMEOUT_SECONDS
+                    row = await asyncio.wait_for(
+                        asyncio.shield(lookup), max(0, deadline - time.monotonic())
                     )
-                except TimeoutError:
-                    return IpcResponse(
-                        request.request_id, None, None, QueuedCliResult(envelope.submission_id)
-                    )
-                if receipt.disposition == ReceiptDisposition.refused:
-                    error = receipt.result.get("error", receipt.result)
-                    return IpcResponse(request.request_id, None, cast(JsonObject, error))
-                return IpcResponse(request.request_id, receipt.result, None)
-            finally:
-                if self._receipts.get(request.request_id) is future:
-                    del self._receipts[request.request_id]
-                if not future.done():
-                    future.cancel()
-        except (ValueError, PermissionError, ConnectionError) as error:
-            return IpcResponse(
-                request.request_id, None, {"message": str(error), "type": type(error).__name__}
+                except (TimeoutError, OSError):
+                    return self._unconfirmed(request.request_id, retry.submission_id, "unknown")
+                if row is not None:
+                    original = TypeAdapter(CliWrite).validate_python(row.envelope.payload)
+                    if (
+                        original.child != child.reference
+                        or row.envelope.kind != EnvelopeKind.cli_write
+                    ):
+                        raise PermissionError("submission belongs to another executor child")
+                return self._publication_status(request.request_id, retry.submission_id, row)
+
+            if request.operation is not IpcOperation.write:
+                raise ValueError("unsupported executor IPC operation")
+            incoming = TypeAdapter(IpcWritePayload).validate_python(request.payload)
+            safe_component(request.request_id)
+            write = CliWrite(
+                incoming.operation,
+                as_object(incoming.arguments),
+                child.reference,
+                child.active_turn,
             )
+            publication = self._publications.get(request.request_id)
+            if publication is not None:
+                self._match_publication(publication.write, write)
+            else:
+                if self.registry.admission_stopped:
+                    raise PermissionError("executor admission stopped")
+                receipt: asyncio.Future[AcceptanceReceipt] = (
+                    asyncio.get_running_loop().create_future()
+                )
+                self._receipts[request.request_id] = receipt
+
+                async def publish_write() -> JournalPublication:
+                    assert publication is not None
+                    publication.admitted = True
+                    previous = await asyncio.to_thread(
+                        self.spool.lookup_publication, request.request_id
+                    )
+                    if previous is not None:
+                        if previous.envelope.kind != EnvelopeKind.cli_write:
+                            raise _IpcConflict("submission identity conflicts with journal")
+                        self._match_publication(
+                            TypeAdapter(CliWrite).validate_python(previous.envelope.payload), write
+                        )
+                        return previous
+                    snapshots: tuple[FileSnapshot, ...] = ()
+                    if child.ticket_id is not None:
+                        snapshots = await asyncio.to_thread(
+                            snapshot_ticket, self.paths, child.ticket_id
+                        )
+                    envelope = await asyncio.to_thread(
+                        self.spool.mint_envelope,
+                        conversation_id=child.reference.conversation_id,
+                        kind=EnvelopeKind.cli_write,
+                        payload=as_object(write),
+                        snapshots=snapshots,
+                        submission_id=request.request_id,
+                    )
+                    return JournalPublication(envelope, True)
+
+                task = asyncio.create_task(
+                    self.registry.source_work(child.reference, publish_write, new_work=True)
+                )
+                publication = _IpcPublication(write, task, receipt)
+                # Reserve before the first await, including a blocked journal lookup.
+                self._publications[request.request_id] = publication
+                task.add_done_callback(
+                    lambda _: self._release_publication(request.request_id, publication)
+                )
+            return await self._observe_publication(
+                request.request_id, request.request_id, publication, deadline
+            )
+        except (ValueError, PermissionError, ConnectionError) as error:
+            code = "validation"
+            if isinstance(error, PermissionError):
+                code = "agent_forbidden"
+            elif isinstance(error, ConnectionError):
+                code = "connection"
+            return IpcResponse(
+                request.request_id, None, {"code": code, "message": str(error), "detail": {}}
+            )
+
+    @staticmethod
+    def _match_publication(original: CliWrite, incoming: CliWrite) -> None:
+        # Retain the original turn and snapshots. Current turn state is not replay input.
+        if (original.child, original.operation, original.arguments) != (
+            incoming.child,
+            incoming.operation,
+            incoming.arguments,
+        ):
+            raise _IpcConflict("submission identity reused with different content")
+
+    @staticmethod
+    def _unconfirmed(
+        request_id: str,
+        submission_id: str,
+        publication: Literal["unknown", "preparing", "queued", "acknowledged"],
+    ) -> IpcResponse:
+        return IpcResponse(
+            request_id,
+            None,
+            None,
+            unconfirmed=UnconfirmedCliResult(request_id, submission_id, publication),
+        )
+
+    def _publication_status(
+        self, request_id: str, submission_id: str, row: JournalPublication | None
+    ) -> IpcResponse:
+        if row is None:
+            return self._unconfirmed(request_id, submission_id, "unknown")
+        if row.pending and request_id != submission_id:
+            return self._unconfirmed(request_id, submission_id, "queued")
+        if row.pending:
+            # Keep the existing durable queue contract for callers that already use it.
+            return IpcResponse(request_id, None, None, QueuedCliResult(submission_id))
+        return self._unconfirmed(request_id, submission_id, "acknowledged")
+
+    def _release_publication(self, submission_id: str, publication: _IpcPublication) -> None:
+        if not publication.task.done():
+            return
+        if not publication.task.cancelled():
+            publication.task.exception()  # Consume failure even after every caller disconnects.
+        if publication.observers == 0 and self._publications.get(submission_id) is publication:
+            del self._publications[submission_id]
+            if self._receipts.get(submission_id) is publication.receipt:
+                del self._receipts[submission_id]
+
+    async def _observe_publication(
+        self, request_id: str, submission_id: str, publication: _IpcPublication, deadline: float
+    ) -> IpcResponse:
+        publication.observers += 1
+        try:
+            # Neither a timeout nor cancellation of this observer owns the source task.
+            await asyncio.wait(
+                (publication.task, publication.receipt),
+                timeout=max(0, deadline - time.monotonic()),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if publication.receipt.done() and not publication.receipt.cancelled():
+                return self._receipt_response(request_id, publication.receipt.result())
+            if publication.task.cancelled():
+                return self._unconfirmed(request_id, submission_id, "unknown")
+            if publication.task.done():
+                error = publication.task.exception()
+                if error is not None:
+                    if not publication.admitted or isinstance(error, _IpcConflict):
+                        raise error
+                    # Even a local error can follow the journal commit. Do not infer refusal.
+                    return self._unconfirmed(request_id, submission_id, "unknown")
+                row = publication.task.result()
+                if not publication.receipt.done() and row.pending:
+                    await asyncio.wait(
+                        (publication.receipt,), timeout=max(0, deadline - time.monotonic())
+                    )
+                if not publication.receipt.done():
+                    return self._publication_status(request_id, submission_id, row)
+            if publication.receipt.done() and not publication.receipt.cancelled():
+                return self._receipt_response(request_id, publication.receipt.result())
+            return self._unconfirmed(request_id, submission_id, "preparing")
+        finally:
+            publication.observers -= 1
+            self._release_publication(submission_id, publication)
+
+    @staticmethod
+    def _receipt_response(request_id: str, receipt: AcceptanceReceipt) -> IpcResponse:
+        if receipt.disposition == ReceiptDisposition.refused:
+            error_payload = receipt.result.get("error", receipt.result)
+            return IpcResponse(request_id, None, cast(JsonObject, error_payload))
+        return IpcResponse(request_id, receipt.result, None)
 
     async def _ipc_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -848,9 +1026,13 @@ class MacExecutor:
             response = await self.handle_ipc(request)
             writer.write(encode_frame(response))
             await writer.drain()
+        except (ConnectionError, OSError):
+            # Lost response delivery says nothing about an admitted publication.
+            pass
         finally:
             writer.close()
-            await writer.wait_closed()
+            with contextlib.suppress(ConnectionError, OSError):
+                await writer.wait_closed()
 
     async def run(self) -> None:
         self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -876,5 +1058,11 @@ class MacExecutor:
                                     self._stop.wait(), RECONNECT_INTERVAL_SECONDS
                                 )
         finally:
+            self._ipc_stopping = True
+            self.registry.admission_stopped = True
             self.paths.ipc_socket.unlink(missing_ok=True)
+            for publication in tuple(self._publications.values()):
+                await wait_for_settlement(publication.task)
+            for lookup in tuple(self._ipc_lookups):
+                await wait_for_settlement(lookup)
             self.spool.close()

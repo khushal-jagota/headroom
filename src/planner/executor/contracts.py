@@ -355,6 +355,20 @@ class QueuedCliResult:
     acceptance: str = "unconfirmed"
 
 
+@dataclass(frozen=True, slots=True)
+class UnconfirmedCliResult:
+    request_id: str
+    submission_id: str
+    publication: Literal["unknown", "preparing", "queued", "acknowledged"]
+    acceptance: Literal["unconfirmed"] = "unconfirmed"
+
+
+@dataclass(frozen=True, slots=True)
+class JournalPublication:
+    envelope: QueuedEnvelope
+    pending: bool
+
+
 class ChildOperation(StrEnum):
     start = "start"
     write_prompt = "write_prompt"
@@ -577,6 +591,7 @@ class WireMessage:
 class IpcOperation(StrEnum):
     read = "read"
     write = "write"
+    retry = "retry"
     health = "health"
     quiesce = "quiesce"
 
@@ -595,6 +610,20 @@ class IpcRequest:
     child_id: str | None
     capability: str | None
     payload: JsonObject
+    response_deadline: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IpcWritePayload:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    operation: str
+    arguments: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class IpcRetryPayload:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    submission_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,6 +632,7 @@ class IpcResponse:
     result: JsonObject | None
     error: JsonObject | None
     queued: QueuedCliResult | None = None
+    unconfirmed: UnconfirmedCliResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -615,6 +645,10 @@ class LiveReadRequest:
 
 
 class AllocatingDurableSpool(DurableSpool, Protocol):
+    def lookup_publication(self, submission_id: str) -> JournalPublication | None:
+        """Read retained publication metadata without altering replay state."""
+        ...
+
     @property
     def sender_id(self) -> str:
         """Persisted sender identity, independent of process incarnation."""
