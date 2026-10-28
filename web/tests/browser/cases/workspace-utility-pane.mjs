@@ -47,7 +47,11 @@ class QuietEventSource {
     const request = JSON.parse(new URL(this.url, location.href).searchParams.get('view')!);
     const receipt: any = {sourceId:this.id, refreshId, url:this.url, request, snapshot:null, dispatched:false};
     const response = await fetch(this.url.replace('/events?', '/snapshot?'), {signal});
-    if (!response.ok) throw new Error('Navigation snapshot request failed: '+response.status);
+    receipt.status = response.status;
+    if (!response.ok) {
+      receipt.error = 'Navigation snapshot HTTP '+response.status;
+      return receipt;
+    }
     const data = await response.text();
     receipt.snapshot = JSON.parse(data);
     await new Promise<void>((resolve, reject) => {

@@ -164,9 +164,10 @@ _PROJECTION_START = """({token,required,recaps,milliseconds})=>{
       if(Array.isArray(item)&&item.length>60)return [...item.slice(0,60),{omitted:item.length-60}];
       return item;
     }));return {error:this.error,receipts:bounded(this.receipts?.map(r=>({sourceId:r.sourceId,refreshId:r.refreshId,
-      url:r.url,request:r.request,dispatched:r.dispatched,snapshot:{view_id:r.snapshot.view_id,
+      url:r.url,request:r.request,dispatched:r.dispatched,status:r.status,error:r.error,
+      snapshot:r.snapshot?{view_id:r.snapshot.view_id,
       scope_generation:r.snapshot.scope_generation,content_version:r.snapshot.content_version,
-      windows:r.snapshot.content.windows}}))??null),checks:bounded(this.checks),
+      windows:r.snapshot.content.windows}:null}))??null),checks:bounded(this.checks),
       active:window.__navigationSources().map(s=>({id:s.id,url:s.url,generation:s.generation,closed:s.closed}))};},
     cleanup(){clearTimeout(timer);controller.abort();}
   };
