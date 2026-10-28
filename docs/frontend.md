@@ -765,15 +765,13 @@ hand-rolling the same shapes per screen. Each does one job:
   The newest line has a 12px bottom gap. A held top line sits 32px below the edge,
   clear of the 20px fade. The bottom fade appears only when content remains below.
 
-  Cold entry captures the owner-read watermark before the read credit advances.
-  The first visible unread message is admitted through bounded pages and placed before
-  the transcript appears. The existing busy region stays mounted. Failure exposes
-  an error and Retry, rather than an indefinite hidden transcript. An existing
-  anchor survives restoration. With nothing unread, entry uses newest. A fresh open
-  or lens switch commits its position before the transcript appears. Deferred body
-  and Markdown presentation must be ready at the destination. Later layout changes
-  retain the bottom or held message without animated catch-up.
-  A parked unread target survives expansion and arrivals until reader navigation.
+  A fresh conversation opens at the actual newest content. Live requests and the
+  owner-read watermark do not choose its destination. Entry commits its position
+  before the transcript appears. Deferred body and Markdown presentation must be
+  ready at the destination. Later layout changes retain the bottom without animated
+  catch-up. Reader navigation takes control, including while entry settles.
+  Saved text and row positions still restore on tab return and lens changes.
+  Connection failures expose an error and Retry in the existing busy region.
 
   Latest uses confirmed page admission and retains its reader identity through layout
   and focus. It returns focus to the Conversation region after its button disappears,

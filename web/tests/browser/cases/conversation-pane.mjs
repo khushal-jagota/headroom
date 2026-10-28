@@ -29,6 +29,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         turn_key:null,work_group_key:null,fold_rule:'never' as const,
         body:{kind:'inline' as const,value:{kind:'agent_message' as const,to_owner:true,
           content:[{piece:'text' as const,text:('Intent row '+index+'. ').repeat(30)}]}}}))}];
+    // This synthetic reader already owns its initial admitted content.
+    value.entryPhase='complete';
     value.load=(_scope,_cursor,_direction,replace)=>replace
       ?new Promise<boolean>(resolve=>intentLoads.push(resolve)):Promise.resolve(false);
     return value;

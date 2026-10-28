@@ -2907,41 +2907,18 @@ def _settled_unread_entry(browser, url):
     proof = []
     page = browser.new_page(viewport={"width": 1000, "height": 900}, reduced_motion="reduce")
     try:
-        page.goto(url + "?reader=1&unread=1500&entry-hold=1")
-        page.wait_for_function("window.__entryProbe.waiting > 0")
-        region = page.locator('.conversation-transcript-region')
-        assert region.get_attribute('aria-busy') == 'true'
-        assert not page.locator('[data-conversation-view-key="e2000"]').is_visible()
-        page.evaluate("window.__entryProbe.hold=false;window.__entryProbe.release()")
+        page.goto(url + "?reader=1&unread=1500")
         page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
-        first = page.locator('[data-conversation-view-key="e1501"]')
-        first.wait_for(state='visible')
-        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
-        assert abs(gap-32) < 2, gap
+        newest = page.locator('[data-conversation-view-key="e2000"]')
+        newest.wait_for(state='visible')
+        gap = newest.evaluate("node=>document.querySelector('[data-conversation-thread]').getBoundingClientRect().bottom-node.getBoundingClientRect().bottom")
+        assert -2 <= gap <= 18, gap
+        assert page.locator('[data-conversation-view-key="e1501"]').count() == 0
+        history_calls = page.evaluate("window.__viewCalls.filter(raw=>new URL(raw,location.origin).pathname.endsWith('/view/pages'))")
+        assert history_calls == [], history_calls
         assert page.locator('[data-conversation-view-key]').count() <= 300
-        page.screenshot(path=str(output / 'settled-unread.png'))
-        proof.append({'case':'older unread delayed admission','topGap':gap,'newestFlash':False})
-
-        page.goto(url + "?reader=1&unread=1500&entry-fail=1")
-        retry = page.get_by_role('button', name='Retry unread messages', exact=True)
-        retry.wait_for(state='visible')
-        assert page.locator('[data-conversation-entry-status]').is_visible()
-        assert region.get_attribute('aria-busy') == 'false'
-        page.screenshot(path=str(output / 'settled-unread-error.png'))
-        page.evaluate("window.__entryProbe.fail=false")
-        retry.click()
-        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
-        page.locator('[data-conversation-view-key="e1501"]').wait_for(state='visible')
-        assert not retry.is_visible()
-        proof.append({'case':'admission failure','visibleRetry':True,'retryPreservesTarget':True})
-
-        page.goto(url + "?reader=1&unread=1500&entry-hidden=1")
-        page.wait_for_function("document.querySelector('[data-conversation-entry]')?.dataset.conversationEntry==='complete'")
-        first = page.locator('[data-conversation-view-key="e1601"]')
-        first.wait_for(state='visible')
-        gap = first.evaluate("node=>node.getBoundingClientRect().top-document.querySelector('[data-conversation-thread]').getBoundingClientRect().top")
-        assert abs(gap-32) < 2, gap
-        proof.append({'case':'hidden-only first page','firstVisible':'e1601','topGap':gap})
+        page.screenshot(path=str(output / 'actual-newest-over-unread.png'))
+        proof.append({'case':'actual newest across unread gap','newest':'e2000','bottomGap':gap,'historyCalls':history_calls})
         receipt={'cases':proof,'seconds':round(time.perf_counter()-started,3),'newHosts':0}
         (output / 'settled-unread-proof.json').write_text(json.dumps(receipt,indent=2))
         print('SETTLED_UNREAD_PROOF '+json.dumps(receipt),flush=True)
@@ -2976,20 +2953,21 @@ def _position_commit(browser, url):
       };requestAnimationFrame(sample);""")
     try:
         # Readiness must survive bodies completing after the initial nonzero layout.
-        for attempt in range(2):
-            page.goto(url+'?reader=1&position-race=1')
+        for request in ('permission', 'user-input'):
+            page.goto(url+'?reader=1&position-race=1&opening-request='+request)
             page.wait_for_function('window.__positionProbe.waiting>0')
             page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
             assert page.locator('.conversation-transcript-region').get_attribute('aria-busy')=='true'
             page.evaluate('window.__positionProbe.release()')
             page.locator('[data-conversation-entry="complete"]').wait_for()
+            assert page.locator('[data-conversation-ask-state="live"], [data-conversation-user-input-state="live"]').count() == 1
             page.wait_for_timeout(350)
             frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
             visible=[row for row in frames if not row['hidden']]
             assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), visible
             ready=[row for row in visible if row['busy']!='true']
             assert ready and all(-2<=row['gap']<=18 for row in ready), ready
-            proof['entry'].append({'trigger':'fresh open','attempt':attempt,'frames':frames})
+            proof['entry'].append({'trigger':'fresh open','request':request,'frames':frames})
             for lens in ('full','focus'):
                 page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
                 page.locator('[data-conversation-lens-choice="'+lens+'"]').click()
@@ -2999,7 +2977,7 @@ def _position_commit(browser, url):
                 assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), (lens,visible)
                 ready=[row for row in visible if row['busy']!='true']
                 assert ready and all(-2<=row['gap']<=18 for row in ready), (lens,ready)
-                proof['entry'].append({'trigger':'lens '+lens,'attempt':attempt,'frames':frames})
+                proof['entry'].append({'trigger':'lens '+lens,'request':request,'frames':frames})
             # Browser-owned image and font metrics change after reveal. Neither causes travel.
             frames=page.evaluate("""()=>new Promise(resolve=>{
               const thread=document.querySelector('[data-conversation-thread]');
@@ -3011,6 +2989,27 @@ def _position_commit(browser, url):
             assert all(-2<=row['gap']<=18 for row in frames), frames
             proof['entry'].append({'trigger':'late image/font metrics','frames':frames})
         page.screenshot(path=str(output/'position-entry.png'))
+
+        # A real reader gesture owns the provisional view while newest is still pending.
+        page.goto(url+'?reader=1&position-race=1&position-takeover=1')
+        page.wait_for_function('window.__positionProbe.waiting>0')
+        thread = page.locator('[data-conversation-thread]')
+        thread.wait_for(state='visible')
+        assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'true'
+        thread.focus()
+        page.keyboard.press('PageUp')
+        page.wait_for_function("document.querySelector('[data-conversation-thread]')?.dataset.conversationPositionOwner==='manual'")
+        page.wait_for_timeout(200)
+        held = thread.evaluate('node=>node.scrollTop')
+        page.evaluate('window.__positionProbe.release()')
+        page.wait_for_function("document.querySelector('.conversation-transcript-region')?.getAttribute('aria-busy')==='false'")
+        page.wait_for_timeout(350)
+        after = thread.evaluate('node=>({top:node.scrollTop,gap:node.scrollHeight-node.clientHeight-node.scrollTop,owner:node.dataset.conversationPositionOwner})')
+        assert after['owner'] == 'manual' and after['gap'] > 200, after
+        assert abs(after['top']-held) <= 2, (held,after)
+        proof['entry'].append({'trigger':'PageUp during pending newest body','heldTop':held,'after':after})
+        page.screenshot(path=str(output/'position-reader-takeover.png'))
+
 
         # The label counts unread source messages, while visibility still follows newest.
         page.goto(url)
@@ -3929,6 +3928,9 @@ def run(browser, urls):
             return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'motion':
             _settled_motion(browser, urls[0])
+            return
+        if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'position':
+            _position_commit(browser, urls[0])
             return
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'unread':
             _settled_unread_entry(browser, urls[0])

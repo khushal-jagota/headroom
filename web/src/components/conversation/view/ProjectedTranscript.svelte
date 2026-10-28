@@ -123,10 +123,10 @@
       direction: 'older' | 'newer';
   }) {
       let current = request;
-      const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting && !reader.entryHeld && !['loading','placing','error'].includes(reader.entryPhase))
+      const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting && !['loading','placing','error'].includes(reader.entryPhase))
           void reader.load(current.scope, current.cursor, current.direction); }, { root: node.closest('[data-conversation-thread]'), rootMargin: '50% 0px' });
       observer.observe(node);
-      $effect(() => { reader.entryHeld; reader.entryPhase; observer.unobserve(node); observer.observe(node); });
+      $effect(() => { reader.entryPhase; observer.unobserve(node); observer.observe(node); });
       return { destroy: () => observer.disconnect(), update: (next: typeof request) => { current = next; observer.unobserve(node); observer.observe(node); } };
   }
   /** Ask for this head's own bounded scope, but only once it is near the reader.
@@ -138,7 +138,7 @@
       if (item.kind !== 'turn' && item.kind !== 'work_group') return { destroy: () => { } };
       const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
       const ask = (): void => {
-          if (reader.entryHeld || ['loading','placing','error'].includes(reader.entryPhase)) return;
+          if (['loading','placing','error'].includes(reader.entryPhase)) return;
           if (reader.lens !== 'full' && !reader.isExpanded(scope)) return;
           if (reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key)) return;
           void reader.expand(scope, true);
@@ -146,7 +146,7 @@
       const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting) ask(); },
           { root: node.closest('[data-conversation-thread]'), rootMargin: '100% 0px' });
       observer.observe(node);
-      $effect(() => { reader.entryHeld; reader.entryPhase; observer.unobserve(node); observer.observe(node); });
+      $effect(() => { reader.entryPhase; observer.unobserve(node); observer.observe(node); });
       return { destroy: () => observer.disconnect() };
   }
 </script>
