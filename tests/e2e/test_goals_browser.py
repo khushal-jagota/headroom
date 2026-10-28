@@ -137,11 +137,15 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert any(
         row["id"] == goal["id"] for row in api.get(server, "/api/goals?active=true")["goals"]
     )
+    # The approved page keeps the active state with the other goal fields, behind Edit goal.
+    page.get_by_role("button", name="Edit goal", exact=True).click(timeout=WAIT_MS)
+    page.get_by_label("State", exact=True).select_option(label="Inactive")
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
     ):
-        page.get_by_role("button", name="Make inactive", exact=True).click(timeout=WAIT_MS)
+        page.get_by_role("button", name="Save", exact=True).click(timeout=WAIT_MS)
+    expect(page.locator("[data-goal-page] .goal-state")).to_have_text("Inactive", timeout=WAIT_MS)
     current = api.get(server, path)
     assert current["completed"] is True and current["active"] is False
     updated_page = current["page"]
@@ -159,9 +163,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     )
     assert response.is_success, response.text
     expect(page.get_by_role("button", name="Mark done", exact=True)).to_be_visible(timeout=WAIT_MS)
-    expect(page.get_by_role("button", name="Make inactive", exact=True)).to_be_visible(
-        timeout=WAIT_MS
-    )
+    expect(page.locator("[data-goal-page] .goal-state")).to_have_text("Active", timeout=WAIT_MS)
     expect(page.get_by_role("checkbox", name="Review the updated draft", exact=True)).to_be_visible(
         timeout=WAIT_MS
     )

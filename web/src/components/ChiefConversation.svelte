@@ -126,12 +126,14 @@
 
 <div class="chief-workspace-host" bind:this={root}>
 <ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
-  <GoalsOverview all={allGoals}/>
-  {#if !allGoals}
+  {#if allGoals}
+  <GoalsOverview all/>
+  {:else}
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
+  <GoalsOverview/>
   <section class="manager-workers" aria-label="Workers">
     <ManagerChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
   </section>
@@ -173,5 +175,5 @@
 </div>
 <style>
   .chief-workspace-host { display:contents; }
-  .manager-workers { margin-top:var(--space-5); }
+  .manager-workers { margin-top:48px; }
 </style>

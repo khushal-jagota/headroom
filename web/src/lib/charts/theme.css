@@ -44,6 +44,18 @@
   .compact .ranges button { flex:1; padding:6px 8px; }
   .compact .caption { font-size:12px; }
   .chart-range-footer { margin-top:20px; }
+  /* A chart the page already framed: the page owns the card, the chart owns its content. */
+  .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
+  .integrated-card.compact { padding:0; --text-3xl:var(--type-chart-compact); }
+  .integrated-card .metric-top { min-height:24px; }
+  .integrated-card .metric-top h2 { font-size:15px; font-weight:500; color:var(--chart-secondary); }
+  .integrated-card .headline { margin:20px 0 24px; min-height:0; }
+  .integrated-card .comparison { font-size:12px; }
+  .integrated-card .caption { font-size:12px; }
+  .integrated-card .ranges button { padding:6px 8px; }
+  .integrated-card .chart-range-footer { margin-top:20px; }
+  /* The page card already reserves the room a standalone completion card holds. */
+  .integrated-card.completion-card { min-height:167px; }
   .bar-plot { position:relative; }
   .bar-legend { display:flex; flex-wrap:wrap; gap:16px; color:var(--chart-secondary); font-size:13px; margin:0 0 24px; min-height:24px; align-items:center; }
   .bar-legend button { display:flex; align-items:center; gap:8px; padding:4px 0; background:none; border:0; color:inherit; font:inherit; cursor:pointer; }

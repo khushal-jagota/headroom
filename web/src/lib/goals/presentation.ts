@@ -3,6 +3,12 @@ export function goalStatusText(goal:GoalResponse):string {
  if(goal.kind!=='binary')return goal.status==='good'?'On target':goal.status==='bad'?'Below target':'No readings';
  return goal.completed?'Done':goal.status==='attention'?'Due today':goal.status==='bad'?'Overdue':'Not done';
 }
+/** The approved pages write a deadline as "Dec 31". Midday avoids a timezone day shift. */
+export function goalDateText(deadline:string|null|undefined):string|null {
+ if(!deadline)return null;
+ const date=new Date(deadline+'T12:00:00');
+ return Number.isNaN(date.getTime())?deadline:date.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
 export function updatePageBlock(blocks:Block[],id:string,update:(block:Block)=>Block):Block[]{
  return blocks.map(block=>{
   if(block.id===id)return update(block);

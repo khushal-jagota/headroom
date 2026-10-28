@@ -92,7 +92,7 @@ function InlineValue({ value, state, label, unit = '', decimals = 0, onSave, onC
   </div>;
 }
 
-export function ManualMeasurement({ block, values, adapter: suppliedAdapter, narrow = false, compact = false, preferenceKey }: { block: ChartBlock; values: MeasureValue[]; adapter?: ManualMeasurementAdapter; narrow?: boolean; compact?: boolean; preferenceKey: string }) {
+export function ManualMeasurement({ block, values, adapter: suppliedAdapter, narrow = false, compact = false, integrated = false, preferenceKey }: { block: ChartBlock; values: MeasureValue[]; adapter?: ManualMeasurementAdapter; narrow?: boolean; compact?: boolean; integrated?: boolean; preferenceKey: string }) {
   const adapter = useMemo(() => suppliedAdapter ?? manualMeasurementHttp(block.measure_id!), [suppliedAdapter, block.measure_id]);
   const foldable = block.placement === 'supporting' && narrow;
   const [preferences, setPreferences] = useState(() => { const saved = readChartPreference(preferenceKey); return block.ranges?.length && !block.ranges.some(range => range.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved; });
@@ -227,7 +227,7 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     }
     preference({ range });
   }); }} /></div> : null;
-  const card = <article className="manual-measurement" data-embedded={foldable || undefined} data-compact={compact || block.placement === 'supporting' || undefined} data-manual-model={block.manual!.model} aria-busy={pending || undefined}>
+  const card = <article className="manual-measurement" data-embedded={foldable || integrated || undefined} data-compact={compact || block.placement === 'supporting' || undefined} data-manual-model={block.manual!.model} aria-busy={pending || undefined}>
     {!foldable && <div className="card-heading"><h3>{title}</h3>{!cumulative && selected && selected !== today && <span className="selected-date">{dateLabel(selected)}</span>}</div>}
     {foldable && !cumulative && selected && selected !== today && <div className="selected-date embedded-date">{dateLabel(selected)}</div>}
     {cumulative ? <><div className="radial"><svg viewBox="0 0 100 90" role="meter" aria-label={title} aria-valuemin={Math.min(0, current ?? 0)} aria-valuemax={target} aria-valuenow={Math.min(current ?? 0, target)} aria-valuetext={current === undefined ? 'No reading' : `${current} of ${target}${current >= target ? ', target reached' : ''}`}>

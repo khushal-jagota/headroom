@@ -14,7 +14,7 @@ import './theme.css';
 
 const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--text-muted)' };
 const C = { green: colors.good, blue: 'var(--accent-bright)', reference: 'var(--chart-reference)' };
-export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean };
+export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean };
 
 export function Range({ value, onChange, id, block }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock }) {
   const reduce = useReducedMotion();
@@ -34,7 +34,7 @@ function Comparison({ block, data, headline, supporting = false }: { block: Char
   </div>;
 }
 
-export function GoalChart({ block, values, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false }: GoalChartProps) {
+export function GoalChart({ block, values, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false }: GoalChartProps) {
   const [preferences, setPreferences] = useState(() => {
     const saved = readChartPreference(preferenceKey);
     return block.ranges?.length && !block.ranges.some(r => r.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved;
@@ -95,14 +95,14 @@ export function GoalChart({ block, values, narrow, preferenceKey, completed = fa
   else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} legend={series.length > 2} emptyLabel="No readings yet" />;
   const plot = <>{chart}{compact && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
-  if (block.kind === 'binary') return <article className="metric-card indicator-card completion-card"><div className="metric-top"><h2>{title}</h2></div><CompletionReading done={completed} tone={colors[status]} context={completed ? 'Completed' : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : 'Not done'} /></article>;
+  if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? 'Completed' : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : 'Not done'} /></article>;
   if (foldable) {
     const visible = preferences.expanded ? headline : summary;
     return <section ref={root} {...trackFocus}><SupportingMetric title={title} reading={block.kind === 'allocation' && visible.value !== undefined ? formatReading(block, visible.value) : counter(visible.value)}
       status={block.kind === 'allocation' && visible.value !== undefined ? <span style={{ color: C.blue }}>{allocationSummary(authoredSeries, data.at(-1))}</span> : <Comparison block={block} data={data} headline={visible} supporting />}
       open={preferences.expanded} onToggle={() => preference({ expanded: !preferences.expanded })}>{plot}</SupportingMetric></section>;
   }
-  return <article ref={root} {...trackFocus} className={`metric-card ${compact ? 'compact ' : ''}${block.emphasis === 'hero' ? 'hero-card ' : ''}${block.kind === 'gauge' ? 'gauge-card ' : ''}${indicator || block.kind === 'progress' ? `indicator-card ${block.kind}-card` : ''}`}>
+  return <article ref={root} {...trackFocus} className={`metric-card ${integrated ? 'integrated-card ' : ''}${compact ? 'compact ' : ''}${block.emphasis === 'hero' ? 'hero-card ' : ''}${block.kind === 'gauge' ? 'gauge-card ' : ''}${indicator || block.kind === 'progress' ? `indicator-card ${block.kind}-card` : ''}`}>
     <div className="metric-top"><h2>{title}</h2>{!compact && hasRange && range}</div>
     {block.kind !== 'gauge' && !indicator && <div className="headline">
       {block.kind === 'progress' && <div className="caption">Completed</div>}
