@@ -17,6 +17,7 @@ import { buildWorkspaceRail } from '../src/lib/workspaceRail';
   managers.filter(item=>item.settled).length);
 import {installConversationViewReaderFixture} from '../tests/support/conversationViewReaderFixture';
 const overlay = new URLSearchParams(location.search).has('overlay');
+const ownerUpdates = new URLSearchParams(location.search).has('owner-updates');
 if (overlay) installConversationViewReaderFixture(location.hash.includes('t_overlay0') ? 'ticket-overlay' : 'bounded-reader');
 const ReaderSource = globalThis.EventSource;
 // Supply wire snapshots through the production EventSource transport. The optional
@@ -36,6 +37,11 @@ class QuietEventSource {
   url: string;
   constructor(url: string) {
     this.url = url;
+    if (ownerUpdates && url === '/api/changes') {
+      (globalThis as any).__ownerUpdatesSignal = () => (this.onmessage as any)?.({data:''});
+      queueMicrotask(() => (this.onopen as any)?.());
+      return;
+    }
     if (!url.startsWith('/api/navigation/view/events')) { if (overlay) return new ReaderSource(url); return; }
     sources.add(this);
     void this.refresh();

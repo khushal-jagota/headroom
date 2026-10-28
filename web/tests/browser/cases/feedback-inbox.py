@@ -200,7 +200,7 @@ def run(browser, urls):
     expect(status).to_have_count(0)
     page.evaluate("window.__release('shipped')")
     expect(status).to_contain_text("New version ready")
-    expect(status.locator(".status-action")).to_have_text("Update")
+    expect(status.locator(".status-action")).to_have_text("Refresh page")
     assert status.evaluate("node => node.tagName") == "BUTTON"
     # A failed deploy displaces it: a rolled back release still differs from the boot.
     page.evaluate("window.__deployment('problem')")
@@ -208,7 +208,7 @@ def run(browser, urls):
     assert status.evaluate("node => node.tagName") == "DIV"
     page.evaluate("window.__deployment('idle')")
     expect(status).to_contain_text("New version ready")
-    expect(status.locator(".status-action")).to_have_text("Update")
+    expect(status.locator(".status-action")).to_have_text("Refresh page")
     page.screenshot(animations="disabled", path=str(evidence / "update-ready-desktop.png"))
 
     # Asking for the reload while a message is composed holds it, and says why.
@@ -216,7 +216,7 @@ def run(browser, urls):
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
     )
     status.click()
-    expect(status).to_contain_text("Update applies when this message is safe")
+    expect(status).to_contain_text("Page refresh waits until this message is safe")
     expect(status.locator(".status-action")).to_have_count(0)
     assert status.evaluate("node => node.tagName") == "DIV"
     # The long copy wraps inside the rail rather than widening or truncating it.
@@ -236,7 +236,7 @@ def run(browser, urls):
     # Both breakpoints: on mobile the same card is a band inside the bottom bar.
     page.set_viewport_size({"width": 390, "height": 844})
     band = page.locator(".compact-bar .status-card")
-    expect(band).to_contain_text("Update applies when this message is safe")
+    expect(band).to_contain_text("Page refresh waits until this message is safe")
     bar = page.locator(".compact-bar-row").bounding_box()
     box = band.bounding_box()
     assert box and bar and box["y"] + box["height"] <= bar["y"] + 1, (box, bar)
@@ -279,7 +279,7 @@ def run(browser, urls):
         )
         if shown.evaluate("node => node.tagName") == "BUTTON":
             shown.click()
-        expect(shown).to_contain_text("Update applies when this message is safe")
+        expect(shown).to_contain_text("Page refresh waits until this message is safe")
         page.screenshot(animations="disabled", path=str(evidence / f"state-update-held-{breakpoint_}.png"))
 
     # A swap between two open occupants holds the slot at grid-template-rows:1fr, so the
@@ -367,7 +367,7 @@ def run(browser, urls):
     expect(status).to_contain_text("New version ready")
     page.screenshot(animations="disabled", path=str(evidence / "narrow-update-ready-desktop.png"))
     ready_to_held = swap("held")
-    expect(status).to_contain_text("Update applies when this message is safe")
+    expect(status).to_contain_text("Page refresh waits until this message is safe")
     smooth(ready_to_held, "ready-to-held")
     page.screenshot(animations="disabled", path=str(evidence / "narrow-update-held-desktop.png"))
 
@@ -379,7 +379,7 @@ def run(browser, urls):
     # Reduced motion keeps the same occupants and the same hold, without a timed effect.
     page.emulate_media(reduced_motion="reduce")
     page.evaluate("window.__deployment('idle')")
-    expect(status).to_contain_text("Update applies when this message is safe")
+    expect(status).to_contain_text("Page refresh waits until this message is safe")
     reduced = swap("problem", duration=200)
     expect(status).to_have_text("Problem")
     assert all(sample["heightEffects"] == 0 for sample in reduced), reduced
@@ -426,7 +426,7 @@ def run(browser, urls):
     page.evaluate("window.__release('booted'); window.__deployment('idle')")
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     entering = overlap([[0, "ready"], [80, "held"]], duration=1200)
-    expect(status).to_contain_text("Update applies when this message is safe")
+    expect(status).to_contain_text("Page refresh waits until this message is safe")
     card = status.bounding_box()
     assert card and abs(entering[-1]["height"] - (card["height"] + 8)) < 1.5, (card, entering[-1])
     assert all(abs(current["height"] - previous["height"]) < 8
@@ -525,7 +525,7 @@ def run(browser, urls):
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
     )
     status.click()
-    expect(status).to_contain_text("Update applies when this message is safe")
+    expect(status).to_contain_text("Page refresh waits until this message is safe")
     page.evaluate("window.__heldNarrow = true")
     page.evaluate(
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"

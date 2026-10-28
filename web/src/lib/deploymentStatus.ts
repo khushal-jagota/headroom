@@ -108,7 +108,8 @@ export type StatusCardKey =
   | "Reconnecting"
   | "Problem"
   | "update-ready"
-  | "update-held";
+  | "update-held"
+  | "owner-update";
 
 export function resolveStatusCard(
   statusState: VisibleDeploymentState,
