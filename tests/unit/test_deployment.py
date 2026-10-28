@@ -360,6 +360,7 @@ def test_gate_refuses_changed_proof_before_service_or_backup(
             service=FakeService(events),
             health=FakeHealth(events, {SHA_B}),
             gate_evidence=evidence,
+            before_stop=lambda: events.append("claim"),
         )
     assert events == []
     assert not list(current.glob(".app-*"))

@@ -46,65 +46,128 @@ def test_rehearsal_refuses_non_disposable_or_no_replacement_setup(
         deployment_paths(environment() | {"PANELS_REHEARSAL": "true"} | override)
 
 
-def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_suites() -> None:
+def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    job = workflow["jobs"]["deploy"]
-    assert job["if"] == "${{ inputs.rehearsal || github.ref == 'refs/heads/main' }}"
-    assert job["runs-on"] == (
-        "${{ inputs.rehearsal && 'ubuntu-24.04' || "
-        "fromJSON('[\"self-hosted\", \"linux\", \"production\", \"panels-deploy\"]') }}"
+    publication = workflow["jobs"]["deploy"]
+    adoption = workflow["jobs"]["adopt"]
+    assert publication["runs-on"] == "ubuntu-24.04"
+    assert publication["env"]["PANELS_REHEARSAL"] == "true"
+    assert "2c0e05cefc82de100bfc576c1a8f3eda7a931f2d" in (
+        publication["env"]["PANELS_BASELINE_SHA"]
     )
-    assert "inputs.rehearsal && format('deploy-rehearsal-" in workflow["concurrency"]["group"]
-    steps = {step.get("name"): step for step in job["steps"]}
+    assert "workflow_dispatch" in adoption["if"]
+    assert "inputs.operation == 'adopt'" in adoption["if"]
+    assert "!inputs.rehearsal" in adoption["if"]
+    assert "github.ref == 'refs/heads/main'" in adoption["if"]
+    assert adoption["runs-on"] == ["self-hosted", "linux", "production", "panels-deploy"]
+    assert workflow["permissions"] == {"contents": "read", "actions": "read"}
+    steps = {step.get("name"): step for step in publication["steps"]}
     names = list(steps)
-    assert names.index("Start deployment lifecycle") < names.index("Prepare deployment runtime")
-    assert steps["Prepare deployment runtime"]["if"] == "${{ !inputs.rehearsal }}"
-    assert steps["Prepare rehearsal runtime"]["if"] == "${{ inputs.rehearsal }}"
-    assert steps["Prepare rehearsal runtime"]["run"] == steps["Prepare deployment runtime"]["run"]
-    assert names.index("Prepare rehearsal runtime") < names.index(
-        "Start known-good rehearsal release"
+    assert names.index("Build exact candidate once") < names.index(
+        "Seal immutable executable archive"
     )
+    assert names.index("Seal immutable executable archive") < names.index(
+        "Smoke exact retained archive"
+    )
+    assert names.index("Smoke exact retained archive") < names.index("Deploy exact app")
+    assert names.index("Collect rehearsal proof") < names.index(
+        "Write immutable publication receipt"
+    )
+    assert "update_publication.py selection" in steps["Select complete publication checks"]["run"]
+    for name in ("Retain exact executable archive", "Retain publication proof"):
+        assert steps[name]["with"]["retention-days"] == 30
+    commands = "\n".join(step.get("run", "") for step in adoption["steps"])
+    assert "update_runner apply" in commands
+    assert "app-build" not in commands and "pytest" not in commands
+    for key in ("REQUEST_ID", "PUBLICATION_RUN_ID", "ARTIFACT_ID", "PROOF_ARTIFACT_ID",
+                "APP_SHA", "ARTIFACT_DIGEST", "ARCHIVE_SHA256"):
+        assert f'"$UPDATE_{key}"' in commands
+
+
+def test_publication_preserves_existing_isolated_suite_report_boundaries() -> None:
+    job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["deploy"]
+    shell = "python3 scripts/deployment_progress.py {0}"
+    assert job["defaults"]["run"]["shell"] == shell
+    steps = {step.get("name"): step for step in job["steps"] if "run" in step}
     for suite in ("unit", "integration", "E2E"):
         script = steps[f"pytest {suite} at requested source"]["run"]
         assert script.index('"$GITHUB_WORKSPACE/scripts/deployment_codex.py" verify') < (
             script.index('.venv/bin/pytest "${selected[@]}"')
         )
-    deploy = steps["Deploy exact app"]["run"]
-    for value in ("PANELS_CURRENT_ROOT", "PANELS_HEALTH_URL", "PANELS_SERVICE_NAME",
-                  "PANELS_LIFECYCLE_PATH", "PANELS_APP_HOME"):
-        assert value in deploy
-    assert "inputs.rehearsal" in steps["Retain rehearsal proof"]["if"]
-    production_cleanup = "Remove production deployment temporary state"
-    rehearsal_cleanup = "Remove rehearsal temporary state"
-    assert steps[production_cleanup]["if"] == "${{ always() && !inputs.rehearsal }}"
-    assert steps[rehearsal_cleanup]["if"] == "${{ always() && inputs.rehearsal }}"
-    assert steps[production_cleanup]["run"] == steps[rehearsal_cleanup]["run"]
-    assert names.index(production_cleanup) < names.index("Finalize deployment lifecycle")
-    assert names.index("Finalize deployment lifecycle") < names.index("Collect rehearsal proof")
-    assert names.index("Collect rehearsal proof") < names.index("Retain rehearsal proof")
-    assert names.index("Retain rehearsal proof") < names.index(rehearsal_cleanup)
-    hermes = steps["Provision offline Hermes packaging prerequisite"]
-    assert hermes["if"] == "${{ inputs.rehearsal }}"
-    assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]
-    assert '"$hermes_source[acp]"' in hermes["run"]
+    assert steps["Finalize deployment lifecycle"]["shell"] == "bash"
+    assert steps["Remove rehearsal temporary state"]["shell"] == shell.replace(
+        " {0}", " --cleanup {0}"
+    )
     assert "ffmpeg" in steps["Bootstrap disposable hosted runner"]["run"]
+    assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in (
+        steps["Provision offline Hermes packaging prerequisite"]["run"]
+    )
 
 
-def test_every_run_is_supervised_after_activation_except_direct_finalization() -> None:
-    job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["deploy"]
-    shell = "python3 scripts/deployment_progress.py {0}"
-    assert job["defaults"]["run"]["shell"] == shell
-    steps = {step.get("name"): step for step in job["steps"] if "run" in step}
-    start = steps["Start deployment lifecycle"]["run"]
-    activation = 'echo "PANELS_DEPLOYMENT_PROGRESS_ACTIVE=true" >> "$GITHUB_ENV"'
-    assert start.count(activation) == 1
-    assert start.index(activation) > start.index('"${prior_args[@]}"')
-    for name, step in steps.items():
-        if name == "Finalize deployment lifecycle":
-            assert step["shell"] == "bash"
-        elif name in (
-            "Remove production deployment temporary state", "Remove rehearsal temporary state",
-        ):
-            assert step["shell"] == shell.replace(" {0}", " --cleanup {0}")
-        else:
-            assert "shell" not in step
+def test_post_health_failure_reports_installed_app_without_undoing_local_commit(
+    tmp_path: Path,
+) -> None:
+    """The real finalizer CLI must not turn local commit into workflow success."""
+    import os
+    import subprocess
+    import sys
+
+    from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+
+    sha = "a" * 40
+    path = tmp_path / "deployment-lifecycle.json"
+    store = DeploymentLifecycleStore(path)
+    store.start("123-1", sha, expected_deployment_id=None)
+    store.transition("123-1", "verifying")
+    store.transition("123-1", "app_healthy", serving_sha=sha)
+    # Replace only the external health observation. Execute the actual lifecycle CLI.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    executable = tools / "python3"
+    executable.write_text(
+        '#!/bin/sh\nif [ "$1" = - ]; then cat >/dev/null; '
+        'printf "%s\\n" "$FINALIZER_SERVING_SHA"; '
+        f'else exec "{sys.executable}" "$@"; fi\n'
+    )
+    executable.chmod(0o755)
+    job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["adopt"]
+    step = next(s for s in job["steps"] if s.get("name") == "Finalize owner adoption lifecycle")
+    assert step["if"] == "${{ always() }}"
+    assert job["steps"][-1] is step
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", step["run"]],
+        env=os.environ | {
+            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            "FINALIZER_SERVING_SHA": sha,
+            "PANELS_PRIOR_JOB_STATUS": "failure",
+            "PANELS_REQUESTED_SHA": sha,
+            "PANELS_LIFECYCLE_PATH": str(path),
+            "PANELS_DEPLOYMENT_ID": "123-1",
+            "GITHUB_WORKSPACE": str(WORKFLOW.parents[2]),
+        },
+        text=True, capture_output=True, check=True,
+    )
+    assert "post_health_check_failed" in result.stdout
+    recorded = store.read().lifecycle
+    assert recorded is not None and recorded.phase == "failed"
+    assert recorded.serving_sha == sha
+    assert "installed" in (recorded.detail or "")
+    # A healthy endpoint before commit cannot open candidate work through finalization.
+    store.start("123-2", sha, expected_deployment_id="123-1")
+    store.transition("123-2", "verifying")
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", step["run"]],
+        env=os.environ | {
+            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            "FINALIZER_SERVING_SHA": sha,
+            "PANELS_PRIOR_JOB_STATUS": "failure",
+            "PANELS_REQUESTED_SHA": sha,
+            "PANELS_LIFECYCLE_PATH": str(path),
+            "PANELS_DEPLOYMENT_ID": "123-2",
+            "GITHUB_WORKSPACE": str(WORKFLOW.parents[2]),
+        },
+        text=True, capture_output=True, check=True,
+    )
+    recorded = store.read().lifecycle
+    assert recorded is not None and recorded.phase == "failed"
+    assert recorded.serving_sha is None

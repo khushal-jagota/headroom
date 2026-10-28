@@ -16,6 +16,7 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Literal
 
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
@@ -55,6 +56,7 @@ from planner.conversation.message_content import (
     require_message_content,
     sender_labeled_composed_message_content,
 )
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal
 
 
@@ -220,8 +222,31 @@ class InMemoryConversationSystem:
 
     def __init__(self) -> None:
         self._conversations: dict[str, _ConversationState] = {}
+        self.workspace_admission = WorkspaceAdmission()
 
     # --- the contract ---
+
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        if self.workspace_admission.closed:
+            return "unknown"
+        if self.workspace_admission.active or any(
+            state.running_turn is not None or state.held_prompts
+            for state in self._conversations.values()
+        ):
+            return "busy"
+        return "idle"
+
+    async def run_with_workspace_admission(
+        self,
+        operation: Callable[[], None],
+        *,
+        require_idle: bool,
+    ) -> bool:
+        return self.workspace_admission.claim(
+            operation,
+            idle=lambda: self.workspace_activity() == "idle",
+            require_idle=require_idle,
+        )
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         state = self._conversations.get(conversation_id)
@@ -232,6 +257,8 @@ class InMemoryConversationSystem:
         return True
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
+        if self.workspace_admission.closed:
+            raise RuntimeError("Workspace admission is closed for an owner update.")
         resolved = resolve_conversation_start_request(request)
         if resolved.conversation_id in self._conversations:
             raise ConversationAlreadyStarted(resolved.conversation_id)
@@ -293,6 +320,9 @@ class InMemoryConversationSystem:
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
+        # This implementation has no await within admission or delivery.
+        if self.workspace_admission.closed:
+            raise RuntimeError("Workspace admission is closed for an owner update.")
         require_message_content(content)
         if record_refusal and sender_message_id is None:
             raise ValueError("record_refusal requires a sender_message_id")

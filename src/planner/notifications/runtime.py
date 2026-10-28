@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import nullcontext
 from time import monotonic
 
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.notifications import data
@@ -22,8 +24,10 @@ class NotificationLoop:
         *,
         canonical_origin: str | None,
         busy_timeout_ms: int = 5000,
+        workspace_admission: WorkspaceAdmission | None = None,
         adapter: WebPushAdapter | None = None,
     ) -> None:
+        self._workspace_admission = workspace_admission
         self._db_path = db_path
         self._clock = clock
         self._busy_timeout_ms = busy_timeout_ms
@@ -42,30 +46,37 @@ class NotificationLoop:
             conn.close()
 
     def poll_once(self) -> int:
-        conn = connect(self._db_path, self._busy_timeout_ms)
-        try:
-            now = self._clock.now_unix()
-            data.queue_deliveries(conn, now)
-            identity = data.read_web_push_identity(conn)
-            deliveries = data.pending_deliveries(conn, now)
-            for delivery in deliveries:
-                result = self._adapter.send(
-                    delivery.subscription,
-                    delivery.intent,
-                    identity,
-                    subject=self._subject,
-                )
-                data.record_delivery_result(
-                    conn,
-                    delivery,
-                    now=now,
-                    delivered=result.delivered,
-                    expired=result.expired,
-                    error=result.error,
-                )
-            return len(deliveries)
-        finally:
-            conn.close()
+        with (
+            self._workspace_admission.operation()
+            if self._workspace_admission
+            else nullcontext(True) as admitted
+        ):
+            if not admitted:
+                return 0
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                now = self._clock.now_unix()
+                data.queue_deliveries(conn, now)
+                identity = data.read_web_push_identity(conn)
+                deliveries = data.pending_deliveries(conn, now)
+                for delivery in deliveries:
+                    result = self._adapter.send(
+                        delivery.subscription,
+                        delivery.intent,
+                        identity,
+                        subject=self._subject,
+                    )
+                    data.record_delivery_result(
+                        conn,
+                        delivery,
+                        now=now,
+                        delivered=result.delivered,
+                        expired=result.expired,
+                        error=result.error,
+                    )
+                return len(deliveries)
+            finally:
+                conn.close()
 
     def start(self, interval: int) -> None:
         if self._thread is not None:

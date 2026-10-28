@@ -81,6 +81,9 @@ class TrustedIngressMiddleware:
                 if login != self.config.allowed_login:
                     await self._reject(scope, send, "Tailscale user is not allowed")
                     return
+                if str(scope.get("path", "")).startswith("/api/updates"):
+                    await self.app(scope, receive, send)
+                    return
                 scope = _without_header(scope, X_PLAN_ACTOR)
                 scope = _without_header(scope, X_PLAN_TICKET_ID)
                 scope = _without_header(scope, X_PLAN_MANAGER_ID)

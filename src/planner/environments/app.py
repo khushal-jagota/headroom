@@ -176,6 +176,12 @@ def _validate_runtime_tree(root: Path) -> None:
             raise AppValidationError(f"runtime file is missing: {path.relative_to(root)}")
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)
+    # Publication and adoption validate the candidate as a child process. The
+    # runner's repository credentials belong only to its artifact adapter.
+    for key in (
+        "GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+    ):
+        environment.pop(key, None)
     try:
         imported = subprocess.run(
             [

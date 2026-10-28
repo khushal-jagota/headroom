@@ -50,6 +50,11 @@ from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.web_assets import WebAssets
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.update_admission import matching_commit, startup_requires_commit
+from planner.environments.update_api import router as updates_router
+from planner.environments.update_provider import GitHubUpdateProvider
+from planner.environments.update_requests import FileUpdateRequestStore
+from planner.environments.update_service import UpdateService
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
 from planner.environments.vps_metrics.config import store_path
@@ -180,8 +185,15 @@ def create_app(
         video_cleanup_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
+        release_task: asyncio.Task[None] | None = None
 
         async def shutdown_dependents() -> None:
+            if release_task is not None and not release_task.done():
+                release_task.cancel()
+                try:
+                    await release_task
+                except asyncio.CancelledError:
+                    pass
             app.state.conversation = None
             if video_cleanup_task is not None:
                 video_cleanup_task.cancel()
@@ -236,6 +248,7 @@ def create_app(
             remembered_codex_login_rejection=remembered_codex_login_rejection,
             navigation_delivery=navigation_delivery,
             shutdown_dependents=shutdown_dependents,
+            defer_view_cleanup=True,
         ) as conversation:
             audit_conn = conn_factory()
             try:
@@ -245,52 +258,99 @@ def create_app(
             finally:
                 audit_conn.close()
 
-            from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
-
-            recovery_task = asyncio.create_task(
-                run_automatic_recovery(conversation.system, conversation.store)
-            )
-            app.state.conversation = conversation
-            await asyncio.to_thread(video_uploads.recover_and_cleanup)
-            video_cleanup_task = asyncio.create_task(_clean_video_uploads())
-            # A test that drives workers wants a conversation system it can hold still, so it
-            # passes one in. Nothing else does: production always runs the real one.
             app.state.conversation_system = (
                 conversation.system
                 if conversation_system_for_test is None
                 else conversation_system_for_test
             )
-            if not config.test_mode:
-                from planner.core.loops import prepare_background_loops
 
-                loops = prepare_background_loops(
-                    config,
-                    clock,
-                    conversation_system=app.state.conversation_system,
-                    asyncio_loop=asyncio.get_running_loop(),
+            async def release_normal_work() -> None:
+                nonlocal recovery_task, video_cleanup_task, loops, metrics
+                # A matching runner commit is irreversible even if later setup fails.
+                app.state.update_startup_pending = False
+                change_signal.emit()
+                conversation.live_tail.views.cleanup_stale_epochs()
+                from planner.conversation.deploy_interruptions.coordinator import (
+                    run_automatic_recovery,
                 )
 
-            from planner.environments.vps_metrics.collectors import LinuxCollector
-            from planner.environments.vps_metrics.data import Store
+                async def recover_conversations() -> None:
+                    with conversation.system.workspace_admission.operation() as admitted:
+                        if admitted:
+                            await run_automatic_recovery(conversation.system, conversation.store)
 
-            metrics_config = load_metrics_config()
-            metrics_path = store_path(config.db_path)
-            metrics = MetricsRuntime(
-                metrics_path,
-                Store(metrics_path, metrics_config),
-                None if config.test_mode else LinuxCollector(metrics_config),
-                metrics_config,
-            )
-            app.state.vps_metrics = metrics
-            metrics.start()
-            await navigation_delivery.start()
-            await scoped_navigation.start()
-            await conversation.system.start_idle_child_janitor()
+                recovery_task = asyncio.create_task(recover_conversations())
+                app.state.conversation = conversation
+                await asyncio.to_thread(video_uploads.recover_and_cleanup)
+                video_cleanup_task = asyncio.create_task(_clean_video_uploads())
+                # A test that drives workers wants a conversation system it can hold still, so it
+                # passes one in. Nothing else does: production always runs the real one.
+                if not config.test_mode:
+                    from planner.core.loops import prepare_background_loops
+
+                    loops = prepare_background_loops(
+                        config,
+                        clock,
+                        conversation_system=app.state.conversation_system,
+                        asyncio_loop=asyncio.get_running_loop(),
+                        before_readiness_poll=lambda: app.state.updates.dispatch_pending(),
+                    )
+
+                from planner.environments.vps_metrics.collectors import LinuxCollector
+                from planner.environments.vps_metrics.data import Store
+
+                metrics_config = load_metrics_config()
+                metrics_path = store_path(config.db_path)
+                metrics = MetricsRuntime(
+                    metrics_path,
+                    Store(metrics_path, metrics_config),
+                    None if config.test_mode else LinuxCollector(metrics_config),
+                    metrics_config,
+                )
+                app.state.vps_metrics = metrics
+                metrics.start()
+                await navigation_delivery.start()
+                await scoped_navigation.start()
+                await conversation.system.start_idle_child_janitor()
+                if loops is not None:
+                    loops.start(config.tick_seconds)
+                app.state.update_startup_pending = False
+                change_signal.emit()
+
+            def lifecycle_changed() -> None:
+                nonlocal release_task
+                change_signal.emit()
+                if (
+                    app.state.update_startup_pending
+                    and release_task is None
+                    and matching_commit(deployment_lifecycle_store, config.app_sha)
+                ):
+                    release_task = asyncio.create_task(release_normal_work())
+
+                    def report_setup_result(task: asyncio.Task[None]) -> None:
+                        if not task.cancelled() and task.exception() is not None:
+                            app.state.update_startup_detail = (
+                                f"App {config.app_sha} is installed. "
+                                "Deferred startup setup failed. Inspect the server log."
+                            )
+                            import logging
+
+                            logging.getLogger(__name__).error(
+                                "Deferred setup failed after app %s committed",
+                                config.app_sha,
+                                exc_info=task.exception(),
+                            )
+                            change_signal.emit()
+
+                    release_task.add_done_callback(report_setup_result)
+
+            if not app.state.update_startup_pending:
+                await release_normal_work()
             lifecycle_observer = asyncio.create_task(
-                observe_path_changes(deployment_lifecycle_path, change_signal.emit)
+                observe_path_changes(deployment_lifecycle_path, lifecycle_changed)
             )
-            if loops is not None:
-                loops.start(config.tick_seconds)
+            # Close the read/observer-install race without a second watcher.
+            lifecycle_changed()
             yield
 
     video_uploads = VideoUploadService(config.db_path)
@@ -298,7 +358,11 @@ def create_app(
     async def _clean_video_uploads() -> None:
         while True:
             await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
-            await asyncio.to_thread(video_uploads.recover_and_cleanup)
+            system = app.state.conversation_system
+            if system is not None:
+                with system.workspace_admission.operation() as admitted:
+                    if admitted:
+                        await asyncio.to_thread(video_uploads.recover_and_cleanup)
 
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
@@ -340,6 +404,75 @@ def create_app(
     )
     deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
     app.state.deployment_lifecycle_store = deployment_lifecycle_store
+    update_request_store = FileUpdateRequestStore(
+        deployment_lifecycle_path.with_name("owner-update-request.json")
+    )
+    recorded_update = update_request_store.read()
+    applying_candidate = bool(
+        recorded_update is not None
+        and recorded_update.state == "applying"
+        and recorded_update.release.manifest.app_sha == config.app_sha
+    )
+    app.state.update_startup_pending = startup_requires_commit(
+        deployment_lifecycle_store, config.app_sha
+    ) or (applying_candidate and not matching_commit(deployment_lifecycle_store, config.app_sha))
+    app.state.update_admission_closed = False
+    app.state.update_startup_detail = None
+    app.state.updates = UpdateService(
+        GitHubUpdateProvider.configured(),
+        update_request_store,
+        lambda: app.state.conversation_system,
+        current_app_sha=config.app_sha,
+        availability_path=deployment_lifecycle_path.with_name("owner-update-availability.json"),
+        can_refresh=lambda: not app.state.update_startup_pending,
+    )
+
+    @app.middleware("http")
+    async def update_admission(request: Request, call_next: Any) -> Any:
+        path = request.url.path
+        browser_sha = request.headers.get("X-Panels-App-SHA")
+        if (
+            request.method not in {"GET", "HEAD", "OPTIONS"}
+            and browser_sha is not None
+            and browser_sha != config.app_sha
+        ):
+            return JSONResponse(
+                status_code=409,
+                content=PlannerError(
+                    ErrorCode.validation, "Refresh page before making changes.", {}
+                ).to_payload(),
+            )
+        status_path = path in {"/api/health", "/api/meta", "/api/deployment-status", "/api/updates"}
+        static_path = not path.startswith("/api/") and request.method in {"GET", "HEAD"}
+        if (
+            (app.state.update_startup_pending or app.state.update_admission_closed)
+            and not status_path
+            and not static_path
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        "Normal work waits for the deployment runner. "
+                        "Recovery requires the owner if progress expires."
+                    )
+                },
+            )
+        system = app.state.conversation_system
+        if (
+            system is not None
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and not path.startswith("/api/updates")
+            and not status_path
+        ):
+            with system.workspace_admission.operation() as admitted:
+                if not admitted:
+                    return JSONResponse(
+                        status_code=503, content={"detail": "Owner update in progress."}
+                    )
+                return await call_next(request)
+        return await call_next(request)
+
     app.state.resource_version_epoch = str(uuid4())
 
     app.add_exception_handler(PlannerError, handle_planner_error)
@@ -353,6 +486,7 @@ def create_app(
         event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
 
     for domain_router in (
+        updates_router,
         tickets_router,
         ticket_workspace_router,
         resource_versions_router,
@@ -416,7 +550,15 @@ def create_app(
     @app.get("/api/deployment-status")
     async def deployment_status() -> dict[str, object]:
         projection = await asyncio.to_thread(deployment_lifecycle_store.project, config.app_sha)
-        return projection.to_public_dict()
+        payload = projection.to_public_dict()
+        if app.state.update_startup_pending and projection.state == "unknown":
+            payload["detail"] = (
+                "Recovery required: candidate admission lacks a readable runner commit. "
+                "The owner must inspect the deployment runner and recorded recovery paths."
+            )
+        if app.state.update_startup_detail is not None:
+            payload["detail"] = app.state.update_startup_detail
+        return payload
 
     @app.get("/api/vps-status-summary")
     async def vps_status_summary() -> dict[str, object]:
