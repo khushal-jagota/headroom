@@ -807,10 +807,30 @@ Ticket detail and workspace reads expose `launch_validation`: selection, nullabl
 validation, whether that validation is current, and its transition revision. Historical
 missing selections also expose the canonical unresolved reason and corrective action.
 Refused prompt replies and events may carry `model_validation`; older records omit it.
+The selected conversation view retains that refusal fact after reload. Projection version
+3 rebuilds its cached bodies from existing events without rewriting the journal. A
+recorded refusal remains separate from the current picker preview and saved launch state.
 
-Backend reads expose typed picker facts and structured validation. Presentation remains
-subject to the separately approved compact-controls Design. This source requires the
-combined review and matching peers before any later operator application.
+Ticket setup and composer controls use scoped rows and read-only previews. A deliberate
+row choice retains its submitted token and kind. Owner sends accept `selection_kind`
+only with an explicit model. Omitted effort preserves intent; explicit null requests the
+provider default. Queued messages, promotion and explicit retry retain those distinctions.
+Manager and Chief composers retain their existing authorized behavior. This Ticket-scoped
+catalog path does not establish destination validation for them.
+
+Migration `held_selection_kind`, after `ticket_launch_validation`, marks the semantic
+change to `executor_native_messages.held_prompt_json`. Older builds refuse that database
+through the existing version gate before application readiness or dispatch. Legacy rows
+without the field retain their original uncertainty. Native protocol 11 and spool 2 do
+not change.
+
+After this migration, rollback requires a compatible build or an explicitly reviewed
+restoration procedure. There is no automatic downgrade. Do not restore a stale backup
+that discards later durable work. An older build's generic pre-collapse migration advice
+does not override this recovery requirement.
+
+The compact controls follow the approved Design. This source requires the combined
+review and matching peers before any later operator application.
 
 Code: `src/planner/conversation/model_resolution/`, `src/planner/executor/`.
 
