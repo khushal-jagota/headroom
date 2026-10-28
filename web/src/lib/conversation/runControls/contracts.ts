@@ -1,3 +1,4 @@
+import type { PickerRow, CanonicalModelValidation, SelectionKind } from "../modelResolutionWire";
 import type { RunValues } from "../composer";
 import type {
   BackendModel,
@@ -10,10 +11,14 @@ export type ComposerRunSelection = Readonly<{
   pickedBackend: ConversationBackendKey | null;
   pickedModel: string | null;
   pickedReasoningEffort: string | null;
+  selectionKind?: SelectionKind;
+  effortIsSet?: boolean;
 }>;
 
 export type ComposerRunControlsInput = Readonly<{
   selection: ComposerRunSelection;
+  canonicalRows?: readonly PickerRow[];
+  validation?: CanonicalModelValidation | null;
   backendKey: ConversationBackendKey | null;
   conversationExists: boolean;
   running: boolean;
@@ -31,7 +36,7 @@ export type ComposerRunControlsInput = Readonly<{
 
 export type ComposerRunSelectionIntent =
   | { intent: "choose_backend"; backendKey: ConversationBackendKey }
-  | { intent: "choose_model"; model: string; reasoningEffort: string | null }
+  | { intent: "choose_model"; model: string; reasoningEffort: string | null; row?: PickerRow }
   | { intent: "choose_reasoning_effort"; reasoningEffort: string };
 
 export type ComposerRunControlsView = Readonly<{
@@ -39,6 +44,8 @@ export type ComposerRunControlsView = Readonly<{
   carriedRunValues: RunValues;
   disabled: boolean;
   picker: ModelPickerView;
+  canonicalRows?: readonly PickerRow[];
+  validation?: CanonicalModelValidation | null;
   pickerSource: Readonly<{
     backends: readonly BackendSnapshot[];
     models: readonly BackendModel[];
@@ -57,7 +64,7 @@ export type ComposerRunControlsView = Readonly<{
 
 export type ComposerRunControlIntents = Readonly<{
   chooseBackend: (backendKey: ConversationBackendKey) => void;
-  chooseModel: (model: string, reasoningEffort: string | null) => void;
+  chooseModel: (model: string, reasoningEffort: string | null, row?: PickerRow) => void;
   chooseReasoningEffort: (reasoningEffort: string) => void;
   chooseDeliveryMode: (mode: import("../wire").PromptDeliveryMode) => void;
   send: () => void;

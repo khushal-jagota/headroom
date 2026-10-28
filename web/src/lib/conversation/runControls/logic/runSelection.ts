@@ -16,7 +16,7 @@ import type {
   ComposerRunSelection,
   ComposerRunSelectionIntent
 } from "../contracts";
-import { modelIsEnabled, resolveModelPicker } from "../../modelPicker";
+import { MODEL_PICKER_BACKEND_KEYS, modelIsEnabled, resolveModelPicker } from "../../modelPicker";
 
 type ActiveCatalog = Readonly<{
   models: readonly BackendModel[];
@@ -99,6 +99,40 @@ function submitProjection(
 export function resolveComposerRunControls(
   input: ComposerRunControlsInput
 ): ComposerRunControlsView {
+  if (input.canonicalRows !== undefined) {
+    const selection = input.selection;
+    const validation = input.validation;
+    return {
+      normalizedSelection: selection,
+      carriedRunValues: {
+        model: selection.pickedModel,
+        reasoningEffort: selection.pickedReasoningEffort,
+        backendKey: input.conversationExists ? null : selection.pickedBackend,
+        ...(selection.selectionKind === undefined ? {} : {selectionKind: selection.selectionKind}),
+        ...(selection.effortIsSet === undefined ? {} : {effortIsSet: selection.effortIsSet})
+      },
+      canonicalRows: input.canonicalRows,
+      validation,
+      disabled: input.inputDisabled,
+      picker: {
+        ...resolveModelPicker({
+          backendKey: validation?.selection.backend_key ?? shownBackend(input),
+          model: validation?.selection.submitted_token ?? selection.pickedModel,
+          reasoningEffort: validation?.selection.reasoning_effort ?? null,
+          backends: [], backendLocked: input.conversationExists, models: [],
+          backendEffortOptions: []
+        }),
+        backends: input.conversationExists ? [] : MODEL_PICKER_BACKEND_KEYS.map(key => ({
+          key, name: key[0].toUpperCase() + key.slice(1),
+          selected: key === validation?.selection.backend_key,
+          unavailableReason: null
+        }))
+      },
+      pickerSource: {backends: [], models: [], backendEffortOptions: []},
+      submit: submitProjection(input), showStop: input.running,
+      deliveryMode: input.deliveryMode ?? "steer"
+    };
+  }
   const catalog = activeCatalog(input);
   const pickedModel = normalizedModel(
     input.selection.pickedModel,
@@ -186,7 +220,13 @@ export function applyComposerRunSelectionIntent(
       return {
         ...input.selection,
         pickedModel: intent.model,
-        pickedReasoningEffort: intent.reasoningEffort
+        pickedReasoningEffort: intent.row && !intent.row.supported_reasoning_efforts?.length
+          ? input.selection.pickedReasoningEffort : intent.reasoningEffort,
+        ...(intent.row ? {
+          pickedBackend: input.conversationExists ? null : intent.row.validation.selection.backend_key,
+          selectionKind: intent.row.selection_kind,
+          effortIsSet: intent.row.supported_reasoning_efforts?.length ? true : input.selection.effortIsSet
+        } : {})
       };
     case "choose_reasoning_effort":
       return {

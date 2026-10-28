@@ -10,8 +10,10 @@
     view,
     intents,
     snapshots = $bindable(),
-    beforeSubmit
+    beforeSubmit,
+    onRetry
   }: {
+    onRetry?: () => Promise<void>;
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
     snapshots: readonly import("../../../lib/conversation/wire").BackendSnapshot[];
@@ -21,6 +23,9 @@
 </script>
 
 <UnifiedModelPicker
+  canonicalRows={view.canonicalRows}
+  validation={view.validation}
+  {onRetry}
   chevron="drawn"
   view={view.picker}
   bind:snapshots

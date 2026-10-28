@@ -136,6 +136,9 @@ export function askPlaceholder(
 // --- what a picker changes ---------------------------------------------------------------
 
 export type RunValues = {
+  selectionKind?: import("./modelResolutionWire").SelectionKind;
+  /** Absent is untouched; true with null explicitly requests provider default. */
+  effortIsSet?: boolean;
   model: string | null;
   reasoningEffort: string | null;
   /** Which backend a message that has to create a conversation would create it on. It is

@@ -14,7 +14,8 @@ function draft(): ComposerDraft {
 
 describe("ordered attachments after a refused send", () => {
   it("restores the same mixed draft with fresh identities and retained run choices", () => {
-    const attempt = beginComposerSend(draft(), {model:"sonnet",reasoningEffort:"high"});
+    const selectedDraft = {...draft(), pickedReasoningEffort: null, selectionKind: "provider_alias" as const, effortIsSet: true};
+    const attempt = beginComposerSend(selectedDraft, {model:"sonnet",reasoningEffort:null,selectionKind:"provider_alias",effortIsSet:true});
     expect(attempt.draftAfterSend.attachmentOrder).toEqual([]);
     const result = restoreRefusedComposerSend(attempt.draftAfterSend, attempt, 8, 12, 0);
     expect(result.restored).toBe(true);
@@ -23,7 +24,12 @@ describe("ordered attachments after a refused send", () => {
       result.draft.pendingFiles).map(attachment => attachment.value.fileName))
       .toEqual(["image-1.png","notes.md","image-2.png"]);
     expect(result.draft.pickedModel).toBe("sonnet");
-    expect(result.draft.pickedReasoningEffort).toBe("high");
+    expect(result.draft.pickedReasoningEffort).toBeNull();
+    expect(result.draft.selectionKind).toBe("provider_alias");
+    expect(result.draft.effortIsSet).toBe(true);
+    expect(attempt.carriedRunValues).toEqual({model:"sonnet",reasoningEffort:null,selectionKind:"provider_alias",effortIsSet:true});
+    const changedKind = {...attempt.draftAfterSend, selectionKind: "concrete" as const};
+    expect(restoreRefusedComposerSend(changedKind, attempt, 8, 12, 0).restored).toBe(false);
     expect(result.draft.pendingImages.every(image => !image.previewUrlNeedsRevoking)).toBe(true);
     expect(result.nextImageId).toBe(10);
     expect(result.nextFileId).toBe(13);

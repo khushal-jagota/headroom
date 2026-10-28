@@ -73,6 +73,7 @@
     promoteHeldPrompt,
     readConversation,
     readComposerCatalog,
+    readDestinationModelChoices,
     ConversationWireError,
     type BackendSnapshot,
     type ConversationBackendKey,
@@ -97,6 +98,7 @@
     backends = $bindable([]),
     senderLabel = "owner",
     startValues = null,
+    launchValidation = null,
     runningBackendKey = $bindable(),
     conversationState = $bindable(null),
     composerPlaceholder,
@@ -126,6 +128,7 @@
      *  somebody picked. Null is nobody having answered yet — the caller has not asked, or
      *  the read has not come back — and then there is nothing to show rather than a guess. */
     startValues?: ConversationStartValues | null;
+    launchValidation?: import("../../lib/ticketWorkspace/contracts").LaunchValidationProjection | null;
     /** The backend in force, read back out for a caller that says so in its own words:
      *  what this conversation is running on, or what one started here would be. Null
      *  until one of those two can answer. */
@@ -154,6 +157,70 @@
   } = $props();
 
   let view = $state<ConversationView | null>(null);
+  // Only Ticket owners have an accepted canonical picker authority. Manager and Chief
+  // direct conversations cannot manufacture a creation draft to borrow that authority.
+  let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
+  let scopedChoices = $state<import("../../lib/conversation/modelResolutionWire").DestinationModelChoicesResponse | null>(null);
+  let refusalValidation = $state<import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null>(null);
+  let proposedSelection = $state<import("../../lib/conversation/runControls/contracts").ComposerRunSelection | null>(null);
+  let previewBackend = $state<ConversationBackendKey | null>(null);
+  let pickerReadGeneration = 0;
+  let capturedPickerRequest: import("../../lib/conversation/modelResolutionWire").TicketModelChoicesRequest | null = null;
+  let pickerOwnerKey = "";
+  let pickerContextKey = "";
+
+  async function readScopedChoices(request: import("../../lib/conversation/modelResolutionWire").TicketModelChoicesRequest): Promise<void> {
+    const generation = ++pickerReadGeneration;
+    const context = pickerContextKey;
+    scopedChoices = null;
+    refusalValidation = null;
+    try {
+      const result = await readDestinationModelChoices(request);
+      if (generation !== pickerReadGeneration || context !== pickerContextKey) return;
+      scopedChoices = result;
+    } catch (error) {
+      if (generation !== pickerReadGeneration || context !== pickerContextKey) return;
+      errorNote = sentenceFor(error);
+    }
+  }
+
+  async function retryScopedChoices(): Promise<void> {
+    if (capturedPickerRequest) await readScopedChoices({...capturedPickerRequest});
+  }
+
+  function previewRunSelection(selection: import("../../lib/conversation/runControls/contracts").ComposerRunSelection, backend?: ConversationBackendKey): void {
+    proposedSelection = selection;
+    previewBackend = backend ?? null;
+  }
+
+  $effect(() => {
+    const owner = pickerTicketId;
+    const ownerKey = JSON.stringify([owner]);
+    if (ownerKey !== pickerOwnerKey) {
+      pickerOwnerKey = ownerKey;
+      proposedSelection = null;
+      previewBackend = null;
+    }
+    const selection = proposedSelection;
+    const backend = previewBackend ?? selection?.pickedBackend ?? undefined;
+    const request: import("../../lib/conversation/modelResolutionWire").TicketModelChoicesRequest | null = owner === null || readOnly ? null : {
+      ticket_id: owner,
+      ...(locale === undefined ? {} : {locale}),
+      ...(backend ? {employee_backend: backend} : {}),
+      ...(selection?.pickedModel ? {employee_launch_model: selection.pickedModel} : {}),
+      ...(selection?.selectionKind === undefined || previewBackend !== null ? {} : {selection_kind: selection.selectionKind}),
+      ...(selection?.effortIsSet ? {employee_launch_reasoning_effort: selection.pickedReasoningEffort} : {})
+    };
+    const context = JSON.stringify([ownerKey, locale, conversationId, request, launchValidation?.selection?.selection_revision, startValues]);
+    if (context === pickerContextKey) return;
+    pickerContextKey = context;
+    capturedPickerRequest = request;
+    pickerReadGeneration += 1;
+    scopedChoices = null;
+    refusalValidation = null;
+    if (request) untrack(() => void readScopedChoices(request));
+  });
+
   let remote = $derived(locale === "macos" || view?.executor_context != null);
   const healthQuery = createQuery(() => ({...queries.executorHealth(), enabled:remote}), () => queryClient);
   let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
@@ -636,6 +703,7 @@
       );
       // The answer is the fate, with the conversation it happened in alongside it.
       const fate = delivered;
+      if (fate.fate === "refused") refusalValidation = fate.model_validation ?? null;
       if (
         delivered.conversation_id !== null
         && delivered.conversation_id !== persistenceConversationId
@@ -822,6 +890,7 @@
         (held) => held.held_prompt_id === heldPromptId
       )?.sender_message_id ?? null;
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
+      if (result.promoted && result.fate === "refused") refusalValidation = result.model_validation ?? null;
       if (result.promoted && (result.fate === "started" || result.fate === "injected") && promotedMessageId !== null) {
         await holdOnTo(sentMessages.map(message => message.messageId === promotedMessageId ? {...message, accepted: true} : message));
       }
@@ -1002,6 +1071,10 @@
   {userInputAvailable}
   {activityUncertain}
   {current}
+  canonicalRows={pickerTicketId === null ? undefined : scopedChoices?.rows ?? []}
+  validation={refusalValidation ?? scopedChoices?.validation ?? null}
+  onRetryModelChoices={pickerTicketId === null ? undefined : retryScopedChoices}
+  onPreviewRunSelection={pickerTicketId === null ? undefined : previewRunSelection}
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
   composerCatalog={composerCatalog}

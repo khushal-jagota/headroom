@@ -54,6 +54,10 @@
     userInputAvailable = true,
     activityUncertain = false,
     current = { model: null, reasoningEffort: null },
+    canonicalRows,
+    validation = null,
+    onRetryModelChoices,
+    onPreviewRunSelection,
     models = [],
     backends = $bindable([]),
     ownSenderLabel = null,
@@ -138,6 +142,10 @@
     userInputAvailable?: boolean;
     activityUncertain?: boolean;
     current?: RunValues;
+    canonicalRows?: readonly import("../../lib/conversation/modelResolutionWire").PickerRow[];
+    validation?: import("../../lib/conversation/modelResolutionWire").CanonicalModelValidation | null;
+    onRetryModelChoices?: () => Promise<void>;
+    onPreviewRunSelection?: (selection: import("../../lib/conversation/runControls/contracts").ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
     /** Every backend this machine reported. The composer's rail chooses from them while
      *  there is no conversation to be fixed to one. */
@@ -550,6 +558,10 @@
     {permissionAvailable}
     {userInputAvailable}
       {current}
+      {canonicalRows}
+      {validation}
+      {onRetryModelChoices}
+      {onPreviewRunSelection}
       {models}
       bind:backends
       {effortOptions}
