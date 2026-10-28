@@ -80,6 +80,12 @@ def run(browser, urls):
             view = json.loads(parse_qs(parts.query)["view"][0])
             route.fulfill(json=fixture["scoped_navigation_response"](source, view))
             return
+        if path == "/api/recap-requests" and card_fixture.get("recap_worker"):
+            assert route.request.post_data_json == {"target": {"kind": "ticket", "id": card_fixture["recap_worker"]["id"]}}
+            card_fixture["recap_worker"]["recap"] = ""
+            card_fixture["recap_requests"] = card_fixture.get("recap_requests", 0) + 1
+            route.fulfill(json={"fate": "started"})
+            return
         if path.startswith("/api/vps-metrics/"):
             metrics_calls.append(path)
             response = metrics.client.request(route.request.method, path + ("?" + parts.query if parts.query else ""))
@@ -307,6 +313,7 @@ def run(browser, urls):
     capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
+    verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
@@ -1503,3 +1510,270 @@ def verify_rail_overflow(page, fixture, evidence):
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
     }, indent=2))
+
+
+def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
+    """Prove layout and stationary hit testing through the real request and projection.
+
+    Unit hover tests cannot prove a ResizeObserver-driven panel stays under a pointer.
+    Reuse the App host and navigation transport, with no live backend or new host.
+    """
+    started = time.perf_counter()
+    worker = {"id": "recap_floor", "title": "Recap floor", "worker_type": "coding",
+              "stage": "needs_implementation", "ticket_status": "agent", "recap": "Initial recap"}
+    neighbor = {**worker, "id": "recap_neighbor", "title": "Other recap", "recap": "Short recap"}
+    fixture.update(enabled=True, recap_worker=worker, board={"managers": [
+        {"id": "recap_manager", "title": "Recap manager", "created_at": 1, "tickets": [worker, neighbor]},
+    ]}, chief={"label": "Chief"})
+    proof = {"newHosts": 0, "samples": [], "sessions": []}
+    panel = page.locator('[data-rail-hover-panel]')
+    text = panel.locator('[data-recap-text]')
+    row = page.locator('[data-ticket-id="recap_floor"]')
+
+    def refresh(target_page=page):
+        target_page.evaluate("() => window.__refreshNavigation()")
+
+    def open_panel():
+        row.hover()
+        expect(panel).to_have_attribute("aria-hidden", "false")
+        page.wait_for_timeout(300)
+        panel.hover()
+
+    def leave():
+        page.mouse.move(1200, 650)
+        page.get_by_role("separator", name="Resize workspace panel").focus()
+        expect(panel).to_have_attribute("aria-hidden", "true")
+
+    def set_lines(lines):
+        # Use real font metrics to create exactly the requested number of wrapped
+        # lines. A long token wraps by the production overflow-wrap rule.
+        count = panel.locator("[data-recap-slot]").evaluate("""(node, lines) => {
+          const css=getComputedStyle(node), canvas=document.createElement('canvas');
+          const ctx=canvas.getContext('2d'); ctx.font=css.font;
+          return Math.floor(node.getBoundingClientRect().width/ctx.measureText('W').width)*(lines-1)+1;
+        }""", lines)
+        worker["recap"] = "W" * count
+        refresh()
+        expect(text).to_have_text(worker["recap"])
+        assert text.evaluate("node => Math.round(node.getBoundingClientRect().height/parseFloat(getComputedStyle(node).lineHeight))") == lines
+        return worker["recap"]
+
+    def sample_change(label, mutate, floor=None, point=None):
+        # Start before publication, so every animation frame includes actual panel
+        # bounds and hit testing at a pointer that never moves during the change.
+        page.evaluate("""({point}) => {
+          window.__recapFrames=[];
+          window.__recapSampleUntil=null;
+          const start=performance.now();
+          window.__recapSampling=new Promise(resolve=>{
+            function sample(){
+              const panel=document.querySelector('[data-rail-hover-panel]'), r=panel.getBoundingClientRect();
+              window.__recapFrames.push({ms:performance.now()-start,x:r.x,y:r.y,width:r.width,height:r.height,
+                visible:panel.getAttribute('aria-hidden')==='false',
+                hit:point ? Boolean(document.elementFromPoint(point.x,point.y)?.closest('[data-rail-hover-panel]')) : null});
+              if(window.__recapSampleUntil===null || performance.now()<window.__recapSampleUntil) requestAnimationFrame(sample); else resolve();
+            } requestAnimationFrame(sample);
+          });
+        }""", {"point": point})
+        mutate()
+        page.evaluate("window.__recapSampleUntil=performance.now()+380")
+        page.evaluate("() => window.__recapSampling")
+        frames = page.evaluate("window.__recapFrames")
+        proof["samples"].append({"label": label, "point": point, "floor": floor, "frames": frames})
+        (evidence / "recap-floor-geometry.json").write_text(json.dumps(proof, indent=2))
+        assert frames[-1]["ms"] >= 380, (label, frames[-1])
+        if floor is not None:
+            assert all(frame["height"] >= floor - 1 for frame in frames), (label, floor, frames)
+        if point:
+            assert all(frame["visible"] and frame["hit"] for frame in frames), (label, point, frames)
+        return panel.bounding_box()["height"]
+
+    def request():
+        before = fixture.get("recap_requests", 0)
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True)
+        expect(ask).to_have_attribute('aria-disabled', 'false')
+        with page.expect_response('**/api/recap-requests'):
+            ask.click()
+        assert fixture["recap_requests"] == before + 1
+        refresh()
+        expect(text).to_have_count(0)
+
+    def keyboard_request(before_request=None):
+        expect(panel.locator('[data-request-recap]')).to_have_attribute('data-request-recap', 'ticket:recap_floor')
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True)
+        # HTTP delivery precedes mutateJson's query invalidations. The action stays
+        # busy until those finish, so a second Enter must wait for its public state.
+        expect(ask).to_have_attribute('aria-disabled', 'false')
+        ask.focus()
+        expect(ask).to_be_focused()
+        if before_request:
+            before_request()
+        with page.expect_response('**/api/recap-requests'):
+            page.keyboard.press('Enter')
+
+    for reduced, lower in [(False, False), (False, True), (True, False)]:
+        page.set_viewport_size({"width": 1280, "height": 700})
+        page.emulate_media(reduced_motion="reduce" if reduced else "no-preference")
+        worker["recap"] = "Initial recap"
+        page.mouse.move(1200, 650)
+        page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
+        expect(row).to_be_visible()
+        refresh()
+        row.evaluate("node => node.style.marginTop=''")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        if lower:
+            # Place the real row near the viewport bottom without a second host.
+            # This exercises production viewport clamping and upward growth.
+            row.evaluate("node => node.style.marginTop='390px'")
+            row.scroll_into_view_if_needed()
+            assert row.bounding_box()["y"] > 450
+        open_panel()
+        three = set_lines(3)
+        page.wait_for_timeout(300)
+        if not reduced and not lower:
+            page.screenshot(path=str(evidence / "recap-floor-initial-three-lines.png"))
+        floor = panel.bounding_box()["height"]
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True).bounding_box()
+        point = {"x": ask["x"] + ask["width"] / 2, "y": ask["y"] + ask["height"] / 2}
+        page.mouse.move(point["x"], point["y"])
+        tag = f'{"lower" if lower else "upper"}-{"reduced" if reduced else "normal"}'
+        sample_change(tag + '-request-clears', request, floor, point)
+        sample_change(tag + '-short-reply', lambda: set_lines(2), floor, point)
+        page.screenshot(path=str(evidence / f'recap-floor-{tag}-two-lines.png'))
+        grown = sample_change(tag + '-growth', lambda: set_lines(5), floor, point)
+        assert grown > floor + 20, (tag, floor, grown, panel.inner_html())
+        # The real Ask action can move on growth. Move to it once, then hold the
+        # new stationary point for the repeated request and shorter response.
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True).bounding_box()
+        point = {"x": ask["x"] + ask["width"] / 2, "y": ask["y"] + ask["height"] / 2}
+        page.mouse.move(point["x"], point["y"])
+        sample_change(tag + '-repeat-request', request, grown, point)
+        sample_change(tag + '-repeat-short-reply', lambda: set_lines(2), grown, point)
+        leave()
+        open_panel()
+        natural = panel.bounding_box()["height"]
+        if not reduced and not lower:
+            page.screenshot(path=str(evidence / "recap-floor-returned-two-lines.png"))
+        assert natural < floor - 10, (natural, floor)
+        # A delayed response or no response cannot retain the old floor after exit.
+        worker["recap"] = three
+        refresh()
+        page.wait_for_timeout(300)
+        panel.hover()
+        sample_change(tag + '-no-reply', request, floor)
+        leave()
+        open_panel()
+        empty = panel.bounding_box()["height"]
+        assert empty < natural - 10, (empty, natural)
+        sample_change(tag + '-late-reply', lambda: set_lines(2))
+        assert panel.bounding_box()["height"] < floor - 10
+        # Retarget while the shared panel is already open. Its old floor must not
+        # leak into the next Worker, even without an intervening hide.
+        set_lines(5)
+        page.wait_for_timeout(300)
+        page.keyboard.press('Tab')
+        page.locator('[data-ticket-id="recap_neighbor"]').focus()
+        expect(panel.locator('.title')).to_contain_text('Other recap')
+        page.wait_for_timeout(300)
+        assert panel.bounding_box()["height"] < floor - 10
+        proof["sessions"].append({"name": tag, "threeLines": floor, "largest": grown,
+                                  "twoLinesAfterExit": natural, "emptyAfterExit": empty})
+        leave()
+
+    # Keyboard focus opens the same panel without pointer entry. It must shrink.
+    page.emulate_media(reduced_motion="no-preference")
+    worker["recap"] = "Initial recap"
+    refresh()
+    page.keyboard.press('Tab')
+    row.focus()
+    expect(panel).to_have_attribute('aria-hidden', 'false')
+    set_lines(3)
+    page.wait_for_timeout(300)
+    before = panel.bounding_box()["height"]
+    keyboard_request()
+    refresh()
+    expect(text).to_have_count(0)
+    sample_change('keyboard-no-pointer', lambda: None)
+    after = panel.bounding_box()["height"]
+    assert after < before - 20
+    assert any(after + 1 < frame["height"] < before - 1 for frame in proof["samples"][-1]["frames"]), proof["samples"][-1]
+    proof["sessions"].append({"name": "keyboard", "before": before, "after": panel.bounding_box()["height"]})
+    leave()
+
+    # Enter during an ordinary shrink. The new pointer visit must hold the
+    # visible intermediate height, rather than the smaller animation target.
+    page.keyboard.press('Tab')
+    row.focus()
+    expect(panel).to_have_attribute('aria-hidden', 'false')
+    set_lines(3)
+    page.wait_for_timeout(300)
+    full = panel.bounding_box()["height"]
+    def pause_shrink():
+        # Pause the browser-owned CSS transition at a known intermediate time.
+        # A fixed delay can miss a short transition on a loaded machine.
+        page.evaluate("""() => {
+          window.__recapShrinkReady = new Promise((resolve, reject) => {
+            const slot=document.querySelector('[data-rail-hover-panel] [data-recap-slot]');
+            const started=performance.now();
+            function sample(){
+              const animation=slot.getAnimations().find(animation=>animation.transitionProperty==='height');
+              if(animation && slot.style.height==='0px') {
+                animation.pause();
+                animation.currentTime=animation.effect.getTiming().duration/2;
+                requestAnimationFrame(()=>resolve(slot.getBoundingClientRect().height));
+              } else if(performance.now()-started>2000) reject(new Error('No ordinary recap shrink transition'));
+              else requestAnimationFrame(sample);
+            } requestAnimationFrame(sample);
+          });
+        }""")
+
+    keyboard_request(pause_shrink)
+    refresh()
+    expect(text).to_have_count(0)
+    page.evaluate('() => window.__recapShrinkReady')
+    bounds = panel.bounding_box()
+    point = {"x": bounds["x"] + 20, "y": bounds["y"] + 20}
+    page.mouse.move(point["x"], point["y"])
+    entered = panel.bounding_box()["height"]
+    assert after + 1 < entered < full - 1, (after, entered, full)
+    sample_change('enter-during-shrink', lambda: None, entered, point)
+    proof["sessions"].append({"name": "enter-during-shrink", "full": full, "entered": entered})
+    # The scroll dismissal hides the panel while the pointer remains on it.
+    # Reopening must size to the empty recap, even when no reply ever arrives.
+    page.locator('[data-active-work-scroll]').dispatch_event('scroll')
+    expect(panel).to_have_attribute('aria-hidden', 'true')
+    open_panel()
+    assert panel.bounding_box()["height"] < entered - 1
+    leave()
+
+    # Real touch input (including its implicit pointerenter) must not acquire a floor.
+    touch_context = browser.new_context(viewport={"width": 1280, "height": 700}, has_touch=True)
+    touch_page = touch_context.new_page()
+    touch_page.route('**/api/**', respond)
+    worker["recap"] = three
+    touch_page.goto(url + '#/workspace/utility/settings', wait_until='domcontentloaded')
+    touch_row = touch_page.locator('[data-ticket-id="recap_floor"]')
+    expect(touch_row).to_be_visible()
+    bounds = touch_row.bounding_box()
+    session = touch_context.new_cdp_session(touch_page)
+    session.send('Input.dispatchTouchEvent', {"type": "touchStart", "touchPoints": [{"x": bounds["x"] + 20, "y": bounds["y"] + 10}]})
+    touch_panel = touch_page.locator('[data-rail-hover-panel]')
+    expect(touch_panel).to_have_attribute('aria-hidden', 'false')
+    expect(touch_panel.locator('.title')).to_contain_text('Recap floor')
+    before = touch_panel.bounding_box()["height"]
+    expect(touch_panel.get_by_role('button', name='Ask for a recap', exact=True)).to_have_attribute('aria-disabled', 'false')
+    session.send('Input.dispatchTouchEvent', {"type": "touchEnd", "touchPoints": []})
+    with touch_page.expect_response('**/api/recap-requests'):
+        touch_panel.get_by_role('button', name='Ask for a recap', exact=True).tap()
+    refresh(touch_page)
+    expect(touch_panel.locator('[data-recap-text]')).to_have_count(0)
+    touch_page.wait_for_timeout(380)
+    after = touch_panel.bounding_box()["height"]
+    assert after < before - 20, (before, after)
+    proof["sessions"].append({"name": "touch", "before": before, "after": after})
+    touch_page.screenshot(path=str(evidence / 'recap-floor-touch.png'))
+    touch_context.close()
+    fixture.pop("recap_worker")
+    proof["seconds"] = round(time.perf_counter() - started, 3)
+    (evidence / 'recap-floor-geometry.json').write_text(json.dumps(proof, indent=2))
+    print('RECAP_FLOOR_PROOF ' + json.dumps({"seconds": proof["seconds"], "sessions": proof["sessions"]}), flush=True)

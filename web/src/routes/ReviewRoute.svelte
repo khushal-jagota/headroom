@@ -11,11 +11,12 @@
   import ReviewTicketCard from "../components/ReviewTicketCard.svelte";
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
   import ReviewMessageCard from "../components/ReviewMessageCard.svelte";
+  import ReviewFinalState from "../components/ReviewFinalState.svelte";
   import { reviewMessageHref } from "../lib/review/messages";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
   const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`,impact => {
-    const view=navigation.state.effective;return reviewQueueImpact(impact,view ? navigation.presentationFor(view) : undefined) || currentItem===null && runtimeCountImpact(impact,view ? navigation.presentationFor(view) : undefined);
+    const view=navigation.state.effective;return reviewQueueImpact(impact,view ? navigation.presentationFor(view) : undefined) || showFinal && runtimeCountImpact(impact,view ? navigation.presentationFor(view) : undefined);
   });
   onDestroy(() => navigation.disposeRenderBoundary(observer));
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
@@ -40,7 +41,11 @@
   }
 
   let items = $derived(queueWindow?(review?.items ?? []).filter(item=>queueWindow?.members.some(key=>key.kind===(item.review_item_type === "message" ? 'address' : 'ticket') && key.id===(item.review_item_type === "message" ? item.address_id : item.ticket_id))):review?.items ?? []);
-  let runningWorkerCount = $derived(review?.runningConversationCount ?? null);
+  let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
+  let waitingCount = $derived(displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null);
+  let finalLatched = $state(false);
+  let returning = $state(false);
+  let returnError = $state<unknown>(null);
   let busyConversations = $state<Record<string,boolean>>({});
   let messageGenerations = $state<Record<string,number>>({});
   // Keep a painted conversation through delivery uncertainty and its exit. Owner
@@ -83,7 +88,16 @@
     return items.find(item=>!skipped[itemKey(item)]) ?? null;
   });
   let messageBusy = $derived(currentItem?.review_item_type==='message' ? Boolean(busyConversations[currentItem.conversation_id]) : Boolean(currentItem?.messages.some(message=>busyConversations[message.conversation_id])));
+  // Only a completed last window is terminal. An exhausted intermediate window
+  // keeps the existing pagination path, and loading never admits the final screen.
+  let terminalWindow = $derived(Boolean(displayed?.runtimeCurrent && review && queueWindow
+    && queueWindow.request.anchor === reviewAnchor && !queueWindow.next && !currentItem));
+  let showFinal = $derived(finalLatched || !returning && terminalWindow);
+  $effect(() => {
+    if (!returning && terminalWindow) finalLatched = true;
+  });
   $effect(()=>{
+    if (finalLatched) return;
     if(!heldCard && currentItem && (currentItem.review_item_type==='message' || currentItem.messages.length))heldCard=currentItem;
     else if(heldCard?.review_item_type==='ticket' && currentItem?.review_item_type==='ticket' && heldCard.ticket_id===currentItem.ticket_id
       && currentItem.messages.some(message=>!heldCard || heldCard.review_item_type!=='ticket' || !heldCard.messages.some(held=>held.conversation_id===message.conversation_id && held.address_id===message.address_id)))heldCard=currentItem;
@@ -92,14 +106,31 @@
 
 
   $effect(()=>{
-    if(queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
+    if(!showFinal && queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
       reviewAnchor=queueWindow.next;
       skipped={};
     }
   });
 
-  function runningWorkersText(count: number): string {
-    return `${count} ${count === 1 ? "agent" : "agents"} in progress`;
+  async function backToReview(): Promise<void> {
+    if (returning) return;
+    returning = true;
+    returnError = null;
+    reviewAnchor = null;
+    skipped = {};
+    heldCard = null;
+    try {
+      // Let the reset window demand reach the owner before requesting a fresh view.
+      // Keep the composer mounted until that read succeeds, even for an empty result.
+      await tick();
+      await navigation.owner.recover();
+      await tick();
+      if (displayed?.runtimeCurrent && queueWindow?.request.anchor === null && currentItem) finalLatched = false;
+    } catch (error) {
+      returnError = error;
+    } finally {
+      returning = false;
+    }
   }
 
   function skip(item: ReviewItem): void {
@@ -137,17 +168,18 @@
     const effective = displayed;
     const generation = navigation.state.generation;
     const element = screenElement;
-    const selected = currentItem;
+    const selected = showFinal ? null : currentItem;
     const bodyObservation = renderedBody;
     void bodyObservation;
     const count = runningWorkerCount;
+    const finalCount = showFinal ? waitingCount : undefined;
     if (!effective?.runtimeCurrent || !element) return;
     const publication = effective.publication;
     const observation = observer.observeSelectors(publication,generation);
     let obsolete = false;
     void tick().then(() => {
       if (!obsolete && element.isConnected && navigation.state.generation === generation
-        && navigation.selectors.effective === effective && reviewDomMatches(element,selected,count)) observer.acknowledgeRender(publication,observation);
+        && navigation.selectors.effective === effective && reviewDomMatches(element,selected,count,finalCount)) observer.acknowledgeRender(publication,observation);
     });
     return () => { obsolete = true; };
   });
@@ -165,6 +197,7 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (showFinal) return;
     const item = currentItem;
     if (!item) return;
     // Ignore auto-repeat: holding a key must not skip/approve through the decisions.
@@ -208,14 +241,10 @@
   </div>
 {/snippet}
 
-<section class="review-screen" data-screen="review" bind:this={screenElement}>
+<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement}>
   <ResourceState shape="block" error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
-    {#if !items.length && !currentItem}
-      <div class="review-empty-state" data-review-empty>
-        <div class="review-empty-mark" aria-hidden="true"><span></span></div>
-        <div class="review-empty-text">There is nothing to review right now.</div>
-        {#if runningWorkerCount !== null}<div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>{/if}
-      </div>
+    {#if showFinal}
+      <ReviewFinalState {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
     {:else if currentItem}
       {#if currentItem.review_item_type === "message"}
         {@const message = currentItem}
@@ -245,12 +274,10 @@
           </ReviewTicketCard>
         {/key}
       {/if}
-    {:else}
-      <div class="review-empty-state" data-review-empty>
-        <div class="review-empty-mark" aria-hidden="true"><span></span></div>
-        <div class="review-empty-text">There is nothing to review right now.</div>
-        {#if runningWorkerCount !== null}<div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>{/if}
-      </div>
     {/if}
   </ResourceState>
 </section>
+
+<style>
+  .review-screen-final { max-width:calc(var(--measure-index) + var(--page-gutter)*2); }
+</style>
