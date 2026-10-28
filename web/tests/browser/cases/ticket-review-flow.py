@@ -1248,21 +1248,19 @@ def run(browser, urls):
     retained_editor.press("Tab")
     page.evaluate("window.__batch()")
     expect(retained_editor).to_contain_text("Retained local draft")
+    # This fixture's Coding manifest ends after Success. Approval therefore keeps
+    # the saved reviewer and the retained local edit without another scope choice.
     approve_row.locator("[data-accept]").click()
-    expect(approve_row.get_by_role("listbox")).to_have_attribute("aria-label", "Ceiling stage")
-    approve_row.locator('[data-ceiling-picker-choice="done"]').click()
-    expect(approve_row.get_by_role("listbox")).to_have_attribute(
-        "aria-label", "Who holds the ceiling"
-    )
-    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
     for _ in range(100):
         if approvals:
             break
         page.wait_for_timeout(50)
     assert len(approvals) == 1
-    assert approvals[0]["next_ceiling"] == "done"
-    assert approvals[0]["next_holder"] == {"kind": "chief", "id": "chief"}
+    assert approvals[0]["next_ceiling"] == "none"
+    assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
     assert approvals[0]["expected_proposal_revision"] == 2
+    assert approvals[0]["edited_body"] == "Retained local draft"
     expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
     remaining = page.locator('[data-review-ticket-card][data-ticket-id="t_personal_pending"]')
     expect(remaining).to_have_count(1)
@@ -1330,8 +1328,7 @@ def run(browser, urls):
     server_revision = 4
     approve_row = page.locator("[data-approval-block]")
     approve_row.locator("[data-accept]").click()
-    approve_row.locator('[data-ceiling-picker-choice="done"]').click()
-    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
     expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
     assert len(approvals) == 1
     server_revision = 3
@@ -1340,14 +1337,15 @@ def run(browser, urls):
     proposal_editor.fill("Edited replacement body")
     proposal_editor.press("Tab")
     approve_row.locator("[data-accept]").click()
-    approve_row.locator('[data-ceiling-picker-choice="done"]').click()
-    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
     for _ in range(100):
         if len(approvals) == 2:
             break
         page.wait_for_timeout(10)
     assert approvals[1]["expected_proposal_revision"] == 3
     assert approvals[1]["edited_body"] == "Edited replacement body"
+    assert approvals[1]["next_ceiling"] == "none"
+    assert approvals[1]["next_holder"] == {"kind": "owner", "id": "owner"}
     expect(page.locator("[data-review-card]")).to_have_count(0)
     runtime_working = True
     page.evaluate("window.__refresh()")
@@ -1597,12 +1595,13 @@ def run(browser, urls):
     expect(message_card.locator('.review-attachment')).to_contain_text("notes.txt")
     server_revision = 1
     combined.locator('[data-accept]').click()
-    combined.locator('[data-ceiling-picker-choice="done"]').click()
-    combined.locator('[data-ceiling-picker-choice="chief"]').click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
     expect(combined.locator('[data-review-item-type="proposal"]')).to_have_count(0)
     expect(message_card.locator('[data-review-message-sequence]')).to_have_count(121)
     expect(reply).to_have_value("Keep these words")
     assert approvals[-1]["expected_proposal_revision"] == 1
+    assert approvals[-1]["next_ceiling"] == "none"
+    assert approvals[-1]["next_holder"] == ticket["ceiling_holder"]
     assert review_read == 0
     ticket.update(ticket_status="awaiting_approval", pending_proposal={"field":"success_condition","body":"A separate decision","created_at":500,"revision":1})
     page.evaluate("window.__refresh()")
