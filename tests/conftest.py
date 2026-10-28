@@ -20,6 +20,13 @@ TREE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TREE / "scripts"))
 
 import tree_environment  # noqa: E402  # reached via sys.path.insert above
+
+# Dependency diagnosis must precede imports used by the guard (notably PyYAML).
+# The planner import remains after guard installation in pytest_configure.
+_BOOTSTRAP_DIAGNOSIS = tree_environment.preflight(TREE, ask_planner=False)
+if _BOOTSTRAP_DIAGNOSIS:
+    raise pytest.UsageError(_BOOTSTRAP_DIAGNOSIS)
+
 from tests.support.skill_tree_protection.pytest_plugin import bootstrap  # noqa: E402
 from tests.support.synthetic_homes import synthetic_homes as synthetic_homes  # noqa: E402
 

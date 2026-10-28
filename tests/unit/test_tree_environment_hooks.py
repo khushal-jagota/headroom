@@ -145,4 +145,23 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
         assert "[assignment]" not in output
         assert not imported.exists(), output
         assert not collected.exists(), output
+    # The guard imports yaml. Diagnose its pin before that dependency can import.
+    requirements.write_text(
+        f"claude-agent-sdk==0.2.128\npackaging=={importlib.metadata.version('packaging')}\n"
+        "PyYAML==0.0.0\n"
+    )
+    yaml_sentinel = "yaml-import-preceded-dependency-diagnosis"
+    (tree / "yaml.py").write_text(f"raise RuntimeError({yaml_sentinel!r})\n")
+    yaml_refused = run_tool("pytest")
+    yaml_output = yaml_refused.stdout + yaml_refused.stderr
+    assert yaml_refused.returncode == 4, yaml_output
+    assert "pyyaml" in yaml_output
+    assert "0.0.0" in yaml_output
+    assert importlib.metadata.version("PyYAML") in yaml_output
+    assert "requirements.txt" in yaml_output
+    assert "No bypass is supported." in yaml_output
+    assert shlex.quote(str(tree)) in yaml_output
+    assert yaml_sentinel not in yaml_output
+    assert not imported.exists(), yaml_output
+    assert not collected.exists(), yaml_output
     print(f"Real pytest/mypy hook smoke wall time: {time.monotonic() - started:.3f}s")
