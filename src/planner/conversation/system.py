@@ -1131,6 +1131,7 @@ class SqliteProcessConversationSystem:
             running = state.running_turn
             if running is not None:
                 await self._revoke_executor_turn_asks(state, running)
+            owns_ending = True
             try:
                 cancel_fact = None
                 child = state.child
@@ -1153,6 +1154,8 @@ class SqliteProcessConversationSystem:
 
                     if running is not None:
                         if isinstance(child, RemoteBackendChild):
+                            reference = child.reference
+                            reservation = state.reserved_turn
                             self._set_phase(state, _ConversationPhase.ending)
                             running.ending_is_the_cores = True
                             state.lock.release()
@@ -1160,9 +1163,42 @@ class SqliteProcessConversationSystem:
                                 cancel_fact = await self._cancel_child_turn(state, child)
                             finally:
                                 await state.lock.acquire()
+                            current_child = state.child
+                            current_turn = state.running_turn
+                            last_ended = state.last_ended_turn_token
+                            owns_ending = (
+                                not self._shutting_down
+                                and state.reserved_turn is reservation
+                                and (
+                                    (
+                                        current_turn is not None
+                                        and current_turn.token == running.token
+                                    )
+                                    or (current_turn is None and last_ended == running.token)
+                                )
+                                and (
+                                    last_ended is None
+                                    or (
+                                        last_ended.conversation_id == running.token.conversation_id
+                                        and last_ended.turn_number <= running.token.turn_number
+                                    )
+                                )
+                            )
+                            if (
+                                not owns_ending
+                                or not isinstance(current_child, RemoteBackendChild)
+                                or current_child.reference != reference
+                                or state.executor_child_reference != reference
+                            ):
+                                owns_ending = False
+                                return
+                            # Inventory can replace the proxy for this same native child.
+                            child = current_child
+                            running = current_turn
                         else:
                             cancel_fact = await self._cancel_child_turn(state, child)
                     if state.child is child:
+                        assert child is not None
                         await self._discard_child(state, child)
                 if running is not None:
                     await self._end_turn(
@@ -1173,7 +1209,8 @@ class SqliteProcessConversationSystem:
                         cancel_fact=cancel_fact,
                     )
             finally:
-                self._settle_phase(state)
+                if owns_ending and not self._shutting_down:
+                    self._settle_phase(state)
         finally:
             state.lock.release()
         cleanup = state.initial_shutdown_task

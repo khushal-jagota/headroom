@@ -1547,6 +1547,179 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
     _run(exercise)
 
 
+@pytest.mark.parametrize(
+    "changed_owner",
+    [
+        "different_incarnation",
+        "different_child",
+        "different_conversation",
+        "different_assignment",
+        "newer_running_turn",
+        "newer_reservation",
+        "later_ended_turn",
+        "shutdown",
+        "shutdown_cancel_propagates",
+    ],
+)
+def test_remote_kill_cannot_retire_or_end_a_successor_after_cancel(
+    harness: _Harness, changed_owner: str
+) -> None:
+    """A cancel result owns its exact child and turn, never later runtime work."""
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildOperation,
+        ChildReference,
+        CommandDisposition,
+        CommandOutcome,
+    )
+    from planner.executor.remote import RemoteBackendChild
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        state = harness.system._conversations["c"]
+        running = state.running_turn
+        assert running is not None
+        reference = ChildReference("incarnation", "original-child", "c")
+        entered, release, shutdown_cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        commands: list[ChildCommand] = []
+
+        async def send(command: ChildCommand) -> CommandOutcome:
+            commands.append(command)
+            if command.operation is ChildOperation.cancel_running_turn:
+                entered.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    # Let the exact cancellation return after shutdown starts.
+                    shutdown_cancelled.set()
+                    if changed_owner == "shutdown_cancel_propagates":
+                        raise
+                    await release.wait()
+            return CommandOutcome(
+                command.command_id, command.child, CommandDisposition.succeeded, {}
+            )
+
+        def proxy(child_reference: ChildReference) -> RemoteBackendChild:
+            return RemoteBackendChild(child_reference, send, lambda resolved: canonical_snapshot())
+
+        state.child = proxy(reference)
+        state.executor_child_reference = reference
+        killing = asyncio.create_task(harness.system.kill("c"))
+        await entered.wait()
+        shutdown: asyncio.Task[None] | None = None
+        successor_turn = TurnToken("c", running.token.turn_number + 1)
+        async with state.lock:
+            if changed_owner.startswith("different_"):
+                replacement = {
+                    "different_incarnation": replace(reference, executor_incarnation="successor"),
+                    "different_child": replace(reference, child_id="successor"),
+                    "different_conversation": replace(reference, conversation_id="successor"),
+                    "different_assignment": replace(reference, child_id="successor"),
+                }[changed_owner]
+                if changed_owner != "different_assignment":
+                    state.child = proxy(replacement)
+                state.executor_child_reference = replacement
+            elif changed_owner == "newer_running_turn":
+                state.running_turn = replace(running, token=successor_turn)
+            elif changed_owner == "newer_reservation":
+                state.reserved_turn = conversation_system._ReservedTurn(
+                    successor_turn, asyncio.Event()
+                )
+                harness.system._set_phase(state, conversation_system._ConversationPhase.starting)
+            elif changed_owner == "later_ended_turn":
+                state.last_ended_turn_token = successor_turn
+            expected_child = state.child
+            expected_turn = state.running_turn
+            expected_reservation = state.reserved_turn
+            expected_last_ended = state.last_ended_turn_token
+            expected_phase = state.phase
+            expected_phase_settled = state.phase_settled.is_set()
+        if changed_owner.startswith("shutdown"):
+            shutdown = asyncio.create_task(harness.system.shutdown())
+            await shutdown_cancelled.wait()
+            assert harness.system._shutting_down
+        release.set()
+        if changed_owner == "shutdown_cancel_propagates":
+            await asyncio.gather(killing, return_exceptions=True)
+            assert killing.cancelled()
+        else:
+            await killing
+        if shutdown is not None:
+            await shutdown
+        else:
+            assert state.child is expected_child
+        assert [command.operation for command in commands] == [ChildOperation.cancel_running_turn]
+        assert state.running_turn is expected_turn
+        assert state.reserved_turn is expected_reservation
+        assert state.last_ended_turn_token == expected_last_ended
+        assert state.phase is expected_phase
+        assert state.phase_settled.is_set() is expected_phase_settled
+        assert await harness.recorded_endings("c") == ()
+
+    _run(exercise)
+
+
+def test_remote_kill_retires_same_child_without_ending_its_completed_copy_twice(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inventory copies a turn record, so the captured record can outlive its ending."""
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.executor.contracts import (
+        ChildCommand,
+        ChildReference,
+        CommandDisposition,
+        CommandOutcome,
+    )
+    from planner.executor.remote import RemoteBackendChild
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        state = harness.system._conversations["c"]
+        running = state.running_turn
+        assert running is not None
+        reference = ChildReference("incarnation", "original-child", "c")
+        entered, release = asyncio.Event(), asyncio.Event()
+        retired: list[object] = []
+
+        async def send(command: ChildCommand) -> CommandOutcome:
+            entered.set()
+            await release.wait()
+            return CommandOutcome(
+                command.command_id, command.child, CommandDisposition.succeeded, {}
+            )
+
+        async def discard(current_state: Any, child: Any) -> None:
+            assert current_state is state
+            retired.append(child)
+
+        monkeypatch.setattr(harness.system, "_discard_child", discard)
+        original = RemoteBackendChild(reference, send, lambda resolved: canonical_snapshot())
+        current = RemoteBackendChild(reference, send, lambda resolved: canonical_snapshot())
+        state.child = original
+        state.executor_child_reference = reference
+        killing = asyncio.create_task(harness.system.kill("c"))
+        await entered.wait()
+        async with state.lock:
+            state.child = current
+            copied = replace(running)
+            state.running_turn = copied
+            await harness.system._end_turn(state, copied, ConversationTurnEnding.completed, None)
+            assert state.running_turn is None
+            assert not running.ended
+        release.set()
+        await killing
+        assert retired == [current]
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.completed,)
+        assert state.last_ended_turn_token == running.token
+
+    _run(exercise)
+
+
 def test_everything_waiting_goes_in_as_one_turn_with_a_row_for_each_sender(
     harness: _Harness,
 ) -> None:

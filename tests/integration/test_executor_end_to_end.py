@@ -1735,6 +1735,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
             )
             native = ScriptedNativeChild()
             stop_entered, release_stop = asyncio.Event(), asyncio.Event()
+            cancel_entered, inventory_adopted = asyncio.Event(), asyncio.Event()
             native_stop = native.stop
 
             async def blocked_stop() -> None:
@@ -1742,7 +1743,12 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 stop_entered.set()
                 await release_stop.wait()
 
+            async def cancel_native() -> None:
+                cancel_entered.set()
+                await inventory_adopted.wait()
+
             monkeypatch.setattr(native, "stop", blocked_stop)
+            monkeypatch.setattr(native, "cancel_running_turn", cancel_native, raising=False)
 
             def factory(
                 resolved: ResolvedConversationStart, capability: str, child: ChildReference
@@ -1763,6 +1769,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 message_files=ConversationMessageFiles(tmp_path / "mac/unused"),
             )
             task = asyncio.create_task(mac.run())
+            killing: asyncio.Task[None] | None = None
             try:
                 first_app = target[0]
                 async with first_app.router.lifespan_context(first_app):
@@ -1773,6 +1780,19 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                     identity = mac.identity
                     first_endpoint = first_app.state.executor_endpoint
                     first_system = first_app.state.conversation_system
+                    adopt = first_system.adopt_remote_child
+                    adopted_proxies: list[BackendChild] = []
+
+                    async def adopt_during_cancel(inventory: Any, child: BackendChild) -> bool:
+                        if inventory.active_turn is not None:
+                            await cancel_entered.wait()
+                        result = cast(bool, await adopt(inventory, child))
+                        if result and inventory.active_turn is not None:
+                            adopted_proxies.append(child)
+                            inventory_adopted.set()
+                        return result
+
+                    monkeypatch.setattr(first_system, "adopt_remote_child", adopt_during_cancel)
                     await first_system.start_conversation(
                         ConversationStartRequest(
                             conversation_id="c_scripted",
@@ -1799,13 +1819,18 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                     )
                     reference = next(iter(mac.registry.children.values())).reference
                     first_state = first_system._conversations["c_scripted"]
-                    # Enter the same retirement owner used by kill and idle cleanup.
-                    async with first_state.lock:
-                        assert first_state.child is not None
-                        waiter = first_system._schedule_remote_retirement(
-                            first_state, first_state.child
-                        )
+                    # Kill ends the turn under the lock before retirement records stop.
+                    # Direct scheduling on an active turn bypasses that caller precondition.
+                    child_before_cancel = first_state.child
+                    killing = asyncio.create_task(first_system.kill("c_scripted"))
                     await asyncio.wait_for(stop_entered.wait(), 5)
+                    assert inventory_adopted.is_set()
+                    assert adopted_proxies and first_state.child is adopted_proxies[-1]
+                    assert first_state.child is not child_before_cancel
+                    assert first_state.running_turn is None
+                    assert first_state.last_ended_turn_token == native.turn
+                    assert not killing.done()
+                    waiter = first_state.initial_shutdown_task
                     assert waiter is not None and not waiter.done()
                     assert first_state.child_is_quarantined
                     stop_command, stop_future = next(
@@ -1824,6 +1849,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                         for command in retained_runtime["initial_commands"]
                     )
                 assert waiter.cancelled()
+                await asyncio.gather(killing, return_exceptions=True)
                 assert reference.child_id in mac.registry.children
                 assert native.stop_count == 1
                 second_app = create_app(config, RealClock(), lambda: connect(db_path))
@@ -1865,7 +1891,12 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                         second_app.state.executor_endpoint.writer.close()
                     await asyncio.wait_for(task, 3)
             finally:
+                inventory_adopted.set()
                 release_stop.set()
+                if killing is not None:
+                    if not killing.done():
+                        killing.cancel()
+                    await asyncio.gather(killing, return_exceptions=True)
                 if not task.done():
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
