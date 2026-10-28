@@ -2279,8 +2279,12 @@ class SqliteProcessConversationSystem:
 
                 if child is not None and not isinstance(child, RemoteBackendChild):
                     try:
-                        await self._stop_child(state, child)
+                        if not await self._stop_child(state, child):
+                            state.child = child
+                            state.child_is_quarantined = True
                     except asyncio.CancelledError:
+                        state.child = child
+                        state.child_is_quarantined = True
                         # An adapter can abort its own stop. No local callback or writer
                         # survives this cleanup, but provider termination is unproven.
                         LOGGER.error(

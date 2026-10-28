@@ -66,11 +66,11 @@ import warnings
 from base64 import b64encode
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Callable
-from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
+from anyio.abc import Process
 from claude_agent_sdk import (
     AssistantMessage,
     CanUseToolShadowedWarning,
@@ -364,9 +364,40 @@ def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
         warnings.simplefilter("ignore", CanUseToolShadowedWarning)
         transport_options = _configure_can_use_tool(options)
     transport = _ClaudeProtocolTransport(
-        SubprocessCLITransport(prompt=empty_prompt(), options=transport_options)
+        _ClaudeCleanupTransport(prompt=empty_prompt(), options=transport_options)
     )
     return _ObservedClaudeSdkClient(options, transport)
+
+
+class _ClaudeCleanupTransport(SubprocessCLITransport):
+    """Keep exact process exit evidence when SDK 0.2.152 clears its handle.
+
+    The SDK can return from close without a confirmed exit. Its next close is then
+    a no-op, so only the retained process can establish cleanup on a later call.
+    One transport owns one process lifetime and cannot reconnect after cleanup.
+    """
+
+    def __init__(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+        options: ClaudeAgentOptions,
+    ) -> None:
+        super().__init__(prompt, options)
+        self._cleanup_process: Process | None = None
+        self._cleanup_started = False
+
+    async def connect(self) -> None:
+        if self._cleanup_started:
+            raise RuntimeError("a Claude transport cannot reconnect after cleanup")
+        await super().connect()
+
+    async def close(self) -> None:
+        self._cleanup_started = True
+        if self._cleanup_process is None:
+            self._cleanup_process = self._process
+        await super().close()
+        if self._cleanup_process is not None and self._cleanup_process.returncode is None:
+            raise RuntimeError("Claude process termination remains unconfirmed")
 
 
 @dataclass(slots=True)
@@ -619,6 +650,10 @@ class _ObservedClaudeSdkClient:
 
     async def disconnect(self) -> None:
         await self._client.disconnect()
+        # A failed connect can spawn a process before the SDK creates its query.
+        # SDK disconnect then drops its transport without closing it. Keep our
+        # independently owned transport responsible for exact process exit proof.
+        await self._transport.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -731,6 +766,8 @@ class ClaudeAgentSdkBackendChild:
         returns, so the conversation can resume from it whatever happens next. A resume
         names the session it wants and gets that one or nothing.
         """
+        if self._client is not None or self._reader is not None:
+            raise BackendSpawnFailed("the previous Claude child still owns cleanup handles")
         self._resolved_start = resolved_start
         minted_session_id = (
             None if vendor_session_cursor is not None else str(uuid.uuid4())
@@ -739,8 +776,10 @@ class ClaudeAgentSdkBackendChild:
             resolved_start, vendor_session_cursor, minted_session_id
         )
         client = self._client_factory(options)
-        await self._connect(client, resumed_from=vendor_session_cursor)
+        self._wire_broken = True
         self._client = client
+        await self._connect(client, resumed_from=vendor_session_cursor)
+        self._wire_broken = False
         self._session_id = vendor_session_cursor or minted_session_id
         # A session claude was asked to load has not proved itself yet; one it was asked to
         # create under our own id is bound to that id from the start.
@@ -1083,7 +1122,8 @@ class ClaudeAgentSdkBackendChild:
             raise UserInputAnswerWriteFailed(request_id) from never_given
 
     async def stop(self) -> None:
-        """Shut the child down: stop reading, settle its asks, close the client."""
+        """Close the exact child, retaining cleanup handles until each step succeeds."""
+        self._wire_broken = True
         turn = self._turn
         self._turn = None
         self._last_ended_turn = None
@@ -1091,18 +1131,24 @@ class ClaudeAgentSdkBackendChild:
             self._stop_waiting_for_steers(turn)
             self._settle_parked_asks(turn)
         reader = self._reader
-        self._reader = None
         if reader is not None:
-            reader.cancel()
-            with suppress(asyncio.CancelledError):
-                await reader
+            if not reader.cancelling():
+                reader.cancel()
+            try:
+                # Shield the reader's cancellation cleanup from a cancellation of
+                # this caller. A later stop can still join that exact reader.
+                await asyncio.shield(reader)
+            except asyncio.CancelledError:
+                caller = asyncio.current_task()
+                if caller is not None and caller.cancelling():
+                    raise
+                if not reader.cancelled():
+                    raise
+            self._reader = None
         client = self._client
-        self._client = None
         if client is not None:
-            # A client whose child has already gone makes closing it fail too, and a child
-            # being shut down has no use for the complaint.
-            with suppress(Exception):
-                await client.disconnect()
+            await client.disconnect()
+            self._client = None
 
     # --- starting -----------------------------------------------------------------------
 

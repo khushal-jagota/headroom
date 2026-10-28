@@ -15,10 +15,15 @@ lives in ``tests/support/conversation_claude_agent_sdk_bench.py``.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
-from claude_agent_sdk import CLINotFoundError, ResultMessage, TextBlock
+from anyio.abc import Process
+from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError, ResultMessage, TextBlock
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
     SESSION_ID,
@@ -30,6 +35,11 @@ from tests.support.conversation_claude_agent_sdk_bench import (
     _write,
 )
 
+from planner.conversation.backends.claude_agent_sdk import (
+    _ClaudeCleanupTransport,
+    _ClaudeProtocolTransport,
+    _ObservedClaudeSdkClient,
+)
 from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     NeedsRebind,
@@ -151,5 +161,210 @@ def test_unavailable_claude_start_preserves_adapter_failure_and_sends_no_prompt(
             assert sink.endings == []
         finally:
             await child.stop()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("abort", [False, True])
+def test_transport_retains_exact_process_until_exit_across_noop_cleanup(
+    monkeypatch: pytest.MonkeyPatch, abort: bool
+) -> None:
+    async def exercise() -> None:
+        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions())
+        process = SimpleNamespace(returncode=None)
+        transport._process = cast(Process, process)
+        calls = 0
+
+        async def sdk_close(self: SubprocessCLITransport) -> None:
+            nonlocal calls
+            calls += 1
+            self._process = None
+            if abort and calls == 1:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(SubprocessCLITransport, "close", sdk_close)
+        expected = asyncio.CancelledError if abort else RuntimeError
+        with pytest.raises(expected):
+            await transport.close()
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
+            await transport.close()
+        assert transport._cleanup_process is cast(Process, process)
+        with pytest.raises(RuntimeError, match="cannot reconnect"):
+            await transport.connect()
+        process.returncode = 0
+        await transport.close()
+        await transport.close()
+        assert transport._cleanup_process is cast(Process, process)
+        await _ClaudeCleanupTransport("", ClaudeAgentOptions()).close()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("disconnect failed"), asyncio.CancelledError()])
+def test_failed_disconnect_retains_client_and_fences_prompt_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        client = clients[0]
+        original_disconnect = client.disconnect
+
+        async def fail() -> None:
+            raise failure
+
+        monkeypatch.setattr(client, "disconnect", fail)
+        with pytest.raises(type(failure)):
+            await child.stop()
+        assert child._client is client
+        assert child._reader is None
+        with pytest.raises(NeedsRebind):
+            await _write(child, "must not reach provider")
+        with pytest.raises(BackendSpawnFailed, match="cleanup handles"):
+            await child.start(start, vendor_session_cursor=None)
+        assert len(clients) == 1
+        assert client.prompts == []
+        monkeypatch.setattr(client, "disconnect", original_disconnect)
+        await child.stop()
+        await child.stop()
+        assert child._client is None
+        assert client.disconnected
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("phase", ["reader", "disconnect"])
+def test_caller_cancellation_retains_cleanup_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        client = clients[0]
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        reader = child._reader
+        assert reader is not None
+        if phase == "reader":
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
+
+            async def delayed_reader() -> None:
+                try:
+                    await asyncio.Future[None]()
+                finally:
+                    entered.set()
+                    await release.wait()
+
+            reader = asyncio.create_task(delayed_reader())
+            child._reader = reader
+            await asyncio.sleep(0)
+        else:
+            original_disconnect = client.disconnect
+
+            async def delayed_disconnect() -> None:
+                entered.set()
+                await release.wait()
+                await original_disconnect()
+
+            monkeypatch.setattr(client, "disconnect", delayed_disconnect)
+        stopping = asyncio.create_task(child.stop())
+        await entered.wait()
+        stopping.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopping
+        assert child._client is client
+        if phase == "reader":
+            assert child._reader is reader
+        assert not client.disconnected
+        retry = asyncio.create_task(child.stop())
+        await asyncio.sleep(0)
+        assert not retry.done()
+        release.set()
+        await retry
+        assert child._reader is None
+        assert child._client is None
+
+    _run(exercise)
+
+
+def test_reader_cleanup_failure_retains_both_handles(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        original_reader = child._reader
+        assert original_reader is not None
+        original_reader.cancel()
+        await asyncio.gather(original_reader, return_exceptions=True)
+
+        async def failed_reader() -> None:
+            raise RuntimeError("reader cleanup failed")
+
+        reader = asyncio.create_task(failed_reader())
+        child._reader = reader
+        await asyncio.sleep(0)
+        with pytest.raises(RuntimeError, match="reader cleanup failed"):
+            await child.stop()
+        assert child._reader is reader
+        assert child._client is clients[0]
+        assert not clients[0].disconnected
+        with pytest.raises(RuntimeError, match="reader cleanup failed"):
+            await child.stop()
+        assert child._reader is reader
+        assert child._client is clients[0]
+        # Release this test's deliberate failed-reader fixture without masking the
+        # production obligation to retain it until cleanup can be established.
+        child._reader = None
+        await child.stop()
+
+    _run(exercise)
+
+
+
+def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The actual SDK drops a pre-query transport without closing its live process."""
+    async def exercise() -> None:
+        options = ClaudeAgentOptions()
+        transport = _ClaudeCleanupTransport("", options)
+        observed = _ObservedClaudeSdkClient(options, _ClaudeProtocolTransport(transport))
+        process = SimpleNamespace(returncode=None)
+        closes = 0
+
+        async def partial_connect(self: SubprocessCLITransport) -> None:
+            self._process = cast(Process, process)
+            raise RuntimeError("post-spawn pre-query failure")
+
+        async def sdk_close(self: SubprocessCLITransport) -> None:
+            nonlocal closes
+            closes += 1
+            self._process = None
+
+        monkeypatch.setattr(SubprocessCLITransport, "connect", partial_connect)
+        monkeypatch.setattr(SubprocessCLITransport, "close", sdk_close)
+        with pytest.raises(RuntimeError, match="post-spawn pre-query failure"):
+            await observed.connect()
+        assert observed._client._query is None
+        assert transport._process is cast(Process, process)
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
+            await observed.disconnect()
+        # The SDK now lost its handle. Its no-op disconnect still cannot establish
+        # exit for the exact process that our wrapper continues to own.
+        assert observed._client._transport is None
+        assert transport._cleanup_process is cast(Process, process)
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
+            await observed.disconnect()
+        assert closes == 2
+        process.returncode = 0
+        await observed.disconnect()
+        await observed.disconnect()
+        assert closes == 4
+        assert transport._cleanup_process is cast(Process, process)
 
     _run(exercise)

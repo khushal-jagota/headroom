@@ -475,6 +475,12 @@ class BackendChild(Protocol):
     async def stop(self) -> None:
         """Shut the child down for good: the janitor's idle sweep, or the server stopping.
 
+        Normal return confirms cleanup for this exact child. An exception or
+        cancellation leaves termination unconfirmed: retain its cleanup identity
+        and do not reuse its wire. Repeated calls must not infer success from a
+        handle that an earlier failed attempt cleared. Confirmed cleanup remains
+        idempotent.
+
         The session cursor is already stored, so a conversation whose child was stopped
         picks up again by resuming, with nothing said about it.
         """
