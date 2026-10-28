@@ -23,8 +23,8 @@ from planner.executor.contracts import (
     FileScope,
     IpcOperation,
     IpcRequest,
+    JournalPublication,
     JsonObject,
-    QueuedEnvelope,
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
@@ -247,16 +247,16 @@ def test_ipc_receives_acknowledgment_before_source_publication_returns(
 
         async def publish_and_ack(
             child: ChildReference,
-            work: Callable[[], Awaitable[QueuedEnvelope]],
+            work: Callable[[], Awaitable[JournalPublication]],
             *,
             new_work: bool,
-        ) -> QueuedEnvelope:
-            async def publish() -> QueuedEnvelope:
+        ) -> JournalPublication:
+            async def publish() -> JournalPublication:
                 nonlocal acknowledged
                 envelope = await work()
                 # Actual receipt validation and durable acknowledgment happen while
                 # source_work still owns publication and has not returned its row.
-                await mac._replay_envelope(envelope)
+                await mac._replay_envelope(envelope.envelope)
                 acknowledged = True
                 assert not mac.spool.has_pending()
                 return envelope
@@ -269,6 +269,9 @@ def test_ipc_receives_acknowledgment_before_source_publication_returns(
             assert acknowledged
             assert response.result == {"landed": True}
             assert response.error is None and response.queued is None
+            if request.request_id in mac._publications:
+                await mac._publications[request.request_id].task
+                await asyncio.sleep(0)  # Let the settled task release its receipt tracker.
             assert not mac._receipts
         finally:
             mac.spool.close()
@@ -293,11 +296,11 @@ def test_ipc_waiter_cleanup_preserves_durable_publication(
 
         async def controlled(
             child: ChildReference,
-            work: Callable[[], Awaitable[QueuedEnvelope]],
+            work: Callable[[], Awaitable[JournalPublication]],
             *,
             new_work: bool,
-        ) -> QueuedEnvelope:
-            async def publish() -> QueuedEnvelope:
+        ) -> JournalPublication:
+            async def publish() -> JournalPublication:
                 if outcome == "failure":
                     raise ValueError("publication refused")
                 if outcome == "publication_timeout":
@@ -318,10 +321,11 @@ def test_ipc_waiter_cleanup_preserves_durable_publication(
             if outcome.startswith("cancel"):
                 await entered.wait()
                 owned = mac._receipts[request.request_id]
+                publication = mac._publications[request.request_id]
                 task.cancel()
                 await asyncio.sleep(0)
                 if outcome == "cancel_publication":
-                    assert not task.done()
+                    assert not publication.task.done()
                     assert mac._receipts[request.request_id] is owned
                     assert mac.registry._source_work == {
                         ChildReference(
@@ -331,6 +335,8 @@ def test_ipc_waiter_cleanup_preserves_durable_publication(
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await task
+                await publication.task
+                await asyncio.sleep(0)
                 assert owned.cancelled()
             elif outcome == "publication_timeout":
                 with pytest.raises(TimeoutError, match="publication timed out"):
@@ -349,6 +355,8 @@ def test_ipc_waiter_cleanup_preserves_durable_publication(
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
+            if mac._publications:
+                await asyncio.gather(*(row.task for row in mac._publications.values()))
             mac.spool.close()
 
     asyncio.run(run())
@@ -361,6 +369,7 @@ def test_concurrent_duplicate_cannot_replace_original_receipt_waiter(
     changed_content: bool,
 ) -> None:
     async def run() -> None:
+        import time
         from dataclasses import replace
 
         mac, request = ipc_writer(tmp_path, monkeypatch)
@@ -369,15 +378,15 @@ def test_concurrent_duplicate_cannot_replace_original_receipt_waiter(
 
         async def controlled(
             child: ChildReference,
-            work: Callable[[], Awaitable[QueuedEnvelope]],
+            work: Callable[[], Awaitable[JournalPublication]],
             *,
             new_work: bool,
-        ) -> QueuedEnvelope:
-            async def publish() -> QueuedEnvelope:
+        ) -> JournalPublication:
+            async def publish() -> JournalPublication:
                 row = await work()
                 entered.set()
                 await release.wait()
-                await mac._replay_envelope(row)
+                await mac._replay_envelope(row.envelope)
                 return row
 
             return await source_work(child, publish, new_work=new_work)
@@ -392,15 +401,24 @@ def test_concurrent_duplicate_cannot_replace_original_receipt_waiter(
                 if changed_content
                 else request
             )
-            response = await mac.handle_ipc(duplicate)
-            assert response.result is None and response.error is None
-            assert response.queued is not None
-            assert response.queued.submission_id == request.request_id
+            response = await mac.handle_ipc(
+                replace(duplicate, response_deadline=time.monotonic() + 0.01)
+            )
+            assert response.result is None
+            if changed_content:
+                assert response.error is not None and response.error["code"] == "validation"
+            else:
+                assert response.error is None and response.unconfirmed is not None
+                assert response.unconfirmed.submission_id == request.request_id
+                assert response.unconfirmed.publication == "preparing"
             assert mac._receipts[request.request_id] is owned and not owned.done()
             assert len(mac.spool.pending()) == 1
             release.set()
             result = await asyncio.wait_for(original, 2)
             assert result.result == {"landed": True} and result.error is None
+            if request.request_id in mac._publications:
+                await mac._publications[request.request_id].task
+                await asyncio.sleep(0)  # Let the settled task release its receipt tracker.
             assert not mac._receipts and not mac.spool.has_pending()
         finally:
             release.set()

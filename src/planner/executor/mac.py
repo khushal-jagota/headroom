@@ -976,6 +976,8 @@ class MacExecutor:
             del self._publications[submission_id]
             if self._receipts.get(submission_id) is publication.receipt:
                 del self._receipts[submission_id]
+            if not publication.receipt.done():
+                publication.receipt.cancel()
 
     async def _observe_publication(
         self, request_id: str, submission_id: str, publication: _IpcPublication, deadline: float

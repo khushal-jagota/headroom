@@ -74,6 +74,9 @@ def test_retry_boundary_keeps_wait_and_propagates_cancellation(
     executor.paths = paths
     executor._stop = asyncio.Event()
     executor.spool = MagicMock()
+    executor.registry = MagicMock()
+    executor._publications = {}
+    executor._ipc_lookups = set()
     errors: list[BaseException] = [ValueError("secret") for _ in range(10)]
     errors.append(asyncio.CancelledError())
     lines: list[str] = []
