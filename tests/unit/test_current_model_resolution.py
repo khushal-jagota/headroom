@@ -2179,7 +2179,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
         identity_preserving_launch_token="fable",
     )
     source = ScopedCatalogue(observation((alias,), launch=launch, stamp=stamp))
-    service, _, path = setup(tmp_path, source)
+    service, catalogue_store, path = setup(tmp_path, source)
     service._now = time.time
     harness = _Harness(path)
     harness.clock.now = float(stamp)
@@ -2219,8 +2219,15 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
             source.value = replace(
                 source.value,
                 rows=(concrete,),
-                evidence=replace(source.value.evidence, observation_revision="2"),
+                evidence=replace(
+                    source.value.evidence,
+                    observation_id="explicit-concrete-receipt",
+                    observation_revision="2",
+                ),
             )
+            # An explicit scoped metadata receipt changes the visible catalog. Merely
+            # changing the observer cannot invalidate fresh immutable cached evidence.
+            catalogue_store.keep_observation(source.value)
             body = OwnerSendBody(
                 content=[SentTextPiece(piece="text", text="Explicit concrete choice")],
                 model="fable",
