@@ -31,8 +31,7 @@ extension APIClient {
         return ReviewMessageEvent.unread(response.events, after: after)
     }
     func markReviewRead(_ id: String, through: Int) async throws {
-        struct Body: Encodable { let throughSequence: Int }
-        _ = try await reviewWrite("/api/conversation/conversations/\(id)/owner-read", body: Body(throughSequence: through))
+        _ = try await markConversationRead(id, through: through)
     }
     func currentConversation(_ owner: ConversationOwner) async throws -> String? {
         switch owner {

@@ -35,7 +35,7 @@ describe('application presentation and command evidence',()=>{
       const restored=presentationFor(knowledge.accept({...publication,records:publication.records.map(row=>
         row.kind==='ticket'?{...pending,value:{...pending.value,is_backlogged:false}}:row),
         view:{...publication.view,contentVersion:'two',counts:{...publication.view.counts,review:1}}}));
-      expect(restored.review.items.map(item=>item.review_item_type==='proposal' ? item.ticket_id : item.conversation_id)).toEqual(['a']);
+      expect(restored.review.items.map(item=>item.review_item_type==='ticket' ? item.ticket_id : item.conversation_id)).toEqual(['a']);
       expect(restored.ticketsById.get('a')?.is_backlogged).toBe(false);
     } finally {collection.destroy();}
   });
@@ -131,6 +131,9 @@ describe('application presentation and command evidence',()=>{
       expect(workspaceRailImpact(historyImpact,unreadBacklogged,backloggedRail,true)).toBe(false);
       expect(runtimeCountImpact(titleImpact,first)).toBe(false);
       expect(reviewBadgeImpact(titleImpact)).toBe(false);
+      expect(reviewBadgeImpact({kind:'ticket',id:'a',fields:['is_backlogged']})).toBe(true);
+      expect(reviewBadgeImpact({kind:'ticket',id:'a',fields:['stage']})).toBe(true);
+      expect(reviewBadgeImpact({kind:'manager',id:'parent',fields:['settled']})).toBe(true);
     } finally {collection.destroy();}
   });
 
@@ -279,16 +282,32 @@ describe('mixed review presentation',()=>{
       const initial=collection.getPublication()!;
       const items=presentationFor(knowledge.accept(initial)).review.items;
       expect(items).toMatchObject([
-        {review_item_type:'message',conversation_id:'a-conversation',waiting_since:1,owner_id:'a',recap:'Worker recap'},
+        {review_item_type:'ticket',ticket_id:'a',waiting_since:1,proposal:{waiting_since:2},messages:[{conversation_id:'a-conversation',owner_id:'a',recap:'Worker recap'}]},
         {review_item_type:'message',conversation_id:'historical',waiting_since:2,owner_id:'parent',title:'Parent'},
-        {review_item_type:'proposal',ticket_id:'a',waiting_since:2},
       ]);
       const replaced=presentationFor(knowledge.accept({...initial,records:source.filter(row=>row.id!=='current-manager')}));
-      expect(replaced.review.items[1]).toMatchObject({review_item_type:'message',conversation_id:'historical',owner_id:'a',title:'A',recap:'Worker recap'});
+      expect(replaced.review.items).toHaveLength(1);
+      expect(replaced.review.items[0]).toMatchObject({review_item_type:'ticket',ticket_id:'a',messages:[{conversation_id:'a-conversation'},{conversation_id:'historical',owner_id:'a',title:'A',recap:'Worker recap'}]});
+      const settled=source.map(row=>row.kind==='manager' ? {...row,value:{...row.value,settled:true}} : row);
+      const liveChild=presentationFor(knowledge.accept({...initial,records:settled}));
+      expect(liveChild.review.items).toHaveLength(1);
+      expect(liveChild.review.items[0]).toMatchObject({ticket_id:'a',messages:[{conversation_id:'a-conversation'}]});
+      // The settled canonical Manager must not fall back to the historical Ticket.
+      expect(liveChild.messages.some(message=>message.conversationId==='historical')).toBe(true);
+      const backlogged=settled.map(row=>row.kind==='ticket' ? {...row,value:{...row.value,is_backlogged:true}} : row);
+      const excluded=presentationFor(knowledge.accept({...initial,records:backlogged}));
+      expect(excluded.review.items).toEqual([]);
+      expect(excluded.messages.map(message=>message.conversationId)).toContain('a-conversation');
+      const done=settled.map(row=>row.kind==='ticket' ? {...row,value:{...row.value,stage:'done',ticket_status:'empty' as const}} : row);
+      expect(presentationFor(knowledge.accept({...initial,records:done})).review.items).toEqual([]);
+      const messageOnly=settled.map(row=>row.kind==='ticket' ? {...row,value:{...row.value,ticket_status:'empty' as const,proposal_field:null,proposal_created_at:null}} : row);
+      expect(presentationFor(knowledge.accept({...initial,records:messageOnly})).review.items).toMatchObject([{review_item_type:'ticket',ticket_id:'a',proposal:null,messages:[{conversation_id:'a-conversation'}]}]);
+      knowledge.accept({...initial,records:source.filter(row=>row.id!=='current-manager')});
       const lost=knowledge.loseRuntime()!;
-      expect(presentationFor(lost).review.items).toHaveLength(3);
+      expect(presentationFor(lost).review.items).toHaveLength(1);
       const invalid=knowledge.invalidateDurableFact('historical','message_for_owner',5)!;
-      expect(presentationFor(invalid).review.items).toHaveLength(2);
+      expect(presentationFor(invalid).review.items).toHaveLength(1);
+      expect(presentationFor(invalid).review.items[0]).toMatchObject({messages:[{conversation_id:"a-conversation"}]});
     } finally {collection.destroy();}
   });
 });

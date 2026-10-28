@@ -5,6 +5,7 @@ struct ReviewMessageView: View {
     let item: ReviewItem
     let onSkip: () -> Void
     let onResolved: () -> Void
+    @Binding var selectionLocked: Bool
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -94,6 +95,8 @@ struct ReviewMessageView: View {
             if state == .failed || state == .changed || state == .uncertain { sendingPresentation = false }
         }
         .onChange(of: decision.accepted) { _, accepted in if accepted { finishReply() } }
+        .onChange(of: decision.pending || decision.busy || capturing || leaving, initial: true) { _, locked in selectionLocked = locked }
+        .onDisappear { selectionLocked = false }
     }
     @ToolbarContentBuilder private var skipToolbar: some ToolbarContent {
         if #available(iOS 26.0, *) {

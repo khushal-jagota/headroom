@@ -133,7 +133,13 @@ struct ConversationDelivery: Decodable, Sendable {
         }
     }
 }
+struct ConversationReadBoundary: Equatable, Sendable {
+    let conversationID: String
+    let throughSequence: Int
+}
+
 protocol ConversationServing: Sendable {
+    func markConversationRead(_ id: String, through: Int) async throws -> Int
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot
     func conversationLiveText(_ id: String, reference: ConversationBodyReference) async throws -> String
     func conversationReceipts(_ id: String, messageIDs: [String]) async throws -> [ConversationReceipt]

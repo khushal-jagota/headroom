@@ -11,6 +11,8 @@
    * yet is designed — thumbnails, a lightbox — and that is its own piece of work rather
    * than something to guess at here.
    */
+  import { getContext } from 'svelte';
+  import { conversationTextPresentations, TextPresentationRegistry } from '../../lib/conversation/view/textPresentation';
   import MarkdownBlock from "../MarkdownBlock.svelte";
   import VisibleMessageImage from "./VisibleMessageImage.svelte";
   import ConversationFileCard from "./ConversationFileCard.svelte";
@@ -23,18 +25,21 @@
 
   let {
     content,
-    conversationId
+    conversationId,
+    presentationRowKey = null
   }: {
+    presentationRowKey?: string | null;
     content: readonly (MessagePiece | SentMessagePiece)[];
     /** Which conversation's files these pieces name. A file is fetched under the
      *  conversation that kept it, so a piece can never reach another one's. */
     conversationId: string;
   } = $props();
+  const presentations = getContext<TextPresentationRegistry | undefined>(conversationTextPresentations);
 </script>
 
 {#each content as piece, at (at)}
   {#if piece.piece === "text"}
-    <MarkdownBlock text={piece.text} />
+    <MarkdownBlock text={piece.text} registerPresentation={presentationRowKey !== null && presentations ? (host, presentation) => presentations.register(presentationRowKey!, at, host, presentation) : undefined} />
   {:else if piece.piece === "image"}
     <VisibleMessageImage
       outgoing={"data" in piece}

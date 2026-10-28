@@ -22,6 +22,7 @@ from planner.conversation.retention.policy import (
     SUPPORTED_SCHEMA_REVISIONS,
     SUPPORTED_VIEW_TABLES,
 )
+from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
 
 
 def _quoted(identifier: str) -> str:
@@ -95,7 +96,8 @@ def build_report(
     if (
         view_tables != SUPPORTED_VIEW_TABLES
         or connection.execute(
-            "SELECT 1 FROM conversation_view_state WHERE projection_version != 1 LIMIT 1"
+            "SELECT 1 FROM conversation_view_state WHERE projection_version != ? LIMIT 1",
+            (VIEW_PROJECTION_VERSION,),
         ).fetchone()
     ):
         raise ValueError("Unsupported conversation projection schema")

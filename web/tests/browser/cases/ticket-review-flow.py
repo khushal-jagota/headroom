@@ -162,6 +162,10 @@ def run(browser, urls):
     session_revised = False
     review_messages = []
     review_read = 0
+    review_sibling_messages = []
+    review_sibling_read = 0
+    review_sibling_held = []
+    review_sibling_transferred = False
     review_message_sends = []
     review_held = []
     review_send_fate = "refused"
@@ -284,6 +288,7 @@ def run(browser, urls):
         parent = {
             "id": "outcome_kept",
             "title": "Kept outcome",
+            "settled": review_sibling_transferred,
             "created_at": 1,
             "project_id": parent_project["id"],
             "project": parent_project["name"],
@@ -334,6 +339,22 @@ def run(browser, urls):
                 retained_conversation = json.loads(json.dumps(record))
         if source_deleted and retained_conversation is not None:
             response["snapshot"]["records"].append(retained_conversation)
+        if review_sibling_messages:
+            sibling = json.loads(json.dumps(retained_conversation))
+            sibling["id"] = "review-sibling"
+            unread = [event for event in review_sibling_messages if event["sequence"] > review_sibling_read]
+            sibling["value"].update(first_unread_owner_message_at=unread[0]["created_at"] if unread else None,
+                                     owner_read_through_sequence=review_sibling_read,
+                                     latest_sequence=review_sibling_messages[-1]["sequence"])
+            sibling["value"]["attention"]["durable"]["message_for_owner"] = bool(unread)
+            sibling["value"]["attention"]["current"]["signal"]["message_for_owner"] = bool(unread)
+            response["snapshot"]["records"].extend([sibling, {"kind":"address", "id":"review-sibling-address", "value":{
+                "owner_kind":"ticket", "owner_id":"t_review", "conversation_id":"review-sibling", "current":False,
+                "parent_kind":"manager", "parent_id":"outcome_kept"}}])
+        if review_sibling_transferred:
+            response["snapshot"]["records"].append({"kind":"address", "id":"review-manager-address", "value":{
+                "owner_kind":"manager", "owner_id":"outcome_kept", "conversation_id":"review-sibling", "current":True,
+                "parent_kind":None,"parent_id":None}})
         authored = json.dumps(response["snapshot"]["records"], sort_keys=True)
         if force_publication or authored != last_records:
             source_revision += 1
@@ -358,7 +379,7 @@ def run(browser, urls):
         route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 
     def respond(route):
-        nonlocal navigation_proposal, session_revised, fail_field_save, review_read
+        nonlocal navigation_proposal, session_revised, fail_field_save, review_read, review_sibling_read
         path = route.request.url.split("/api/", 1)[1]
         requests.append(path)
         if path.startswith("resource-body?"):
@@ -368,31 +389,46 @@ def run(browser, urls):
             path = path.removesuffix("/workspace")
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if review_message_mode and path.startswith("conversation/conversations/review-message"):
+        if review_message_mode and (path.startswith("conversation/conversations/review-message") or path.startswith("conversation/conversations/review-sibling")):
+            sibling = path.startswith("conversation/conversations/review-sibling")
+            conversation_id = "review-sibling" if sibling else "review-message"
+            events = review_sibling_messages if sibling else review_messages
+            boundary = review_sibling_read if sibling else review_read
+            held = review_sibling_held if sibling else review_held
             if "/events?" in path:
                 after = int(parse_qs(path.split("?", 1)[1])["after"][0])
-                result = {"events": [event for event in review_messages if event["sequence"] > after]}
+                result = {"events": [event for event in events if event["sequence"] > after]}
             elif path.endswith("/owner-read"):
-                review_read = route.request.post_data_json["through_sequence"]
-                ticket["conversation_signal"]["message_for_owner"] = any(event["sequence"] > review_read for event in review_messages)
-                result = {"owner_read_through_sequence": review_read}
+                boundary = route.request.post_data_json["through_sequence"]
+                if sibling:
+                    review_sibling_read = boundary
+                else:
+                    review_read = boundary
+                    ticket["conversation_signal"]["message_for_owner"] = any(event["sequence"] > review_read for event in review_messages)
+                result = {"owner_read_through_sequence": boundary}
             elif "/view/receipts?" in path:
-                result = {"conversation_id": "review-message", "receipts": []}
+                result = {"conversation_id": conversation_id, "receipts": []}
             else:
-                result = {"conversation_id": "review-message", "latest_sequence": review_messages[-1]["sequence"],
-                          "owner_read_through_sequence": review_read, "held_prompts": review_held}
+                result = {"conversation_id": conversation_id, "latest_sequence": events[-1]["sequence"],
+                          "owner_read_through_sequence": boundary, "held_prompts": held}
         elif review_message_mode and path == "tickets/t_review/conversation/send":
-            review_message_sends.append(route.request.post_data_json)
+            payload = route.request.post_data_json
+            review_message_sends.append(payload)
+            conversation_id = payload["conversation_id"]
+            sibling = conversation_id == "review-sibling"
             if review_send_fate == "refused":
-                result = {"conversation_id": "review-message", "fate": "refused", "refusal_reason": "backend_did_not_start"}
+                result = {"conversation_id": conversation_id, "fate": "refused", "refusal_reason": "backend_did_not_start"}
             else:
-                review_read = route.request.post_data_json["owner_read_through_sequence"]
-                ticket["conversation_signal"]["message_for_owner"] = any(event["sequence"] > review_read for event in review_messages)
+                if sibling:
+                    review_sibling_read = payload["owner_read_through_sequence"]
+                else:
+                    review_read = payload["owner_read_through_sequence"]
+                    ticket["conversation_signal"]["message_for_owner"] = any(event["sequence"] > review_read for event in review_messages)
                 if review_send_fate == "lost-queued":
-                    review_held.append({"sender_message_id": route.request.post_data_json["sender_message_id"]})
+                    (review_sibling_held if sibling else review_held).append({"sender_message_id": payload["sender_message_id"]})
                     route.abort("connectionreset")
                     return
-                result = {"conversation_id": "review-message", "fate": review_send_fate}
+                result = {"conversation_id": conversation_id, "fate": review_send_fate}
         elif path.split("?")[0] == "test/navigation-publication":
             assert route.request.method == "POST"
             result = review_snapshot(force_publication=True)
@@ -1049,7 +1085,7 @@ def run(browser, urls):
     page.wait_for_function(
         "() => [...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))"
     )
-    composer.click()
+    page.locator("[data-conversation-expand]").click()
     page.locator(".chat-overflow > .chat-overflow-btn").click()
     page.locator("[data-conversation-new-arm]").click()
     page.locator("[data-conversation-new-confirm]").click()
@@ -1068,6 +1104,7 @@ def run(browser, urls):
     proposal = page.locator(
         '[data-approval-block][data-field="success_condition"] [contenteditable]'
     )
+    page.locator("[data-conversation-collapse]").click()
     proposal.click()
     proposal.fill("Edited pending result")
     proposal.press("Tab")
@@ -1113,6 +1150,7 @@ def run(browser, urls):
     expect(saved).to_have_text("Draft survives a closed stage")
     page.evaluate("window.__showTicket('t_personal')")
     page.locator('[data-ticket-id="t_personal"]').wait_for()
+    page.locator("[data-conversation-collapse]").click()
     personal_outcome = page.locator(
         '[data-worker-live-card] [data-field="outcome"] [contenteditable]'
     )
@@ -1226,7 +1264,7 @@ def run(browser, urls):
     assert approvals[0]["next_holder"] == {"kind": "chief", "id": "chief"}
     assert approvals[0]["expected_proposal_revision"] == 2
     expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
-    remaining = page.locator('[data-review-card][data-ticket-id="t_personal_pending"]')
+    remaining = page.locator('[data-review-ticket-card][data-ticket-id="t_personal_pending"]')
     expect(remaining).to_have_count(1)
     remaining.locator("[data-skip]").click()
     expect(page.locator("[data-review-card]")).to_have_count(0)
@@ -1349,6 +1387,7 @@ def run(browser, urls):
     page.get_by_role("button", name="Conversation options").click()
     expect(page.locator("[data-conversation-history]")).to_have_count(0)
     page.keyboard.press("Escape")
+    page.locator("[data-conversation-collapse]").click()
     page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
     page.locator('[data-stage-fold] [data-field="brief"]').evaluate(
         "(element) => element.open = true"
@@ -1411,9 +1450,20 @@ def run(browser, urls):
     expect(viewer).to_have_attribute("aria-label", "image.svg")
     expect(viewer.locator("img")).to_be_visible()
     viewer.get_by_role("button", name="Close", exact=True).click()
-    saved_artifacts.get_by_role("link", name="Open plan.md", exact=True).click()
+    # The artifact takes the focus when it opens and hands it back to the pressed link
+    # when it closes, so the keyboard is where the reading is and then where it was.
+    # This is the link that can prove it, deliberately: a field body is a contenteditable,
+    # and Chromium focuses the editable host rather than an anchor inside it, so a press
+    # on a raw Markdown link in a field leaves the field holding the focus. This link
+    # lives in the mounted preview slot, which is contenteditable="false", so it is a real
+    # focusable anchor. Do not move this proof back onto one of the raw links.
+    open_link = saved_artifacts.get_by_role("link", name="Open plan.md", exact=True)
+    open_link.click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
+    expect(viewer).to_be_focused()
     viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    expect(open_link).to_be_focused()
     saved_artifacts.get_by_role("link", name="Explicit receipt", exact=True).click()
     expect(viewer).to_have_attribute("aria-label", "receipt.json")
     expect(viewer.get_by_role("link", name="Download receipt.json", exact=True)).to_have_attribute(
@@ -1421,8 +1471,6 @@ def run(browser, urls):
     )
     viewer.get_by_role("button", name="Close", exact=True).click()
     if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
-        page.locator("[data-conversation-input]").click()
-    if page.locator('[data-conversation-pane][data-conversation-state="peeked"]').count():
         page.locator("[data-conversation-expand]").click()
     expect(page.locator("[data-conversation-pane]")).to_have_attribute(
         "data-conversation-state", "opened"
@@ -1433,8 +1481,72 @@ def run(browser, urls):
         "src", "/files/managers/si_artifacts/artifacts/plan.wav"
     )
     expect(page.locator("[data-conversation-pane]")).to_have_attribute(
-        "data-conversation-state", "peeked"
+        "data-conversation-state", "rest"
     )
+    assert page.url == original_url
+
+    # The document underneath keeps the place the reader left it, and Close gives it back.
+    # Measure only after the conversation's dock has settled: the dock reserves part of
+    # the screen, what it finally reserves is what the document has left to scroll in, and
+    # a reader that connects later changes the dock's height, which clamps the document's
+    # scroll position out from under the measurement.
+    page.set_viewport_size({"width": 1280, "height": 560})
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    conversation_pane = page.locator("[data-conversation-pane]")
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    expect(page.locator("[data-conversation-rest-bar]")).to_be_visible()
+    document_box = page.locator(".ticket-doc")
+    reading_range = document_box.evaluate(
+        "(element) => element.scrollHeight - element.clientHeight"
+    )
+    assert reading_range > 0, reading_range
+    # Set the reading position outright and dispatch the press rather than clicking it:
+    # the driver scrolls an element into view before a real click, which would move the
+    # very position being measured. The real click is proved above.
+    kept_scroll = document_box.evaluate(
+        "(element) => { element.scrollTop = Math.round("
+        "(element.scrollHeight - element.clientHeight) / 2); return element.scrollTop; }"
+    )
+    assert kept_scroll > 0, (reading_range, kept_scroll)
+    html_link.dispatch_event("click")
+    expect(viewer).to_have_attribute("aria-label", "plan.html")
+    under = document_box.evaluate("(element) => element.scrollTop")
+    assert abs(under - kept_scroll) <= 1, (kept_scroll, under)
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    given_back = document_box.evaluate("(element) => element.scrollTop")
+    assert abs(given_back - kept_scroll) <= 1, (kept_scroll, under, given_back)
+
+    # Escape belongs to whatever is on top, and on this screen that is a deliberate
+    # change: the Ticket used to close the artifact from behind an open conversation, and
+    # now it defers to the conversation covering it.
+    html_link.click()
+    expect(viewer).to_have_count(1)
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    html_link.click()
+    expect(viewer).to_have_count(1)
+    page.locator("[data-conversation-rest-bar]").click()
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "opened")
+    page.keyboard.press("Escape")
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    expect(viewer).to_have_count(1)
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+
+    # The one-document address still works on its own, which is the way in from a
+    # notification or a shared link, where there is no pane to draw the file over.
+    page.evaluate(
+        "window.__showPreview"
+        "('#/preview?source=ticket&ticket=t_artifacts&path=artifacts%2Fplan.md')"
+    )
+    expect(
+        page.locator("[data-file-preview-route]").get_by_role("heading", name="Markdown plan")
+    ).to_be_visible()
+    page.evaluate("history.replaceState(null, '', location.pathname)")
+    page.set_viewport_size({"width": 1280, "height": 900})
     assert page.url == original_url
     print(f"Artifact link browser coverage: {time.monotonic() - artifact_started:.2f}s", flush=True)
     # Reuse this host for the new browser boundary: the complete unread run, a draft
@@ -1455,7 +1567,7 @@ def run(browser, urls):
     page.evaluate("window.__showTicket('t_review')")
     page.evaluate("window.__refresh()")
     page.evaluate("window.__showReview()")
-    message_card = page.locator('[data-review-item-type="message"]')
+    message_card = page.locator('[data-review-item-type="message"][data-conversation-id="review-message"]')
     expect(message_card.locator('[data-review-message-sequence]')).to_have_count(121)
     expect(message_card.locator('[data-review-message-sequence="121"]')).to_contain_text("Unread message 121")
     message_card.locator('[data-review-message-sequence="121"]').scroll_into_view_if_needed()
@@ -1471,12 +1583,30 @@ def run(browser, urls):
     expect(message_card.locator('.review-attachment')).to_contain_text("notes.txt")
     expect(message_card.locator('[data-review-attach]')).to_be_enabled()
     expect(message_card.locator('[data-voice-record]')).to_have_count(1)
-    message_card.locator('[data-skip]').click()
-    expect(page.locator('[data-review-item-type="proposal"]')).to_be_visible()
+    # One Ticket supplies one header and one queue stop for both constituents.
+    combined = page.locator('[data-review-ticket-card][data-ticket-id="t_review"]')
+    expect(combined.locator('.review-ticket-title')).to_have_count(1)
+    expect(combined.locator('[data-review-item-type="proposal"]')).to_be_visible()
+    page.locator('body').click(position={"x": 1, "y": 1})
+    page.keyboard.press('s')
+    expect(combined).to_have_count(0)
+    expect(page.locator('[data-review-empty]')).to_be_visible()
     page.evaluate("window.__showTicket('t_review')")
     page.evaluate("window.__showReview()")
     expect(reply).to_have_value("Keep these words")
     expect(message_card.locator('.review-attachment')).to_contain_text("notes.txt")
+    server_revision = 1
+    combined.locator('[data-accept]').click()
+    combined.locator('[data-ceiling-picker-choice="done"]').click()
+    combined.locator('[data-ceiling-picker-choice="chief"]').click()
+    expect(combined.locator('[data-review-item-type="proposal"]')).to_have_count(0)
+    expect(message_card.locator('[data-review-message-sequence]')).to_have_count(121)
+    expect(reply).to_have_value("Keep these words")
+    assert approvals[-1]["expected_proposal_revision"] == 1
+    assert review_read == 0
+    ticket.update(ticket_status="awaiting_approval", pending_proposal={"field":"success_condition","body":"A separate decision","created_at":500,"revision":1})
+    page.evaluate("window.__refresh()")
+    expect(combined.locator('[data-review-item-type="proposal"]')).to_be_visible()
     message_card.locator('[data-review-send]').click()
     expect(message_card.locator('.error-line')).to_be_visible()
     expect(reply).to_have_value("Keep these words")
@@ -1536,6 +1666,19 @@ def run(browser, urls):
                             owner_message(124, "The revised plan keeps the original scope.")])
     page.evaluate("window.__refresh()")
     expect(message_card.locator('[data-review-message-sequence]')).to_have_count(2)
+    # Admit a second conversation after the first card already owns its held run.
+    review_sibling_messages[:] = [{**owner_message(i, f"Historical message {i}"), "conversation_id":"review-sibling", "created_at":1000+i} for i in (1, 2)]
+    page.evaluate("window.__refresh()")
+    sibling_card = page.locator('[data-review-item-type="message"][data-conversation-id="review-sibling"]')
+    expect(sibling_card.locator('[data-review-message-sequence]')).to_have_count(2)
+    sibling_reply = sibling_card.locator('[data-review-reply]')
+    sibling_reply.fill("Keep the new conversation draft.")
+    message_card.locator('[data-review-mark-read]').click()
+    expect(message_card).to_have_count(0)
+    assert review_read == 124
+    expect(sibling_reply).to_have_value("Keep the new conversation draft.")
+    message_card = sibling_card
+    reply = sibling_reply
     reply.fill("Keep the scope and the attachment.")
     message_card.locator('input[type="file"]').set_input_files({"name": "scope.txt", "mimeType": "text/plain", "buffer": b"Keep scope"})
     expect(message_card.locator('.review-attachment')).to_contain_text("scope.txt")
@@ -1551,7 +1694,20 @@ def run(browser, urls):
     expect(message_card).to_have_count(0)
     expect(page.locator('[data-review-empty]')).to_be_visible()
     assert review_read == 124
+    assert review_sibling_read == 2
+    assert review_message_sends[-1]["conversation_id"] == "review-sibling"
     assert len(review_message_sends) == sent_count
+    # A retained Ticket message must leave Review when its canonical address moves
+    # to a settled Manager, even though the former Ticket remains live.
+    review_sibling_messages.append({**owner_message(3,"A message before transfer"),"conversation_id":"review-sibling","created_at":1003})
+    page.evaluate("window.__refresh()")
+    expect(sibling_card).to_be_visible()
+    sibling_reply.fill("A draft before transfer")
+    review_sibling_transferred = True
+    page.evaluate("window.__refresh()")
+    expect(sibling_card).to_have_count(0)
+    expect(page.locator('[data-review-ticket-card]')).to_have_count(0)
+    expect(page.locator('[data-review-empty]')).to_be_visible()
     page.evaluate("window.__showConfig()")
     stage_table = page.locator("[data-worker-stage-table]")
     stage_table.locator("[data-worker-stage-row]").first.wait_for()
@@ -1560,5 +1716,7 @@ def run(browser, urls):
     assert stage_table.locator("[data-stage-owner-select]").count() == editable_rows
     assert stage_table.locator("select").count() == editable_rows
     assert stage_table.locator("input, [contenteditable]").count() == 0
-    page.unroute_all(behavior="wait")
+    # Scope changes can leave a live snapshot handler during teardown. All UI
+    # assertions are complete; close the fixture without waiting for live requests.
+    page.unroute_all(behavior="ignoreErrors")
     page.close()

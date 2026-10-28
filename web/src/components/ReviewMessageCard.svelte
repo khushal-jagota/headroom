@@ -26,8 +26,8 @@
   import SkeletonRegion from './SkeletonRegion.svelte';
   import ErrorLine from './ErrorLine.svelte';
 
-  let { item, onSkip, onResolved, onRendered, onBusy, footer }: {
-    item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
+  let { item, onSkip, onResolved, onRendered, onBusy, footer, embedded=false }: {
+    embedded?:boolean; item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
     onRendered?:()=>void; onBusy?:(busy:boolean)=>void; footer?:Snippet;
   } = $props();
   const navigation = navigationApplication()!;
@@ -92,7 +92,7 @@
       ready=true;
       await load();
     })().catch(problem=>{error=problem;});
-    return ()=>{destroyed=true;voice?.dispose();releasePendingImages(images);};
+    return ()=>{destroyed=true;voice?.dispose();releasePendingImages(images);onBusy?.(false);};
   });
 
   async function attach(chosen:FileList|null):Promise<void> {
@@ -170,6 +170,7 @@
 </script>
 
 <div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
+  {#if !embedded}
   <div class="review-ticket-decision-line">
     <button data-skip disabled={busy || intakeBusy || voiceState.phase!=='idle'} onclick={onSkip}>Skip &rsaquo;</button>
     <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation &rsaquo;</a>
@@ -177,6 +178,8 @@
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
+  {/if}
+  {#if embedded}<div class="review-ticket-decision-line"><a data-open-conversation href={reviewMessageHref(item)}>Open conversation &rsaquo;</a></div>{/if}
   <SkeletonRegion shape="block" loading={!loaded && !error} loadingText="Loading messages...">
     {#if loaded}
       <div class="review-message-card">

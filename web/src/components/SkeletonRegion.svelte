@@ -15,10 +15,13 @@
   let mounted = $state(false);
   let visible = $state(false);
   let announced = $state(false);
+  let fading = $state(false);
   let wait = $state(0);
   let timers: ReturnType<typeof setTimeout>[] = [];
   let height = $state(0);
-  const regionHeight = $derived(height || reservation[shape]);
+  // The frame shape reserves its box in CSS, so it has no reservation to read here.
+  const reserved = $derived(shape === "frame" ? null : reservation[shape]);
+  const regionHeight = $derived(height || reserved || 0);
   const rows = $derived(Math.ceil((regionHeight + rowHeight - 39) / rowHeight));
   const blocks = $derived(Math.max(1, Math.ceil((regionHeight + 60 - documentHeadHeight) / documentBlockStep)));
   const turns = $derived.by(() => {
@@ -37,22 +40,40 @@
     timers = [];
   }
 
+  // The mounted region owns the effective token, including inherited overrides.
+  function duration(name: string): number {
+    const token = getComputedStyle(region).getPropertyValue(name).trim();
+    return Math.max(0, parseFloat(token) || 0) * (token.endsWith("ms") ? 1 : 1000);
+  }
+
   $effect.pre(() => {
     const pending = loading;
     if (!mounted) return;
     untrack(() => {
       cancelTimers();
       announced = false;
-      visible = false;
       if (pending) {
+        fading = false;
+        visible = false;
         const currentWait = ++wait;
-        // The mounted region owns the effective token, including inherited overrides.
-        const token = getComputedStyle(region).getPropertyValue("--skeleton-delay").trim();
-        const delay = Math.max(0, parseFloat(token) || 0) * (token.endsWith("ms") ? 1 : 1000);
+        const delay = duration("--skeleton-delay");
         timers = [
           setTimeout(() => { if (wait === currentWait && loading) announced = true; }, delay * announcementDelayRatio),
           setTimeout(() => { if (wait === currentWait && loading) visible = true; }, delay)
         ];
+      } else if (shape === "frame" && visible) {
+        // Both layers exist for one crossfade, so the drawn skeleton leaves over the
+        // revealed frame rather than at the instant it arrives.
+        fading = true;
+        const currentWait = wait;
+        timers = [setTimeout(() => {
+          if (wait !== currentWait || loading) return;
+          visible = false;
+          fading = false;
+        }, duration("--skeleton-fade"))];
+      } else {
+        visible = false;
+        fading = false;
       }
     });
   });
@@ -74,7 +95,22 @@
 <span class="skeleton-status" role="status">{loading && announced ? loadingText : ""}</span>
 <svelte:element this={shape === "inline" ? "span" : "div"} bind:this={region} class="resource skeleton-region" class:skeleton-region--fill={layout === "fill"}
   class:skeleton-region--inline={shape === "inline"} data-active={loading || undefined}
-  data-shape={shape} aria-busy={loading} style:--skeleton-reservation={`${reservation[shape]}px`}>
+  data-shape={shape} aria-busy={loading} style:--skeleton-reservation={reserved === null ? undefined : `${reserved}px`}>
+  {#if shape === "frame"}
+  <!-- The frame layer stays mounted through the wait, so the artifact can draw behind the
+       skeleton and report that it painted. -->
+  <div class="skeleton-content resource-state">{@render children?.()}</div>
+  {#if visible}
+    <div class="resource-state skeleton skeleton--frame" class:skeleton--leaving={fading} aria-hidden="true">
+      <div class="skeleton-frame">
+        <div class="skeleton-document-eyebrow"><span class="skeleton-row skeleton-row--eyebrow"><span class="skeleton-line skeleton-line--xs" style="width:130px"></span></span></div>
+        <div class="skeleton-document-title"><span class="skeleton-row skeleton-row--title"><span class="skeleton-line skeleton-line--title" style="width:74%"></span></span></div>
+        <div class="skeleton-document-meta"><span class="skeleton-row skeleton-row--ui"><span class="skeleton-line" style="width:210px"></span></span></div>
+        <div class="skeleton-block skeleton-frame-block"></div>
+      </div>
+    </div>
+  {/if}
+  {:else}
   {#key wait}
   {#if loading && visible}
     <svelte:element this={shape === "inline" ? "span" : "div"} class="resource-state skeleton" class:skeleton--up={shape === "conversation"}
@@ -112,4 +148,5 @@
     </svelte:element>
   {/if}
   {/key}
+  {/if}
 </svelte:element>

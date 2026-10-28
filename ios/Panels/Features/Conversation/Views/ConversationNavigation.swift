@@ -128,7 +128,7 @@ private struct ConversationSurface: View {
         VStack(spacing: 0) {
             header
             if isPage {
-                ConversationThread(model: model, owner: owner, readOnly: readOnly)
+                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
             }
             if readOnly {
                 Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)
@@ -242,6 +242,12 @@ struct ConversationThread: View {
     @Bindable var model: ConversationModel
     let owner: ConversationOwner
     var readOnly = false
+    var active = false
+    @State private var appeared = false
+    @State private var visibleRowIDs: Set<String> = []
+    private var readBoundary: ConversationReadBoundary? {
+        model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared)
+    }
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
@@ -281,11 +287,22 @@ struct ConversationThread: View {
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
                             if !row.own { Spacer(minLength: 0) }
                         }.id(row.id)
+                            .onScrollVisibilityChange(threshold: 0.01) { visible in
+                                if visible { visibleRowIDs.insert(row.id) }
+                                else { visibleRowIDs.remove(row.id) }
+                            }
                     }
                 }
                 }.padding(.horizontal, 20).padding(.bottom, 12)
             }
             .accessibilityIdentifier("conversation-thread")
+            .onAppear { appeared = true }
+            .onDisappear { appeared = false; visibleRowIDs = [] }
+            .onChange(of: model.conversationID) { _, _ in visibleRowIDs = [] }
+            .onChange(of: model.lens) { _, _ in visibleRowIDs = [] }
+            .task(id: readBoundary) {
+                await model.acknowledgeVisibleRows(visibleRowIDs, active: active && appeared, using: store.client)
+            }
             .contentMargins(.top, 12, for: .scrollContent)
             .task {
                 await model.prepareOpening(using: store.client)

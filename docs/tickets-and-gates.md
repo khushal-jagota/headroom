@@ -22,6 +22,27 @@ single-door rule.
    field                                               package)           report)
 ```
 
+## HTML artifacts
+
+The viewer opens HTML links inside the same artifact directory, including its subdirectories.
+It keeps the Panels address unchanged and gives each viewer its own Back button.
+A new artifact starts a new history. Refresh reloads the current child document.
+Fragments scroll inside the current document without a new file read.
+Empty links, bare `#` links, and anchors without `href` keep their authored behavior.
+
+The parent viewer resolves each raw link against the current trusted file address.
+Authored base elements do not control navigation. Absolute and scheme-relative links must use the same origin and permitted directory.
+Dot segments resolve before the directory check. Encoded separators, double encoding, backslashes, credentials, and queries cause rejection.
+Only HTML and HTM links open here. Middle clicks, modified clicks, download links, and explicit targets use the same viewer.
+A rejected or missing link leaves the current document and history intact.
+The parent draws the rejection notice outside the artifact frame.
+
+The server checks the resolved file against the resolved artifact directory before each viewer read, including the first document.
+A symlink that leaves that directory returns the same generic 404 as a missing file.
+Valid files retain their attachment headers and the `allow-scripts` sandbox.
+Only the current visible frame and its current document generation can request navigation.
+Concurrent viewers share an unfinished read only when their original directory and freshness rules match.
+
 ## Execution locale
 
 Each Ticket stores the machine where its Worker can run: `vps` or `macos`.
@@ -428,6 +449,16 @@ is introduced.
 sets the ceiling to the next stage. It does not pause the next Worker turn. Current
 scope edits use actual lifecycle stages. The existing readiness, authority, blocker,
 claim, and user-owned collaboration rules continue unchanged.
+
+Review combines each Ticket's eligible proposal and unread conversations into one card before pagination and counts.
+Its queue position is the earliest constituent timestamp. An older unread message deliberately brings a new proposal forward.
+The proposal keeps its own timestamp and revision for approval. Each conversation retains its exact reply address and read boundary.
+Approval changes only the proposal. Reply and Mark read leave other pending parts intact.
+
+The message filter uses the owning Ticket's done and backlog state or the owning Manager's settlement state.
+A settled Manager does not exclude live child Tickets. Chief messages remain eligible because Chief cannot settle.
+State reversals restore eligible messages. Ordinary unread discovery and watermarks remain independent of the Review filter.
+Proposal eligibility stays unchanged.
 
 Review's oldest-first walk shows owner-addressed proposals independently of Today.
 A proposal addressed to an ordinary Manager or Chief creates a durable notice

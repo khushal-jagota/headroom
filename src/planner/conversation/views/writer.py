@@ -9,11 +9,16 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from planner.conversation import events as event
+from planner.conversation.message_content import message_content_text
 from planner.conversation.views.configuration import PROJECTION_BACKFILL_BATCH
 from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
 from planner.conversation.views.logic.bodies import sent_at_milliseconds
 from planner.conversation.views.logic.effects import event_effect
-from planner.conversation.views.logic.rest import event_has_rest_text, excerpt
+from planner.conversation.views.logic.rest import (
+    event_has_rest_text,
+    excerpt,
+    owner_message_preview,
+)
 from planner.conversation.views.status import project_rest_event
 from planner.conversation.views.storage import encode_wire
 
@@ -69,7 +74,31 @@ def _rest_references(conn: sqlite3.Connection, conversation_id: str) -> set[int]
         ).fetchone()
         if tool:
             result.add(tool[0])
+    owner = conn.execute(
+        "SELECT sequence FROM conversation_view_rows WHERE conversation_id=? AND "
+        "row_kind='agent_message' AND focus_visible=1 AND removed=0 "
+        "ORDER BY sequence DESC LIMIT 1",
+        (conversation_id,),
+    ).fetchone()
+    if owner:
+        result.add(owner[0])
     return result
+
+
+def _rest_summary(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    sequence: int,
+    payload: event.ConversationEventPayload,
+) -> str | None:
+    # The preview belongs to the owner row, even when its first-line rest fact is
+    # empty. It is private cache data, never a field of a generic rest event.
+    summary: dict[str, object] = {**(project_rest_event(conn, conversation_id, sequence) or {})}
+    if isinstance(payload, event.MessageToOwnerEventPayload):
+        summary["_owner_message_preview"] = owner_message_preview(
+            message_content_text(payload.content)
+        )
+    return encode_wire(summary) if summary else None
 
 
 def _append(
@@ -166,7 +195,7 @@ def _append(
     if effect.row_kind is not None or matched is not None:
         summary_sequence = matched[0] if matched is not None else sequence
         previous_summaries.add(summary_sequence)
-        rest_summary = project_rest_event(conn, conversation_id, summary_sequence)
+        rest_summary = _rest_summary(conn, conversation_id, summary_sequence, payload)
         permission_title = (
             excerpt(payload.title) or excerpt(payload.detail or "")
             if isinstance(payload, event.PermissionAskedEventPayload)
@@ -176,7 +205,7 @@ def _append(
             "UPDATE conversation_view_rows SET rest_summary=?,permission_title_excerpt="
             "COALESCE(?,permission_title_excerpt) WHERE conversation_id=? AND sequence=?",
             (
-                encode_wire(rest_summary) if rest_summary is not None else None,
+                rest_summary,
                 permission_title,
                 conversation_id,
                 summary_sequence,
@@ -255,12 +284,14 @@ def _append(
             (conversation_id, referenced),
         ).fetchone()
         if summary is not None and (summary[0] is None or effect.closes_turn or removed):
-            projected = project_rest_event(conn, conversation_id, referenced)
+            projected = _rest_summary(
+                conn, conversation_id, referenced, _source(conn, conversation_id, referenced)
+            )
             if projected is not None:
                 conn.execute(
                     "UPDATE conversation_view_rows SET rest_summary=? "
                     "WHERE conversation_id=? AND sequence=?",
-                    (encode_wire(projected), conversation_id, referenced),
+                    (projected, conversation_id, referenced),
                 )
 
 
@@ -478,6 +509,13 @@ def _repair_removed_boundaries(
             "UPDATE conversation_view_state SET segment_start_sequence=? WHERE conversation_id=?",
             (original_segment, conversation_id),
         )
+
+
+def rebuild_projection(conn: sqlite3.Connection) -> None:
+    """Replace derived rows in the caller's migration transaction."""
+    for table in ("lookups", "groups", "turns", "rows", "state"):
+        conn.execute(f"DELETE FROM conversation_view_{table}")
+    backfill_projection(conn)
 
 
 def backfill_projection(conn: sqlite3.Connection) -> None:

@@ -12,6 +12,12 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "rename_managers",
         "notice_suppression_audit",
         "automatic_deployment_recovery",
+        "review_messages",
+        "review_work_cards",
+        "owner_message_preview",
+        "native_push_deliveries",
+        "reconcile_native_recovery",
+        "reconcile_native_main",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

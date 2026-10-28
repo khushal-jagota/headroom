@@ -39,6 +39,7 @@ class Subscription:
     keys: set[tuple[str, str]]
     sections: set[str]
     event: asyncio.Event = field(default_factory=asyncio.Event)
+    review_context: bool = False
     reading: bool = True
     dirty: bool = False
     reset: bool = False
@@ -202,6 +203,8 @@ class ScopedDeliveryRuntime:
                             or (subscription.reading and bool(keys or sections))
                             or bool(subscription.keys & keys)
                             or bool(subscription.sections & sections)
+                            or subscription.review_context
+                            and any(kind == "address" for kind, _ in keys)
                         )
                         subscription.event.set()
             except (DeliveryUnavailable, RuntimeError, ValueError, sqlite3.Error):
@@ -290,7 +293,11 @@ class ScopedDeliveryRuntime:
         value: ViewRequest,
         captured: tuple[SignalAvailability, DeliveryAccess, CurrentAuthority | DegradedAuthority],
     ) -> AsyncIterator[bytes]:
-        subscription = Subscription(set(), {window_key(window) for window in value["windows"]})
+        subscription = Subscription(
+            set(),
+            {window_key(window) for window in value["windows"]},
+            review_context=bool(value["review_conversation_ids"]),
+        )
         self._subscriptions.add(subscription)  # Before initial read, so a wake cannot be lost.
         closed = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -381,6 +388,7 @@ def difference(previous: ViewSnapshot, current: ViewSnapshot) -> dict[str, Any]:
         "evictions": [{"kind": kind, "id": identity} for kind, identity in old.keys() - new.keys()],
         "windows": current["content"]["windows"],
         "counts": current["content"]["counts"],
+        "review_context": current["content"]["review_context"],
     }
 
 

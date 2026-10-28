@@ -9,7 +9,7 @@ import {applyFrame,sameDomain} from './validation';
 import {createViewTransport,type ViewTransport} from './transport';
 import {NavigationRequestError} from '../transport';
 
-export type ViewDemand={selected?:ViewOwner|null;selected_conversation_id?:string|null;windows:readonly ViewWindowRequest[]};
+export type ViewDemand={selected?:ViewOwner|null;selected_conversation_id?:string|null;review_conversation_ids?:readonly string[];windows:readonly ViewWindowRequest[]};
 export function viewWindow(section:ViewWindowRequest['section'],owner:ViewOwner|null=null,options:Partial<Omit<ViewWindowRequest,'section'|'owner'>>={}):ViewWindowRequest {
   return {section,owner,group:'all',child_filter:'all',anchor:null,direction:'after',limit:30,...options};
 }
@@ -17,7 +17,7 @@ export function windowIdentity(window:ViewWindowRequest):string {
   return JSON.stringify([window.section,window.owner,window.group,window.child_filter]);
 }
 export function defaultViewRequest(locale='en-US'):ViewRequest {
-  return {projection_version:VIEW_PROJECTION_VERSION,scope_generation:0,locale,selected:null,selected_conversation_id:null,windows:[
+  return {projection_version:VIEW_PROJECTION_VERSION,scope_generation:0,locale,selected:null,selected_conversation_id:null,review_conversation_ids:[],windows:[
     viewWindow('rail_parents',null,{limit:60}),
     viewWindow('rail_tickets',{kind:'chief',id:'chief'}),
     viewWindow('unread',null,{limit:20}),
@@ -49,7 +49,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   function emit(){for(const listener of listeners)listener(state);}
   function canCertify(){return state.effective?.runtimeCurrent===true && [...state.effective.conversations.values()].every(v=>v.message_for_owner.state==='fresh' && v.last_turn_failed.state==='fresh');}
   function publication(value:ViewSnapshot):NavigationPublication {
-    return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts)})});
+    return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context)})});
   }
   function admit(value:ViewFrame,generation:number,scope=activeRequest):NavigationPublication|undefined {
     if(disposed || generation!==state.generation) return;
@@ -174,22 +174,36 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   }
   function refreshDemand() {
     const base=defaultViewRequest(request.locale);
+    const reviewConversationIds=new Set<string>();
     const windows=new Map(base.windows.map(window=>[windowIdentity(window),window]));
     for(const entry of demands.values()) {
       if(entry.selected!==undefined){base.selected=entry.selected;base.selected_conversation_id=entry.selected_conversation_id??null;}
+      for(const id of entry.review_conversation_ids ?? [])reviewConversationIds.add(id);
       for(const window of entry.windows)windows.set(windowIdentity(window),{...window});
     }
+    if(reviewConversationIds.size>256)throw new Error('Review conversation context exceeds its budget');
+    base.review_conversation_ids=[...reviewConversationIds].sort();
     base.windows=[...windows.values()];
     // Parent pages define the visible child surfaces. Shrinking these in response
     // to child demand would repeatedly mount/unmount that same demand. Keep them
     // stable, and preserve Chief's existing pages; allocate other bodies fairly.
     const stable=(window:ViewWindowRequest)=>window.section==='rail_parents'||window.section==='settled'||(window.section==='children'&&window.owner?.kind==='chief');
-    const fixed=base.windows.filter(stable).reduce((sum,window)=>sum+window.limit,0);
+    const stableWindows=base.windows.filter(stable);
+    let fixed=stableWindows.reduce((sum,window)=>sum+window.limit,0);
+    if(fixed+reviewConversationIds.size>256) {
+      const desiredStable=new Map(stableWindows.map(window=>[window,window.limit]));
+      for(const window of stableWindows)window.limit=0;
+      let available=Math.max(0,256-reviewConversationIds.size);
+      for(let position=0;available>0&&position<60;position++)for(const window of stableWindows) {
+        if(available>0 && window.limit<(desiredStable.get(window) ?? 0)){window.limit++;available--;}
+      }
+      fixed=stableWindows.reduce((sum,window)=>sum+window.limit,0);
+    }
     const elastic=base.windows.filter(window=>!stable(window)&&window.limit>0);
     const desired=new Map(elastic.map(window=>[window,window.limit]));
     elastic.sort((a,b)=>Number(windowIdentity(b)===priorityWindow)-Number(windowIdentity(a)===priorityWindow));
     for(const window of elastic)window.limit=0;
-    let remaining=Math.max(0,256-fixed);
+    let remaining=Math.max(0,256-fixed-reviewConversationIds.size);
     // One row per nonempty intent before another round; no two-row floor can
     // overrun the global budget. Count-only identities are never discarded.
     for(let position=0;remaining>0&&position<60;position++)for(const window of elastic){

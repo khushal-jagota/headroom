@@ -1394,7 +1394,7 @@ def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
         conn.close()
 
 
-@pytest.mark.parametrize("starting_head", ["native_push_deliveries", "review_messages"])
+@pytest.mark.parametrize("starting_head", ["reconcile_native_recovery", "owner_message_preview"])
 def test_native_and_review_histories_upgrade_to_one_head(
     tmp_path: Path, starting_head: str
 ) -> None:
@@ -1412,7 +1412,7 @@ def test_native_and_review_histories_upgrade_to_one_head(
         engine.dispose()
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("reconcile_native_recovery",)
+            ("reconcile_native_main",)
         ]
         assert "recovery_sender_message_id" in {
             column[1]

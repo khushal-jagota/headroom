@@ -35,6 +35,13 @@ keeps a full refresh, and servers without that API keep ordinary reads. Manual
 refresh and reconnect always read again. Manager, ticket and Review list versions
 are not registered by the server, so visible lists still use ordinary reads.
 
+The full conversation acknowledges remote rows only after they enter its visible
+scroll area. Polls, stream progress, the dock, hidden screens and inactive scenes
+earn no read credit. A deferred message earns credit only after its body is loaded
+and visible. The request carries that row's exact conversation and sequence;
+confirmed read positions never move backwards when an older configuration arrives.
+A failed acknowledgment leaves the messages unread.
+
 Conversation polling retains its 700 ms interval and its tail subscription.
 Overlapping refresh requests share a following read instead of being dropped.
 The transcript projection is retained until its message, expanded body, outgoing

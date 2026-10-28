@@ -12,7 +12,9 @@ export const conversationPattern = [
   { height: 72, user: false }
 ];
 export const conversationGap = 24;
-export const reservation: Record<SkeletonShape, number> = {
+// The frame shape has no reservation: its box is the embedded preview frame's own
+// `min-height`, held in CSS, so no second copy of that number lives here.
+export const reservation: Record<Exclude<SkeletonShape, "frame">, number> = {
   rows: 24 * 2 + 35 + 4 + rowWidths.length * rowHeight + 4,
   document: 24 * 2 + documentHeadHeight + documentBlockStep * 2,
   block: documentBlockHeight,

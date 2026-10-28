@@ -190,11 +190,11 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         capture_success(page, str(EVIDENCE / "approvals-child-message.png"))
 
         owner_row.click(timeout=WAIT_MS)
-        page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+        page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
         page.wait_for_function(
-            "() => document.querySelector('[data-conversation-state=peeked]')", timeout=WAIT_MS
+            "() => document.querySelector('[data-conversation-state=opened]')", timeout=WAIT_MS
         )
-        # Peeked is local UI state; metadata and reader bootstrap can still be pending.
+        # Opened is local UI state; metadata and reader bootstrap can still be pending.
         # Establish that the interceptor holds delivery before testing the read boundary.
         page.wait_for_function("() => window.__proofTranscriptHeld === true", timeout=WAIT_MS)
         # The snapshot can name an unread latest sequence, but undelivered rows cannot be read.
@@ -266,7 +266,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
         assert _read_position(server, "dot-supervisor") == 0
         capture_success(page, str(EVIDENCE / "supervisor-own-message-title-and-rail.png"))
-        page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+        page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
         expect(right.locator(".manager-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
         assert _read_position(server, "dot-supervisor") == 1
@@ -281,7 +281,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
         assert _read_position(server, "dot-chief") == 0
-        page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+        page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
         page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         expect(
             page.locator("[data-conversation-transcript]").get_by_text(

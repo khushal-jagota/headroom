@@ -43,7 +43,13 @@ import XCTest
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReviewStub.self]
         let api = APIClient(baseURL: URL(string: "https://review.invalid")!, session: URLSession(configuration: configuration))
-        let item = ReviewItem(reviewItemType: "proposal", ticketId: detail.id, field: proposal.field, title: detail.title, waitingSince: proposal.createdAt)
+        // The card's oldest message predates the proposal. The loader must use
+        // the nested proposal's exact timestamp, never the card's waiting time.
+        let wire: [String: Any] = ["review_item_type": "ticket", "ticket_id": detail.id, "title": detail.title,
+            "waiting_since": 1, "proposal": ["ticket_id": detail.id, "field": proposal.field,
+                "title": detail.title, "waiting_since": proposal.createdAt], "messages": []]
+        let card = try APIClient.decoder().decode(ReviewItem.self, from: JSONSerialization.data(withJSONObject: wire))
+        let item = try XCTUnwrap(card.components.first)
         let decision = ReviewDecision()
         await decision.load(item: item, api: api)
         XCTAssertTrue(decision.ready)

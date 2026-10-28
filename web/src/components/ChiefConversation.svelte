@@ -30,7 +30,8 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
-  let { showRequestErrorLine = true, requestedConversationId = null }: { showRequestErrorLine?: boolean; requestedConversationId?: string | null } = $props();
+  import type { ManagedFileTarget } from "../lib/filePreview";
+  let { showRequestErrorLine = true, requestedConversationId = null, openedFile = null, onOpenFile }: { showRequestErrorLine?: boolean; requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
   const navigation = (() => {
     const value = navigationApplication();
     if (!value) throw new Error("Chief conversation requires the application navigation owner");
@@ -123,7 +124,7 @@
 </script>
 
 <div class="chief-workspace-host" bind:this={root}>
-<ManagerFrame class="chief-workspace" bind:conversationState>
+<ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
