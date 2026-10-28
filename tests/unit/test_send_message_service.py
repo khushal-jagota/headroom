@@ -295,6 +295,11 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
     Nothing else covers the one send in Panels whose answer is not words.
     """
 
+    expected_request = (
+        "File a short, top-level recap with your recap tool. "
+        "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
+        "Chief: `PUT /api/workers/chief-of-staff/recap`. Do not send the user a message."
+    )
     owner = Principal(PrincipalKind.owner, "owner")
     worker = Principal(PrincipalKind.ticket, "t_worker")
     monkeypatch.setattr(
@@ -361,7 +366,7 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
             await subject.complete_running_turn("c_worker")
             writes = await subject.backend_writes("c_worker")
             assert len(writes) == 2
-            assert writes[1].text == f"Panels:\n{recap_request.RECAP_REQUEST_MESSAGE}"
+            assert writes[1].text == f"Panels:\n{expected_request}"
             assert writes[1].mode is PromptDeliveryMode.queue
             assert "Authenticated Panels reply requirement" not in writes[1].text
             await subject.complete_running_turn("c_worker")
@@ -372,7 +377,7 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
             assert prompts[1].sender is None
             assert prompts[1].sender_label == "Panels"
             assert prompts[1].recipient == worker
-            assert message_content_text(prompts[1].content) == recap_request.RECAP_REQUEST_MESSAGE
+            assert message_content_text(prompts[1].content) == expected_request
             missing = [
                 e.payload for e in events if isinstance(e.payload, ExplicitReplyMissingEventPayload)
             ]
