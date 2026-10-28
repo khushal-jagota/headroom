@@ -131,6 +131,8 @@ def test_ticket_setup_scoped_composer_and_durable_refusal(
     assert refusal["model_validation"]["corrective_action"] == "authenticate_provider"
     assert api.get(server, f"/api/test/signals/{conversation}/delivered")["texts"] == receipts
     page.reload()
+    # Opening the transcript is an explicit view choice; reload starts at the dock.
+    page.locator("[data-conversation-expand]").click()
     expect(page.locator('[data-conversation-row="prompt_refused"]')).to_contain_text(refused_words)
     composer.locator("[data-conversation-picker-trigger]").click()
     page.locator("[data-model-picker-why]").click()
