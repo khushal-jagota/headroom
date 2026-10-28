@@ -414,10 +414,10 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 ## The approval gate and Ticket leash
 
 Anyone standing above the Ticket can decide a parked proposal, whoever it is addressed
-to. Whenever they approve a step, they must name the next ceiling and holder. The system
-refuses an approval that omits either. Approving is a ceiling-setting moment like any
-other, so the approve row carries the same control the Ticket page does, and the approver
-can hand the Ticket onward rather than only keeping it.
+to. Every acceptance request includes the next ceiling and holder. The server refuses
+a request that omits either. At earlier gates, the reader chooses both through the
+approval control and can hand the Ticket onward. At the final gate, the interface
+supplies both values automatically.
 
 At earlier gates, Approve opens the stage/reviewer picker with the immediate next
 valid Stage and the owner selected. When the actual next Stage is terminal in the
