@@ -111,6 +111,8 @@ def run_retirement(browser, urls, *, control=""):
       const last=content.lastElementChild;
       const anchor=window.__retirementAnchor;
       const sent=[...t.querySelectorAll('[data-conversation-outgoing]')].at(-1);
+      const expectedSendId=window.__retirementSupersedingSendId??null;
+      const exactSend=expectedSendId===null?null:[...t.querySelectorAll('[data-conversation-outgoing]')].find(node=>node.getAttribute('data-conversation-outgoing')===expectedSendId);
       const css=getComputedStyle(t),height=room?.getBoundingClientRect().height??0;
       const gap=room?parseFloat(css.rowGap)+parseFloat(getComputedStyle(room).marginTop)+parseFloat(getComputedStyle(room).marginBottom):0;
       // Geometry alone remains valid when scroll chaining moves the entire host
@@ -148,6 +150,8 @@ def run_retirement(browser, urls, *, control=""):
         contentBottom:content.getBoundingClientRect().bottom-bounds.top,
         room:height,gap,totalTail:height+gap,paddingTop:parseFloat(css.paddingTop),paddingBottom:parseFloat(css.paddingBottom),
         sentTop:sent?sent.getBoundingClientRect().top-bounds.top:null,
+        supersedingSend:{expectedId:expectedSendId,id:exactSend?.getAttribute('data-conversation-outgoing')??null,
+          accepted:exactSend?.getAttribute('data-conversation-accepted')??null,top:exactSend?exactSend.getBoundingClientRect().top-bounds.top:null},
         anchor:anchor?.isConnected?{key:anchor.getAttribute('data-conversation-view-key')??anchor.getAttribute('data-conversation-row'),offset:anchor.getBoundingClientRect().top-bounds.top}:null,
         latest:!!document.querySelector('[aria-label="Jump to latest message"]'),
         placementReady:t.dataset.conversationPlacementReady,owner:t.dataset.conversationPositionOwner??null,paint};
@@ -161,6 +165,26 @@ def run_retirement(browser, urls, *, control=""):
         checks.append((label + ' has no intermediate position snap', all(abs(frame['top'] - before['top']) <= 1 for frame in frames), before, after))
         if before['anchor']:
             checks.append((label + ' preserves the reading line before each paint', all(frame['anchor'] and frame['anchor']['key'] == before['anchor']['key'] and abs(frame['anchor']['offset'] - before['anchor']['offset']) <= 1 for frame in frames), before, after))
+
+    def supersession_frame_contract(acceptance, after, send_id):
+        frames = [*frames_between(acceptance, after), after]
+
+        def at_target(frame):
+            sent = frame['supersedingSend']
+            return (sent['expectedId'] == send_id and sent['id'] == send_id
+                    and sent['accepted'] == 'true' and sent['top'] is not None
+                    and abs(sent['top'] - 32) < 2)
+
+        # Placement can move until this exact accepted send first reaches 32px.
+        # A later recovery cannot erase a departure or restart this boundary.
+        first_arrival = next((index for index, frame in enumerate(frames) if at_target(frame)), None)
+        held = frames[first_arrival:] if first_arrival is not None else []
+        violations = [frame for frame in held if not at_target(frame)]
+        return {'kind': 'accepted-send-frame-contract', 'sendId': send_id, 'target': 32,
+                'strictTolerance': 2, 'acceptance': acceptance, 'through': after,
+                'firstArrival': held[0] if held else None, 'framesAfterArrival': len(held),
+                'firstViolation': violations[0] if violations else None,
+                'violations': len(violations), 'passed': bool(held) and not violations}
 
     def sample(label):
         page.evaluate("label=>window.__retirementPhase=label", label)
@@ -443,6 +467,7 @@ def run_retirement(browser, urls, *, control=""):
             page.evaluate('window.__nativeDisableSupersession=true')
         page.locator('[data-conversation-input]').press('Enter')
         page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
+        superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
         if control == 'late-acceptance':
             page.wait_for_function("!window.__nativeMotion.capture('late').motion")
         page.evaluate('window.__resolveDelivery()')
@@ -459,10 +484,16 @@ def run_retirement(browser, urls, *, control=""):
         page.wait_for_timeout(200)
         remember_anchor()
         latest_send = sample('accepted-send')
+        frame_contract = supersession_frame_contract(acceptance, latest_send, superseding_send_id)
+        native_events.append(frame_contract)
         assert abs(latest_send['sentTop'] - 32) < 2 and latest_send['totalTail'] > 100, ('BEHAVIOR_SEND_SUPERSESSION', latest_send)
         page.wait_for_timeout(300)
-        assert abs(sample('new-send-still-owns')['sentTop'] - 32) < 2
+        try:
+            assert abs(sample('new-send-still-owns')['sentTop'] - 32) < 2
+        finally:
+            frame_contract.update(supersession_frame_contract(acceptance, samples[-1], superseding_send_id))
         native_events.append({'kind': 'original-supersession-checks', 'passed': True})
+        assert frame_contract['passed'], ('BEHAVIOR_SEND_SUPERSESSION', frame_contract)
         assert send_owner != 'latest', ('BEHAVIOR_SEND_SUPERSESSION_NEW_ONLY', send_owner, acceptance)
         if control:
             for check in checks:
