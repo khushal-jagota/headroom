@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Mapping
@@ -40,7 +41,10 @@ from functools import partial
 from typing import IO, Any
 from uuid import uuid4
 
+from planner.conversation.backend_event_contracts import TurnEndingContext
 from planner.conversation.backends.contracts import (
+    AgentMessageCompletedArguments,
+    AgentMessageDeltaArguments,
     BackendChild,
     BackendChildFactory,
     BackendPermissionAsk,
@@ -50,14 +54,26 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    ComposerCatalogReportedArguments,
+    ContextCompactedArguments,
+    ModelThinkingHappenedArguments,
     NeedsRebind,
     PermissionAnswerWriteFailed,
+    PermissionAskRaisedArguments,
+    PlanUpdatedArguments,
     PromptWriteFailed,
     SessionLoadFailed,
+    TokenUsageReportedArguments,
+    ToolCallFinishedArguments,
+    ToolCallProgressArguments,
+    ToolCallStartedArguments,
+    TurnEndedArguments,
     TurnToken,
     UserInputAnswerWriteFailed,
+    UserInputFailedArguments,
+    UserInputRequestedArguments,
+    VendorSessionCursorReboundArguments,
 )
-from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
     ComposerCatalogEntry,
@@ -90,13 +106,11 @@ from planner.conversation.events import (
     ConversationEventPayload,
     ConversationLiveTailFrame,
     ConversationTurnEnding,
-    ExplicitReplyMissingEventPayload,
     HeldPromptsChangedFrame,
     MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     ModelThinkingFrame,
     PermissionAnsweredEventPayload,
-    PermissionAskedEventPayload,
     PlanEntry,
     PlanUpdatedEventPayload,
     PromptDeliveryRefusedEventPayload,
@@ -108,12 +122,10 @@ from planner.conversation.events import (
     ToolCallProgressFrame,
     ToolCallStartedEventPayload,
     ToolCallStatus,
-    TurnEndedEventPayload,
     UserInputAnswer,
     UserInputAnsweredEventPayload,
     UserInputFailedEventPayload,
     UserInputQuestion,
-    UserInputRequestedEventPayload,
 )
 from planner.conversation.lifecycle import (
     LifecycleFact,
@@ -124,6 +136,11 @@ from planner.conversation.lifecycle import (
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.logic.addressed_reply import (
     with_authenticated_reply_directive,
+)
+from planner.conversation.logic.backend_events import (
+    interpret_permission_ask,
+    interpret_turn_ending,
+    interpret_user_input_request,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -151,7 +168,17 @@ from planner.conversation.storage import (
 from planner.core import change_signal
 from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
-from planner.executor.contracts import ChildCommand, ChildOperation, ChildReference
+from planner.executor.contracts import (
+    AcceptanceReceipt,
+    AnswerApplication,
+    BackendEvent,
+    ChildCommand,
+    ChildOperation,
+    ChildReference,
+    ExecutorEffectAcceptor,
+    JsonObject,
+    QueuedEnvelope,
+)
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -279,6 +306,17 @@ class _RunningTurn:
     # of the two may be recorded, and it is the core's: the core is the side that knows
     # the turn was interrupted rather than merely over.
     ending_is_the_cores: bool = False
+
+
+def _ending_context(running: _RunningTurn) -> TurnEndingContext:
+    return TurnEndingContext(
+        running.token,
+        running.automatic_compaction,
+        running.compaction_confirmed,
+        running.automatic_notice,
+        tuple(running.prompt_senders),
+        tuple(running.explicit_reply_recipients),
+    )
 
 
 @dataclass(slots=True)
@@ -4462,30 +4500,14 @@ class SqliteProcessConversationSystem:
         if running.ended:
             return None
         await self._revoke_executor_turn_asks(state, running)
-        automatic_compaction_result = (
-            AutomaticCompactionResult.not_compacted
-            if running.automatic_compaction
-            and ending is ConversationTurnEnding.completed
-            and not running.compaction_confirmed
-            else None
+        interpreted = interpret_turn_ending(
+            _ending_context(running),
+            ending,
+            error_summary,
+            await self._store.lifecycle_facts(state.record.conversation_id),
         )
-        ending_payload = TurnEndedEventPayload(
-            ending=ending,
-            error_summary=(
-                normalized_failure_summary(error_summary)
-                if ending is ConversationTurnEnding.failed
-                else None
-            ),
-            automatic_compaction_result=automatic_compaction_result,
-        )
-        payloads: tuple[ConversationEventPayload, ...] = (
-            *(
-                ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
-                for prompt_sender in running.prompt_senders
-                if prompt_sender not in running.explicit_reply_recipients
-            ),
-            ending_payload,
-        )
+        automatic_compaction_result = interpreted.compaction_result
+        payloads = interpreted.payloads
         written = await self._persist(
             state,
             partial(
@@ -4493,22 +4515,14 @@ class SqliteProcessConversationSystem:
                 state.record.conversation_id,
                 payloads,
                 lifecycle=(
-                    _turn_fact(running.token, LifecycleStatus(ending.value)),
+                    interpreted.lifecycle[0],
                     *((cancel_fact,) if cancel_fact is not None else ()),
-                    *(
-                        replace(fact, status=LifecycleStatus.unavailable)
-                        for fact in await self._store.lifecycle_facts(state.record.conversation_id)
-                        if fact.kind is LifecycleKind.request
-                        and fact.turn_number == running.token.turn_number
-                        and fact.status in (LifecycleStatus.pending, LifecycleStatus.answering)
-                    ),
+                    *interpreted.lifecycle[1:],
                 ),
                 agent_activity=not running.automatic_compaction,
                 automatic_compaction_confirmed=running.compaction_confirmed,
                 automatic_compaction_result=automatic_compaction_result,
-                create_failure_notice=(
-                    ending is ConversationTurnEnding.failed and not running.automatic_notice
-                ),
+                create_failure_notice=interpreted.failure_notice,
                 executor_turn=self._executor_turn_metadata(
                     state,
                     replace(
@@ -4949,30 +4963,18 @@ class SqliteProcessConversationSystem:
         if running is None:
             return
         try:
-            identity = f"{turn_token.turn_number}:permission:{ask.ask_id}"
+            interpreted = interpret_permission_ask(turn_token, ask)
+            identity = interpreted.lifecycle.identity
             if any(
                 fact.kind is LifecycleKind.request and fact.identity == identity
                 for fact in await self._store.lifecycle_facts(state.record.conversation_id)
             ):
                 return
-            request_fact = LifecycleFact(
-                LifecycleKind.request,
-                identity,
-                turn_token.turn_number,
-                LifecycleOperation.permission,
-                LifecycleStatus.pending,
-                ask.ask_id,
-            )
             await self._append_backend_event(
                 state,
                 turn_token,
-                PermissionAskedEventPayload(
-                    ask_id=identity,
-                    title=ask.title,
-                    detail=ask.detail,
-                    options=ask.options,
-                ),
-                lifecycle=(request_fact,),
+                interpreted.payload,
+                lifecycle=(interpreted.lifecycle,),
                 runtime_mutation=self._runtime_mutation(
                     state,
                     PlainFieldMutation(
@@ -5003,25 +5005,18 @@ class SqliteProcessConversationSystem:
         if running is None:
             return
         try:
-            identity = f"{turn_token.turn_number}:user_input:{request.request_id}"
+            interpreted = interpret_user_input_request(turn_token, request)
+            identity = interpreted.lifecycle.identity
             if any(
                 fact.kind is LifecycleKind.request and fact.identity == identity
                 for fact in await self._store.lifecycle_facts(state.record.conversation_id)
             ):
                 return
-            request_fact = LifecycleFact(
-                LifecycleKind.request,
-                identity,
-                turn_token.turn_number,
-                LifecycleOperation.user_input,
-                LifecycleStatus.pending,
-                request.request_id,
-            )
             await self._append_backend_event(
                 state,
                 turn_token,
-                UserInputRequestedEventPayload(request_id=identity, questions=request.questions),
-                lifecycle=(request_fact,),
+                interpreted.payload,
+                lifecycle=(interpreted.lifecycle,),
                 runtime_mutation=self._runtime_mutation(
                     state,
                     PlainFieldMutation(
@@ -5488,16 +5483,36 @@ class SqliteProcessConversationSystem:
             return True
 
     async def receive_remote_answer_application(
-        self, application: Any, envelope: Any, acceptor: Any, record_application: Any
-    ) -> Any:
+        self,
+        application: AnswerApplication,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+        record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
+    ) -> AcceptanceReceipt:
         """Commit native application, lifecycle, answer row, and receipt together."""
-        from pydantic import TypeAdapter
-
-        from planner.executor.contracts import AskKind, ReceiptDisposition
 
         state = await self._conversation_state(application.ask.child.conversation_id)
         if state is None:
             raise ValueError("answer application names unknown conversation")
+        return await self._own_settlement(
+            state,
+            self._receive_remote_answer_application_owned(
+                state, application, envelope, acceptor, record_application
+            ),
+        )
+
+    async def _receive_remote_answer_application_owned(
+        self,
+        state: _ConversationState,
+        application: AnswerApplication,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+        record_application: Callable[[sqlite3.Connection, AnswerApplication], None],
+    ) -> AcceptanceReceipt:
+        from pydantic import TypeAdapter
+
+        from planner.executor.contracts import AskKind, ReceiptDisposition
+
         written: tuple[StoredConversationEvent, ...] = ()
         fresh = False
         async with state.lock:
@@ -5532,8 +5547,15 @@ class SqliteProcessConversationSystem:
                 else None
             )
 
-            def write(connection: Any, accepted: Any) -> Any:
-                nonlocal written, fresh
+            conversation_id = state.record.conversation_id
+            metadata = (
+                self._executor_turn_metadata(state, predicted) if predicted is not None else None
+            )
+
+            def write(
+                connection: sqlite3.Connection, accepted: QueuedEnvelope
+            ) -> tuple[JsonObject, tuple[StoredConversationEvent, ...]]:
+                written: tuple[StoredConversationEvent, ...] = ()
                 del accepted
                 answer = connection.execute(
                     "SELECT option_id,user_input_answers_json,applied_at_mac_ms "
@@ -5561,7 +5583,7 @@ class SqliteProcessConversationSystem:
                         (
                             fact
                             for fact in self._store.lifecycle_facts_in_transaction(
-                                connection, state.record.conversation_id
+                                connection, conversation_id
                             )
                             if fact.kind is LifecycleKind.request and fact.identity == lifecycle_id
                         ),
@@ -5583,20 +5605,22 @@ class SqliteProcessConversationSystem:
                     )
                     written = self._store.append_in_transaction(
                         connection,
-                        state.record.conversation_id,
+                        conversation_id,
                         (payload,),
                         lifecycle=lifecycle,
                     )
-                fresh = True
-                if predicted is not None:
-                    metadata = self._executor_turn_metadata(state, predicted)
-                    if metadata is not None:
-                        self._store.save_executor_turn_in_transaction(
-                            connection, state.record.conversation_id, metadata
-                        )
-                return {"recorded": True}
+                if metadata is not None:
+                    self._store.save_executor_turn_in_transaction(
+                        connection, conversation_id, metadata
+                    )
+                return {"recorded": True}, written
 
-            receipt = self._store.accept_executor_effect(envelope, acceptor, write, mutation)
+            result = await self._persist(
+                state,
+                partial(self._store.accept_executor_effect, envelope, acceptor, write, mutation),
+                runtime_mutation=mutation,
+            )
+            receipt, written, fresh = result.receipt, result.written, result.fresh
             if fresh and receipt.disposition is ReceiptDisposition.accepted:
                 if self._signal is None and predicted is not None:
                     state.running_turn = predicted
@@ -5604,30 +5628,40 @@ class SqliteProcessConversationSystem:
             return receipt
 
     async def receive_remote_backend_event(
-        self, event: Any, envelope: Any, acceptor: Any, observer: Any = None
-    ) -> Any:
+        self,
+        event: BackendEvent,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+    ) -> AcceptanceReceipt:
         """Apply native events through lifecycle publication and executor acceptance."""
-        from planner.executor.capture import observe, safe_call
+
+        state = await self._conversation_state(event.child.conversation_id)
+        if state is None:
+            raise ValueError("remote event names an unknown conversation")
+        return await self._own_settlement(
+            state,
+            self._receive_remote_backend_event_owned(state, event, envelope, acceptor),
+        )
+
+    async def _receive_remote_backend_event_owned(
+        self,
+        state: _ConversationState,
+        event: BackendEvent,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+    ) -> AcceptanceReceipt:
         from planner.executor.codec import decode_event_arguments
         from planner.executor.contracts import BackendEventMethod, ReceiptDisposition
 
-        with observe(observer, "state_lookup"):
-            state = await self._conversation_state(event.child.conversation_id)
-        if state is None:
-            raise ValueError("remote event names an unknown conversation")
         reservation = state.reserved_turn
         if reservation is not None and event.turn == reservation.token:
-            with observe(observer, "reservation_wait"):
-                await reservation.resolved.wait()
-        with observe(observer, "event_decode"):
-            args = decode_event_arguments(event)
+            await reservation.resolved.wait()
+        args = decode_event_arguments(event)
         written: tuple[StoredConversationEvent, ...] = ()
         fresh = False
         method, token = event.method, event.turn
         should_drain = False
-        safe_call(observer, "enter", "state_lock_wait")
         async with state.lock:
-            safe_call(observer, "complete", "state_lock_wait")
             running = state.running_turn
             live = token is None or (
                 running is not None
@@ -5647,7 +5681,7 @@ class SqliteProcessConversationSystem:
                 live = False
             payloads: tuple[ConversationEventPayload, ...] = ()
             lifecycle: tuple[LifecycleFact, ...] = ()
-            compacted = live and method is BackendEventMethod.context_compacted
+            compacted = live and isinstance(args, ContextCompactedArguments)
             compaction_result = None
             failure_notice = False
             predicted = (
@@ -5662,104 +5696,74 @@ class SqliteProcessConversationSystem:
                 else None
             )
             if live:
-                if method is BackendEventMethod.tool_call_started:
-                    payloads = (ToolCallStartedEventPayload(**args),)
-                elif method is BackendEventMethod.tool_call_finished:
-                    payloads = (ToolCallFinishedEventPayload(**args),)
-                elif method is BackendEventMethod.plan_updated:
-                    payloads = (PlanUpdatedEventPayload(**args),)
-                elif method is BackendEventMethod.token_usage_reported:
-                    payloads = (TokenUsageEventPayload(**args),)
+                if isinstance(args, ToolCallStartedArguments):
+                    payloads = (
+                        ToolCallStartedEventPayload(
+                            tool_call_id=args.tool_call_id,
+                            title=args.title,
+                            tool_kind=args.tool_kind,
+                            detail=args.detail,
+                        ),
+                    )
+                elif isinstance(args, ToolCallFinishedArguments):
+                    payloads = (
+                        ToolCallFinishedEventPayload(
+                            tool_call_id=args.tool_call_id,
+                            tool_call_status=args.tool_call_status,
+                            detail=args.detail,
+                        ),
+                    )
+                elif isinstance(args, PlanUpdatedArguments):
+                    payloads = (PlanUpdatedEventPayload(entries=args.entries),)
+                elif isinstance(args, TokenUsageReportedArguments):
+                    payloads = (
+                        TokenUsageEventPayload(
+                            input_tokens=args.input_tokens,
+                            output_tokens=args.output_tokens,
+                            cached_input_tokens=args.cached_input_tokens,
+                            cost_usd=args.cost_usd,
+                        ),
+                    )
                 elif compacted:
                     payloads = (ContextCompactedEventPayload(),)
                     if predicted is not None:
                         predicted.compaction_confirmed = True
-                elif method is BackendEventMethod.permission_ask_raised and token is not None:
-                    ask = args["ask"]
-                    identity = f"{token.turn_number}:permission:{ask.ask_id}"
-                    payloads = (
-                        PermissionAskedEventPayload(
-                            ask_id=identity, title=ask.title, detail=ask.detail, options=ask.options
-                        ),
-                    )
-                    lifecycle = (
-                        LifecycleFact(
-                            LifecycleKind.request,
-                            identity,
-                            token.turn_number,
-                            LifecycleOperation.permission,
-                            LifecycleStatus.pending,
-                            ask.ask_id,
-                        ),
-                    )
+                elif isinstance(args, PermissionAskRaisedArguments) and token is not None:
+                    ask = args.ask
+                    interpreted_request = interpret_permission_ask(token, ask)
+                    identity = interpreted_request.lifecycle.identity
+                    payloads = (interpreted_request.payload,)
+                    lifecycle = (interpreted_request.lifecycle,)
                     if predicted is not None:
                         predicted.pending_permission_ask_ids.add(identity)
                         predicted.permission_provider_ids[identity] = ask.ask_id
-                elif method is BackendEventMethod.user_input_requested and token is not None:
-                    request = args["request"]
-                    identity = f"{token.turn_number}:user_input:{request.request_id}"
-                    payloads = (
-                        UserInputRequestedEventPayload(
-                            request_id=identity, questions=request.questions
-                        ),
-                    )
-                    lifecycle = (
-                        LifecycleFact(
-                            LifecycleKind.request,
-                            identity,
-                            token.turn_number,
-                            LifecycleOperation.user_input,
-                            LifecycleStatus.pending,
-                            request.request_id,
-                        ),
-                    )
+                elif isinstance(args, UserInputRequestedArguments) and token is not None:
+                    request = args.request
+                    interpreted_request = interpret_user_input_request(token, request)
+                    identity = interpreted_request.lifecycle.identity
+                    payloads = (interpreted_request.payload,)
+                    lifecycle = (interpreted_request.lifecycle,)
                     if predicted is not None:
                         predicted.pending_user_input_questions[identity] = request.questions
                         predicted.user_input_provider_ids[identity] = request.request_id
-                elif method is BackendEventMethod.user_input_failed and token is not None:
+                elif isinstance(args, UserInputFailedArguments) and token is not None:
                     payloads = (
                         UserInputFailedEventPayload(
-                            request_id=f"{token.turn_number}:user_input:{args['request_id']}",
-                            detail=args["detail"],
+                            request_id=f"{token.turn_number}:user_input:{args.request_id}",
+                            detail=args.detail,
                         ),
                     )
-                elif method is BackendEventMethod.turn_ended and running is not None:
-                    ending = args["ending"]
-                    compaction_result = (
-                        AutomaticCompactionResult.not_compacted
-                        if running.automatic_compaction
-                        and ending is ConversationTurnEnding.completed
-                        and not running.compaction_confirmed
-                        else None
+                elif isinstance(args, TurnEndedArguments) and running is not None:
+                    interpreted_ending = interpret_turn_ending(
+                        _ending_context(running),
+                        args.ending,
+                        args.error_summary,
+                        await self._store.lifecycle_facts(state.record.conversation_id),
                     )
-                    payloads = tuple(
-                        ExplicitReplyMissingEventPayload(prompt_sender=sender)
-                        for sender in running.prompt_senders
-                        if sender not in running.explicit_reply_recipients
-                    ) + (
-                        TurnEndedEventPayload(
-                            ending=ending,
-                            error_summary=normalized_failure_summary(args.get("error_summary"))
-                            if ending is ConversationTurnEnding.failed
-                            else None,
-                            automatic_compaction_result=compaction_result,
-                        ),
-                    )
-                    lifecycle = (
-                        _turn_fact(running.token, LifecycleStatus(ending.value)),
-                        *(
-                            replace(fact, status=LifecycleStatus.unavailable)
-                            for fact in await self._store.lifecycle_facts(
-                                state.record.conversation_id
-                            )
-                            if fact.kind is LifecycleKind.request
-                            and fact.turn_number == running.token.turn_number
-                            and fact.status in (LifecycleStatus.pending, LifecycleStatus.answering)
-                        ),
-                    )
-                    failure_notice = (
-                        ending is ConversationTurnEnding.failed and not running.automatic_notice
-                    )
+                    payloads = interpreted_ending.payloads
+                    lifecycle = interpreted_ending.lifecycle
+                    compaction_result = interpreted_ending.compaction_result
+                    failure_notice = interpreted_ending.failure_notice
                     if predicted is not None:
                         predicted.ended = True
                         predicted.pending_permission_ask_ids.clear()
@@ -5787,106 +5791,113 @@ class SqliteProcessConversationSystem:
                     )
             mutation = self._runtime_mutation(state, *operations)
 
-            def write(conn: Any, accepted: Any) -> Any:
-                nonlocal written, fresh
-                del accepted
-                with observe(observer, "conversation_append"):
-                    written = self._store.append_in_transaction(
-                        conn,
-                        state.record.conversation_id,
-                        payloads,
-                        lifecycle=lifecycle,
-                        agent_activity=bool(payloads)
-                        and not compacted
-                        and running is not None
-                        and not running.automatic_compaction,
-                        automatic_compaction_confirmed=compacted
-                        or (
-                            live
-                            and method is BackendEventMethod.turn_ended
-                            and running is not None
-                            and running.compaction_confirmed
-                        ),
-                        automatic_compaction_result=compaction_result,
-                        create_failure_notice=failure_notice,
-                    )
-                if method is BackendEventMethod.vendor_session_cursor_rebound:
-                    self._store.update_remote_identity_in_transaction(
-                        conn,
-                        state.record.conversation_id,
-                        vendor_session_cursor=args["vendor_session_cursor"],
-                    )
-                elif method is BackendEventMethod.composer_catalog_reported:
-                    self._store.update_remote_identity_in_transaction(
-                        conn,
-                        state.record.conversation_id,
-                        composer_catalog=args["composer_catalog"],
-                    )
-                if predicted is not None:
-                    metadata = self._executor_turn_metadata(state, predicted)
-                    if metadata is not None:
-                        self._store.save_executor_turn_in_transaction(
-                            conn, state.record.conversation_id, metadata
-                        )
-                fresh = True
-                return {"applied": live}
+            conversation_id = state.record.conversation_id
+            metadata = (
+                self._executor_turn_metadata(state, predicted) if predicted is not None else None
+            )
+            agent_activity = (
+                bool(payloads)
+                and not compacted
+                and running is not None
+                and not running.automatic_compaction
+            )
+            compaction_confirmed = compacted or (
+                live
+                and isinstance(args, TurnEndedArguments)
+                and running is not None
+                and running.compaction_confirmed
+            )
 
-            with observe(observer, "acceptor"):
-                receipt = self._store.accept_executor_effect(envelope, acceptor, write, mutation)
-            safe_call(observer, "receipt", receipt)
-            with observe(observer, "publication_finalize"):
-                if fresh and receipt.disposition is ReceiptDisposition.accepted:
-                    if self._signal is None:
-                        for operation in operations:
-                            setattr(operation.target, operation.attribute, operation.value)
-                    self._take_in_written_rows(state, written)
-                    if (
-                        written
-                        and running is not None
-                        and not running.automatic_compaction
-                        and not compacted
-                    ):
-                        last = written[-1]
-                        state.record = replace(
-                            state.record,
-                            latest_agent_activity_at=last.created_at,
-                            latest_agent_activity_sequence=last.sequence,
+            def write(
+                conn: sqlite3.Connection, accepted: QueuedEnvelope
+            ) -> tuple[JsonObject, tuple[StoredConversationEvent, ...]]:
+                del accepted
+                written = self._store.append_in_transaction(
+                    conn,
+                    conversation_id,
+                    payloads,
+                    lifecycle=lifecycle,
+                    agent_activity=agent_activity,
+                    automatic_compaction_confirmed=compaction_confirmed,
+                    automatic_compaction_result=compaction_result,
+                    create_failure_notice=failure_notice,
+                )
+                if isinstance(args, VendorSessionCursorReboundArguments):
+                    self._store.update_remote_identity_in_transaction(
+                        conn,
+                        conversation_id,
+                        vendor_session_cursor=args.vendor_session_cursor,
+                    )
+                elif isinstance(args, ComposerCatalogReportedArguments):
+                    self._store.update_remote_identity_in_transaction(
+                        conn,
+                        conversation_id,
+                        composer_catalog=args.composer_catalog,
+                    )
+                if metadata is not None:
+                    self._store.save_executor_turn_in_transaction(conn, conversation_id, metadata)
+                return {"applied": live}, written
+
+            result = await self._persist(
+                state,
+                partial(self._store.accept_executor_effect, envelope, acceptor, write, mutation),
+                runtime_mutation=mutation,
+            )
+            receipt, written, fresh = result.receipt, result.written, result.fresh
+            if fresh and receipt.disposition is ReceiptDisposition.accepted:
+                if self._signal is None:
+                    for operation in operations:
+                        setattr(operation.target, operation.attribute, operation.value)
+                self._take_in_written_rows(state, written)
+                if (
+                    written
+                    and running is not None
+                    and not running.automatic_compaction
+                    and not compacted
+                ):
+                    last = written[-1]
+                    state.record = replace(
+                        state.record,
+                        latest_agent_activity_at=last.created_at,
+                        latest_agent_activity_sequence=last.sequence,
+                    )
+                if compacted:
+                    state.record = replace(
+                        state.record,
+                        automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
+                        automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+                    )
+                elif compaction_result is AutomaticCompactionResult.not_compacted:
+                    state.record = replace(
+                        state.record,
+                        automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+                    )
+                if isinstance(args, VendorSessionCursorReboundArguments):
+                    state.record = replace(
+                        state.record, vendor_session_cursor=args.vendor_session_cursor
+                    )
+                elif isinstance(args, ComposerCatalogReportedArguments):
+                    state.record = replace(state.record, composer_catalog=args.composer_catalog)
+                if predicted is not None and predicted.ended:
+                    self._settle_phase(state)
+                    should_drain = True
+                if live and token is not None:
+                    if isinstance(args, AgentMessageDeltaArguments):
+                        self._publish_live_tail_frame(
+                            state, token, AgentMessageDeltaFrame(text_delta=args.text_delta)
                         )
-                    if compacted:
-                        state.record = replace(
-                            state.record,
-                            automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
-                            automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
+                    elif isinstance(args, ToolCallProgressArguments):
+                        self._publish_live_tail_frame(
+                            state,
+                            token,
+                            ToolCallProgressFrame(
+                                tool_call_id=args.tool_call_id, detail=args.detail
+                            ),
                         )
-                    elif compaction_result is AutomaticCompactionResult.not_compacted:
-                        state.record = replace(
-                            state.record,
-                            automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
-                        )
-                    if method is BackendEventMethod.vendor_session_cursor_rebound:
-                        state.record = replace(
-                            state.record, vendor_session_cursor=args["vendor_session_cursor"]
-                        )
-                    elif method is BackendEventMethod.composer_catalog_reported:
-                        state.record = replace(
-                            state.record, composer_catalog=args["composer_catalog"]
-                        )
-                    if predicted is not None and predicted.ended:
-                        self._settle_phase(state)
-                        should_drain = True
-                    if live and token is not None:
-                        if method is BackendEventMethod.agent_message_delta:
-                            self._publish_live_tail_frame(
-                                state, token, AgentMessageDeltaFrame(**args)
-                            )
-                        elif method is BackendEventMethod.tool_call_progress:
-                            self._publish_live_tail_frame(
-                                state, token, ToolCallProgressFrame(**args)
-                            )
-                        elif method is BackendEventMethod.model_thinking_happened:
-                            self._publish_model_thinking(state, token)
-                        elif method is BackendEventMethod.agent_message_completed:
-                            completed_backend_text_event(args["content"])
+                    elif isinstance(args, ModelThinkingHappenedArguments):
+                        self._publish_model_thinking(state, token)
+                    elif isinstance(args, AgentMessageCompletedArguments):
+                        completed_backend_text_event(args.content)
         if should_drain:
             asyncio.create_task(self._drain_held_prompts(state))
         return receipt

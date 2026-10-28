@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -74,6 +75,7 @@ class FilesystemSpool:
         self.root = root
         self._lock = threading.RLock()
         self._pins: dict[str, int] = {}
+        self._content_paths: dict[tuple[str, int], set[Path]] = {}
         self._closed = False
         self._database: sqlite3.Connection | None = None
         # This validates metadata and names, but permits authorized rollback recovery.
@@ -99,6 +101,8 @@ class FilesystemSpool:
                 publish_metadata(root, self._sender_id)
             _check_spool_directory(root, SPOOL_FORMAT_VERSION)
             self._cleanup_acknowledged()
+            for envelope in self.pending():
+                self._register_content(envelope)
         except BaseException:
             self.close()
             raise
@@ -247,6 +251,7 @@ class FilesystemSpool:
                     )
             except sqlite3.IntegrityError as error:
                 raise ValueError("submission sequence conflicts with journal") from error
+            self._register_content(envelope)
             for snapshot in snapshots:
                 if snapshot.local_path.parent.name == ".executor-snapshots":
                     snapshot.local_path.unlink(missing_ok=True)
@@ -268,29 +273,61 @@ class FilesystemSpool:
             return original
         temporary = self.root / f".incomplete-{uuid4().hex}"
         temporary.mkdir(mode=0o700)
+        local: dict[tuple[str, int], Path] = {}
         for index, snapshot in enumerate(snapshots):
-            digest = hashlib.sha256()
-            count = 0
-            with (
-                snapshot.local_path.open("rb") as source,
-                (temporary / f"file-{index}").open("xb") as out,
-            ):
-                while block := source.read(OUTBOX_COPY_BYTES):
-                    count += len(block)
-                    digest.update(block)
-                    out.write(block)
-                out.flush()
-                fsync_file(out.fileno())
-            if (
-                count != snapshot.manifest.byte_count
-                or digest.hexdigest() != snapshot.manifest.sha256
-            ):
-                raise ValueError("snapshot changed before durable publication")
+            key = (snapshot.manifest.sha256, snapshot.manifest.byte_count)
+            destination = temporary / f"file-{index}"
+            candidates = self._content_paths.get(key, set())
+            candidate = local.get(key) or next(iter(candidates), None)
+            linked = False
+            if candidate is not None:
+                self._verify_file(snapshot.local_path, snapshot.manifest)
+                self._verify_file(candidate, snapshot.manifest)
+                try:
+                    os.link(candidate, destination, follow_symlinks=False)
+                    linked = True
+                except OSError as error:
+                    if error.errno not in (
+                        errno.EXDEV,
+                        errno.EPERM,
+                        errno.EOPNOTSUPP,
+                        errno.EMLINK,
+                    ):
+                        raise
+            if not linked:
+                digest = hashlib.sha256()
+                count = 0
+                with snapshot.local_path.open("rb") as source, destination.open("xb") as out:
+                    while block := source.read(OUTBOX_COPY_BYTES):
+                        count += len(block)
+                        digest.update(block)
+                        out.write(block)
+                    out.flush()
+                    fsync_file(out.fileno())
+                if (
+                    count != snapshot.manifest.byte_count
+                    or digest.hexdigest() != snapshot.manifest.sha256
+                ):
+                    raise ValueError("snapshot changed before durable publication")
+            local[key] = destination
         write_file(temporary / "envelope.json", encoded)
         fsync_directory(temporary)
         os.rename(temporary, target)
         fsync_directory(self._entries)
         return encoded
+
+    def _register_content(self, envelope: QueuedEnvelope) -> None:
+        for index, manifest in enumerate(envelope.file_dependencies):
+            key = (manifest.sha256, manifest.byte_count)
+            self._content_paths.setdefault(key, set()).add(
+                self._entries / envelope.submission_id / f"file-{index}"
+            )
+
+    def _forget_content(self, folder: Path) -> None:
+        for key, paths in tuple(self._content_paths.items()):
+            paths.difference_update(path for path in tuple(paths) if path.parent == folder)
+            if not paths:
+                del self._content_paths[key]
 
     @staticmethod
     def _verify_file(path: Path, manifest: FileManifest) -> None:
@@ -419,6 +456,7 @@ class FilesystemSpool:
             return
         folder = self._entries / submission_id
         if folder.exists():
+            self._forget_content(folder)
             shutil.rmtree(folder)
             fsync_directory(self._entries)
 

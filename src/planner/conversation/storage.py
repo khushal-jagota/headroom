@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import IO, Any, cast
 from uuid import uuid4
 
+from pydantic import TypeAdapter
+
+from planner.conversation.backend_event_contracts import ExecutorEffectResult, ExecutorEffectWriter
 from planner.conversation.backends.contracts import BackendSpawnFailed, TurnToken
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -86,7 +89,13 @@ from planner.core.commit_capture import register_capture_task, run_in_capture_th
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
-from planner.executor.contracts import ChildReference
+from planner.executor.contracts import (
+    AcceptanceReceipt,
+    ChildReference,
+    ExecutorEffectAcceptor,
+    JsonObject,
+    QueuedEnvelope,
+)
 from planner.executor.store import ExecutorStore
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
@@ -1859,6 +1868,18 @@ class ConversationStore:
 
     @staticmethod
     def _encode_signal_result(result: object) -> object:
+        if isinstance(result, ExecutorEffectResult):
+            return {
+                "executor_effect": {
+                    "receipt": TypeAdapter(AcceptanceReceipt).dump_python(
+                        result.receipt, mode="json"
+                    ),
+                    "written": [
+                        ConversationStore._encode_signal_result(row) for row in result.written
+                    ],
+                    "fresh": result.fresh,
+                }
+            }
         if isinstance(result, PromptDispatchDecision):
             return {"dispatch_decision": asdict(result)}
         if isinstance(result, StoredConversationEvent):
@@ -1887,6 +1908,16 @@ class ConversationStore:
     def _decode_signal_result(result: object) -> object:
         if not isinstance(result, dict):
             return result
+        if "executor_effect" in result:
+            value = result["executor_effect"]
+            return ExecutorEffectResult(
+                TypeAdapter(AcceptanceReceipt).validate_python(value["receipt"]),
+                tuple(
+                    cast(StoredConversationEvent, ConversationStore._decode_signal_result(row))
+                    for row in value["written"]
+                ),
+                value["fresh"],
+            )
         if "dispatch_decision" in result:
             return PromptDispatchDecision(**result["dispatch_decision"])
         if "event" in result:
@@ -2363,46 +2394,70 @@ class ConversationStore:
 
         return ExecutorStore(self._db_path).public_request_id(ask)
 
-    def accept_executor_effect(
+    async def accept_executor_effect(
         self,
-        envelope: Any,
-        acceptor: Any,
-        writer: Any,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+        writer: ExecutorEffectWriter,
         mutation: SignalRuntimeMutation | None,
-    ) -> Any:
-        """Bind receipt acceptance to the same reversible runtime publication.
+    ) -> ExecutorEffectResult:
+        return await self._write(
+            self._accept_executor_effect_sync, envelope, acceptor, writer, mutation
+        )
 
-        Prepare before BEGIN. Apply only a successful new effect after its savepoint
-        closes. A replay or refused effect leaves runtime fields unchanged.
-        """
+    def _accept_executor_effect_sync(
+        self,
+        envelope: QueuedEnvelope,
+        acceptor: ExecutorEffectAcceptor,
+        writer: ExecutorEffectWriter,
+        mutation: SignalRuntimeMutation | None,
+    ) -> ExecutorEffectResult:
         coordinator = self.signal_coordinator
-        if coordinator is None:
-            return acceptor(envelope, writer)
         admission: SignalAdmission | None = None
-        applied = False
+        written: tuple[StoredConversationEvent, ...] = ()
+        outcome: ExecutorEffectResult | None = None
 
         @contextmanager
         def transaction_context(conn: sqlite3.Connection) -> Iterator[None]:
             nonlocal admission
-            admission = coordinator.prepare_mutation(conn, mutation, operation_id=uuid4().hex)
+            if coordinator is None:
+                yield
+                return
+            candidate = self._signal_attempt.get()
+            assert candidate is not None
+            admission = coordinator.prepare_mutation(
+                conn, mutation, operation_id=candidate[1], retain_failure=True
+            )
             assert self._bind_signal_admission is not None
             with self._bind_signal_admission(conn, admission):
                 yield
 
-        def write(conn: sqlite3.Connection, accepted: Any) -> Any:
-            nonlocal applied
-            result = writer(conn, accepted)
-            applied = True
+        def write(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+            nonlocal written
+            result, written = writer(connection, envelope)
             return result
 
         def before_commit(conn: sqlite3.Connection) -> None:
-            if applied:
+            if coordinator is not None:
                 assert admission is not None
                 coordinator.apply_mutation(conn, admission)
 
-        return acceptor(
-            envelope, write, transaction_context=transaction_context, before_commit=before_commit
+        def before_outcome_commit(
+            conn: sqlite3.Connection, receipt: AcceptanceReceipt, fresh: bool
+        ) -> None:
+            nonlocal outcome
+            outcome = ExecutorEffectResult(receipt, written if fresh else (), fresh)
+            self._record_signal_result(conn, outcome)
+
+        acceptor(
+            envelope,
+            write,
+            transaction_context=transaction_context,
+            before_commit=before_commit,
+            before_outcome_commit=before_outcome_commit,
         )
+        assert outcome is not None
+        return outcome
 
     @staticmethod
     def lifecycle_facts_in_transaction(

@@ -506,3 +506,110 @@ class BackendChildFactory(Protocol):
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
     ) -> BackendChild: ...
+
+
+# Typed callback arguments at the native event boundary.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentMessageDeltaArguments:
+    text_delta: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelThinkingHappenedArguments:
+    pass
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentMessageCompletedArguments:
+    content: MessageContent
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolCallStartedArguments:
+    tool_call_id: str
+    title: str
+    tool_kind: str
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolCallProgressArguments:
+    tool_call_id: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolCallFinishedArguments:
+    tool_call_id: str
+    tool_call_status: ToolCallStatus
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PlanUpdatedArguments:
+    entries: tuple[PlanEntry, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TokenUsageReportedArguments:
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cost_usd: float | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ContextCompactedArguments:
+    pass
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PermissionAskRaisedArguments:
+    ask: BackendPermissionAsk
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UserInputRequestedArguments:
+    request: BackendUserInputRequest
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UserInputFailedArguments:
+    request_id: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TurnEndedArguments:
+    ending: ConversationTurnEnding
+    error_summary: str | None = None
+    standard_error_tail: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VendorSessionCursorReboundArguments:
+    vendor_session_cursor: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ComposerCatalogReportedArguments:
+    composer_catalog: tuple[ComposerCatalogEntry, ...]
+
+
+type DecodedBackendEventArguments = (
+    AgentMessageDeltaArguments
+    | ModelThinkingHappenedArguments
+    | AgentMessageCompletedArguments
+    | ToolCallStartedArguments
+    | ToolCallProgressArguments
+    | ToolCallFinishedArguments
+    | PlanUpdatedArguments
+    | TokenUsageReportedArguments
+    | ContextCompactedArguments
+    | PermissionAskRaisedArguments
+    | UserInputRequestedArguments
+    | UserInputFailedArguments
+    | TurnEndedArguments
+    | VendorSessionCursorReboundArguments
+    | ComposerCatalogReportedArguments
+)

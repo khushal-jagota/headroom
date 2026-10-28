@@ -20,6 +20,7 @@ from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
     FileScope,
+    FileSnapshot,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
@@ -734,3 +735,161 @@ def test_offline_conversion_cli_reports_result_and_sqlite_failure(
     result = CliRunner().invoke(executor_group, ["convert-spool", "--root", str(tmp_path)])
     assert result.exit_code == 1
     assert "Error: invalid legacy database" in result.output
+
+
+def test_equal_event_bytes_share_inodes_across_restart_and_pinned_cleanup(tmp_path: Path) -> None:
+    """Each event owns identity and lifetime independently of its shared bytes."""
+    source = tmp_path / "source"
+    source.mkdir()
+    artifact = source / "data"
+    original = b"x" * (1024 * 1024)
+    artifact.write_bytes(original)
+    spool = FilesystemSpool(tmp_path / "spool")
+
+    def publish() -> QueuedEnvelope:
+        snapshot = snapshot_file(
+            root=source, relative_path="data", scope=FileScope.ticket, owner_id="t_one"
+        )
+        return spool.mint_envelope(
+            conversation_id="c_one",
+            kind=EnvelopeKind.backend_event,
+            payload={},
+            snapshots=(snapshot,),
+        )
+
+    rows = [publish() for _ in range(3)]
+    paths = [spool.snapshots(row.submission_id)[0].local_path for row in rows]
+    assert len({p.stat().st_ino for p in paths}) == 1
+    assert len({row.file_dependencies[0].publication_id for row in rows}) == 3
+    assert len({row.submission_id for row in rows}) == 3
+    artifact.write_bytes(b"changed")
+    changed = publish()
+    assert (
+        spool.snapshots(changed.submission_id)[0].local_path.stat().st_ino != paths[0].stat().st_ino
+    )
+    spool.close()
+
+    before = contents(tmp_path / "spool")
+    check_spool_compatibility(tmp_path / "spool", 2)
+    assert contents(tmp_path / "spool") == before
+    spool = FilesystemSpool(tmp_path / "spool")
+    artifact.write_bytes(original)
+    resumed = publish()
+    assert (
+        spool.snapshots(resumed.submission_id)[0].local_path.stat().st_ino == paths[0].stat().st_ino
+    )
+    with spool.pin_snapshots(rows[0].submission_id) as pinned:
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            workers.submit(spool.acknowledge, receipt(rows[0])).result()
+        spool.acknowledge(receipt(rows[1]))
+        assert pinned[0].local_path.read_bytes() == original
+        assert paths[2].read_bytes() == original
+    assert not paths[0].exists()
+    assert paths[2].read_bytes() == original
+    for row in (rows[2], resumed, changed):
+        spool.acknowledge(receipt(row))
+    assert not list((spool.root / "entries").iterdir())
+    spool.close()
+
+
+@pytest.mark.parametrize("boundary", ["incoming", "retained", "unsupported_link"])
+def test_shared_snapshot_verification_and_filesystem_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    import errno
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "data").write_bytes(b"original")
+    spool = FilesystemSpool(tmp_path / "spool")
+
+    def capture() -> FileSnapshot:
+        return snapshot_file(
+            root=source, relative_path="data", scope=FileScope.ticket, owner_id="t_one"
+        )
+
+    first = spool.mint_envelope(
+        conversation_id="c_one", kind=EnvelopeKind.backend_event, payload={}, snapshots=(capture(),)
+    )
+    retained = spool.snapshots(first.submission_id)[0].local_path
+    snapshot = capture()
+    if boundary == "incoming":
+        snapshot.local_path.write_bytes(b"corrupt")
+    elif boundary == "retained":
+        retained.write_bytes(b"corrupt")
+    else:
+
+        def unsupported(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EOPNOTSUPP, "hard links unsupported")
+
+        monkeypatch.setattr("planner.executor.journal.os.link", unsupported)
+    if boundary == "unsupported_link":
+        second = spool.mint_envelope(
+            conversation_id="c_one",
+            kind=EnvelopeKind.backend_event,
+            payload={},
+            snapshots=(snapshot,),
+        )
+        copied = spool.snapshots(second.submission_id)[0].local_path
+        assert copied.read_bytes() == b"original"
+        assert copied.stat().st_ino != retained.stat().st_ino
+    else:
+        with pytest.raises(ValueError, match="corrupt immutable"):
+            spool.mint_envelope(
+                conversation_id="c_one",
+                kind=EnvelopeKind.backend_event,
+                payload={},
+                snapshots=(snapshot,),
+            )
+        assert spool.pending() == (first,)
+    spool.close()
+
+
+def test_interrupted_link_publication_preserves_original_and_exact_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "data").write_bytes(b"retained")
+    spool = FilesystemSpool(tmp_path / "spool")
+
+    def capture() -> FileSnapshot:
+        return snapshot_file(
+            root=source, relative_path="data", scope=FileScope.ticket, owner_id="t_one"
+        )
+
+    first = spool.mint_envelope(
+        conversation_id="c_one", kind=EnvelopeKind.backend_event, payload={}, snapshots=(capture(),)
+    )
+    snapshot = capture()
+    original_fsync = fsync_directory
+
+    def fail_after_rename(path: Path) -> None:
+        original_fsync(path)
+        if path == spool.root / "entries":
+            raise OSError("interrupted directory flush")
+
+    with monkeypatch.context() as failure:
+        failure.setattr("planner.executor.journal.fsync_directory", fail_after_rename)
+        with pytest.raises(OSError, match="interrupted"):
+            spool.mint_envelope(
+                conversation_id="c_one",
+                kind=EnvelopeKind.backend_event,
+                payload={},
+                snapshots=(snapshot,),
+                submission_id="interrupted",
+            )
+    assert spool.pending() == (first,)
+    original = spool.snapshots(first.submission_id)[0].local_path
+    assert original.read_bytes() == b"retained"
+    retried = spool.mint_envelope(
+        conversation_id="c_one",
+        kind=EnvelopeKind.backend_event,
+        payload={},
+        snapshots=(snapshot,),
+        submission_id="interrupted",
+    )
+    assert (
+        spool.snapshots(retried.submission_id)[0].local_path.stat().st_ino == original.stat().st_ino
+    )
+    spool.close()

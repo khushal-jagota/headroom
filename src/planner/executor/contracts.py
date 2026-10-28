@@ -9,6 +9,7 @@ retain command outcomes and report uncertainty without automatic redispatch.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -536,6 +537,21 @@ class TransactionalWriter(Protocol):
         back without receipt. Async/native effects use their separate command fate.
         """
         ...
+
+
+class ExecutorEffectAcceptor(Protocol):
+    def __call__(
+        self,
+        row: QueuedEnvelope,
+        write: TransactionalWriter,
+        /,
+        *,
+        transaction_context: Callable[[sqlite3.Connection], AbstractContextManager[None]]
+        | None = None,
+        before_commit: Callable[[sqlite3.Connection], None] | None = None,
+        before_outcome_commit: Callable[[sqlite3.Connection, AcceptanceReceipt, bool], None]
+        | None = None,
+    ) -> AcceptanceReceipt: ...
 
 
 class WireMessageKind(StrEnum):

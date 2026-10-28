@@ -138,27 +138,24 @@ def test_native_request_receipt_runtime_publication_and_application_share_bounda
                 assert any(f.provider_identity == ask.ask_id for f in candidate.facts)
                 raise RuntimeError("mixed participant refused")
 
-            class BrokenObserver:
-                def __getattr__(self, name: str) -> Any:
-                    raise RuntimeError("private observation failure")
-
-            observer = BrokenObserver()
             harness.store._transaction_participant = fail
-            with pytest.raises(RuntimeError, match="mixed participant refused"):
-                await harness.system.receive_remote_backend_event(
-                    event, envelope, accept, observer=observer
-                )
-            assert store.lookup_receipt("native", "native-1") is None
-            assert not await harness.system.has_pending_permission_ask("c")
-            assert not await harness.system.has_pending_user_input("c")
-            harness.store._transaction_participant = None
-            receipt = await harness.system.receive_remote_backend_event(
-                event, envelope, accept, observer=observer
+            pending = asyncio.create_task(
+                harness.system.receive_remote_backend_event(event, envelope, accept)
             )
+            for _ in range(500):
+                if harness.store.recording_failures("c"):
+                    break
+                await asyncio.sleep(0.002)
+            assert harness.store.recording_failures("c")
+            assert store.lookup_receipt("native", "native-1") is None
+            assert state.running_turn is not None
+            assert not state.running_turn.pending_permission_ask_ids
+            assert not state.running_turn.pending_user_input_questions
+            harness.store._transaction_participant = None
+            harness.store.resume_recording("c")
+            receipt = await asyncio.wait_for(pending, 5)
             assert (
-                await harness.system.receive_remote_backend_event(
-                    event, envelope, accept, observer=observer
-                )
+                await harness.system.receive_remote_backend_event(event, envelope, accept)
                 == receipt
             )
             public_id = f"{token.turn_number}:{kind.value}:{ask.ask_id}"

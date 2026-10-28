@@ -28,13 +28,6 @@ from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.executor.capture import (
-    capture_hello,
-    capture_request,
-    get_capture,
-    observe,
-    safe_call,
-)
 from planner.executor.codec import encode_value
 from planner.executor.configuration import (
     INPUT_CANCEL_TIMEOUT_SECONDS,
@@ -184,7 +177,6 @@ class ExecutorEndpoint:
     """One active Mac connection; old generations are fenced before any writes."""
 
     def __init__(self, db_path: str, clock: Clock) -> None:
-        self._capture = get_capture(db_path)
         self.store = ExecutorStore(db_path)
         self.clock = clock
         self.db_path = db_path
@@ -247,7 +239,6 @@ class ExecutorEndpoint:
         self.ready = False
         writer, self.writer = self.writer, None
         if writer is not None:
-            safe_call(getattr(self, "_capture", None), "close_attempt", writer, "endpoint_shutdown")
             writer.close()
         for exchange in self._input_exchanges.values():
             if not exchange.response.done():
@@ -413,37 +404,18 @@ class ExecutorEndpoint:
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         self._responses[request_id] = future
         writer = self.writer
-        observer = safe_call(
-            getattr(self, "_capture", None),
-            "outgoing",
-            getattr(self, "identity", None),
-            writer,
-            request_id,
-            kind,
-        )
         deadline: asyncio.Timeout | None = None
         try:
             deadline = asyncio.timeout(REQUEST_TIMEOUT_SECONDS)
             async with deadline:
                 await self._send(WireMessage(kind, request_id, payload))
                 return await future
-        except TimeoutError as error:
-            safe_call(
-                observer, "request_timeout", error, deadline is not None and deadline.expired()
-            )
+        except TimeoutError:
             if writer is not None:
-                safe_call(
-                    getattr(self, "_capture", None),
-                    "close_attempt",
-                    writer,
-                    "request_timeout",
-                    observer,
-                )
                 writer.close()
             raise
         finally:
             self._responses.pop(request_id, None)
-            safe_call(observer, "request_done")
 
     async def _input_exchange(self, request: InputTransferRequest) -> None:
         identity, writer = self.identity, self.writer
@@ -721,13 +693,6 @@ class ExecutorEndpoint:
                 self._possibly_emitted_commands.add(command.command_id)
                 if command.operation is ChildOperation.write_prompt:
                     self._prompt_command_ids.add(command.command_id)
-                safe_call(
-                    self._capture,
-                    "command",
-                    command.command_id,
-                    command.operation,
-                    command.child.conversation_id,
-                )
                 await write_frame(
                     writer,
                     WireMessage(WireMessageKind.command, command.command_id, _object(command)),
@@ -758,13 +723,6 @@ class ExecutorEndpoint:
                     or not self.store.answer_is_deliverable(answer, identity)
                 ):
                     return
-                safe_call(
-                    self._capture,
-                    "command",
-                    command.command_id,
-                    command.operation,
-                    command.child.conversation_id,
-                )
                 await write_frame(
                     writer,
                     WireMessage(WireMessageKind.command, command.command_id, _object(command)),
@@ -874,36 +832,30 @@ class ExecutorEndpoint:
             raise ValueError("application lacks the original authenticated child assignment")
 
     async def accept_envelope(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, observer: Any = None
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
         lock = self._conversation_locks.setdefault(envelope.conversation_id, asyncio.Lock())
-        safe_call(observer, "enter", "conversation_lock_wait")
         async with lock:
-            safe_call(observer, "complete", "conversation_lock_wait")
-            with observe(observer, "accept_return"):
-                receipt = await self._accept_envelope(
-                    envelope, identity, **({"observer": observer} if observer is not None else {})
-                )
-            safe_call(observer, "receipt", receipt)
+            receipt = await self._accept_envelope(
+                envelope,
+                identity,
+            )
             return receipt
 
     async def _accept_envelope(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, observer: Any = None
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
-        with observe(observer, "preflight"):
-            previous = self.store.preflight(
-                envelope,
-                identity=identity,
-                **({"observer": observer} if observer is not None else {}),
-            )
+        previous = self.store.preflight(
+            envelope,
+            identity=identity,
+        )
         if previous is not None:
             if envelope.kind is EnvelopeKind.command_outcome:
                 self._resolve_command(TypeAdapter(CommandOutcome).validate_python(envelope.payload))
             return previous
         if envelope.kind is EnvelopeKind.backend_event:
             event = TypeAdapter(BackendEvent).validate_python(envelope.payload)
-            with observe(observer, "assignment_check"):
-                self._assignment(event.child)
+            self._assignment(event.child)
             if event.child.conversation_id != envelope.conversation_id:
                 raise ValueError("event conversation conflicts with envelope")
 
@@ -919,7 +871,13 @@ class ExecutorEndpoint:
                     ):
                         from planner.executor.codec import decode_event_arguments
 
-                        ask = decode_event_arguments(event)["ask"]
+                        decoded = decode_event_arguments(event)
+                        from planner.conversation.backends.contracts import (
+                            PermissionAskRaisedArguments,
+                        )
+
+                        assert isinstance(decoded, PermissionAskRaisedArguments)
+                        ask = decoded.ask
                         self.store.publish_ask_in_transaction(
                             conn,
                             AskReference(event.child, event.turn, ask.ask_id),
@@ -933,7 +891,13 @@ class ExecutorEndpoint:
                     ):
                         from planner.executor.codec import decode_event_arguments
 
-                        request = decode_event_arguments(event)["request"]
+                        decoded = decode_event_arguments(event)
+                        from planner.conversation.backends.contracts import (
+                            UserInputRequestedArguments,
+                        )
+
+                        assert isinstance(decoded, UserInputRequestedArguments)
+                        request = decoded.request
                         self.store.publish_user_input_request_in_transaction(
                             conn,
                             AskReference(
@@ -953,20 +917,17 @@ class ExecutorEndpoint:
                     effect,
                     now_ms(),
                     identity=identity,
-                    **({"observer": observer} if observer is not None else {}),
                     **publication,
                 )
 
-            with observe(observer, "event_publication"):
-                return cast(
-                    AcceptanceReceipt,
-                    await self.runtime.system.receive_remote_backend_event(
-                        event,
-                        envelope,
-                        accept,
-                        **({"observer": observer} if observer is not None else {}),
-                    ),
-                )
+            return cast(
+                AcceptanceReceipt,
+                await self.runtime.system.receive_remote_backend_event(
+                    event,
+                    envelope,
+                    accept,
+                ),
+            )
         if envelope.kind is EnvelopeKind.cli_write:
             write = TypeAdapter(CliWrite).validate_python(envelope.payload)
             if write.child.conversation_id != envelope.conversation_id:
@@ -1030,7 +991,6 @@ class ExecutorEndpoint:
                 mutate,
                 now_ms(),
                 identity=identity,
-                **({"observer": observer} if observer is not None else {}),
             )
             if notices:
                 connection = connect(self.db_path)
@@ -1044,7 +1004,6 @@ class ExecutorEndpoint:
 
         if envelope.kind is EnvelopeKind.command_outcome:
             outcome = TypeAdapter(CommandOutcome).validate_python(envelope.payload)
-            safe_call(observer, "command_outcome", outcome)
             if outcome.child.conversation_id != envelope.conversation_id:
                 raise ValueError("command outcome conversation conflicts with envelope")
             retired_refusal = (
@@ -1095,7 +1054,6 @@ class ExecutorEndpoint:
                         write,
                         now_ms(),
                         identity=identity,
-                        **({"observer": observer} if observer is not None else {}),
                         **publication,
                     ),
                     record,
@@ -1107,7 +1065,6 @@ class ExecutorEndpoint:
                 lambda conn, row: self._command_outcome(conn, outcome),
                 now_ms(),
                 identity=identity,
-                **({"observer": observer} if observer is not None else {}),
             )
             self._resolve_command(outcome)
             return receipt
@@ -1124,7 +1081,6 @@ class ExecutorEndpoint:
                         write,
                         now_ms(),
                         identity=identity,
-                        **({"observer": observer} if observer is not None else {}),
                         **publication,
                     ),
                     self.store.record_application_in_transaction,
@@ -1323,28 +1279,23 @@ class ExecutorEndpoint:
     async def _session(self, reader: FrameReader, writer: FrameWriter) -> None:
         identity = None
         forwards: PreviewForwards | None = None
-        observer = capture_hello(self._capture, None)
-        terminal_error: BaseException | None = None
         try:
-            with observe(observer, "hello_decode"):
-                async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                    hello = await read_frame(reader)
-                if hello.kind is not WireMessageKind.hello:
-                    raise ValueError("executor handshake required")
-                parsed_identity = parse_identity(hello.payload.get("identity"))
-                health = TypeAdapter(ExecutorHealth).validate_python(hello.payload)
-                if health.identity != parsed_identity:
-                    raise ValueError("identity coercion refused")
-                if type(hello.payload.get("process_id")) is not int or health.process_id < 1:
-                    raise ValueError("invalid executor process identity")
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                hello = await read_frame(reader)
+            if hello.kind is not WireMessageKind.hello:
+                raise ValueError("executor handshake required")
+            parsed_identity = parse_identity(hello.payload.get("identity"))
+            health = TypeAdapter(ExecutorHealth).validate_python(hello.payload)
+            if health.identity != parsed_identity:
+                raise ValueError("identity coercion refused")
+            if type(hello.payload.get("process_id")) is not int or health.process_id < 1:
+                raise ValueError("invalid executor process identity")
             old_identity = self.identity
             old_writer = self.writer
             self.store.begin_connection(health.identity, now_ms())
             # Only an admitted writer owns generation cleanup. A duplicate hello
             # must not revoke resources from the already accepted connection.
             identity = health.identity
-            safe_call(observer, "hello_admitted", identity)
-            safe_call(self._capture, "session_writer", writer, observer)
             self.process_id = health.process_id
             self.observed_at_ms = now_ms()
             self.lost_at_ms = None
@@ -1354,7 +1305,6 @@ class ExecutorEndpoint:
 
             self._preview_forwards = None
             if old_writer is not None and old_writer is not writer:
-                safe_call(self._capture, "close_attempt", old_writer, "session_replaced")
                 old_writer.close()
             try:
                 if old_previews is not None:
@@ -1395,9 +1345,7 @@ class ExecutorEndpoint:
             self._tasks.add(probe)
             probe.add_done_callback(self._tasks.discard)
             while self.writer is writer and self.identity == identity:
-                with observe(observer, "frame_decode"):
-                    message = await read_frame(reader)
-                request_observer = capture_request(self._capture, identity, message)
+                message = await read_frame(reader)
                 # Decode and fence synchronously before domain work can yield.
                 # A valid frame proves receipt even when its operation is refused.
                 if self.writer is not writer or self.identity != identity:
@@ -1408,7 +1356,6 @@ class ExecutorEndpoint:
                         message,
                         identity,
                         writer,
-                        **({"observer": request_observer} if request_observer is not None else {}),
                     )
                 )
                 self._tasks.add(task)
@@ -1420,15 +1367,11 @@ class ExecutorEndpoint:
             ValueError,
             TimeoutError,
             PlannerError,
-        ) as error:
-            terminal_error = error
-            safe_call(observer, "fail", "generation_close", error)
-        except BaseException as error:
-            terminal_error = error
-            safe_call(observer, "fail", "generation_close", error)
+        ):
+            pass
+        except BaseException:
             raise
         finally:
-            safe_call(observer, "generation_closed", identity, terminal_error)
             if identity is not None and self.writer is writer and self.identity == identity:
                 # Detach this generation before cleanup yields to a replacement hello.
                 self.ready = False
@@ -1443,10 +1386,7 @@ class ExecutorEndpoint:
                 for response_future in self._responses.values():
                     if not response_future.done():
                         response_future.set_exception(ConnectionError("executor link lost"))
-            safe_call(self._capture, "close_attempt", writer, "session_cleanup", observer)
             writer.close()
-            safe_call(self._capture, "session_done", writer)
-            safe_call(observer, "request_done")
             current_forwards = self._preview_forwards if self.identity == identity else None
             try:
                 if forwards is not None:
@@ -1476,50 +1416,23 @@ class ExecutorEndpoint:
         message: WireMessage,
         identity: ExecutorIdentity,
         writer: FrameWriter,
-        observer: Any = None,
     ) -> None:
         try:
-            with observe(observer, "handler_enter"):
-                await self._handle_message(
-                    message,
-                    identity,
-                    writer,
-                    **({"observer": observer} if observer is not None else {}),
-                )
-        except Exception as error:
-            safe_call(observer, "fail", "handler_failed", error)
+            await self._handle_message(
+                message,
+                identity,
+                writer,
+            )
+        except Exception:
             # An unanswered operation may already have committed. Close only
             # its original generation and recover through ordinary replay.
-            safe_call(
-                getattr(self, "_capture", None),
-                "close_attempt",
-                writer,
-                "handler_failure",
-                observer,
-            )
             writer.close()
-        finally:
-            if observer is not None:
-                self._settle_capture(observer)
-
-    def _settle_capture(self, observer: Any) -> None:
-        # Diagnostics settle off-loop after domain work, without a shutdown wait.
-        try:
-            resolution = asyncio.create_task(
-                asyncio.to_thread(safe_call, observer, "settled", self.db_path)
-            )
-            resolution.add_done_callback(
-                lambda task: task.exception() if not task.cancelled() else None
-            )
-        except BaseException:
-            safe_call(observer, "disable")
 
     async def _handle_message(
         self,
         message: WireMessage,
         identity: ExecutorIdentity,
         writer: FrameWriter,
-        observer: Any = None,
     ) -> None:
         if self.writer is not writer or self.identity != identity:
             return
@@ -1572,10 +1485,7 @@ class ExecutorEndpoint:
                         WireMessageKind.transport_opened,
                     )
             elif message.kind is WireMessageKind.reconcile_inventory:
-                with observe(observer, "inventory_decode"):
-                    inventory = TypeAdapter(ReconciliationInventory).validate_python(
-                        message.payload
-                    )
+                inventory = TypeAdapter(ReconciliationInventory).validate_python(message.payload)
                 if inventory.identity != identity:
                     raise ValueError("stale reconciliation generation")
                 self.store.verify_connection(identity)
@@ -1601,8 +1511,7 @@ class ExecutorEndpoint:
                     if proxy is None:
                         proxy = self.recover_child(item.child)
                         self.children[item.child.child_id] = proxy
-                    with observe(observer, "inventory_adopt"):
-                        await self.runtime.system.adopt_remote_child(item, proxy)
+                    await self.runtime.system.adopt_remote_child(item, proxy)
                     if not self._reconciliation_current(identity, writer):
                         return
                     # Adoption can wait behind shutdown. Its earlier assignment
@@ -1630,7 +1539,6 @@ class ExecutorEndpoint:
                     if not self._reconciliation_current(identity, writer):
                         return
                     self._retained_inventory[outcome.command_id] = outcome
-                    safe_call(observer, "command_outcome", outcome)
                     if not historical:
                         self._resolve_command(outcome)
                 if not inventory.children and not inventory.retained_command_outcomes:
@@ -1645,8 +1553,7 @@ class ExecutorEndpoint:
                         ),
                         retained_command_outcomes=tuple(self._retained_inventory.values()),
                     )
-                    with observe(observer, "inventory_finalize"):
-                        reconciliation = self.store.reconcile(merged, now_ms())
+                    reconciliation = self.store.reconcile(merged, now_ms())
                     # Detach synchronously: a replacement handler may populate
                     # its own aggregates while any of the ACK writes awaits.
                     retained_outcomes = self._retained_inventory
@@ -1680,65 +1587,56 @@ class ExecutorEndpoint:
                 async with self._send_lock:
                     if self.writer is not writer or self.identity != identity:
                         return
-                    with observe(observer, "ready_ack_send"):
-                        await write_frame(
-                            writer,
-                            WireMessage(
-                                WireMessageKind.reconciliation_ready,
-                                message.request_id,
-                                {"ready": True},
-                            ),
-                        )
+                    await write_frame(
+                        writer,
+                        WireMessage(
+                            WireMessageKind.reconciliation_ready,
+                            message.request_id,
+                            {"ready": True},
+                        ),
+                    )
                     if self.writer is not writer or self.identity != identity:
                         return
                     self.ready = True
                 if hasattr(self.store, "mark_ready"):
-                    with observe(observer, "mark_ready"):
-                        self.store.mark_ready(identity, now_ms())
-                with observe(observer, "held_resume"):
-                    await self.runtime.system.resume_executor_held_prompts(remote_ready=True)
+                    self.store.mark_ready(identity, now_ms())
+                await self.runtime.system.resume_executor_held_prompts(remote_ready=True)
                 if self.writer is not writer or self.identity != identity:
                     return
                 for answer in self.store.unapplied_answers():
-                    with observe(observer, "answer_dispatch"):
-                        self._dispatch_answer(answer)
+                    self._dispatch_answer(answer)
                 # Resending a stable command to the same live registry is safe:
                 # the registry retains its pending task and first outcome.
-                with observe(observer, "pending_command_replay"):
-                    for command, future in tuple(self.pending_commands.values()):
-                        if (
-                            not future.done()
-                            and command.child.executor_incarnation == identity.executor_incarnation
+                for command, future in tuple(self.pending_commands.values()):
+                    if (
+                        not future.done()
+                        and command.child.executor_incarnation == identity.executor_incarnation
+                    ):
+                        try:
+                            await self._transfer_command_inputs(command)
+                        except (ConnectionError, TimeoutError):
+                            raise
+                        except (RemoteInputTransferFailed, ValueError, OSError) as error:
+                            self._fail_command_input(command, future, error)
+                            continue
+                        if not future.done() and not await self._emit_command(
+                            command, identity, writer
                         ):
-                            try:
-                                await self._transfer_command_inputs(command)
-                            except (ConnectionError, TimeoutError):
-                                raise
-                            except (RemoteInputTransferFailed, ValueError, OSError) as error:
-                                self._fail_command_input(command, future, error)
-                                continue
-                            if not future.done() and not await self._emit_command(
-                                command, identity, writer
-                            ):
-                                self._release_closed_answer(command, future)
+                            self._release_closed_answer(command, future)
                 return
             elif message.kind is WireMessageKind.envelope:
-                with observe(observer, "envelope_decode"):
-                    envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
-                safe_call(observer, "bind_envelope", envelope)
+                envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
                 result, response_kind = (
                     _object(
                         await self.accept_envelope(
                             envelope,
                             identity,
-                            **({"observer": observer} if observer is not None else {}),
                         )
                     ),
                     WireMessageKind.receipt,
                 )
             elif message.kind is WireMessageKind.command_outcome:
                 outcome = TypeAdapter(CommandOutcome).validate_python(message.payload)
-                safe_call(observer, "command_outcome", outcome)
                 self._resolve_command(outcome)
                 if not self._outcome_hint_acknowledged(outcome):
                     return
@@ -1757,7 +1655,6 @@ class ExecutorEndpoint:
             else:
                 raise ValueError("unsupported executor frame")
             if self.writer is writer and self.identity == identity:
-                safe_call(observer, "enter", "response_send_enter")
                 try:
                     response = WireMessage(response_kind, message.request_id, result)
                     if message.kind is WireMessageKind.reconcile_inventory:
@@ -1765,36 +1662,25 @@ class ExecutorEndpoint:
                             return
                     else:
                         await self._send(response)
-                except BaseException as error:
-                    safe_call(observer, "fail", "response_send_failed", error)
+                except BaseException:
                     raise
                 else:
-                    safe_call(observer, "complete", "response_send_done")
-        except (sqlite3.OperationalError, OSError) as error:
-            safe_call(observer, "fail", "handler_failed", error)
-            safe_call(
-                getattr(self, "_capture", None),
-                "close_attempt",
-                writer,
-                "handler_io_failure",
-                observer,
-            )
+                    pass
+        except (sqlite3.OperationalError, OSError):
             writer.close()
         except (ValueError, PlannerError, KeyError, TypeError) as error:
-            safe_call(observer, "fail", "validation_response", error)
             if self.writer is writer:
-                with observe(observer, "validation_response"):
-                    response = WireMessage(
-                        WireMessageKind.error,
-                        message.request_id,
-                        error.to_payload()
-                        if isinstance(error, PlannerError)
-                        else {"error": {"code": "validation", "message": str(error)}},
-                    )
-                    if message.kind is WireMessageKind.reconcile_inventory:
-                        await self._send_reconciliation(response, identity, writer)
-                    else:
-                        await self._send(response)
+                response = WireMessage(
+                    WireMessageKind.error,
+                    message.request_id,
+                    error.to_payload()
+                    if isinstance(error, PlannerError)
+                    else {"error": {"code": "validation", "message": str(error)}},
+                )
+                if message.kind is WireMessageKind.reconcile_inventory:
+                    await self._send_reconciliation(response, identity, writer)
+                else:
+                    await self._send(response)
 
     async def _read(self, read: LiveReadRequest) -> JsonObject:
         self._assignment(read.child)

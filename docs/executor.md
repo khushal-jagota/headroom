@@ -147,7 +147,11 @@ Code paths: `src/planner/executor/journal.py`, `store.py`, `mutations.py`,
 Workers use ordinary file tools in a resolved Ticket directory. Publication
 captures immutable bytes. Transport consumes a `FileSnapshot` containing its
 manifest and local path. Snapshot bytes remain immutable until an authoritative
-receipt. A transfer pin retains them through receipt cleanup, completion, and
+receipt. Equal retained bytes share hard links between immutable spool entries.
+Every event keeps its own manifest and publication identity. Pins and receipts
+control each entry's lifetime. The final link removal releases shared storage.
+Unsupported hard-link operations use verified copies. Transient capture and
+network transfer remain unchanged. A transfer pin retains them through receipt cleanup, completion, and
 cancellation; no database transaction spans network I/O. The receiver checks the assigned child, owner, path,
 length, and digest, then publishes a complete file from quarantine. A dependent
 row cannot commit first. A replay of an old publication cannot overwrite a newer
@@ -466,28 +470,20 @@ Connection diagnostics omit credentials, addresses, paths, exception messages, a
 Active transfers prevent quiescence. The Manager coordinates compatible peers through the existing identity-bound application procedure.
 A coding candidate grants no permission for a live route or peer change.
 
-The private VPS capture remains disabled without its retained-case configuration.
-Its local observation ID differs from the wire request ID. Valid UUIDs normalize
-to one representation for correlation. Wire kinds and exception classes use fixed
-allowlists. The capture excludes payloads, exception messages, and partial read bytes.
+The private incident observer is outside normal product runtime.
+Its [source and recovery references](/files/tickets/t_1ymbjrdm/artifacts/diagnostic-source-archive.json)
+remain available with the historical evidence. Old private capture configuration
+does not activate the observer in this build.
 
-A VPS request timeout records whether its deadline expired or an inner call raised
-TimeoutError. The record retains the original writer's generation after replacement
-and session cleanup. A local close record describes an attempt at the existing close
-boundary. It does not prove that the close succeeded. Each generation retains separate
-tokens for its first observed failure and its first local close attempt. Wrapper
-reports preserve the original failure token and phase.
+A timeout or lost response does not establish refusal. Durable acceptance remains
+separate from response delivery. An EOF alone does not establish a physical cause.
 
-An EOF records observed transport termination. A preceding local close token links
-that termination to local evidence. Without that token, its physical cause stays
-unknown. A timeout or lost response never establishes operation refusal. Durable
-acceptance remains separate from response delivery.
-
-Capture limits remain 256 records, 256 KiB, 2048 bytes per record, and 180 seconds.
-Receipt settlement retains its 15-second limit. Private metadata has explicit bounds
-and clears at capture termination. Saturation produces honest truncation. Existing
-finalization can precede a later timeout callback. Missing later evidence does not
-prove that no failure occurred. Observer failure never controls executor behavior.
+Conversation request identities and common turn outcomes use shared typed rules.
+Transport callbacks and receipt transactions keep their own execution boundaries.
+Remote conversation persistence uses the existing conversation write worker.
+Connections open and close in that worker. Ordered loop finalization follows the
+committed result. Cancellation retains the operation through settlement.
+Reconciliation recovers the same typed result for acceptance, replay, or refusal.
 
 ## Evidence boundaries
 

@@ -7,23 +7,32 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from planner.conversation.backends.contracts import (
+    AgentMessageCompletedArguments,
+    AgentMessageDeltaArguments,
     BackendChild,
-    BackendEventSink,
-    BackendPermissionAsk,
     BackendPromptAccepted,
     BackendSteerAccepted,
     BackendSteerRefused,
-    BackendUserInputRequest,
+    ComposerCatalogReportedArguments,
+    ContextCompactedArguments,
+    DecodedBackendEventArguments,
+    ModelThinkingHappenedArguments,
+    PermissionAskRaisedArguments,
+    PlanUpdatedArguments,
+    TokenUsageReportedArguments,
+    ToolCallFinishedArguments,
+    ToolCallProgressArguments,
+    ToolCallStartedArguments,
+    TurnEndedArguments,
+    UserInputFailedArguments,
+    UserInputRequestedArguments,
+    VendorSessionCursorReboundArguments,
 )
 from planner.conversation.contracts import (
-    ComposerCatalogEntry,
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
-    ConversationTurnEnding,
-    PlanEntry,
-    ToolCallStatus,
     UserInputAnswer,
 )
 from planner.conversation.message_content import MessageContent
@@ -112,31 +121,39 @@ async def invoke_child(child: BackendChild, command: ChildCommand) -> JsonObject
     return {}
 
 
-def decode_event_arguments(event: BackendEvent) -> dict[str, Any]:
-    args: dict[str, Any] = dict(event.arguments)
-    adapters: dict[BackendEventMethod, dict[str, object]] = {
-        BackendEventMethod.agent_message_completed: {"content": MessageContent},
-        BackendEventMethod.permission_ask_raised: {"ask": BackendPermissionAsk},
-        BackendEventMethod.user_input_requested: {"request": BackendUserInputRequest},
-        BackendEventMethod.plan_updated: {"entries": tuple[PlanEntry, ...]},
-        BackendEventMethod.tool_call_finished: {"tool_call_status": ToolCallStatus},
-        BackendEventMethod.turn_ended: {"ending": ConversationTurnEnding},
-        BackendEventMethod.composer_catalog_reported: {
-            "composer_catalog": tuple[ComposerCatalogEntry, ...]
-        },
-    }
-    for name, target in adapters.get(event.method, {}).items():
-        args[name] = TypeAdapter(target).validate_python(args[name])
-    return args
-
-
-async def dispatch_backend_event(sink: BackendEventSink, event: BackendEvent) -> None:
-    args = decode_event_arguments(event)
-    method = getattr(sink, event.method.value)
-    if event.turn is None:
-        await method(**args)
-    else:
-        await method(event.turn, **args)
+def decode_event_arguments(event: BackendEvent) -> DecodedBackendEventArguments:
+    """Decode one closed callback shape without changing its wire representation."""
+    match event.method:
+        case BackendEventMethod.agent_message_delta:
+            return TypeAdapter(AgentMessageDeltaArguments).validate_python(event.arguments)
+        case BackendEventMethod.model_thinking_happened:
+            return TypeAdapter(ModelThinkingHappenedArguments).validate_python(event.arguments)
+        case BackendEventMethod.agent_message_completed:
+            return TypeAdapter(AgentMessageCompletedArguments).validate_python(event.arguments)
+        case BackendEventMethod.tool_call_started:
+            return TypeAdapter(ToolCallStartedArguments).validate_python(event.arguments)
+        case BackendEventMethod.tool_call_progress:
+            return TypeAdapter(ToolCallProgressArguments).validate_python(event.arguments)
+        case BackendEventMethod.tool_call_finished:
+            return TypeAdapter(ToolCallFinishedArguments).validate_python(event.arguments)
+        case BackendEventMethod.plan_updated:
+            return TypeAdapter(PlanUpdatedArguments).validate_python(event.arguments)
+        case BackendEventMethod.token_usage_reported:
+            return TypeAdapter(TokenUsageReportedArguments).validate_python(event.arguments)
+        case BackendEventMethod.context_compacted:
+            return TypeAdapter(ContextCompactedArguments).validate_python(event.arguments)
+        case BackendEventMethod.permission_ask_raised:
+            return TypeAdapter(PermissionAskRaisedArguments).validate_python(event.arguments)
+        case BackendEventMethod.user_input_requested:
+            return TypeAdapter(UserInputRequestedArguments).validate_python(event.arguments)
+        case BackendEventMethod.user_input_failed:
+            return TypeAdapter(UserInputFailedArguments).validate_python(event.arguments)
+        case BackendEventMethod.turn_ended:
+            return TypeAdapter(TurnEndedArguments).validate_python(event.arguments)
+        case BackendEventMethod.vendor_session_cursor_rebound:
+            return TypeAdapter(VendorSessionCursorReboundArguments).validate_python(event.arguments)
+        case BackendEventMethod.composer_catalog_reported:
+            return TypeAdapter(ComposerCatalogReportedArguments).validate_python(event.arguments)
 
 
 def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:

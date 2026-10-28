@@ -1363,21 +1363,14 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
     asyncio.run(asyncio.wait_for(run(), 20))
 
 
-def test_diagnostic_postcommit_error_stays_unknown_until_readonly_receipt_resolution(
-    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_postcommit_error_preserves_durable_effect_and_receipt(
+    store: ExecutorStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An outer commit error can follow a durable commit; rollback cannot undo it."""
-
-    from tests.unit.test_executor_capture import TARGET, identity, make_capture, records
-
     from planner.executor import store as store_module
-    from planner.executor.capture import Observation
 
-    capture = make_capture(tmp_path)
-    observation = Observation(capture, identity(1), True)
     original_connect = connect
     calls: list[str] = []
-    error = RuntimeError("private postcommit participant failure")
+    error = RuntimeError("postcommit participant failure")
 
     class FailingCommit:
         def __init__(self, connection: sqlite3.Connection) -> None:
@@ -1395,199 +1388,88 @@ def test_diagnostic_postcommit_error_stays_unknown_until_readonly_receipt_resolu
             calls.append("rollback")
             self.connection.rollback()
 
-    monkeypatch.setattr(store_module, "connect", lambda path: FailingCommit(original_connect(path)))
-    with pytest.raises(RuntimeError) as raised:
-        with store._transaction(observer=observation, role="acceptance") as connection:
-            connection.execute("INSERT INTO effects VALUES ('durable')")
-            connection.execute(
-                "INSERT INTO executor_receipts VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    TARGET["sender_id"],
-                    TARGET["submission_id"],
-                    TARGET["conversation_id"],
-                    TARGET["sequence"],
-                    TARGET["payload_sha256"],
-                    "accepted",
-                    '{"safe":true}',
-                    123,
-                ),
-            )
+    row = envelope()
+    with monkeypatch.context() as failure:
+        failure.setattr(store_module, "connect", lambda path: FailingCommit(original_connect(path)))
+        with pytest.raises(RuntimeError) as raised:
+            store.accept(row, effect, 123, identity=IDENTITY)
     assert raised.value is error
     assert calls == ["commit", "rollback"]
-    assert observation.commit_status == "unknown"
-    assert observation.disposition is None
-    phases = [(row.get("phase"), row.get("event")) for row in records(capture)]
-    assert ("commit_enter", "failure") in phases
-    assert ("commit_call_returned", "complete") not in phases
-
-    # Resolution must bypass both the schema-opening connection and full receipt reader.
-    def forbidden(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("diagnostic resolution opened a domain read path")
-
-    monkeypatch.setattr(store_module, "connect", forbidden)
-    monkeypatch.setattr(store, "lookup_receipt", forbidden)
-    observation.settled(store.db_path)
-    assert observation.disposition == "accepted"
-    assert observation.commit_status == "durable_receipt"
-    observation.settled(store.db_path)
-    assert sum(row.get("phase") == "receipt_lookup" for row in records(capture)) == 1
-    capture.finish("target_settled")
-    assert "private postcommit" not in capture.config.sink.read_text()
+    saved = store.lookup_receipt(row.sender_id, row.submission_id)
+    assert saved is not None and saved.disposition is ReceiptDisposition.accepted
+    assert store.accept(row, effect, 124, identity=IDENTITY) == saved
+    connection = connect(store.db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM effects").fetchone()[0] == 1
+    finally:
+        connection.close()
 
 
-def test_preflight_probe_never_establishes_acceptance_and_observer_errors_preserve_receipt(
-    store: ExecutorStore,
-) -> None:
-
-    class Probe:
-        def __init__(self) -> None:
-            self.completed: list[tuple[str, str | None]] = []
-
-        def enter(self, phase: str, **kwargs: Any) -> None:
-            raise RuntimeError("observer unavailable")
-
-        def complete(self, phase: str, *, role: str | None = None) -> None:
-            self.completed.append((phase, role))
-
-    probe = Probe()
-    assert store.preflight(envelope(), identity=IDENTITY, observer=probe) is None
-    assert ("commit_call_returned", "preflight") in probe.completed
-    assert all(role == "preflight" for _, role in probe.completed)
+def test_preflight_never_establishes_acceptance(store: ExecutorStore) -> None:
+    assert store.preflight(envelope(), identity=IDENTITY) is None
     assert store.lookup_receipt("sender", "conversation-1") is None
-    receipt = store.accept(envelope(), effect, 1100, identity=IDENTITY, observer=probe)
+    receipt = store.accept(envelope(), effect, 1100, identity=IDENTITY)
     assert receipt == store.lookup_receipt("sender", "conversation-1")
-    assert ("domain_effect", "acceptance") in probe.completed
-    assert ("receipt_insert", "acceptance") in probe.completed
-    assert probe.completed.index(("receipt_insert", "acceptance")) < probe.completed.index(
-        ("commit_enter", "acceptance")
-    )
 
 
-def test_interleaved_target_and_control_requests_keep_phases_and_domain_bytes_separate(
-    tmp_path: Path,
-) -> None:
-    """A ready frame finishing during head acceptance cannot steal its observation."""
+def test_control_frame_progresses_while_envelope_waits(tmp_path: Path) -> None:
     import asyncio
     from types import SimpleNamespace
     from typing import cast
     from unittest.mock import AsyncMock, Mock
 
-    from tests.unit.test_executor_capture import TARGET, make_capture, records
     from tests.unit.test_executor_request_deadlines import peer
 
     from planner.core.clock import RealClock
-    from planner.executor.capture import capture_request
+    from planner.executor.codec import encode_value
     from planner.executor.contracts import AcceptanceReceipt, WireMessage, WireMessageKind
     from planner.executor.vps import ExecutorEndpoint
 
-    async def exercise(mode: str) -> tuple[list[bytes], list[Any]]:
+    async def exercise() -> None:
         endpoint = ExecutorEndpoint(str(tmp_path / "unused.sqlite"), RealClock())
         writer = peer()
-        executor_identity = replace(
-            IDENTITY, executor_incarnation=str(TARGET["executor_incarnation"])
-        )
-        endpoint.identity, endpoint.writer = executor_identity, writer
+        endpoint.identity, endpoint.writer = IDENTITY, writer
         endpoint.store = Mock()
         endpoint.store.unapplied_answers.return_value = ()
         endpoint.runtime = SimpleNamespace(
             system=SimpleNamespace(resume_executor_held_prompts=AsyncMock())
         )
-        payload: JsonObject = {
-            "method": str(TARGET["method"]),
-            "child": {
-                "executor_incarnation": str(TARGET["executor_incarnation"]),
-                "child_id": "b67b9942-bcc5-4925-b3bd-ce551df037a3",
-                "conversation_id": str(TARGET["conversation_id"]),
-            },
-        }
-        head = QueuedEnvelope(
-            str(TARGET["sender_id"]),
-            str(TARGET["conversation_id"]),
-            80,
-            str(TARGET["submission_id"]),
-            EnvelopeKind.backend_event,
-            payload,
-            str(TARGET["payload_sha256"]),
-        )
-        from planner.executor.codec import encode_value
-
+        head = envelope()
         frame = WireMessage(WireMessageKind.envelope, "head", cast(JsonObject, encode_value(head)))
         control = WireMessage(WireMessageKind.reconciliation_ready, "control", {})
-        capture = make_capture(tmp_path) if mode == "capture" else None
-        head_observer = capture_request(capture, executor_identity, frame)
-        control_observer = capture_request(capture, executor_identity, control)
-        if mode == "broken":
-
-            class Broken:
-                def __getattr__(self, name: str) -> Any:
-                    raise RuntimeError("private broken observation")
-
-            head_observer = control_observer = Broken()  # type: ignore[assignment]
         entered, release = asyncio.Event(), asyncio.Event()
-        observers: list[Any] = []
 
-        async def accept(
-            envelope: QueuedEnvelope, identity: ExecutorIdentity, observer: Any = None
-        ) -> AcceptanceReceipt:
-            from planner.executor.capture import observe
-
-            observers.append(observer)
-            with observe(observer, "preflight"):
-                entered.set()
-                await release.wait()
+        async def accept(envelope: QueuedEnvelope, identity: ExecutorIdentity) -> AcceptanceReceipt:
+            row = envelope
+            entered.set()
+            await release.wait()
             return AcceptanceReceipt(
-                envelope.sender_id,
-                envelope.submission_id,
-                envelope.payload_sha256,
+                row.sender_id,
+                row.submission_id,
+                row.payload_sha256,
                 ReceiptDisposition.accepted,
                 {"applied": True},
                 123,
             )
 
         endpoint.accept_envelope = accept  # type: ignore[method-assign]
-        task = asyncio.create_task(
-            endpoint._handle_message(frame, executor_identity, writer, head_observer)
-        )
+        task = asyncio.create_task(endpoint._handle_message(frame, IDENTITY, writer))
         await entered.wait()
-        await endpoint._handle_message(control, executor_identity, writer, control_observer)
+        await endpoint._handle_message(control, IDENTITY, writer)
         assert not task.done()
         assert endpoint.ready
         release.set()
         await task
-        assert observers == [head_observer]
         writer.close.assert_not_called()
-        output = [call.args[0] for call in writer.write.call_args_list]
-        output_records = records(capture) if capture is not None else []
-        if capture is not None:
-            assert head_observer is not None and control_observer is not None
-            head_id = head_observer.request_id
-            control_id = control_observer.request_id
-            assert head_id != control_id
-            assert any(
-                row.get("request_id") == head_id and row.get("phase") == "preflight"
-                for row in output_records
-            )
-            assert any(
-                row.get("request_id") == control_id and row.get("phase") == "held_resume"
-                for row in output_records
-            )
-            assert not any(
-                row.get("request_id") == control_id and row.get("phase") == "preflight"
-                for row in output_records
-            )
-            capture.finish("target_settled")
-        return output, output_records
+        assert writer.write.call_count == 2
 
-    baseline, _ = asyncio.run(exercise("disabled"))
-    broken, _ = asyncio.run(exercise("broken"))
-    captured, _ = asyncio.run(exercise("capture"))
-    assert baseline == broken == captured
+    asyncio.run(exercise())
 
 
-def test_decoded_request_observation_precedes_generation_fence(
+def test_superseded_ingress_cannot_reach_handler_or_close_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Superseded ingress remains observed even when no domain handler can run."""
+    """Superseded ingress cannot execute a domain handler or close the replacement writer."""
     import asyncio
     from unittest.mock import AsyncMock, Mock
 
@@ -1605,11 +1487,6 @@ def test_decoded_request_observation_precedes_generation_fence(
         endpoint._measure_clock = AsyncMock()  # type: ignore[method-assign]
         endpoint._close_transport = AsyncMock()  # type: ignore[method-assign]
         endpoint._handle = AsyncMock()  # type: ignore[method-assign]
-        observed: list[Any] = []
-        capture = Mock()
-        capture.hello.return_value = None
-        capture.request.side_effect = lambda identity, message: observed.append(message)
-        endpoint._capture = capture
         calls = 0
         frame = WireMessage(WireMessageKind.error, "superseded", {})
 
@@ -1623,7 +1500,6 @@ def test_decoded_request_observation_precedes_generation_fence(
 
         monkeypatch.setattr(vps, "read_frame", read)
         await endpoint._session(Mock(), original)
-        assert observed == [frame]
         endpoint._handle.assert_not_called()
         replacement.close.assert_not_called()
         original.close.assert_called_once_with()

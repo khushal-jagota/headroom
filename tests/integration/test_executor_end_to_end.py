@@ -176,7 +176,7 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         self.input_cut_count = 0
 
     async def _accept_envelope(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, observer: Any = None
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
         if self.cut_user_input_application:
             application: JsonValue = None
@@ -191,9 +191,7 @@ class CutReceiptEndpoint(ExecutorEndpoint):
                 if isinstance(ask, dict) and ask.get("kind") == "user_input":
                     self.cut_user_input_application = False
                     self.cut_submission = envelope.submission_id
-        return await super()._accept_envelope(
-            envelope, identity, **({"observer": observer} if observer is not None else {})
-        )
+        return await super()._accept_envelope(envelope, identity)
 
     async def _send_reconciliation(
         self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
@@ -339,9 +337,8 @@ async def boot(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    native_factory: Callable[
-        [ResolvedConversationStart, str, ChildReference], BackendChildFactory
-    ] | None = None,
+    native_factory: Callable[[ResolvedConversationStart, str, ChildReference], BackendChildFactory]
+    | None = None,
     backend_key: ConversationBackendKey = ConversationBackendKey.codex,
     model: str = "scripted",
     reasoning_effort: str | None = None,
@@ -529,6 +526,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
             model="claude-old",
             reasoning_effort="low",
         )
+
         def prompts(client: _ScriptedClaudeSdkClient) -> list[str]:
             return client.prompts + [
                 "\n".join(block["text"] for block in message["message"]["content"])
@@ -544,8 +542,12 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 ended = harness.events("turn_ended")
                 clients[-1].say(
                     ResultMessage(
-                        subtype="success", duration_ms=1, duration_api_ms=1,
-                        is_error=False, num_turns=1, session_id=session,
+                        subtype="success",
+                        duration_ms=1,
+                        duration_api_ms=1,
+                        is_error=False,
+                        num_turns=1,
+                        session_id=session,
                     )
                 )
                 await eventually(
@@ -568,8 +570,10 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 sender_text = f"Keep sender bytes {index}: café\nsecond line"
                 sending = asyncio.create_task(
                     harness.system.send(
-                        "c_scripted", text_message_content(sender_text),
-                        sender_label="Chief", sender=CHIEF_PRINCIPAL,
+                        "c_scripted",
+                        text_message_content(sender_text),
+                        sender_label="Chief",
+                        sender=CHIEF_PRINCIPAL,
                         recipient=Principal(
                             PrincipalKind.ticket, old.options.env["PLAN_TICKET_ID"]
                         ),
@@ -602,7 +606,8 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 assert prompt.index("Chief:") < prompt.index(sender_text)
 
                 writes = [
-                    command for command in harness.mac.registry._commands.values()
+                    command
+                    for command in harness.mac.registry._commands.values()
                     if command.operation is ChildOperation.write_prompt
                     and command.arguments.get("sender_label") == "Chief"
                     and command.arguments.get("model_change") == changes.get("model_change")
