@@ -694,13 +694,33 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
 def test_lifecycle_expectation_crosses_authenticated_native_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """New boundary: real Ticket lifecycle through TLS, with an unrelated active child."""
+    """Authored kind crosses the real lifecycle/TLS boundary without inferred intent."""
     import time
 
+    from planner.conversation.message_content import MessageText
+    from planner.conversation.model_resolution.contracts import SelectionKind
     from planner.executor.contracts import ChildOperation
-    from planner.runtime.conversation_start import start_ticket_conversation, worker_resolve
+    from planner.runtime.conversation_start import (
+        conversation_link_lock,
+        send_to_ticket_conversation,
+    )
+    from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
     from planner.tickets import data
     from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
+    from planner.tickets.validation.data import read_launch_selection
+
+    class CapturedNativeChild(ScriptedNativeChild):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delivered_text: list[str] = []
+
+        async def write_prompt(
+            self, turn_token: TurnToken, content: MessageContent, **arguments: object
+        ) -> BackendPromptAccepted:
+            self.delivered_text.append("\n".join(
+                piece.text for piece in content if isinstance(piece, MessageText)
+            ))
+            return await super().write_prompt(turn_token, content, **arguments)
 
     async def run() -> None:
         started = time.monotonic()
@@ -708,7 +728,7 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
         conn = connect(harness.endpoint.db_path)
         try:
             first = next(iter(harness.mac.registry.children.values()))
-            second = ScriptedNativeChild()
+            second = CapturedNativeChild()
 
             def factory(
                 resolved: ResolvedConversationStart, capability: str, child: ChildReference
@@ -734,28 +754,41 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
                 project_id=project_id,
                 employee_backend="codex",
                 employee_launch_model="scripted",
-                selection_kind="concrete",
+                selection_kind="legacy_unclassified",
             )
-            linked = await start_ticket_conversation(
-                harness.system,
-                conn,
-                ticket,
-                worker_resolve(conn, ticket),
-                conversation_id="c_combined_admission",
-                now=int(time.time()),
-            )
-            fate = await harness.system.send(
-                linked.conversation_id,
-                text_message_content("Exact lifecycle selection"),
-                sender_label="Test",
-                sender=CHIEF_PRINCIPAL,
-                recipient=Principal(PrincipalKind.ticket, ticket.id),
-            )
+            original = read_launch_selection(conn, ticket.id)
+            assert original.selection_kind is SelectionKind.legacy_unclassified
+            exact_text = "Exact lifecycle selection: café\nsecond line"
+            async with conversation_link_lock(f"ticket:{ticket.id}"):
+                delivery = await send_to_ticket_conversation(
+                    harness.system,
+                    conn,
+                    ticket.id,
+                    text_message_content(exact_text),
+                    conversation_id=None,
+                    created_conversation_id="c_combined_admission",
+                    runs_under=ConversationStartOverrides(
+                        model="scripted", selection_kind=SelectionKind.concrete
+                    ),
+                    sender_label="Test",
+                    sender=CHIEF_PRINCIPAL,
+                    recipient=Principal(PrincipalKind.ticket, ticket.id),
+                    now=int(time.time()),
+                )
+            fate = delivery.fate
+            conversation_id = delivery.conversation_id
+            assert conversation_id == "c_combined_admission"
             assert second.start_count == second.prompt_count == 1, fate
+            assert len(second.delivered_text) == 1
+            assert exact_text in second.delivered_text[0]
+            selected = read_launch_selection(conn, ticket.id)
+            assert selected.selection_kind is SelectionKind.concrete
+            assert selected.submitted_token == original.submitted_token == "scripted"
+            assert selected.backend_key is ConversationBackendKey.codex
             commands = [
                 command
                 for command in harness.mac.registry._commands.values()
-                if command.child.conversation_id == linked.conversation_id
+                if command.child.conversation_id == conversation_id
             ]
             assert [command.operation for command in commands] == [
                 ChildOperation.start,
@@ -764,17 +797,24 @@ def test_lifecycle_expectation_crosses_authenticated_native_admission(
             for command in commands:
                 expectation = command.arguments["admission_expectation"]
                 assert isinstance(expectation, dict)
-                assert expectation["conversation_id"] == linked.conversation_id
+                assert expectation["conversation_id"] == conversation_id
+                selection = expectation["selection"]
+                assert isinstance(selection, dict)
+                assert selection["selection_kind"] == "concrete"
+                assert selection["submitted_token"] == "scripted"
+                assert selection["backend_key"] == "codex"
+                assert expectation["resolved_model_id"] == "scripted"
+                assert expectation["launch_token"] == "scripted"
                 assert expectation["child"] == {
                     "executor_incarnation": command.child.executor_incarnation,
                     "child_id": command.child.child_id,
-                    "conversation_id": linked.conversation_id,
+                    "conversation_id": conversation_id,
                 }
                 assert expectation["turn"] == (
                     None
                     if command.turn is None
                     else {
-                        "conversation_id": linked.conversation_id,
+                        "conversation_id": conversation_id,
                         "turn_number": command.turn.turn_number,
                     }
                 )
