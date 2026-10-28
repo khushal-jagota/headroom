@@ -35,8 +35,9 @@ from planner.worker_settings import service as worker_settings_service
 
 RECAP_REQUEST_MESSAGE = (
     "File a short, top-level recap with your recap tool. "
+    "Do not send the user a message. "
     "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
-    "Chief: `PUT /api/workers/chief-of-staff/recap`. Do not send the user a message."
+    "Chief: `PUT /api/workers/chief-of-staff/recap`."
 )
 
 # Every agent Panels runs keeps a recap, so every agent can be asked for a fresh one. The

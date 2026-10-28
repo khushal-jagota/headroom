@@ -297,8 +297,9 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
 
     expected_request = (
         "File a short, top-level recap with your recap tool. "
+        "Do not send the user a message. "
         "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
-        "Chief: `PUT /api/workers/chief-of-staff/recap`. Do not send the user a message."
+        "Chief: `PUT /api/workers/chief-of-staff/recap`."
     )
     owner = Principal(PrincipalKind.owner, "owner")
     worker = Principal(PrincipalKind.ticket, "t_worker")
