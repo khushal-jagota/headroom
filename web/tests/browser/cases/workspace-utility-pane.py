@@ -1531,6 +1531,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         # bounds and hit testing at a pointer that never moves during the change.
         page.evaluate("""({point}) => {
           window.__recapFrames=[];
+          window.__recapSampleUntil=null;
           const start=performance.now();
           window.__recapSampling=new Promise(resolve=>{
             function sample(){
@@ -1538,11 +1539,12 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
               window.__recapFrames.push({ms:performance.now()-start,x:r.x,y:r.y,width:r.width,height:r.height,
                 visible:panel.getAttribute('aria-hidden')==='false',
                 hit:point ? Boolean(document.elementFromPoint(point.x,point.y)?.closest('[data-rail-hover-panel]')) : null});
-              if(performance.now()-start<380) requestAnimationFrame(sample); else resolve();
+              if(window.__recapSampleUntil===null || performance.now()<window.__recapSampleUntil) requestAnimationFrame(sample); else resolve();
             } requestAnimationFrame(sample);
           });
         }""", {"point": point})
         mutate()
+        page.evaluate("window.__recapSampleUntil=performance.now()+380")
         page.evaluate("() => window.__recapSampling")
         frames = page.evaluate("window.__recapFrames")
         proof["samples"].append({"label": label, "point": point, "floor": floor, "frames": frames})
@@ -1556,11 +1558,26 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
 
     def request():
         before = fixture.get("recap_requests", 0)
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True)
+        expect(ask).to_have_attribute('aria-disabled', 'false')
         with page.expect_response('**/api/recap-requests'):
-            panel.get_by_role('button', name='Ask for a recap', exact=True).click()
+            ask.click()
         assert fixture["recap_requests"] == before + 1
         refresh()
         expect(text).to_have_count(0)
+
+    def keyboard_request(before_request=None):
+        expect(panel.locator('[data-request-recap]')).to_have_attribute('data-request-recap', 'ticket:recap_floor')
+        ask = panel.get_by_role('button', name='Ask for a recap', exact=True)
+        # HTTP delivery precedes mutateJson's query invalidations. The action stays
+        # busy until those finish, so a second Enter must wait for its public state.
+        expect(ask).to_have_attribute('aria-disabled', 'false')
+        ask.focus()
+        expect(ask).to_be_focused()
+        if before_request:
+            before_request()
+        with page.expect_response('**/api/recap-requests'):
+            page.keyboard.press('Enter')
 
     for reduced, lower in [(False, False), (False, True), (True, False)]:
         page.set_viewport_size({"width": 1280, "height": 700})
@@ -1641,9 +1658,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     set_lines(3)
     page.wait_for_timeout(300)
     before = panel.bounding_box()["height"]
-    panel.get_by_role('button', name='Ask for a recap', exact=True).focus()
-    with page.expect_response('**/api/recap-requests'):
-        page.keyboard.press('Enter')
+    keyboard_request()
     refresh()
     expect(text).to_have_count(0)
     sample_change('keyboard-no-pointer', lambda: None)
@@ -1661,12 +1676,29 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     set_lines(3)
     page.wait_for_timeout(300)
     full = panel.bounding_box()["height"]
-    panel.get_by_role('button', name='Ask for a recap', exact=True).focus()
-    with page.expect_response('**/api/recap-requests'):
-        page.keyboard.press('Enter')
+    def pause_shrink():
+        # Pause the browser-owned CSS transition at a known intermediate time.
+        # A fixed delay can miss a short transition on a loaded machine.
+        page.evaluate("""() => {
+          window.__recapShrinkReady = new Promise((resolve, reject) => {
+            const slot=document.querySelector('[data-rail-hover-panel] [data-recap-slot]');
+            const started=performance.now();
+            function sample(){
+              const animation=slot.getAnimations().find(animation=>animation.transitionProperty==='height');
+              if(animation && slot.style.height==='0px') {
+                animation.pause();
+                animation.currentTime=animation.effect.getTiming().duration/2;
+                requestAnimationFrame(()=>resolve(slot.getBoundingClientRect().height));
+              } else if(performance.now()-started>2000) reject(new Error('No ordinary recap shrink transition'));
+              else requestAnimationFrame(sample);
+            } requestAnimationFrame(sample);
+          });
+        }""")
+
+    keyboard_request(pause_shrink)
     refresh()
     expect(text).to_have_count(0)
-    page.wait_for_timeout(40)
+    page.evaluate('() => window.__recapShrinkReady')
     bounds = panel.bounding_box()
     point = {"x": bounds["x"] + 20, "y": bounds["y"] + 20}
     page.mouse.move(point["x"], point["y"])
@@ -1697,6 +1729,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     expect(touch_panel).to_have_attribute('aria-hidden', 'false')
     expect(touch_panel.locator('.title')).to_contain_text('Recap floor')
     before = touch_panel.bounding_box()["height"]
+    expect(touch_panel.get_by_role('button', name='Ask for a recap', exact=True)).to_have_attribute('aria-disabled', 'false')
     session.send('Input.dispatchTouchEvent', {"type": "touchEnd", "touchPoints": []})
     with touch_page.expect_response('**/api/recap-requests'):
         touch_panel.get_by_role('button', name='Ask for a recap', exact=True).tap()
