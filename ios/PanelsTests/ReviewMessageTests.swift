@@ -3,14 +3,36 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ReviewMessageTests: XCTestCase {
-    func testMixedReviewDecodesServerOrderAndConversationIdentity() throws {
-        let data = Data(#"{"items":[{"review_item_type":"message","conversation_id":"old","address_id":"history","owner_kind":"manager","owner_id":"m","title":"Older message","waiting_since":1,"recap":"Context"},{"review_item_type":"proposal","ticket_id":"t","field":"brief","title":"Proposal","waiting_since":2}],"running_worker_count":3}"#.utf8)
-        let queue = try APIClient.decoder().decode(ReviewResponse.self, from: data)
-        XCTAssertEqual(queue.items.map(\.title), ["Older message", "Proposal"])
-        XCTAssertEqual(queue.items.first?.owner, .manager("m"))
-        XCTAssertEqual(queue.items.first?.conversationId, "old")
-        XCTAssertTrue(queue.items.first!.isMessage)
-        XCTAssertFalse(queue.items.last!.isMessage)
+    func testGroupedReviewPreservesExactComponentsAndCompletion() throws {
+        let proposal: [String: Any] = ["review_item_type": "proposal", "ticket_id": "t", "field": "plan", "title": "Ticket", "waiting_since": 200]
+        let message: [String: Any] = ["review_item_type": "message", "conversation_id": "old", "address_id": "history", "owner_kind": "ticket", "owner_id": "t", "title": "Ticket", "waiting_since": 100, "recap": "Context"]
+        func card(proposal: [String: Any]?, messages: [[String: Any]]) -> [String: Any] {
+            ["review_item_type": "ticket", "ticket_id": "t", "title": "Ticket", "waiting_since": messages.isEmpty ? 200 : 100,
+             "proposal": proposal as Any? ?? NSNull(), "messages": messages]
+        }
+        let wire: [String: Any] = ["items": [card(proposal: proposal, messages: []), card(proposal: nil, messages: [message]), card(proposal: proposal, messages: [message])], "running_worker_count": 3]
+        let queue = try APIClient.decoder().decode(ReviewResponse.self, from: JSONSerialization.data(withJSONObject: wire))
+        XCTAssertEqual(queue.items.map { $0.components.count }, [1, 1, 2])
+        let combined = queue.items[2]
+        XCTAssertEqual(combined.waitingSince, 100)
+        XCTAssertEqual(combined.components[0].field, "plan")
+        XCTAssertEqual(combined.components[0].waitingSince, 200)
+        XCTAssertEqual(combined.components[1].owner, .ticket("t"))
+        XCTAssertEqual(combined.components[1].conversationId, "old")
+        XCTAssertEqual(combined.components[1].addressId, "history")
+        let afterProposal = try XCTUnwrap(combined.keepingComponents { $0.isMessage })
+        XCTAssertEqual(afterProposal.components.map(\.conversationId), ["old"])
+        let afterMessage = try XCTUnwrap(combined.keepingComponents { !$0.isMessage })
+        XCTAssertEqual(afterMessage.components.map(\.field), ["plan"])
+        XCTAssertNil(afterMessage.keepingComponents { _ in false })
+        var visit = ReviewQueue()
+        visit.skip(combined)
+        XCTAssertNil(visit.current(in: [combined]))
+        visit.revisit()
+        XCTAssertEqual(visit.current(in: [combined])?.id, combined.id)
+        let manager = ReviewItem(reviewItemType: "message", title: "Manager", waitingSince: 1,
+            conversationId: "manager-history", ownerKind: "manager", ownerId: "m")
+        XCTAssertEqual(manager.components.first?.conversationId, "manager-history")
     }
     func testAutomaticRecoveryRetainsSenderInsteadOfBecomingOwnerWords() throws {
         let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"prompt","sender_label":"Panels deployment recovery","content":[{"piece":"text","text":"Inspect interrupted work"}]}"#.utf8))

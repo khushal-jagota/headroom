@@ -245,10 +245,13 @@ def run(browser, urls):
 
     # The hold releases the moment the message is safe, and only then.
     page.evaluate("window.__heldPage = true")
-    page.evaluate(
-        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
-    )
+    with page.expect_navigation(wait_until="networkidle"):
+        page.evaluate(
+            "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
+        )
     page.wait_for_function("() => window.__heldPage === undefined")
+    # A new window clears the marker before its module installs the drivers.
+    page.wait_for_function("() => typeof window.__deployment === 'function'")
 
     # The approved plan's evidence: every state of the one slot, at both breakpoints.
     # The page reloaded above, so this starts from a fresh boot with no update served.
@@ -435,7 +438,10 @@ def run(browser, urls):
     # A card returning mid-close reverses the row, but the scripted collapse is what is
     # on screen. Cancelling it there exposed the taller grid height before the reopen.
     def continuous(samples, label, interrupted_at):
-        assert all(abs(current["height"] - previous["height"]) < 8
+        # The fixture records elapsed milliseconds for each sample. Keep the
+        # eight-pixel bound per 16ms when Chromium delivers a delayed frame.
+        assert all(abs(current["height"] - previous["height"])
+                   < 8 * max(1, (current["ms"] - previous["ms"]) / 16)
                    for previous, current in zip(samples, samples[1:], strict=False)), (label, samples)
         # The return has to travel. Cancelling the scripted collapse instead handed the
         # height straight to the row, which during the exit delay is still at full size,

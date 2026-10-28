@@ -9,11 +9,11 @@ import { readManagedFile } from "../src/lib/managedFileRead";
 
 type Gate = { settle: (value: Response) => void; fail: (reason: unknown) => void };
 
-function stubFetch(): { calls: { href: string; signal: AbortSignal }[]; gates: Gate[] } {
-  const calls: { href: string; signal: AbortSignal }[] = [];
+function stubFetch(): { calls: { href: string; signal: AbortSignal; init: RequestInit }[]; gates: Gate[] } {
+  const calls: { href: string; signal: AbortSignal; init: RequestInit }[] = [];
   const gates: Gate[] = [];
   vi.stubGlobal("fetch", (href: string, init: { signal: AbortSignal }) => {
-    calls.push({ href, signal: init.signal });
+    calls.push({ href, signal: init.signal, init });
     return new Promise<Response>((resolve, reject) => {
       gates.push({ settle: resolve, fail: reject });
     });
@@ -42,6 +42,24 @@ describe("reading a managed file", () => {
     expect(calls).toHaveLength(1);
     gates[0].settle(answer("the note"));
     expect(await Promise.all(previews)).toEqual(["the note", "the note", "the note"]);
+  });
+
+  it("shares HTML reads only across the same confinement and freshness, with independent readers", async () => {
+    const { calls, gates } = stubFetch();
+    const leaving = reader();
+    const options = { artifactRootHref: '/files/tickets/t_1/site/index.html' };
+    const href = '/files/tickets/t_1/site/child.html';
+    const first = readManagedFile(href, leaving.signal, options);
+    const second = readManagedFile(href, reader().signal, options);
+    const fresh = readManagedFile(href, reader().signal, {...options, fresh: true});
+    const otherRoot = readManagedFile(href, reader().signal, {artifactRootHref:'/files/tickets/t_1/index.html'});
+    expect(calls).toHaveLength(3);
+    expect(calls[0].init).toMatchObject({headers:{'X-Panels-Artifact-Root':options.artifactRootHref},redirect:'error'});
+    expect(calls[1].init).toMatchObject({cache:'no-store'});
+    leaving.abort();
+    expect(calls[0].signal.aborted).toBe(false);
+    gates.forEach((gate, index) => gate.settle(answer(String(index))));
+    expect(await Promise.all([first, second, fresh, otherRoot])).toEqual(['0','0','1','2']);
   });
 
   it("keeps nothing, so a later read sees a rewritten file", async () => {

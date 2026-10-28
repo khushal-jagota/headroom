@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 
+from playwright.sync_api import expect
+
 
 def run(browser, urls):
     page = browser.new_page(viewport={"width": 1100, "height": 900})
@@ -314,5 +316,280 @@ def run(browser, urls):
     )
     assert page.evaluate('window.__workers.at(-1).terminated')
     assert fixture.locator('[data-markdown-window]').count() == 0
+    # Reuse this browser host for frame identity, visibility and failure retention.
+    # These risks need a real WindowProxy and sandbox, but no backend connection.
+    page.set_viewport_size({"width": 1100, "height": 900})
+    page.evaluate("""() => {
+      window.__htmlFetches = 0;
+      window.__htmlNavigationMessages = 0;
+      window.addEventListener('message', event => {
+        if (event.data?.type === 'panels-html-navigation') window.__htmlNavigationMessages++;
+      });
+      const originalFetch = window.fetch;
+      window.fetch = (...args) => {
+        if (String(args[0]).includes('/files/tickets/t_owner/')) window.__htmlFetches++;
+        if (String(args[0]).endsWith('/slow.html')) return new Promise(resolve => {
+          window.__resolveSlowHtml = () => resolve(new Response('<h1>Obsolete response</h1>'));
+        });
+        return originalFetch(...args);
+      };
+    }""")
+    reads = []
+    def serve_html(route):
+        path = route.request.url.split("?", 1)[0].split("/files/", 1)[1]
+        reads.append(path)
+        if path.endswith("missing.html"):
+            route.fulfill(status=404, body="not found")
+            return
+        title = "Child" if path.endswith("child.html") else "Index"
+        route.fulfill(status=200, content_type="text/html", body=f"""<!doctype html><html><head>
+          <base href="https://evil.example/"></head><body><h1>{title}</h1>
+          <script>window.controlCounts=[0,0,0];window.controlPrevented=[];</script>
+          <a id="empty-control" href=""
+            onclick="window.controlCounts[0]++;window.controlPrevented.push(event.defaultPrevented);
+            event.preventDefault()">Empty control</a>
+          <a id="hash-control" href="#"
+            onclick="window.controlCounts[1]++;window.controlPrevented.push(event.defaultPrevented);
+            event.preventDefault()">Hash control</a>
+          <a id="no-href-control"
+            onclick="window.controlCounts[2]++;window.controlPrevented.push(event.defaultPrevented);
+            event.preventDefault()">No href control</a>
+          <a id="child" href="nested/child.html">Child</a>
+          <a id="missing" href="missing.html">Missing</a>
+          <a id="escape" href="../outside.html">Outside</a>
+          <a id="fragment" href="#detail">Detail</a>
+          <div style="height:1400px"></div><p id="detail">Detail content</p>
+          </body></html>""")
+    page.route("**/files/tickets/t_owner/**", serve_html)
+    original_url = page.url
+    for mode in ["full", "embedded"]:
+        page.evaluate("mode => window.__html(mode)", mode)
+        html = page.locator('[data-html-fixture]')
+        html.scroll_into_view_if_needed()
+        frame = html.frame_locator('[data-file-preview-html]')
+        expect(frame.locator('h1')).to_have_text('Index')
+        initial_src = html.locator('iframe').get_attribute('src')
+        before_controls = page.evaluate("[window.__htmlFetches,window.__htmlNavigationMessages]")
+        for control in ['empty-control', 'hash-control', 'no-href-control']:
+            frame.locator('#' + control).click()
+        assert frame.locator('body').evaluate("() => window.controlCounts") == [1, 1, 1]
+        assert frame.locator('body').evaluate("() => window.controlPrevented") == [False] * 3
+        assert page.evaluate(
+            "[window.__htmlFetches,window.__htmlNavigationMessages]"
+        ) == before_controls
+        assert html.locator('iframe').get_attribute('src') == initial_src
+        expect(html.locator('[data-html-back]')).to_have_count(0)
+        page.evaluate("""() => {
+          const frame=document.querySelector('[data-html-fixture] iframe');
+          window.__oldHtmlWindow=frame.contentWindow;
+        }""")
+        frame.locator('#child').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        assert page.url == original_url
+        page.evaluate("""() => window.dispatchEvent(new MessageEvent('message', {
+          source:window.__oldHtmlWindow,
+          data:{type:'panels-html-navigation',generation:'stale',href:'missing.html'}
+        }))""")
+        # Current source with an obsolete generation also has no authority.
+        page.evaluate("""() => window.dispatchEvent(new MessageEvent('message', {
+          source:document.querySelector('[data-html-fixture] iframe').contentWindow,
+          data:{type:'panels-html-navigation',generation:'obsolete',href:'missing.html'}
+        }))""")
+        frame.locator('#fragment').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        frame.locator('body').evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(resolve))"
+        )
+        assert frame.locator('body').evaluate("() => window.scrollY") > 1000
+        assert frame.locator('#detail').evaluate("node => node.getBoundingClientRect().top") < 500
+        assert html.locator('[data-html-navigation-notice]').count() == 0
+        html.locator('[data-html-back]').click()  # Fragment history.
+        successful_src = html.locator('iframe').get_attribute('src')
+        frame.locator('#missing').click()
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text(
+            'file fetch failed: 404'
+        )
+        expect(frame.locator('h1')).to_have_text('Child')
+        assert html.locator('iframe').get_attribute('src') == successful_src
+        expect(html.locator('[data-visible-content-failed]')).to_have_count(0)
+        frame.locator('#escape').click()  # Resolves inside the original site directory.
+        expect(frame.locator('h1')).to_have_text('Index')
+        html.locator('[data-html-back]').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        html.locator('[data-html-back]').click()
+        expect(frame.locator('h1')).to_have_text('Index')
+        frame.locator('#escape').click()
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text(
+            'This link cannot be opened in the artifact viewer.'
+        )
+        assert not any(path.endswith('outside.html') and '/site/' not in path for path in reads)
+        generation = frame.locator('head script').first.evaluate(
+            "node => JSON.parse(node.textContent.match(/const generation = ([^;]+);/)[1])"
+        )
+        before = page.evaluate("window.__htmlFetches")
+        page.evaluate("""generation => {
+          const other=document.createElement('iframe');
+          document.body.append(other);
+          window.dispatchEvent(new MessageEvent('message', {source:other.contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'missing.html'}}));
+          other.remove();
+        }""", generation)
+        page.evaluate("""generation => {
+          const host=document.querySelector('[data-html-fixture]');
+          host.style.visibility='hidden';
+          const frame=host.querySelector('iframe');
+          window.dispatchEvent(new MessageEvent('message', {source:frame.contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'missing.html'}}));
+          host.style.visibility='';
+        }""", generation)
+        assert page.evaluate("window.__htmlFetches") == before
+        clipped = page.evaluate("""generation => {
+          const host=document.querySelector('[data-html-fixture]');
+          const wrapper=document.createElement('div');
+          wrapper.style.cssText='height:20px;overflow:auto;position:relative';
+          host.replaceWith(wrapper); wrapper.append(host);
+          host.style.transform='translateY(40px)';
+          const rect=host.getBoundingClientRect();
+          window.dispatchEvent(new MessageEvent('message', {
+            source:host.querySelector('iframe').contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'missing.html'}}));
+          host.style.transform=''; wrapper.replaceWith(host);
+          return {top:rect.top,bottom:rect.bottom,reads:window.__htmlFetches};
+        }""", generation)
+        assert 0 <= clipped['top'] < 900, clipped
+        assert clipped['reads'] == before, clipped
+        # A request starts while visible, then its frame becomes clipped before success.
+        page.evaluate("""generation => {
+          const host=document.querySelector('[data-html-fixture]');
+          window.dispatchEvent(new MessageEvent('message', {
+            source:host.querySelector('iframe').contentWindow,
+            data:{type:'panels-html-navigation',generation,href:'slow.html'}}));
+          const wrapper=document.createElement('div');
+          wrapper.style.cssText='height:20px;overflow:auto;position:relative';
+          host.replaceWith(wrapper); wrapper.append(host);
+          host.style.transform='translateY(40px)';
+          window.__restoreHtml = () => {host.style.transform='';wrapper.replaceWith(host);};
+          window.__resolveSlowHtml();
+        }""", generation)
+        page.evaluate("""() => new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)))""")
+        expect(frame.locator('h1')).to_have_text('Index')
+        page.evaluate("window.__restoreHtml()")
+        page.evaluate("""generation => window.dispatchEvent(new MessageEvent('message', {
+          source:document.querySelector('[data-html-fixture] iframe').contentWindow,
+          data:{type:'panels-html-navigation',generation,href:'slow.html'}
+        }))""", generation)
+        frame.locator('#child').click()
+        expect(frame.locator('h1')).to_have_text('Child')
+        page.evaluate("window.__resolveSlowHtml()")
+        page.evaluate("""() => new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)))""")
+        expect(frame.locator('h1')).to_have_text('Child')
+        html.locator('[data-html-back]').click()
+        expect(frame.locator('h1')).to_have_text('Index')
+        frame.locator('#missing').click()
+        expect(html.locator('[data-html-navigation-notice]')).to_have_text('file fetch failed: 404')
+        page.evaluate("window.__html('')")
+
+    # --- The embedded preview holds one box from first paint --------------------
+    # Risk: the box changes size between mount, skeleton, drawn frame and settled
+    # state, so the text under the preview moves. The cases above prove frame
+    # identity, navigation and failure retention. None of them measures the box.
+    # The artifact below queues its animation frames, so the bridge's paint report
+    # arrives only when this test releases it.
+    page.evaluate("""() => {
+      const originalFetch = window.fetch;
+      window.__heldPending = 0;
+      window.fetch = (...args) => {
+        if (String(args[0]).endsWith('/held.html')) {
+          window.__heldPending += 1;
+          return new Promise(resolve => {
+            window.__releaseHeld = body => {
+              window.__heldPending -= 1;
+              resolve(new Response(body, {headers: {'Content-Type': 'text/html'}}));
+            };
+          });
+        }
+        return originalFetch(...args);
+      };
+      window.__frameBox = () => {
+        const region = document.querySelector('[data-html-fixture] [data-shape="frame"]');
+        return {height: Math.round(region.getBoundingClientRect().height),
+          busy: region.getAttribute('aria-busy'),
+          skeletons: region.querySelectorAll('.skeleton--frame').length,
+          below: Math.round(document.querySelector('header').getBoundingClientRect().top)};
+      };
+      window.__mountHeld = path => {
+        window.__html('');
+        window.__releaseHeld = null;
+        window.__html('embedded', path);
+        document.querySelector('[data-html-fixture]').style.height = 'auto';
+        window.__skeletonMounts = 0;
+        const counter = new MutationObserver(records => records.forEach(record =>
+          record.addedNodes.forEach(node => {
+            if (node.classList?.contains('skeleton--frame')) window.__skeletonMounts++;
+          })));
+        counter.observe(document.querySelector('[data-html-fixture]'),
+          {subtree: true, childList: true});
+        return window.__frameBox();
+      };
+    }""")
+    held = (
+        "<!doctype html><html><head><script>window.__queued=[];"
+        "window.requestAnimationFrame=callback=>{window.__queued.push(callback);return 0;};"
+        "window.__paint=()=>window.__queued.splice(0).forEach(callback=>callback(0));"
+        "</script></head><body><h1>Held artifact</h1></body></html>"
+    )
+    first = page.evaluate("path => window.__mountHeld(path)", 'site/held.html')
+    # 18rem, reserved by CSS before the preview is admitted and before any fetch.
+    assert first['height'] == 288 and first['skeletons'] == 0, first
+    settled = first['below']
+    page.wait_for_function("() => window.__frameBox().busy === 'true'")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 0, 'below': settled}
+    page.wait_for_function("() => window.__frameBox().skeletons === 1")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 1, 'below': settled}
+    html = page.locator('[data-html-fixture]')
+    frame = html.frame_locator('[data-file-preview-html]')
+    page.wait_for_function("() => window.__heldPending > 0")
+    page.evaluate("body => window.__releaseHeld(body)", held)
+    expect(frame.locator('h1')).to_have_text('Held artifact')
+    # The artifact is drawn and unreported. Blob creation alone does not reveal it.
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'true', 'skeletons': 1, 'below': settled}
+    frame.locator('body').evaluate("() => {window.__paint(); window.__paint();}")
+    page.wait_for_function("() => window.__frameBox().busy === 'false'")
+    # Both layers exist for the crossfade, and the box never moved.
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 1, 'below': settled}
+    page.wait_for_function("() => window.__frameBox().skeletons === 0")
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+
+    # An artifact that never reports still reveals, because the limit always fires.
+    page.evaluate("path => window.__mountHeld(path)", 'site/held.html')
+    page.wait_for_function("() => window.__heldPending > 0")
+    page.evaluate("body => window.__releaseHeld(body)", held)
+    expect(frame.locator('h1')).to_have_text('Held artifact')
+    page.wait_for_function("() => window.__frameBox().busy === 'false'", timeout=4000)
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 1, 'below': settled}
+
+    # A file that arrives inside the grace draws no skeleton at all.
+    assert page.evaluate("path => window.__mountHeld(path)", 'site/index.html')['height'] == 288
+    expect(frame.locator('h1')).to_have_text('Index')
+    page.wait_for_function("() => window.__frameBox().busy === 'false'")
+    assert page.evaluate("window.__skeletonMounts") == 0
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+
+    # A missing file keeps the box and puts its message inside it.
+    assert page.evaluate("path => window.__mountHeld(path)", 'site/missing.html')['height'] == 288
+    expect(html.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 404')
+    assert html.locator('[data-html-navigation-notice]').count() == 0
+    assert page.evaluate("window.__frameBox()") == {
+        'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+    page.evaluate("window.__html('')")
     assert not errors, errors
     page.close()

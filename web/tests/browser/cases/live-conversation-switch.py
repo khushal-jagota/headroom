@@ -127,10 +127,10 @@ def run(browser, urls):
     page.evaluate("window.__setConversationState('rest')")
     page.wait_for_function("document.querySelector('[data-conversation-state=rest]')")
     emit_message(6)
-    page.wait_for_function("document.querySelector('[data-conversation-mark=reply]')")
+    page.wait_for_function("document.querySelector('[data-conversation-unread-preview]')")
     assert len(page.evaluate("window.__ownerReads")) == 2
     arm_ready("B message 6")
-    page.evaluate("window.__setConversationState('peeked')")
+    page.evaluate("window.__setConversationState('opened')")
     assert_ready()
     page.wait_for_function("window.__ownerReads.length === 3")
     assert page.evaluate("window.__ownerReads.at(-1).sequence") == 6
@@ -158,7 +158,7 @@ def run(browser, urls):
     page.wait_for_function("document.querySelector('[data-conversation-state=rest]')")
     emit_message(10)
     page.evaluate("window.__releaseRead()")
-    page.wait_for_function("document.querySelector('[data-conversation-mark=reply]')")
+    page.wait_for_function("document.querySelector('[data-conversation-unread-preview]')")
     assert page.evaluate("window.__ownerReads.at(-1).sequence") == 9
     arm_ready("B message 10")
     page.evaluate("window.__setConversationState('opened')")

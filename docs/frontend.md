@@ -22,28 +22,29 @@ One screen per part of the system:
 
 - **Removed calendar screens** — Day and date-range Sprint screens no longer exist.
   Old dated links use the unavailable-route view. A bare former Home address opens Chief.
-- **Review** — one oldest-first queue holds owner-addressed proposals and unread conversations.
-  Each conversation gets one card with its complete unread run, including progress messages.
-  A proposal from the same Worker remains a separate decision. The badge counts both kinds.
-  The title and recap name the conversation. Skip and Open conversation stay above the card.
-  Mini bars separate messages. Linked artifacts appear where the message links them.
+- **Review** — one oldest-first queue holds owner-addressed proposals and eligible unread conversations.
+  A Ticket gets one card with its proposal and unread conversation sections. Each card counts once.
+  Manager and Chief conversation cards keep their existing identities.
+  Ticket messages qualify while the Ticket is neither done nor backlogged.
+  Manager messages qualify while that Manager is not settled. Chief always remains live.
+  A settled Manager does not exclude its live Tickets. Each Ticket uses its own state.
+  Proposal eligibility stays unchanged. Ordinary unread discovery still includes excluded Review messages.
+  A live Worker's progress messages remain eligible, even while the Worker continues work.
+  Existing messages use their owner's current state. State reversals restore eligible rows.
+  Each Ticket card takes the earliest timestamp among its proposal and unread conversations.
+  This deliberately moves a new proposal to its older unread message's queue position.
+  Grouping happens before pagination and counts. Proposal identity retains its original timestamp and revision.
+  One Ticket title and recap introduce its proposal and conversation sections.
+  Each conversation keeps its exact address and complete unread run. Mini bars separate messages.
+  Linked artifacts appear where the message links them.
   The reply field holds paperclip, microphone, and send controls. Mark read sits below it.
   Opening Review does not acknowledge a message. Mark read or an accepted reply clears only
   the messages displayed when the owner acts. Later messages remain unread.
-  A failed reply stays in place with its words and attachments. An uncertain send retains
-  its identity until the recorded outcome resolves it. The card fades out after acceptance.
-  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal
-  guard, with the draft intact. Open conversation names the exact conversation.
-  Proposal items keep their recap, ask, approval, and send-back controls.
-  A proposal routed to a Manager also creates a durable manager wake. Other
-  non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
-  Keyboard shortcuts drive the actions that apply to the current item when the
-  cursor is not in a text field, and each item fades in as it arrives. A proposal's
-  approve button sends the next ceiling and owner holder together. Send-back
-  stores the owner's exact attributed comment for the next worker-step prompt while
-  clearing the proposal and returning the Ticket to its resting control status.
-  A reply in the Ticket conversation leaves the proposal in
-  Review until a decision.
+  A failed reply keeps its words and attachments. An uncertain send retains its identity until its recorded outcome resolves it.
+  Drafts survive Skip and navigation refresh. Historical replies retain the existing refusal guard and draft.
+  Open conversation names the exact conversation. Approval and send-back act only on the proposal.
+  Each action leaves the card's other pending parts intact.
+  Other proposal controls, keyboard shortcuts, and approval routing retain their existing behavior.
 - **Workspace** — an adjustable rail of manager cards beside the selected conversation
   or Worker. Chief leads, keeps its portrait, and never settles. Ordinary managers
   have Project and Settle above the title. Only the owner settles or reopens one.
@@ -592,19 +593,29 @@ or locale produces identical arbitrary-text ordering.
   Conversation images and files use conversation-owned managed bytes. Images render
   inline. Supported documents and data files render as named cards with preview and
   download actions. PDF uses a document frame. Text and data use a bounded text preview.
-- **On a Ticket or Manager screen, that link opens the file in place.** A managed
-  file clicked inside either reading area does not go to the preview address. The screen catches the click
-  and draws the file over its own reading area, with a strip carrying the file's name and
-  a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
-  back the page the reader left. The conversation floats above the artifact. An outer
-  artifact scroller adds clearance below its original-height reader, including framed
-  HTML and PDF files, without changing file bytes or the frame's own scrolling.
-  An opened conversation is the whole page, so opening a file steps it back to peeked.
-  Escape closes the file. This is the same on every screen width. A click asking for a
-  new tab or window is left alone. On the Workspace the open file rides in the address
-  beside the Ticket, so a reload, Back, and a shared link all show it. The
-  `#/preview` address remains the way in from anywhere else — a shared link, a
-  notification, or another screen — and it draws the same document.
+- **Wherever a conversation is shown, that link opens the file in place.** A Ticket
+  screen, a Manager's pane and the Chief's pane each catch the click across the whole
+  pane, the conversation included. A managed file clicked in any of them does not go to
+  the preview address. The pane draws the file over its own reading area, with a strip
+  carrying the file's name and a way out. The pane keeps its layout and its scroll place
+  underneath, so closing gives back the page the reader left, and the conversation the
+  file was named in stays on the screen beside it — which is the point, because a file
+  named in a conversation is usually some other Ticket's. The conversation dock reserves
+  space below the artifact. Full conversation conceals the same mounted artifact and
+  preserves its viewport size and state. An opened conversation is the whole page, so a
+  file link returns to the dock. Escape closes the file, unless the conversation is open
+  over it: then Escape is the conversation's, because one press belongs to one thing and
+  the thing on top answers for it. The keyboard follows the reading: the file takes it
+  once the pane will let it, which is after a full conversation has returned to its bar,
+  and closing gives it back to the link it was opened from. A link read in the
+  conversation leaves the screen with the transcript, so the conversation's own bar takes
+  the keyboard instead and the reader is one press from the words the file was named in. This is the same on every screen width. A click asking
+  for a new tab or window is left alone, and so is a link marked as a download or one
+  whose format has nothing to show. On the Workspace the open file rides in the address
+  beside the Ticket and beside the Chief, so a reload, Back, and a shared link all show
+  it; a Manager's pane keeps its own. The `#/preview` address remains the way in from
+  anywhere else — a shared link, a notification, or another screen — and it draws the
+  same document.
 - **Artifact strips use one component.** Managers list their files newest first.
   Tickets list only managed files linked from their lifecycle fields and pending proposal.
   A chip shows the file name without its extension and then the file type. Matching names
@@ -657,12 +668,12 @@ hand-rolling the same shapes per screen. Each does one job:
   routing. A Ticket reviewer is labelled Worker, distinct from its assigned Manager.
   A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
-- **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
+- **ReviewProposalCard** — one waiting proposal, also embedded inside a combined Ticket card: the ticket's title and recap,
   the approval control and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
-- **ReviewMessageCard** — the complete unread run for one conversation, read from its
+- **ReviewMessageCard** — the complete unread run for one conversation, standalone or embedded in a Ticket card, read from its
   durable watermark. It reuses message rendering, file previews, voice capture, and durable
   composer storage. The card acknowledges only explicit Mark read or bounded reply acceptance.
   Navigation publications carry identity and recap facts, never message bodies.
@@ -727,7 +738,7 @@ hand-rolling the same shapes per screen. Each does one job:
   names why Panels queued a steer fallback.
 
   The textarea grows with its content up to six whole lines, then scrolls internally.
-  The same cap applies at rest, peeked, and opened. Pane height and focus do not change it.
+  The same cap applies in the dock and full conversation. Pane height and focus do not change it.
   A hidden textarea measures each draft with the same text layout and scrollbar width.
   Only the final height and overflow reach the visible input. A same-line edit therefore
   keeps the transcript in place without a temporary collapse of the composer.
@@ -770,8 +781,8 @@ hand-rolling the same shapes per screen. Each does one job:
   messages below the view against the owner's read watermark. Read history shows
   Latest. Tools and structural rows do not increase the count.
 
-  The textarea mirror measures one empty line. Draft growth adds to the overlay's
-  measured peek height and leaves transcript height unchanged. The composer cap and
+  The textarea mirror measures one empty line. Draft growth increases the dock row.
+  Full conversation gives the transcript the space above the same composer. The composer cap and
   visible-viewport bounds remain separate constraints. Sent messages retain one keyed
   bubble through delivery outcomes, with applicable recovery actions in place.
   A running agent does not place a new send in the queue. Confirmed queue membership
@@ -780,63 +791,38 @@ hand-rolling the same shapes per screen. Each does one job:
   or terminal outcome retains its recovery behavior without false acceptance.
   Focus excludes tools throughout the turn. Settled turn heads have no disclosure controls.
 
-  On the Ticket screen the conversation is a layer along the bottom of the page rather
-  than a column beside it, and it has **three states**. At **rest** it is the composer and
-  one line above it saying what happened last — whoever produced it, so your own message
-  can be that line, and so can a request waiting on you. Clicking the input **peeks** it
-  open: a card over the page, with the line gone because the transcript now says the same
-  thing. A control takes it **opened**, the available visible height of the pane, and the same control
-  brings it back. A primary press outside the conversation returns it directly to rest.
-  Escape moves it back one state. Ticket and Manager surfaces share the outside-press rule,
-  including artifact controls beside the document. Presses inside the card keep menus,
-  selection, and conversation previews usable. Outside presses retain their normal action.
+  Ticket, Manager, and Chief screens share a recessed conversation dock. The dock reserves
+  its own row below the document or selected artifact. It has two states: rest and opened.
+  Only the up arrow opens full conversation. Focus, typing, and hover keep the dock closed.
+  The down arrow, Escape, and existing dismissal paths return directly to the dock.
 
-  An open HTML artifact announces primary presses through one fixed message from its
-  sandboxed frame. The surface explicitly registers that exact frame. Only its current,
-  visible frame can return that surface to rest. Inline previews do not register.
-  Hidden, detached, fully clipped, unrelated, and offscreen frames cannot dismiss a card.
-  The frame keeps its script-only sandbox and its original document restrictions.
-  State changes measure in the mutation callback before the next paint. Resize and
-  content measurements stay coalesced in an animation frame. Rapid card reversals start
-  at the current rendered height.
+  The dock activity line reports Working or Worker idle, Manager idle, or Chief idle.
+  Requests, delivery failures, interrupted turns, and connection uncertainty keep separate feedback.
+  An unread owner reply appears below activity as plain text, limited to three lines.
+  Its bounded source comes from canonical status, independently of later tools and the lens.
+  There is no unread dot or badge. The preview does not acknowledge a reply as read.
 
-  Three things are true of all three. Nothing moves it but a person — a request arriving
-  or a turn starting never opens it, which is why the line at rest has to carry that news.
-  It is a layer and never a mode: nothing is locked, and the ticket underneath stays
-  readable and scrollable. And it is one conversation at three heights, never three
-  screens. A move between peeked and opened keeps visible content fixed relative
-  to the bottom of the transcript. A parked unread target retains its top hold.
-  Reopening from rest lands on the newest unanswered request or the end of the conversation.
-  Every state keeps whatever the person had half-typed.
+  The document, composer, and transcript share a centered channel at most 720px wide.
+  The dock and sidebar use the recessed surface. Hover and full conversation use the page surface.
+  A fixed 24px fade ends document text above the dock. Artifacts omit that fade.
+  Full conversation expands upward in 260ms while the composer stays at the bottom.
+  Reversals use current rendered geometry and shade. Reduced motion completes immediately.
+  Touch returns to the recessed surface without a retained hover shade.
 
-  The title and document text define one channel: at most 720px wide, with 24px
-  margins when the pane is narrower. The card's outer edges start and end on that
-  channel, including in Chief and Manager panes. The card keeps its own inner text
-  padding. Its horizontal bounds follow the document's client area so a native
-  scrollbar cannot shift it away from the title. The document retains its full height
-  beneath the card in all three states.
-  Peeked uses 60% of its host pane (52% for a short landscape Ticket); opened fits between
-  the pane's top and bottom gaps. The host intersects its own rectangle with the browser's
-  visual viewport, including keyboard displacement, and bounds the card within it.
-  Oversized composer questions and held prompts scroll inside the card. A composer
-  becomes scrollable when its contents exceed its bounded height by more than one CSS
-  pixel. Ordinary catalog, attachment, and run menus retain their floating placement,
-  with their height limited to the visible space above the composer. If an open menu
-  cannot fit one control target plus the top gap there, it joins the composer's scroll
-  flow instead. This keeps its choices reachable on a reduced keyboard viewport.
-  Keyboard activation of a run-picker rail action first focuses its option list. An
-  action that removes its own button therefore keeps the picker open. Escape returns
-  focus to the stable picker trigger.
-  Document and
-  artifact scrollers gain trailing space equal to the largest measured card clearance
-  during that host visit. Collapsing retains that blank space so it cannot clamp the
-  reader's scroll position. Uncovered document space above the card remains clickable.
+  Full conversation conceals and disables the reader while preserving its pixel height.
+  The selected artifact and its document remain mounted, including the active HTML frame.
+  Return restores scroll, local form values, selection, and nested artifact navigation.
+  Close and navigation release the selected artifact. Explicit Refresh still reloads it.
+  Standalone and inline previews retain their existing lazy load and retention limits.
+  Chief artifact selection uses its existing workspace address and shared artifact controls.
+  Plain managed links in its document and transcript open the same viewer.
 
-  The Chief and ordinary Managers share one layout with this layer and the same
-  outside-click dismissal. Dismissal uses the start of a primary pointer gesture.
-  A text selection that starts inside the conversation can end outside without dismissal.
-  Ticket views use the same rule. Both start at rest. The person controls rest, peeked, and
-  opened states, and a refresh keeps that choice.
+  The host intersects its rectangle with the visual viewport, including keyboard displacement.
+  Oversized composer questions and held prompts scroll within that bound. Ordinary menus float
+  above the composer. A menu that cannot fit one control joins the composer's scroll flow.
+  The same draft, attachments, requests, history, and voice controls survive both states.
+  Null state still means a full-container conversation. Existing initial and explicit conversation
+  requests keep their startup behavior.
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
   plugins. The list narrows as text is typed. A choice inserts its exact catalog text

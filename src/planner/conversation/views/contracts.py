@@ -21,7 +21,7 @@ from planner.conversation.events import (
 from planner.core.contracts import Principal
 
 VIEW_PROTOCOL_VERSION = 1
-VIEW_PROJECTION_VERSION = 1
+VIEW_PROJECTION_VERSION = 2
 
 type ConversationViewLens = Literal["focus", "full"]
 type ViewRowKind = Literal[
@@ -345,6 +345,7 @@ class ViewRestFacts(TypedDict):
     latest_tool: ViewRestTool | None
     permission_title_excerpt: str | None
     latest_owner_message_sequence: int
+    latest_owner_message_preview: str | None
     last_boundary_failed: bool
     plan_progress: ViewPlanProgress
 

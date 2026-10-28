@@ -1253,15 +1253,10 @@ button.list-row:hover .list-row-title {
 /* Message history + input. No dividers: the thread fades into a whisper header and
  * a recessed composer. One user pill; the worker is bubble-less prose. */
 
-/* The conversation's own measures, set once on the card and read by every rule below it.
- * They exist because the card's controls have to agree with each other: one glyph size for
- * every drawn icon in the head and the foot, one target for the boxes around them, and one
- * inset for the card's inner edge. Changing how big the icons read is one line here rather
- * than eight rules apart. */
+/* Shared measures keep the conversation's head and composer controls in agreement. */
 .chat-panel {
   --conversation-glyph: 22px;
   --conversation-target: 32px;
-  --conversation-card-inset: var(--space-4);
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -1565,26 +1560,21 @@ button.list-row:hover .list-row-title {
   overflow-wrap: anywhere;
 }
 
-/* composer = one recessed field; the container IS the input */
-/* The well is not a box. It is the lower band of one card: what separates it from the
- * conversation above is colour — the recessed plane the app already uses for a field —
- * and one hairline seam. It draws no second rectangle, in any host, so the card has one
- * outline and the eye has one shape to read. */
+/* The same rounded input stays distinct from the conversation in both states. */
 .chat-box {
   position: relative;   /* anchors the "/" command popover above it */
   flex: none;
-  background: var(--surface-recessed);
-  border: 0;
-  border-top: var(--border-hairline) solid var(--border-color);
-  border-radius: 0;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-  padding: var(--space-3) var(--space-3);
+  background: var(--surface-input);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+}
+.chat-box:focus-within {
+  border-color: color-mix(in srgb, var(--accent-bright) 40%, var(--border-color));
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 2px color-mix(in srgb, var(--accent-bright) 30%, transparent);
+  box-shadow: inset 0 0 0 var(--border-strong) color-mix(in srgb, var(--accent-bright) 30%, transparent);
 }
 
 /* The task-progress popover shares the raised-popover shadow; the property
@@ -3224,7 +3214,7 @@ select {
   container-name: ticket-pane conversation-host;
 }
 
-/* The document fills the host. The conversation floats over it without changing its box. */
+/* The reader and recessed dock divide the available host height. */
 .ticket-page {
   position: relative;
   display: flex;
@@ -3237,10 +3227,10 @@ select {
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
-  --conversation-edge-gap: max(var(--space-6), env(safe-area-inset-bottom));
+  --conversation-edge-gap: max(var(--space-4), env(safe-area-inset-bottom));
 }
 
-/* Readers retain the full host height in every conversation state. */
+/* The action retains the reader height beneath full conversation. */
 .ticket-reading {
   position: relative;
   display: flex;
@@ -3259,7 +3249,7 @@ select {
   min-height: 0;
 }
 
-/* The ticket scrolls behind the floating conversation. */
+/* The document scrolls independently above the reserved dock. */
 .ticket-doc {
   min-width: 0;
   max-width: 100%;
@@ -3335,25 +3325,31 @@ select {
   overflow: auto;
 }
 
-/* --- One floating conversation card, measured against its host pane -------- */
+/* Keyboard occlusion occupies host space beneath the reserved dock row. */
+[data-conversation-dock-state] {
+  box-sizing: border-box;
+  padding-bottom: var(--conversation-visible-bottom, 0px);
+}
+
+/* The bottom dock is a row. Full conversation expands within the same host. */
 .conversation-layer {
-  position: absolute;
+  position: relative;
   z-index: 2;
-  left: var(--conversation-visible-left, 0px);
-  right: var(--conversation-visible-right, 0px);
-  bottom: calc(var(--conversation-visible-bottom, 0px) + var(--conversation-edge-gap));
-  max-height: max(0px, calc(var(--conversation-visible-height, 100%) - var(--conversation-edge-gap) - var(--space-6)));
-  pointer-events: none;
   flex: none;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  max-width: 100%;
   min-height: 0;
+  max-width: 100%;
+  max-height: var(--conversation-visible-height, 100%);
+  padding-bottom: var(--conversation-edge-gap);
+  background: var(--surface-recessed);
+  transition: background-color var(--motion-base) var(--motion-ease);
 }
-
-/* The card spans the page's full column. Its text retains the card's own inset.
- * The column's width is shared with the document further down. */
+[data-conversation-dock-transition] > .conversation-layer { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .conversation-layer { transition: none; }
+}
 .conversation-column {
   display: flex;
   flex-direction: column;
@@ -3362,94 +3358,46 @@ select {
   min-width: 0;
   padding-inline: 0;
 }
-
-/* The overlay still covers the document when opened, but joins the page without a
- * card border, corners, or shadow. */
-.conversation-layer:has([data-conversation-state="opened"]) .conversation-column {
-  background: var(--surface-1);
+[data-conversation-dock-state="opened"] > .conversation-layer,
+[data-conversation-dock-transition] > .conversation-layer {
+  position: absolute;
+  left: var(--conversation-visible-left, 0px);
+  right: var(--conversation-visible-right, 0px);
+  bottom: var(--conversation-visible-bottom, 0px);
 }
-/* Rest and peek are cards. Opened joins the page, as in the approved design. */
-[data-conversation-pane][data-conversation-state="rest"],
-[data-conversation-pane][data-conversation-state="peeked"] {
-  background: var(--surface-1);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
-}
-[data-conversation-pane][data-conversation-state="rest"]:focus-within,
-[data-conversation-pane][data-conversation-state="peeked"]:focus-within {
-  border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent);
-  box-shadow:
-    0 -8px 24px rgba(0, 0, 0, 0.45),
-    0 0 0 3px color-mix(in srgb, var(--accent-bright) 9%, transparent);
-}
-[data-conversation-pane][data-conversation-state="opened"]:focus-within .chat-box,
-[data-conversation-pane]:not([data-conversation-state]):focus-within .chat-box {
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 1px color-mix(in srgb, var(--accent-bright) 40%, transparent);
-}
-
-/* A file being dragged onto the well outranks the fact that it has focus: the drop is
- * what is about to happen. Same shape, the colour the app means "this is a target" by. */
-[data-conversation-pane] .chat-box.drag,
-[data-conversation-pane]:not([data-conversation-state]):focus-within .chat-box.drag {
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 2px color-mix(in srgb, var(--accent-bright) 30%, transparent);
-}
-
-/* Everything inside the card is held off its edges, by the card's own inset. The head and
- * the transcript add none of their own here: the card is already holding them off the edge. */
-.conversation-layer [data-conversation-pane] {
-  padding-inline: var(--conversation-card-inset);
-  pointer-events: auto;
-  max-height: 100%;
-}
-
-.conversation-layer .chat-thread,
-.conversation-layer .chat-head {
-  padding-inline: 0;
-}
-
-/* The controls reach into the card's inset, so they finish where the design finishes them:
- * a step in from the card's edge rather than a whole inset in. A host that draws no card
- * has no inset to reach into, and keeps its controls on the same edge as everything else. */
-.conversation-layer .chat-head-right {
-  margin-right: calc(var(--space-2) * -1);
-}
-
-/* The band reaches past the card's inset, so it pulls itself back out by it and keeps its
- * own padding for the text inside. */
-.conversation-layer .chat-box {
-  margin: 0 calc(var(--conversation-card-inset) * -1);
-  padding-inline: var(--conversation-card-inset);
-}
-
-.conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
-
-/* State heights use the pane, then fit inside its visible viewport intersection. */
-.conversation-layer:has([data-conversation-state="peeked"]) {
-  height: calc(var(--conversation-peek-height, 60%) + var(--composer-growth, 0px));
-}
-.conversation-layer:has([data-conversation-state="opened"]) {
+[data-conversation-dock-state="opened"] > .conversation-layer {
   height: var(--conversation-visible-height, 100%);
+  background: var(--surface-1);
 }
-/* These tails extend scroll range without changing either reader's original box.
- * Retaining the largest measured value avoids clamping scrollTop when a card collapses. */
-.ticket-doc, .manager-doc, .ticket-artifact-body {
-  scroll-padding-bottom: var(--conversation-clearance, 0px);
+[data-conversation-dock-state="opened"] > .ticket-reading,
+[data-conversation-dock-state="opened"] > .manager-reading {
+  pointer-events: none;
 }
-.ticket-doc::after, .manager-doc::after, .ticket-artifact-body::after {
+/* A fixed document fade does not change with dock hover. Artifacts have no fade. */
+.ticket-reading:not(:has(.ticket-artifact))::after,
+.manager-reading:not(:has(.ticket-artifact))::after {
   content: "";
-  display: block;
-  height: var(--conversation-clearance, 0px);
-  flex: none;
-  overflow-anchor: none;
+  position: absolute;
+  z-index: 1;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--space-5);
+  background: linear-gradient(transparent, var(--surface-1));
+  pointer-events: none;
 }
-.ticket-artifact-body { display: block; overflow: auto; }
+.conversation-layer [data-conversation-pane] {
+  padding-inline: 0;
+  max-height: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.conversation-layer .chat-thread,
+.conversation-layer .chat-head { padding-inline: 0; }
+.conversation-layer .chat-head-right { margin-right: calc(var(--space-2) * -1); }
+.conversation-layer .chat-box { margin: 0; }
 .ticket-artifact-slot {
   height: 100%;
   min-height: 100%;
@@ -3488,22 +3436,6 @@ select {
 .conversation-layer .chat-overflow-menu {
   max-height: calc(var(--conversation-visible-height, 100vh) - 2 * var(--conversation-edge-gap) - var(--space-7));
   overflow-y: auto;
-}
-
-/* Narrow panes reduce the card's inner text inset without narrowing the card. */
-@container conversation-host (max-width: 720px) {
-  .conversation-layer [data-conversation-pane] {
-    --conversation-card-inset: var(--surface-pad);
-  }
-}
-
-/* Narrower still, and the card gives the words the width its edges were holding. This is
- * the card's own inset and nothing else: the column width is untouched, so
- * the page is exactly as wide as it was. */
-@container conversation-host (max-width: 480px) {
-  .conversation-layer [data-conversation-pane] {
-    --conversation-card-inset: var(--space-3);
-  }
 }
 
 /* The head has nothing left in it that can be squeezed: the worker's name and the
@@ -3700,7 +3632,7 @@ select {
   box-shadow: var(--shadow-float);
 }
 
-/* The readable column keeps its own tail before the measured overlay clearance. */
+/* The document keeps its own ordinary bottom gutter. */
 .ticket-col {
   min-width: 0;
   padding: var(--space-4) var(--page-gutter) var(--space-6);
@@ -3804,7 +3736,7 @@ a.artifact-chip:hover,
 /* --- One document text channel ------------------------------------------- */
 /* The title, document text, and card's outer edge share this exact measure.
  * Available width is the document's client area, including its scrollbar reservation.
- * The overlay mirrors that client area; the card keeps its own inner text padding. */
+ * The dock keeps its own inner text padding. */
 .ticket-head,
 .ticket-col,
 .conversation-column,
@@ -3844,17 +3776,6 @@ a.artifact-chip:hover,
     margin-left: 0;
   }
 
-}
-
-/* Short landscape phones need a little more of the ticket above a peeked
- * conversation. Opened remains an explicit full-height reading mode.
- *
- * The Ticket asks for this and no other host does, so it is written on the Ticket screen
- * rather than in the shared card: a Manager's peeked share is 60% at every height. */
-@media (max-width: 720px) and (max-height: 480px) {
-  [data-screen="ticket"] .conversation-layer:has([data-conversation-state="peeked"]) {
-    height: calc(var(--conversation-peek-height, 52%) + var(--composer-growth, 0px));
-  }
 }
 
 .ticket-blockers {
@@ -4082,7 +4003,7 @@ a.artifact-chip:hover,
   max-width: 100%;
   min-height: 0;
   overflow: hidden;
-  --conversation-edge-gap: max(var(--space-6), env(safe-area-inset-bottom));
+  --conversation-edge-gap: max(var(--space-4), env(safe-area-inset-bottom));
   container-type: inline-size;
   /* Its own name for its own rules, and `conversation-host` for the one question every
    * host of the conversation card asks of its pane. See .ticket-screen. */
@@ -5512,12 +5433,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 @media (prefers-reduced-motion:reduce){
   .skeleton[data-entering]{animation:none}
+  .skeleton--frame,
+  .skeleton-region[data-shape="frame"] > .skeleton-content{transition:none}
 }
 
 /* Region integration. Flow reservations are the drawn shape's geometry, and end
    when the wait ends. Fill regions receive their size from their parent. */
-.skeleton-region[data-active]{min-height:var(--skeleton-reservation)}
-.skeleton-region:not([data-active]):not(.skeleton-region--fill),
+.skeleton-region[data-active]:not([data-shape="frame"]){min-height:var(--skeleton-reservation)}
+.skeleton-region:not([data-active]):not(.skeleton-region--fill):not([data-shape="frame"]),
 .skeleton-content:not(.resource-state):not(.skeleton-content--inline){display:contents}
 .skeleton-region--fill{height:100%;min-height:0;flex:1;min-width:0}
 .skeleton-region--fill[data-active]{min-height:0}
@@ -5542,6 +5465,23 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 .skeleton-rows{padding:var(--space-5)}
 .skeleton-document{padding:var(--space-5) var(--space-7)}
+/* The frame shape: one box in both states, at the embedded preview frame's own
+   minimum, with the skeleton and the artifact as layers inside it. */
+.skeleton-region[data-shape="frame"]{min-height:18rem}
+.skeleton-region[data-shape="frame"] > .skeleton-content{position:absolute;inset:0;overflow:hidden;
+  opacity:1;transition:opacity var(--skeleton-fade) ease-in-out}
+.skeleton-region[data-shape="frame"][data-active] > .skeleton-content{opacity:0;pointer-events:none}
+.skeleton-region[data-shape="frame"] .file-preview-frame{height:100%;min-height:0}
+/* No bottom fade: this shape ends at the box, rather than suggesting more below it. */
+.skeleton--frame{opacity:1;transition:opacity var(--skeleton-fade) ease-in-out;
+  mask-image:none;-webkit-mask-image:none}
+@starting-style{.skeleton--frame{opacity:0}}
+.skeleton--frame.skeleton--leaving{opacity:0}
+/* The shape ends where the box ends: a fixed head, then one block taking the rest. */
+.skeleton-frame{display:flex;flex-direction:column;height:100%;padding:var(--space-5) var(--space-7)}
+.skeleton-frame-block{flex:1}
+@media (max-width:720px){.skeleton-frame{padding:var(--space-5) var(--space-4)}}
+.managed-html-fetch-notice{display:flex;align-items:center;justify-content:center;height:100%;padding:var(--space-5)}
 @media (max-width:720px){.skeleton-document{padding:var(--space-5) var(--space-4)}}
 
 /* Native document bands share their summary and body rhythm. */

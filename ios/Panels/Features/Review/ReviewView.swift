@@ -4,6 +4,7 @@ struct ReviewView: View {
     var openTicket: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
     @State private var queue = ReviewQueue()
+    @State private var resolvedComponents: Set<String> = []
     @State private var displayedItem: ReviewItem?
     @State private var decisions: [String: ReviewDecision] = [:]
     @State private var cardHeight: CGFloat = 180
@@ -12,27 +13,29 @@ struct ReviewView: View {
         Outbox.shared.entries(LocalStore.server(store.baseURL)).filter { $0.kind == .approval || $0.kind == .sendBack }
     }
     private var queueItems: [ReviewItem] {
-        (store.review?.items ?? []).filter { item in
-            !savedDecisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
+        (store.review?.items ?? []).compactMap { card in
+            card.keepingComponents { item in
+                !resolvedComponents.contains(item.id) && !savedDecisions.contains {
+                    $0.ticketID == item.ticketId && $0.proposal?.field == item.field &&
+                    $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state)
+                }
+            }
         }
     }
+
     private var skippedCount: Int { queue.skippedCount(in: queueItems) }
     private var pending: [ReviewItem] { queueItems.filter { !queue.skipped.contains($0.id) && !queue.resolved.contains($0.id) } }
 
     var body: some View {
         Group {
             if let item = displayedItem ?? queue.current(in: queueItems) {
-                if item.isMessage {
-                    ReviewMessageView(item: item, onSkip: { advance(item, resolved: false) }, onResolved: {
-                        advance(item, resolved: true)
+                ReviewTicketContents(item: item, decisions: decisions, cardHeight: $cardHeight, openTicket: openTicket,
+                    onSkip: { advance(item, resolved: false) }, onResolved: { component in
+                        if component.isMessage { resolvedComponents.insert(component.id) }
+                        displayedItem = queue.current(in: queueItems)
                         Task { await store.refresh() }
                     }).id(item.id).transition(.identity)
-                } else {
-                ReviewProposalView(item: item, decision: decisions[item.id] ?? ReviewDecision(), cardHeight: $cardHeight, openTicket: openTicket.map { action in { action(item.ticketId) } }, onSkip: { advance(item, resolved: false) }, onResolved: {
-                    advance(item, resolved: true)
-                    Task { await store.refresh() }
-                }).id(item.id).transition(.identity)
-                }
+
             } else if store.review != nil {
                 GeometryReader { geometry in
                     ScrollView {
@@ -94,26 +97,26 @@ struct ReviewView: View {
             for work in savedDecisions where work.state == .changed {
                 if let item = queueItems.first(where: { $0.ticketId == work.ticketID }) {
                     queue.restore(item)
-                    if decisions[item.id]?.resolved == true { decisions[item.id] = nil }
+                    if let proposal = item.proposal?.item, decisions[proposal.id]?.resolved == true { decisions[proposal.id] = nil }
                     if displayedItem == nil { displayedItem = item }
                 }
             }
         }
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
-        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:] }
+        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:]; resolvedComponents = [] }
         .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
-            // Pin the visible ask until its exit finishes, including when the server
-            // removes it from the live queue while its approval sheet is closing.
+            // Refresh the selected Ticket when its pending components change.
             if displayedItem == nil || (displayedItem?.isMessage == false && !queueItems.contains(where: { $0.id == displayedItem?.id })) { displayedItem = queue.current(in: queueItems) }
             // Keep the next complete ask ready before the current one leaves.
-            for item in pending.prefix(30) where !item.isMessage {
+            for item in pending.prefix(30).flatMap(\.components) where !item.isMessage {
                 let decision = decisions[item.id] ?? ReviewDecision()
                 decisions[item.id] = decision
                 if decision.proposal == nil { await decision.load(item: item, api: store.client) }
             }
-            let ids = Set((store.review?.items ?? []).map(\.id))
-            decisions = decisions.filter { ids.contains($0.key) || $0.key == displayedItem?.id }
+            let ids = Set((store.review?.items ?? []).flatMap(\.components).map(\.id))
+            let displayedIDs = Set(displayedItem?.components.map(\.id) ?? [])
+            decisions = decisions.filter { ids.contains($0.key) || displayedIDs.contains($0.key) }
         }
     }
 
@@ -127,6 +130,44 @@ struct ReviewView: View {
     }
 }
 
+/// One queue card per Ticket; its existing proposal and conversation screens share
+/// the card without nesting scrolling composers or losing either exact identity.
+private struct ReviewTicketContents: View {
+    let item: ReviewItem
+    let decisions: [String: ReviewDecision]
+    @Binding var cardHeight: CGFloat
+    let openTicket: ((String) -> Void)?
+    let onSkip: () -> Void
+    let onResolved: (ReviewItem) -> Void
+    @State private var selectedID: String?
+    @State private var selectionLocked = false
+    private var components: [ReviewItem] { item.components }
+    private var selected: ReviewItem? { components.first { $0.id == selectedID } ?? components.first }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if components.count > 1 {
+                Picker("Ticket review", selection: Binding(get: { selected?.id ?? "" }, set: { selectedID = $0 })) {
+                    ForEach(Array(components.enumerated()), id: \.element.id) { index, component in
+                        Text(component.isMessage ? (item.messages.count == 1 ? "Messages" : "Messages \(index)") : "Proposal")
+                            .tag(component.id)
+                    }
+                }.pickerStyle(.menu).disabled(selectionLocked).padding(.horizontal, ReviewStyle.gutter)
+            }
+            if let component = selected {
+                if component.isMessage {
+                    ReviewMessageView(item: component, onSkip: onSkip, onResolved: { onResolved(component) }, selectionLocked: $selectionLocked)
+                        .id(component.id)
+                } else {
+                    ReviewProposalView(item: component, decision: decisions[component.id] ?? ReviewDecision(),
+                        cardHeight: $cardHeight, openTicket: openTicket.map { action in { action(component.ticketId) } },
+                        onSkip: onSkip, onResolved: { onResolved(component) }, selectionLocked: $selectionLocked).id(component.id)
+                }
+            }
+        }
+    }
+}
+
 private struct ReviewProposalView: View {
     let item: ReviewItem
     @Bindable var decision: ReviewDecision
@@ -134,6 +175,7 @@ private struct ReviewProposalView: View {
     let openTicket: (() -> Void)?
     let onSkip: () -> Void
     let onResolved: () -> Void
+    @Binding var selectionLocked: Bool
     @Environment(AppStore.self) private var store
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -235,6 +277,8 @@ private struct ReviewProposalView: View {
             await decision.load(item: item, api: store.client)
         }
         .onAppear { withAnimation(.timingCurve(0.2, 0.7, 0.3, 1, duration: reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.fadeIn)) { visible = true } }
+        .onChange(of: editing || returning || sheet != nil || decision.busy || leaving, initial: true) { _, locked in selectionLocked = locked }
+        .onDisappear { selectionLocked = false }
         .alert("Rename ticket", isPresented: $renaming) {
             TextField("Title", text: $titleDraft)
             Button("Cancel", role: .cancel) {}

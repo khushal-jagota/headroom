@@ -9,6 +9,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from typing import cast
 
 from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict, PrincipalKind
@@ -19,6 +20,8 @@ from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.managers import data as managers_data
 from planner.managers import views as managers_views
 from planner.navigation.review import review_message_items
+from planner.navigation.review_contracts import ReviewMessageItem, ReviewProposalItem
+from planner.navigation.review_logic import group_review_items
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
@@ -612,14 +615,10 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
             }
         )
     items.extend(review_message_items(conn))
-    items.sort(
-        key=lambda item: (
-            item["waiting_since"],
-            item["review_item_type"],
-            item.get("conversation_id", item.get("ticket_id", "")),
-        )
+    return cast(
+        list[JsonDict],
+        group_review_items(cast(list[ReviewProposalItem | ReviewMessageItem], items)),
     )
-    return items
 
 
 def review_view(

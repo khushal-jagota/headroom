@@ -11,6 +11,11 @@ export async function prepare({scratchRoot}) {
     import {MARKDOWN_WORKER_THRESHOLD} from "../src/lib/markdown/config";
     import MarkdownBlock from "../src/components/MarkdownBlock.svelte";
     import {flushSync} from "svelte";
+    import FileDocument from "../src/components/FileDocument.svelte";
+    import FilePreview from "../src/components/FilePreview.svelte";
+    let htmlMode = $state("");
+    let htmlPath = $state("site/index.html");
+    (window as any).__html = (mode: string, path = "site/index.html") => flushSync(() => { htmlMode = mode; htmlPath = path; });
     import SkeletonRegion from "../src/components/SkeletonRegion.svelte";
     let markdownHost: HTMLElement;
     let markdownSurface: ReadOnlyManagedMarkdownSurface | undefined;
@@ -26,6 +31,10 @@ export async function prepare({scratchRoot}) {
     (window as any).__flat = (value: boolean) => flushSync(() => flat = value);
     (window as any).__idle = (value: boolean) => flushSync(() => idle = value);
   </script>
+  {#if htmlMode}<section data-html-fixture style="height:500px">
+    {#if htmlMode === 'full'}<FileDocument target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />
+    {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />{/if}
+  </section>{/if}
   <header>Persistent heading</header>
   <section data-fixed style="height:400px;display:flex;flex-direction:column">
     {#if shown}<SkeletonRegion shape="document" layout="fill" {loading} loadingText="Loading document">

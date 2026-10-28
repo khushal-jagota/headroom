@@ -4,17 +4,31 @@ Navigation is a derived view of canonical database facts. It does not own Ticket
 
 The public contract uses schema 9 and `attention-knowledge-v9-review-messages` semantics. It contains Ticket metadata, canonical status, assignment, approval references, manager metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
 
-Review contains two item kinds: owner-addressed proposals and unread conversations.
-Each conversation contributes one item, even when several addresses name it. A current
-address wins, then stable address identity breaks ties. Historical addresses remain eligible.
-Messages and proposals share oldest-first order. The conversation record supplies
-`first_unread_owner_message_at`, the first owner-message timestamp after its durable read
-boundary. Message bodies stay outside navigation and come from the conversation API.
-The global review count adds distinct unread conversations to eligible proposals.
-The scoped review window includes address keys for messages and Ticket keys for proposals.
-The schema 9 migration rebuilds the derived publication and rotates its epoch. Scoped
-projection version 5 replaces the old review index. Old cursors reset through the existing
-snapshot recovery path. A normal reopen does not rebuild either projection.
+Review has one card per Ticket, with an optional owner-addressed proposal and all eligible unread conversations.
+Manager and Chief conversations retain standalone message cards. Canonical address selection remains current-first, then stable address identity.
+After address selection, a Ticket's messages qualify while it is neither done nor backlogged.
+A Manager's messages qualify while that Manager is not settled. Chief remains live.
+A settled Manager does not exclude live child Tickets. No message content enters this rule.
+
+A Ticket card takes the earliest constituent timestamp. This deliberately moves a new proposal to an older unread message's queue position.
+The nested proposal retains its own timestamp and revision for approval identity checks.
+Each conversation retains its exact address, unread boundary, and ordinary unread visibility.
+Message bodies stay outside navigation and come from the conversation API.
+
+The Review global count comes from grouped membership, independently of ordinary unread counts of distinct conversations.
+Review windows use Ticket keys even for message-only Tickets, and address keys for Manager and Chief cards.
+A Ticket's complete address and conversation closure enters the page atomically under the existing budgets.
+State reversals and constituent changes refresh membership and publication, including changes that preserve the earliest timestamp.
+Painted Review conversations request bounded canonical-owner context while a reply or read resolves.
+The server supplies the canonical address and owner even when unread membership clears or that owner becomes excluded.
+An explicit null address records absence. A missing address in an unrelated page does not establish canonical removal.
+This context preserves uncertain reply attempts without retaining a conversation after its canonical owner becomes excluded.
+It includes only the requested conversation identities and follows existing record, byte, and request budgets.
+
+Scoped projection version 6 and the review-v3 ordering generation replace separate proposal and message membership.
+The forward review_work_cards migration rebuilds derived state from source and rotates its epoch.
+Old cursors reset through existing snapshot recovery. Runtime Signal activation alone grants current authority.
+No message rows or unread watermarks change. A normal reopen does not rebuild either projection.
 
 
 Conversation attention comes from the accepted Signal producer. Each conversation carries complete current attention or explicitly unavailable runtime knowledge, plus independently durable message and failure facts. Raw lifecycle counters, read positions, and Ticket status never substitute for that source. Consumer adoption is in progress. Complete production parity, render proof, recovery, and performance acceptance remain open.

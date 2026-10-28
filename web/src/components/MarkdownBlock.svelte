@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { RegisterMarkdownPresentation } from "../lib/markdown/presentationContracts";
+  import { createMarkdownPresentation, type MarkdownPresentationController } from "../lib/markdown/textLocation";
   import { onDestroy, untrack } from "svelte";
   import { MARKDOWN_WORKER_THRESHOLD } from "../lib/markdown/config";
   import { observeVisibleContent, resetVisibleContentHeight } from "../lib/visibleContent";
@@ -11,15 +13,18 @@
     text = "",
     quiet = "(none)",
     depth = 0,
-    visited = []
+    visited = [],
+    registerPresentation
   }: {
     text?: unknown;
     quiet?: string;
     depth?: number;
     visited?: string[];
+    registerPresentation?: RegisterMarkdownPresentation;
   } = $props();
   let host = $state<HTMLDivElement | null>(null);
   let surface: ReadOnlyManagedMarkdownSurface | null = null;
+  let presentation = $state.raw<MarkdownPresentationController | null>(null);
   let active = $state(false);
   let pendingPresentation: { token: object; before: number } | null = null;
   function textHeight(target: HTMLElement): number {
@@ -31,8 +36,34 @@
   }
   const large = $derived(typeof text === "string" && text.length >= MARKDOWN_WORKER_THRESHOLD);
 
+  const needsPresentation = $derived(registerPresentation !== undefined);
+
+  // This facade exists before observer admission can create the managed surface.
+  // Callback replacements change registry ownership, not the piece presentation.
   $effect(() => {
-    text;
+    if (!host || !needsPresentation) return;
+    surface?.destroy(); surface = null;
+    const controller = createMarkdownPresentation(host);
+    presentation = controller;
+    return () => {
+      surface?.destroy(); surface = null;
+      controller.destroy();
+      if (presentation === controller) presentation = null;
+    };
+  });
+
+  $effect(() => {
+    const controller = presentation;
+    const register = registerPresentation;
+    const target = host;
+    if (!target || !controller || !register) return;
+    return untrack(() => register(target, controller.presentation));
+  });
+
+  $effect(() => {
+    const source = text == null ? "" : String(text);
+    const controller = presentation;
+    untrack(() => controller?.updateSource(source));
     if (host) resetVisibleContentHeight(host);
   });
 
@@ -58,12 +89,13 @@
       pendingPresentation = {token:{}, before:textHeight(target)};
       announce(target, 'before', pendingPresentation);
     }
-    surface ??= createManagedMarkdownSurface(target, { mode: "read-only", onRendered: () => {
+    surface ??= createManagedMarkdownSurface(target, { mode: "read-only", presentation: presentation ?? undefined, onRendered: () => {
       target.removeAttribute("data-markdown-rendering");
       if (pendingPresentation) announce(target, 'after', pendingPresentation);
       pendingPresentation = null;
     } });
-    surface.update({ source: text, emptyText: quiet, depth, visited });
+    const input = { source: text, emptyText: quiet, depth, visited };
+    untrack(() => surface?.update(input));
   });
 
   // Only in a browser. Nothing is mounted when this is rendered on a server, so there is

@@ -9,3 +9,6 @@ export const NEWEST_LINE_BOTTOM_GAP_PIXELS = 12;
 
 /** The approved artifact advances complete reply lines faster than ordinary layout moves. */
 export const REPLY_LINE_MOVE_MS = 120;
+
+/** A saved text address cannot hide an open conversation beyond this active wait. */
+export const TEXT_RESTORATION_WAIT_MS = 5_000;

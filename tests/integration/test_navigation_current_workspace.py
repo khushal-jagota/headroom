@@ -132,19 +132,30 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
         read_page(path, old_cursor, DeliveryConfig())
 
 
+@pytest.mark.parametrize(
+    ("revision", "schema_version", "projection_version"),
+    [("automatic_deployment_recovery", 8, 4), ("review_messages", 9, 5)],
+)
 def test_review_projection_upgrade_resets_old_cursors_without_granting_authority(
     tmp_path: Path,
+    revision: str,
+    schema_version: int,
+    projection_version: int,
 ) -> None:
-    """A deployed schema-8 projection must rebuild before runtime installs schema 9."""
+    """Installed older Review memberships must reset without granting current authority."""
     path = tmp_path / "review-upgrade.db"
     with current_navigation_database(path) as conn:
         before = snapshot(conn)
         conn.execute("BEGIN")
-        conn.execute("UPDATE alembic_version SET version_num='automatic_deployment_recovery'")
-        # The native branch is already installed in this fixture's current database.
+        conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
+        # This fixture already owns native tables. Rewind only Review's branch,
+        # retaining the independently applied native migration to avoid replay.
         conn.execute("INSERT INTO alembic_version VALUES ('native_push_deliveries')")
-        conn.execute("UPDATE navigation_meta SET schema_version=8")
-        conn.execute("UPDATE navigation_view_meta SET projection_version=4")
+        conn.execute("UPDATE navigation_meta SET schema_version=?", (schema_version,))
+        conn.execute(
+            "UPDATE navigation_view_meta SET projection_version=?,ordering_generation='review-v2'",
+            (projection_version,),
+        )
         conn.commit()
     engine = _migration_engine(str(path), 1000)
     try:
@@ -162,5 +173,5 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
         assert (
             conn.execute("SELECT ordering_generation FROM navigation_view_meta")
             .fetchone()[0]
-            .endswith("review-v2")
+            .endswith("review-v3")
         )

@@ -39,7 +39,7 @@
   </div>
   <div class="ticket-artifact-body">
     <div class="ticket-artifact-slot">
-      <FileDocument {target} {reloadSignal} {registerArtifactFrame} />
+      <FileDocument retainWhileSelected {target} {reloadSignal} {registerArtifactFrame} />
     </div>
   </div>
 </aside>

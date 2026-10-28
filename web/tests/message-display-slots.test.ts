@@ -5,17 +5,40 @@ import type { ConversationViewRow } from '../src/lib/conversation/view/contracts
 const local: OutgoingMessage = {messageId:'send',content:[{piece:'text',text:'words'}],senderLabel:'owner',mode:'steer',sentAtUnixMilliseconds:1,knownFate:'nothing_yet',accepted:true};
 const row = (key: string, sequence: number, sender: string|null = null): ConversationViewRow => ({kind:'row',key,row_kind:sender?'prompt':'agent_message',sender_message_id:sender,source_sequence:sequence,order:{sequence,slot:0},changed_through_sequence:sequence,created_at:1,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',content:[{piece:'text',text:key}],to_owner:true}}});
 describe('mounted message presentation',()=>{
- it('retains the original slot through a receipt, later messages, and a recorded replacement, then releases it at eviction',()=>{
+ it('mounts a send at the end of the window, takes its record row place, and releases the slot at eviction',()=>{
    let slots=reconcileDisplaySlots([], [row('before',1)], [local],new Set());
-   const original=slots[1]!;
+   expect(slots[1]?.order).toEqual({sequence:1.5,slot:0});
    slots=reconcileDisplaySlots(slots,[row('before',1),row('later',3)],[],new Set(['send']));
    expect(slots.map(s=>s.key)).toEqual(['record:before','send','record:later']);
    slots=reconcileDisplaySlots(slots,[row('before',1),row('later',3),row('received',4,'send')],[],new Set(['send']));
-   expect(slots[1]?.order).toEqual(original.order);
-   expect(slots[1]?.item?.key).toBe('received');
+   expect(slots.map(s=>s.key)).toEqual(['record:before','record:later','send']);
+   expect(slots[2]?.order).toEqual({sequence:4,slot:0});
+   expect(slots[2]?.item?.key).toBe('received');
    expect(slots.filter(s=>s.local!==null)).toHaveLength(1);
    slots=reconcileDisplaySlots(slots,[row('new-window',20)],[],new Set(['send']));
    expect(slots.map(s=>s.key)).toEqual(['record:new-window']);
+   // A window ending at 31 of a record at 163 placed the owner's send at 31.5, inside
+   // history. It now sorts after every retained row.
+   const behind=reconcileDisplaySlots([],[row('retained',31)],[local],new Set(),new Set(),163);
+   expect(behind.map(s=>s.key)).toEqual(['record:retained','send']);
+   expect(behind[1]?.order).toEqual({sequence:163.5,slot:0});
+   // A window that already holds the newest row keeps placing the send at its end.
+   expect(reconcileDisplaySlots([],[row('retained',31)],[local],new Set(),new Set(),20)[1]?.order)
+     .toEqual({sequence:31.5,slot:0});
+ });
+ it('keeps two sends in the order the owner sent them while the first takes its record row place',()=>{
+   const second={...local,messageId:'second'};
+   let slots=reconcileDisplaySlots([],[row('retained',31)],[local,second],new Set(),new Set(),163);
+   expect(slots.map(s=>s.key)).toEqual(['record:retained','send','second']);
+   expect(slots.map(s=>s.order)).toEqual([{sequence:31,slot:0},{sequence:163.5,slot:0},{sequence:163.5,slot:1}]);
+   // The first send's row arrives at 164. Without a floor the second, still waiting at
+   // 163.5, would be drawn above the message the owner sent before it.
+   slots=reconcileDisplaySlots(slots,[row('retained',31),row('first',164,'send')],[local,second],new Set(['send']),new Set(),164);
+   expect(slots.map(s=>s.key)).toEqual(['record:retained','send','second']);
+   expect(slots[1]?.order).toEqual({sequence:164,slot:0});
+   expect(slots[2]?.order).toEqual({sequence:164,slot:1});
+   slots=reconcileDisplaySlots(slots,[row('retained',31),row('first',164,'send'),row('next',165,'second')],[local,second],new Set(['send','second']),new Set(),165);
+   expect(slots.map(s=>s.order)).toEqual([{sequence:31,slot:0},{sequence:164,slot:0},{sequence:165,slot:0}]);
  });
  it('resends within the same slot and restores failure without changing historical order',()=>{
    let slots=reconcileDisplaySlots([], [row('before',1)], [local],new Set());
@@ -49,7 +72,7 @@ describe('mounted message presentation',()=>{
    slots=reconcileDisplaySlots(slots,[before,received,after],[],new Set(['send']));
    expect(slots.filter(slot=>slot.item?.kind==='row' && slot.item.sender_message_id==='send')).toHaveLength(1);
    expect(slots.find(slot=>slot.local)?.key).toBe(placed.key);
-   expect(slots.find(slot=>slot.local)?.order).toEqual(placed.order);
+   expect(slots.find(slot=>slot.local)?.order).toEqual(received.order);
    slots=reconcileDisplaySlots([], [before,received,after],outgoingMessagesByPlace([unresolved],{...where,recordedSenderMessageIds:new Set(['send'])}).thread,new Set());
    expect(slots.map(slot=>slot.item?.key)).toEqual(['before','received','after']);
    const recordedSlot=slots.find(slot=>slot.local)!;

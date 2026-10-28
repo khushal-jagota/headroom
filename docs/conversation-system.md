@@ -199,6 +199,20 @@ While an active lens is open, the owner read position advances through the newes
 row. Runtime-only rows can clear an unread mark because each lens displays every result that
 needs the owner's attention.
 
+Stream progress alone does not earn read credit. The browser keeps a separate safe read
+position, established when an admitted newest timeline page survives retention. Initial
+entry keeps that baseline even when placement takes the person to earlier unread text.
+Replacing newest with history, refusing a new timeline row, or losing the newest edge
+freezes further credit. Hidden rows and status updates cannot restore that evidence.
+Older rows can leave retention without stopping credit while the newest edge remains held.
+Expanded turn and work-group pages cannot establish conversation-wide read credit.
+
+Latest, ordinary paging that reaches newest, or a fresh newest snapshot can establish new
+delivery evidence. A page read earns credit only through the stream position captured
+when the queued read actually starts; replay checks subsequent writes separately. Failed,
+canceled, and obsolete reads earn nothing. This prevents future false credit. It does not
+lower an existing saved read position or restore unread state cleared before the repair.
+
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only
@@ -748,12 +762,26 @@ person — a wheel, a finger, a hand on the scrollbar — so nothing the thread 
 to itself is mistaken for them; while they are reading elsewhere nothing moves
 them, and the jump button is the way back.
 
+Manual navigation also ends the accepted send’s right to reserve answer space.
+The viewport keeps only the tail that supports the current visible line. Upward
+navigation and reply growth reduce that tail. They cannot restore retired space.
+The tail includes its gap and disappears completely at zero. The viewport retains
+the send’s top inset until an anchor-preserving change fits the available range.
+
+A visible newest line does not grant automatic follow after manual navigation.
+Latest remains available while residual support exists. It admits actual newest
+history, moves once, and drains support as each planned position fits. Arrival
+restores ordinary follow. A fresh gesture or accepted send cancels the old move.
+Genuine navigation to actual newest also restores follow after the tail reaches zero.
+Layout notifications and native anchor corrections cannot grant follow.
+
 Returning to a browser tab restores the line the person left and its offset in the
 view, even if they were at the newest message. The existing logical anchor carries
 that position. Content that arrived while the tab was hidden stays below it and
 does not start live follow. The reader restores a bounded neighborhood around the
-anchor before the viewport places it. If that read fails, the position stays pending
-and the person can retry. Visible live text keeps its normal line-by-line follow.
+anchor before the viewport places it. If restoration fails, the reader retires the
+saved target and admits the newest content before automatic bottom placement.
+Visible live text keeps its normal line-by-line follow.
 
 ## Reading a turn
 
@@ -765,12 +793,20 @@ from zero, and a long wait for the agent to start is counted rather than lost.
 Where the sender minted no such moment, or minted one its own row cannot be
 reconciled with, the whole second the row was written in is counted from instead.
 
-The newest plan is conversation status, not thread history. At rest, an active plan
-step shows its position, its text, and the elapsed time. The position opens the whole
-checklist on pointer hover or keyboard focus. A permission request still replaces this
-line because it needs the person. Without an active step, the line keeps its normal
-elapsed time and newest tool call. In peeked and opened states, the same checklist sits
-in a centered 34-pixel strip between the thread and composer while unfinished work runs.
+The dock places activity and the latest unread owner preview above its rounded input.
+Activity uses the conversation typeface and shows no elapsed timer. Requests and delivery
+failures keep their own controls and feedback. The input keeps its complete border,
+recessed fill, spacing, and shape in both docked and full conversation.
+
+Hover outside the input changes the conversation surface color. Hover inside the input
+returns that surface to its resting color. Hover does not open the conversation.
+The preview button opens it through a click, Enter, or Space. A primary click on the
+surrounding surface also opens it when the press starts at rest and does not become a drag.
+An outside press that dismisses full conversation cannot reopen it on the same click.
+The input and its controls remain usable without opening the conversation.
+
+The newest plan is conversation status, not thread history. In full conversation,
+the checklist sits between the thread and composer while unfinished work runs.
 The plan never appears under the turn that first stated it.
 
 Full shows every message and tool call. Its turn and work groups expand
@@ -820,6 +856,36 @@ All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
 
 ### Scrolling back, and what is known about it
+
+When the reader leaves a tab, the browser retains a location inside visible message text
+and its line offset. A return restores that text after delayed Markdown presentation.
+The address stays local to this browser. It includes the message piece, exact content
+identity, logical text path, and character offset. Nested preview text supplies no address
+for its parent message.
+
+Restoration admits the target Markdown host and group through the existing bounded
+presentation policy. Placeholder geometry cannot replace the saved destination. The
+conversation waits for the actual character and relevant geometry before it reveals the
+restored position. Each attempt gets five seconds while the tab is visible and the
+conversation is open. History and text presentation share this budget. Hidden tabs and
+the dock pause it. Later layout changes preserve a successfully restored character until
+the reader navigates.
+
+Saved-position restoration displays no notice, progress text, warning, or restoration controls.
+Ordinary Latest navigation remains available when content lies below the current position.
+Failure, unavailable text, or an exhausted budget
+retires the saved target and automatically admits the newest conversation page.
+The viewport then places the actual final content at the bottom, without a warning,
+restoration Retry control, or focus change. Request capacity delays this operation
+until a slot becomes available. A failed newest fetch preserves readable content,
+real errors, and ordinary Latest access without an automatic retry loop.
+
+Late results cannot reclaim a retired attempt. Explicit movement, navigation, reader
+replacement, a newer Latest command, or an accepted send cancels automatic recovery.
+Cancellation preserves shared ordinary reader requests. Changed, deleted, or expired
+text produces an unavailable result. If settled text cannot fit its saved offset,
+automatic recovery starts immediately. Successful text restoration retains its exact
+character and line offset. Reader replacement and navigation release target demand.
 
 Scrolling back asks for one page at a time. Before each page the browser closes its live
 stream and re-opens it once the page has arrived. That looks wasteful and is not: a

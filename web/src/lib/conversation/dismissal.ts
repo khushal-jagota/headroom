@@ -8,7 +8,7 @@ export function isPrimaryPressOutsideConversation(event: PointerEvent): boolean 
 
 /** Reject frames outside the current visible, unclipped part of this surface. */
 function visibleArtifactFrame(frame: HTMLIFrameElement, host: HTMLElement): boolean {
-  if (document.visibilityState === "hidden" || !frame.isConnected || !host.contains(frame) || frame.closest("[data-conversation-pane]")) return false;
+  if (document.visibilityState === "hidden" || !frame.isConnected || !host.contains(frame) || frame.closest("[inert], [data-conversation-pane]")) return false;
   if (!frame.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
   const rect = frame.getBoundingClientRect();
   const viewport = window.visualViewport;

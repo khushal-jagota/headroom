@@ -8,6 +8,7 @@
   import type { NavigationReviewItem as ReviewItem } from "../lib/types";
   import { viewWindow } from "../lib/navigation/views/owner";
   import ResourceState from "../components/ResourceState.svelte";
+  import ReviewTicketCard from "../components/ReviewTicketCard.svelte";
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
   import ReviewMessageCard from "../components/ReviewMessageCard.svelte";
   import { reviewMessageHref } from "../lib/review/messages";
@@ -23,7 +24,9 @@
 
   let reviewAnchor=$state<string|null>(null);
   let queueWindow=$derived(navigationWindow(displayed?navigation.presentationFor(displayed):undefined,'review'));
-  $effect(()=>navigation.owner.setDemand('review',{windows:[viewWindow('review',null,{anchor:reviewAnchor,limit:30})]}));
+  $effect(()=>navigation.owner.setDemand('review',{
+    review_conversation_ids:heldCard ? heldCard.review_item_type==='message' ? [heldCard.conversation_id] : heldCard.messages.map(message=>message.conversation_id) : [],
+    windows:[viewWindow('review',null,{anchor:reviewAnchor,limit:30})]}));
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
   let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>({});
@@ -33,19 +36,59 @@
   let screenElement = $state<HTMLElement | null>(null);
 
   function itemKey(item: ReviewItem): string {
-    return item.review_item_type === "message" ? `message:${item.conversation_id}` : `${item.ticket_id}:${item.field}`;
+    return item.review_item_type === "message" ? `message:${item.conversation_id}` : `ticket:${item.ticket_id}`;
   }
 
   let items = $derived(queueWindow?(review?.items ?? []).filter(item=>queueWindow?.members.some(key=>key.kind===(item.review_item_type === "message" ? 'address' : 'ticket') && key.id===(item.review_item_type === "message" ? item.address_id : item.ticket_id))):review?.items ?? []);
   let runningWorkerCount = $derived(review?.runningConversationCount ?? null);
-  let heldMessage = $state<ReviewItem | null>(null);
-  let messageBusy = $state(false);
-  let messageGeneration = $state(0);
+  let busyConversations = $state<Record<string,boolean>>({});
+  let messageGenerations = $state<Record<string,number>>({});
+  // Keep a painted conversation through delivery uncertainty and its exit. Owner
+  // state and canonical address still govern admission, even for a retained draft.
+  let heldCard = $state<ReviewItem|null>(null);
+  function messageEligible(message:import('../lib/types').ReviewMessageItem):boolean {
+    if(!displayed)return false;
+    const presentation=navigation.presentationFor(displayed);
+    const context=displayed.publication.view?.reviewContext?.find(row=>row.conversation_id===message.conversation_id);
+    // New demand hands over atomically. Until its context arrives, the admitted
+    // canonical address from the complete Review card remains authoritative.
+    const canonicalId=context ? context.canonical_address_id
+      : [...(presentation.addressesByConversation.get(message.conversation_id) ?? [])]
+        .sort((a,b)=>Number(b.value.current)-Number(a.value.current) || (a.id<b.id ? -1 : a.id>b.id ? 1 : 0))[0]?.id;
+    if((context || canonicalId!==undefined) && canonicalId!==message.address_id)return false;
+    if(message.owner_kind==='ticket') {
+      const owner=presentation.rawTicketsById.get(message.owner_id)?.value;
+      return owner ? owner.stage!=='done' && !owner.is_backlogged : context===undefined;
+    }
+    if(message.owner_kind==='manager') {
+      const owner=displayed.publication.records.find(record=>record.kind==='manager' && record.id===message.owner_id);
+      return owner?.kind==='manager' ? !owner.value.settled : context===undefined;
+    }
+    return true;
+  }
   let currentItem = $derived.by<ReviewItem | null>(() => {
-    if (heldMessage) return items.find(item=>itemKey(item)===itemKey(heldMessage!)) ?? heldMessage;
+    if(heldCard && !skipped[itemKey(heldCard)]) {
+      const current=items.find(item=>itemKey(item)===itemKey(heldCard!));
+      if(heldCard.review_item_type==='message') {
+        if(messageEligible(heldCard))return current ?? heldCard;
+      } else {
+        const held=heldCard.messages.filter(messageEligible);
+        if(held.length) {
+          const fresh=current?.review_item_type==='ticket' ? current : null;
+          return {...(fresh ?? heldCard),proposal:fresh?.proposal ?? null,
+            messages:[...(fresh?.messages ?? []),...held.filter(message=>!fresh?.messages.some(row=>row.conversation_id===message.conversation_id))]};
+        }
+      }
+    }
     return items.find(item=>!skipped[itemKey(item)]) ?? null;
   });
-  $effect(()=>{if(currentItem?.review_item_type==='message' && !heldMessage)heldMessage=currentItem;});
+  let messageBusy = $derived(currentItem?.review_item_type==='message' ? Boolean(busyConversations[currentItem.conversation_id]) : Boolean(currentItem?.messages.some(message=>busyConversations[message.conversation_id])));
+  $effect(()=>{
+    if(!heldCard && currentItem && (currentItem.review_item_type==='message' || currentItem.messages.length))heldCard=currentItem;
+    else if(heldCard?.review_item_type==='ticket' && currentItem?.review_item_type==='ticket' && heldCard.ticket_id===currentItem.ticket_id
+      && currentItem.messages.some(message=>!heldCard || heldCard.review_item_type!=='ticket' || !heldCard.messages.some(held=>held.conversation_id===message.conversation_id && held.address_id===message.address_id)))heldCard=currentItem;
+    if(heldCard && !(heldCard.review_item_type==='message' ? messageEligible(heldCard) : heldCard.messages.some(messageEligible)))heldCard=null;
+  });
 
 
   $effect(()=>{
@@ -62,7 +105,7 @@
   function skip(item: ReviewItem): void {
     if(messageBusy)return;
     skipped = { ...skipped, [itemKey(item)]: true };
-    heldMessage=null;
+    heldCard=null;
   }
 
   function openTicket(item: ReviewItem): void {
@@ -72,7 +115,19 @@
 
   // The card says a decision has left the queue — approved, sent back, or already
   // gone by the time its Ticket was read. Re-read the queue so the next ask comes up.
-  function messageResolved():void { messageGeneration+=1;heldMessage=null;messageBusy=false;void navigation.owner.recover().catch(()=>undefined); }
+  function messageResolved(conversationId:string):void {
+    if(heldCard?.review_item_type==='message' && heldCard.conversation_id===conversationId)heldCard=null;
+    else if(heldCard?.review_item_type==='ticket') {
+      const messages=heldCard.messages.filter(message=>message.conversation_id!==conversationId);
+      heldCard=messages.length ? {...heldCard,messages} : null;
+    }
+    messageGenerations={...messageGenerations,[conversationId]:(messageGenerations[conversationId] ?? 0)+1};
+    busyConversations={...busyConversations,[conversationId]:false};
+    void navigation.owner.recover().catch(()=>undefined);
+  }
+  function messageBusyChanged(conversationId:string,busy:boolean):void {
+    if(Boolean(busyConversations[conversationId])!==busy)busyConversations={...busyConversations,[conversationId]:busy};
+  }
 
   function proposalResolved(): void {
     void navigation.owner.recover().catch(() => undefined);
@@ -117,7 +172,7 @@
 
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       const button = screenElement?.querySelector<HTMLButtonElement>(
-        item.review_item_type === "message" ? "[data-review-card] [data-review-send]" : "[data-review-card] [data-accept]"
+        item.review_item_type === "ticket" && item.proposal ? "[data-review-card] [data-accept]" : "[data-review-card] [data-review-send]"
       );
       if (button && !button.disabled) {
         event.preventDefault();
@@ -163,24 +218,32 @@
       </div>
     {:else if currentItem}
       {#if currentItem.review_item_type === "message"}
-        {#key `${itemKey(currentItem)}:${messageGeneration}`}
-          <ReviewMessageCard item={currentItem} onSkip={()=>skip(currentItem!)} onResolved={messageResolved}
-            onBusy={value=>messageBusy=value} onRendered={()=>{renderedBody+=1;}} footer={messageKeys}/>
+        {@const message = currentItem}
+        {#key `${itemKey(message)}:${messageGenerations[message.conversation_id] ?? 0}`}
+          <ReviewMessageCard item={message} onSkip={()=>skip(message)} onResolved={()=>messageResolved(message.conversation_id)}
+            onBusy={value=>messageBusyChanged(message.conversation_id,value)} onRendered={()=>{renderedBody+=1;}} footer={messageKeys}/>
         {/key}
       {:else}
-      {@const proposal = currentItem}
-      {#key reviewProposalIdentity(proposal)}
-        <ReviewProposalCard
-          identity={proposal}
-          onRendered={() => { renderedBody += 1; }}
-          ticketId={proposal.ticket_id}
-          field={proposal.field}
-          title={proposal.title}
-          onSkip={() => skip(proposal)}
-          onResolved={proposalResolved}
-          footer={proposalKeys}
-        />
-      {/key}
+        {@const ticket = currentItem}
+        {#key ticket.ticket_id}
+          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy}>
+            {#if ticket.proposal}
+              {@const proposal = ticket.proposal}
+              {#key reviewProposalIdentity(proposal)}
+                <ReviewProposalCard identity={proposal} embedded ticketId={proposal.ticket_id} field={proposal.field}
+                  title={proposal.title} onResolved={proposalResolved} onRendered={()=>{renderedBody+=1;}}/>
+              {/key}
+            {/if}
+            {#each ticket.messages as message (message.conversation_id)}
+              {#key messageGenerations[message.conversation_id] ?? 0}
+                <ReviewMessageCard item={message} embedded onSkip={()=>skip(ticket)}
+                  onResolved={()=>messageResolved(message.conversation_id)} onBusy={value=>messageBusyChanged(message.conversation_id,value)}
+                  onRendered={()=>{renderedBody+=1;}}/>
+              {/key}
+            {/each}
+            {#if ticket.proposal}{@render proposalKeys()}{:else}{@render messageKeys()}{/if}
+          </ReviewTicketCard>
+        {/key}
       {/if}
     {:else}
       <div class="review-empty-state" data-review-empty>

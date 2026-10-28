@@ -38,6 +38,7 @@ from tests.unit.test_conversation_view_storage import event, prompt
 
 from planner.conversation.views.api import _changes
 from planner.conversation.views.contracts import (
+    VIEW_PROJECTION_VERSION,
     ViewHistoryScope,
     ViewPageCursor,
     ViewRetainedRange,
@@ -82,8 +83,9 @@ def conversation(turns: int = TURNS) -> list[dict[str, Any]]:
 class Work:
     """Statements and VM steps charged to one read."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, steps_per_tick: int = 1000) -> None:
         self.conn = conn
+        self.steps_per_tick = steps_per_tick
         self.statements: list[str] = []
         self.steps = 0
 
@@ -91,11 +93,11 @@ class Work:
         self.conn.set_trace_callback(self.statements.append)
         # A progress handler every thousand steps is cheap and precise enough to notice a
         # query that started scanning a table it used to seek into.
-        self.conn.set_progress_handler(self._tick, 1000)
+        self.conn.set_progress_handler(self._tick, self.steps_per_tick)
         return self
 
     def _tick(self) -> int:
-        self.steps += 1000
+        self.steps += self.steps_per_tick
         return 0
 
     def __exit__(self, *_: object) -> None:
@@ -294,7 +296,7 @@ def test_reverse_availability_does_not_walk_hidden_tool_or_message_runs() -> Non
                     for lens in ("focus", "full"):
                         for edge in (0, 2):
                             cursor: ViewPageCursor = {
-                                "projection_version": 1,
+                                "projection_version": VIEW_PROJECTION_VERSION,
                                 "lens": lens,
                                 "scope": {"kind": "timeline", "key": None},
                                 "order": {"sequence": edge, "slot": 0},
@@ -353,12 +355,15 @@ def test_expanded_reverse_reads_seek_past_tools_and_addressed_messages() -> None
                 )
                 for direction, sequence in edges:
                     cursor: ViewPageCursor = {
-                        "projection_version": 1,
+                        "projection_version": VIEW_PROJECTION_VERSION,
                         "lens": "full",
                         "scope": scope,
                         "order": {"sequence": sequence, "slot": 0},
                     }
-                    with Work(conn) as work:
+                    # These empty reads cost fewer than 1,000 instructions.
+                    # Exact counting avoids a false 0 -> 1,000 growth result when
+                    # cached row sizes change SQLite's callback alignment.
+                    with Work(conn, steps_per_tick=1) as work:
                         page = read_page(
                             conn, "fixture", "full", scope=scope, cursor=cursor, direction=direction
                         )

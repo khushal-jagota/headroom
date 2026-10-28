@@ -1,7 +1,13 @@
 # Review on iOS
 
-Review shows proposals and unread conversations in one queue, ordered by waiting
-time. Each conversation has one card containing its complete unread message run.
+Review shows one card per Ticket, ordered by its oldest pending proposal or message.
+A card can contain a proposal, unread conversations, or both. On a combined card,
+the selector switches between the existing proposal and message screens. It stays
+locked during editing, recording, or a decision. Completing one part keeps the other
+parts available; Skip skips the whole Ticket for this visit. Chief and Manager
+conversations remain separate cards, each containing its complete unread message run.
+The proposal keeps its own field and timestamp even when an older message determines
+the card's position in the queue.
 The queue and badge follow the shared change stream. Skip keeps an item out of this visit's queue without
 changing it on the server. When every remaining item was skipped, Revisit skipped
 items brings them back. A new proposal on the same ticket appears again.

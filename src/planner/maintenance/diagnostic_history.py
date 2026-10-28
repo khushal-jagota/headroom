@@ -20,6 +20,7 @@ from planner.conversation.publication.coordinator import (
     SignalPublicationCoordinator,
 )
 from planner.conversation.retention.contracts import ApplyResult, ReclaimResult, RetentionReport
+from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
 from planner.core.db import (
     ChangeSignallingConnection,
     bind_transaction_admission,
@@ -177,7 +178,8 @@ def _validate_projection_schema(conn: sqlite3.Connection) -> None:
     if tables != supported:
         raise RuntimeError("Unsupported conversation projection store; nothing expired")
     if conn.execute(
-        "SELECT 1 FROM conversation_view_state WHERE projection_version != 1 LIMIT 1"
+        "SELECT 1 FROM conversation_view_state WHERE projection_version != ? LIMIT 1",
+        (VIEW_PROJECTION_VERSION,),
     ).fetchone():
         raise RuntimeError("Unsupported conversation projection version; nothing expired")
 

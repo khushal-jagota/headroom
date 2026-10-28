@@ -29,12 +29,6 @@
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
-  import ArtifactPreview from "./ArtifactPreview.svelte";
-  import {
-    managedFileTargetFromLinkHref
-  } from "../lib/artifactStrip";
-  import { isPlainLinkClick } from "../lib/linkClick";
-  import type { ManagedFileTarget } from "../lib/filePreview";
   import type { ManagerWorkspaceContent } from "../lib/types";
 
   export type ManagerWorkspaceResource = {
@@ -177,45 +171,6 @@
     conversationId = null;
   }
 
-  let shownFile = $state<ManagedFileTarget | null>(null);
-  let artifactReloadSignal = $state(0);
-  let artifactElement = $state<HTMLElement | null>(null);
-  let whatHadFocus: HTMLElement | null = null;
-
-  function showFile(file: ManagedFileTarget | null): void {
-    if (file && !shownFile) {
-      whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    }
-    shownFile = file;
-    if (file && conversationState === "opened") conversationState = "peeked";
-    if (!file) {
-      const restoreFocus = whatHadFocus;
-      whatHadFocus = null;
-      queueMicrotask(() => restoreFocus?.focus());
-    }
-  }
-
-  $effect(() => {
-    if (shownFile && artifactElement) artifactElement.focus();
-  });
-
-  function openManagedFileInPlace(event: MouseEvent): void {
-    if (event.defaultPrevented) return;
-    const anchor = (event.target as Element | null)?.closest?.("a[href]");
-    if (!anchor) return;
-    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
-    if (!isPlainLinkClick(link, event)) return;
-    const file = managedFileTargetFromLinkHref(link.href);
-    if (!file) return;
-    event.preventDefault();
-    showFile(file);
-  }
-
-  function closeFileOnEscape(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented || !shownFile) return;
-    event.preventDefault();
-    showFile(null);
-  }
   $effect(()=>{
     const view=navigation.selectors.effective;
     const generation=navigation.state.generation;
@@ -258,14 +213,11 @@
 
 </script>
 
-<svelte:window onkeydown={closeFileOnEscape} />
-
 <ManagerFrame
   class="manager-resource-workspace"
   bind:conversationState
   data-manager-workspace={itemId}
   data-manager-view={itemId}
-  onDocumentClick={openManagedFileInPlace}
 >
     <ResourceState shape="document" layout="fill"
       error={workspace.error}
@@ -326,18 +278,6 @@
           </div>
       {/if}
     </ResourceState>
-  {#snippet readingAside(registerArtifactFrame)}
-  {#if shownFile}
-    <ArtifactPreview
-      {registerArtifactFrame}
-      target={shownFile}
-      reloadSignal={artifactReloadSignal}
-      bind:element={artifactElement}
-      onRefresh={() => artifactReloadSignal += 1}
-      onClose={() => showFile(null)}
-    />
-  {/if}
-  {/snippet}
   {#snippet conversation()}
       <LiveConversation historyOwner={{kind:"manager",id:itemId}}
         bind:conversationState

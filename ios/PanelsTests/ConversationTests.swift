@@ -371,6 +371,73 @@ import XCTest
         XCTAssertFalse(model.hasUnread)
     }
 
+    func testReadCreditRequiresVisibleDecodedRowsInTheActiveConversation() async throws {
+        let service = ConversationStub(fate: "started")
+        var shown = Self.item("shown", kind: "agent_message", text: "On screen")
+        shown["source_sequence"] = 8
+        var hidden = Self.item("hidden", kind: "agent_message", text: "Not on screen")
+        hidden["source_sequence"] = 12
+        await service.setSnapshot(Self.snapshot([shown, hidden], ownerSequence: 12))
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        await model.refresh(using: service, transcript: true)
+        let config = #"{"backend_key":"codex","owner_read_through_sequence":0}"#
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(config.utf8)))
+        let afterPoll = await service.readRequests
+        XCTAssertTrue(afterPoll.isEmpty)
+        await model.acknowledgeVisibleRows(["shown"], active: false, using: service)
+        await model.acknowledgeVisibleRows([], active: true, using: service)
+        let whileHidden = await service.readRequests
+        XCTAssertTrue(whileHidden.isEmpty, "Hidden/background and dock views have no visible rows")
+        await model.acknowledgeVisibleRows(["shown"], active: true, using: service)
+        let visible = await service.readRequests
+        XCTAssertEqual(visible.map(\.throughSequence), [8], "The hidden latest row/status must not earn credit")
+        XCTAssertTrue(model.hasUnread)
+        // An older in-flight configuration response cannot undo a confirmed read.
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(config.utf8)))
+        await model.acknowledgeVisibleRows(["shown"], active: true, using: service)
+        let repeated = await service.readRequests
+        XCTAssertEqual(repeated.count, 1)
+        await model.acknowledgeVisibleRows(["hidden"], active: true, using: service)
+        XCTAssertFalse(model.hasUnread)
+        model.conversationID = "another"
+        XCTAssertNil(model.visibleReadBoundary(rowIDs: ["hidden"], active: true), "Rows belong to the conversation they were loaded from")
+    }
+
+    func testDeferredAndFailedReadAcknowledgmentKeepUnreadState() async throws {
+        let service = ConversationStub(fate: "started", failure: .networkConnectionLost)
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let deferred: [String: Any] = ["kind": "row", "key": "long", "source_sequence": 8,
+            "body": ["kind": "deferred", "reference": ["body_id": "long", "version": "v", "byte_count": 10, "media_type": "application/json"]]]
+        await service.setSnapshot(Self.snapshot([deferred], ownerSequence: 8))
+        await model.refresh(using: service, transcript: true)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(#"{"backend_key":"codex","owner_read_through_sequence":0}"#.utf8)))
+        await model.acknowledgeVisibleRows(["long"], active: true, using: service)
+        let beforeBody = await service.readRequests
+        XCTAssertTrue(beforeBody.isEmpty)
+        model.expandedBodies["long"] = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"agent_message","content":[{"piece":"text","text":"Decoded visible body"}]}"#.utf8))
+        await model.acknowledgeVisibleRows(["long"], active: true, using: service)
+        let failed = await service.readRequests
+        XCTAssertEqual(failed.map(\.throughSequence), [8])
+        XCTAssertTrue(model.hasUnread, "An unconfirmed acknowledgment cannot clear unread state")
+    }
+
+    func testReadAcknowledgmentAdapterUsesExactConversationAndBoundary() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ConversationRequestStub.self]
+        let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))
+        let confirmed = try await api.markConversationRead("historical", through: 8)
+        XCTAssertEqual(confirmed, 8)
+        let request = try XCTUnwrap(ConversationRequestStub.request)
+        XCTAssertEqual(request.url?.path, "/api/conversation/conversations/historical/owner-read")
+        XCTAssertEqual(request.httpMethod, "POST")
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open(); defer { stream.close() }
+        var bytes = [UInt8](repeating: 0, count: 4096)
+        let count = stream.read(&bytes, maxLength: bytes.count)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(bytes.prefix(count))) as? [String: Int])
+        XCTAssertEqual(body, ["through_sequence": 8])
+    }
+
     func testRefusalReasonUsesReadableCopy() {
         XCTAssertEqual(ConversationDelivery.refusalText("backend_did_not_start"), "agent could not start")
         XCTAssertEqual(ConversationDelivery.refusalText("backend_cannot_steer"), "try Queue instead")
@@ -415,6 +482,12 @@ import XCTest
 }
 
 private actor ConversationStub: ConversationServing {
+    var readRequests: [ConversationReadBoundary] = []
+    func markConversationRead(_ id: String, through: Int) async throws -> Int {
+        readRequests.append(.init(conversationID: id, throughSequence: through))
+        if let failure { throw URLError(failure) }
+        return through
+    }
     var fate: String
     let failure: URLError.Code?
     var lastMessage: ConversationSend?
@@ -456,7 +529,8 @@ private final class ConversationRequestStub: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         Self.request = request
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(#"{"conversation_id":"conv_1","fate":"queued","queue_position":1}"#.utf8))
+        let body = request.url?.path.hasSuffix("/owner-read") == true ? #"{"owner_read_through_sequence":8}"# : #"{"conversation_id":"conv_1","fate":"queued","queue_position":1}"#
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}

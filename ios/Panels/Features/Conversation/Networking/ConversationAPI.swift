@@ -1,6 +1,13 @@
 import Foundation
 
 extension APIClient: ConversationServing {
+    func markConversationRead(_ id: String, through: Int) async throws -> Int {
+        struct Body: Encodable { let throughSequence: Int }
+        struct Response: Decodable { let ownerReadThroughSequence: Int }
+        let data = try await reviewWrite("/api/conversation/conversations/\(id)/owner-read", body: Body(throughSequence: through))
+        return try Self.decoder().decode(Response.self, from: data).ownerReadThroughSequence
+    }
+
     func changeHeldPrompt(_ id: String, heldID: String, discard: Bool) async throws -> ConversationHeldChange {
         let path = "/api/conversation/conversations/\(id)/held-prompts/\(heldID)" + (discard ? "" : "/promote")
         var request = URLRequest(url: try url(path))

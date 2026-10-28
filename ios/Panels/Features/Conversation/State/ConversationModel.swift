@@ -24,6 +24,7 @@ import Observation
         if let id = conversationID,
            let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
             if status != snapshot.status { status = snapshot.status }; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
+            loadedConversationID = id
             rememberRows(items.map(\.id))
         }
         syncOutbox()
@@ -50,6 +51,7 @@ import Observation
     var status: ConversationStatus?
     var hasUnread = false
     private var readThroughSequence = 0
+    private var readPositionConversationID: String?
     var heldPrompts: [ConversationConfiguration.HeldPrompt] = []
     var older: ConversationCursor?
     var error: String?
@@ -141,7 +143,11 @@ import Observation
 
     func applyConfiguration(_ configuration: ConversationConfiguration) {
         heldPrompts = configuration.heldPrompts
-        readThroughSequence = configuration.ownerReadThroughSequence ?? 0
+        if readPositionConversationID != conversationID {
+            readPositionConversationID = conversationID
+            readThroughSequence = 0
+        }
+        readThroughSequence = max(readThroughSequence, configuration.ownerReadThroughSequence ?? 0)
         hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
         if backendKey == nil {
             backendKey = configuration.backendKey
@@ -158,6 +164,37 @@ import Observation
             }
         }
     }
+    /// Only a rendered, visible remote row supplies evidence. Status/tail sequence
+    /// and local outgoing rows cannot acknowledge content the person did not see.
+    func visibleReadBoundary(rowIDs: Set<String>, active: Bool) -> ConversationReadBoundary? {
+        guard active, let id = conversationID, loadedConversationID == id else { return nil }
+        let sequence = rows.compactMap { row -> Int? in
+            guard rowIDs.contains(row.id), let item = row.item,
+                  item.body?.reference == nil || expandedBodies[item.key] != nil else { return nil }
+            return item.sourceSequence
+        }.max() ?? 0
+        let alreadyRead = readPositionConversationID == id ? readThroughSequence : 0
+        guard sequence > alreadyRead else { return nil }
+        return ConversationReadBoundary(conversationID: id, throughSequence: sequence)
+    }
+
+    func acknowledgeVisibleRows(_ rowIDs: Set<String>, active: Bool, using service: any ConversationServing) async {
+        guard !Task.isCancelled, let boundary = visibleReadBoundary(rowIDs: rowIDs, active: active) else { return }
+        do {
+            let confirmed = try await service.markConversationRead(boundary.conversationID, through: boundary.throughSequence)
+            guard !Task.isCancelled, conversationID == boundary.conversationID else { return }
+            if readPositionConversationID != conversationID {
+                readPositionConversationID = conversationID
+                readThroughSequence = 0
+            }
+            readThroughSequence = max(readThroughSequence, confirmed)
+            hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
+        } catch {
+            // A read acknowledgment is idempotent; keep unread state on failure.
+            // The next actual visibility change can try again, never a poll alone.
+        }
+    }
+
     var firstUnreadID: String? {
         guard hasUnread else { return nil }
         return items.first { ($0.sourceSequence ?? 0) > readThroughSequence && ["agent_message", "user_input", "permission_ask"].contains($0.body?.value?.kind ?? "") }.map { retryAliases[$0.id] ?? $0.id }
@@ -176,6 +213,7 @@ import Observation
         }
     }
     private var loadedLens: ConversationLens?
+    private var loadedConversationID: String?
 
     func updateSpeechTranscript(_ text: String, prefix: String) {
         let prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -214,7 +252,7 @@ import Observation
             guard id == conversationID, lens == requestedLens else { return }
             if status != snapshot.status { status = snapshot.status }
             if transcript {
-                if loadedLens != requestedLens { items = []; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
+                if loadedConversationID != id || loadedLens != requestedLens { items = []; expandedBodies = [:]; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
                 if let liveRow, output?.reference.version != liveRow.id.replacingOccurrences(of: "live:", with: "", options: .anchored),
                    let settled = snapshot.page.items.last(where: { incoming in
                        incoming.turnKey == liveTurnKey && incoming.body?.value?.kind == "agent_message" && !items.contains(where: { $0.key == incoming.key })

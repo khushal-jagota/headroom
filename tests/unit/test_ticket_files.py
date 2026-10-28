@@ -54,6 +54,8 @@ def test_manager_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
     target = _manager_root(db_path) / "si_files" / "notes" / "brief.md"
     target.parent.mkdir(parents=True)
     target.write_text("brief", encoding="utf-8")
+    html = target.with_name("index.html")
+    html.write_text("<p>HTML</p>", encoding="utf-8")
     with connect(str(db_path)) as conn:
         conn.execute(
             "INSERT INTO agents(agent_key,conversation_id) "
@@ -75,6 +77,12 @@ def test_manager_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
         assert retained.content == response.content
         assert retained.headers["etag"] == response.headers["etag"]
         missing = client.get("/files/managers/si_other/notes/brief.md")
+        for prefix in ("managers", "sprint-items"):
+            confined = client.get(
+                f"/files/{prefix}/si_files/notes/index.html",
+                headers={"X-Panels-Artifact-Root": "/files/managers/si_files/notes/index.html"},
+            )
+            assert confined.status_code == 200 and confined.text == "<p>HTML</p>"
 
     assert response.status_code == 200 and response.text == "brief"
     assert response.headers["x-content-type-options"] == "nosniff"
@@ -235,3 +243,77 @@ def test_the_tag_always_describes_the_bytes_that_were_sent(
             headers={"If-None-Match": answer.headers["etag"]},
         )
         assert revalidated.status_code == 304
+
+
+def test_html_navigation_confines_resolved_paths_without_changing_delivery(tmp_path: Path) -> None:
+    """A sibling reached through a symlink must not enter the preview sandbox."""
+    app, db_path = _make_app(tmp_path)
+    index = _ticket_file(db_path, b"index", "artifact/index.html")
+    child = _ticket_file(db_path, b"child", "artifact/child.html")
+    outside = _ticket_file(db_path, b"private sibling", "outside.html")
+    (index.parent / "escape.html").symlink_to(outside)
+    (index.parent / "inside.html").symlink_to(child)
+    (index.parent / "nested").symlink_to(index.parent, target_is_directory=True)
+    root_href = "/files/tickets/t_reuse01/artifact/index.html"
+    headers = {"X-Panels-Artifact-Root": root_href}
+    with TestClient(app) as client:
+        ordinary = client.get(root_href)
+        confined = client.get(root_href, headers=headers)
+        valid = client.get("/files/tickets/t_reuse01/artifact/inside.html", headers=headers)
+        nested = client.get("/files/tickets/t_reuse01/artifact/nested/child.html", headers=headers)
+        missing = client.get("/files/tickets/t_reuse01/artifact/missing.html", headers=headers)
+        escaped = client.get("/files/tickets/t_reuse01/artifact/escape.html", headers=headers)
+        sibling = client.get("/files/tickets/t_reuse01/outside.html", headers=headers)
+    assert all(answer.status_code == 200 for answer in (ordinary, confined, valid, nested))
+    assert ordinary.content == confined.content == b"index"
+    assert valid.content == nested.content == b"child"
+    for name in ("content-disposition", "x-content-type-options", "cache-control", "etag"):
+        assert ordinary.headers[name] == confined.headers[name]
+    assert missing.status_code == escaped.status_code == sibling.status_code == 404
+    assert missing.json() == escaped.json() == sibling.json()
+    assert str(tmp_path) not in escaped.text
+
+
+def test_html_navigation_resolves_symlinked_artifact_root_before_comparison(tmp_path: Path) -> None:
+    """The lexical artifact alias is permitted only inside its resolved directory."""
+    app, db_path = _make_app(tmp_path)
+    index = _ticket_file(db_path, b"index", "actual/index.html")
+    _ticket_file(db_path, b"child", "actual/child.html")
+    outside = _ticket_file(db_path, b"outside", "sibling/outside.html")
+    owner_root = index.parent.parent
+    (owner_root / "alias").symlink_to(index.parent, target_is_directory=True)
+    (index.parent / "escape.html").symlink_to(outside)
+    # A root document symlink cannot silently redefine the artifact directory.
+    (index.parent / "bad-root.html").symlink_to(outside)
+    headers = {"X-Panels-Artifact-Root": "/files/tickets/t_reuse01/alias/index.html"}
+    with TestClient(app) as client:
+        valid = client.get("/files/tickets/t_reuse01/alias/child.html", headers=headers)
+        escaped = client.get("/files/tickets/t_reuse01/alias/escape.html", headers=headers)
+        bad_root = client.get("/files/tickets/t_reuse01/actual/child.html", headers={
+            "X-Panels-Artifact-Root": "/files/tickets/t_reuse01/actual/bad-root.html",
+        })
+    assert valid.status_code == 200 and valid.content == b"child"
+    assert escaped.status_code == bad_root.status_code == 404
+
+
+def test_html_navigation_rejects_untrusted_root_descriptors(tmp_path: Path) -> None:
+    """Headers are untrusted too, including encoded traversal and URL authorities."""
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"index", "artifact/index.html")
+    target = "/files/tickets/t_reuse01/artifact/index.html"
+    unsafe_roots = [
+        "https://outside.test" + target, "//outside.test" + target,
+        target + "?query=yes", target + "#fragment", target.replace("/artifact/", "/artifact/../"),
+        target.replace("/artifact/", "/artifact/%2e%2e/"),
+        target.replace("/artifact/", "/artifact%2f"), target.replace("/artifact/", "/artifact%5c"),
+        target.replace("/artifact/", "/artifact/%252e%252e/"),
+        target.replace("/artifact/", "/artifact\\"),
+        target.replace("t_reuse01", "t_other"),
+        target.replace("tickets", "managers"),
+    ]
+    with TestClient(app) as client:
+        absent = client.get("/files/tickets/t_reuse01/artifact/absent.html")
+        for root in unsafe_roots:
+            response = client.get(target, headers={"X-Panels-Artifact-Root": root})
+            assert response.status_code == 404, root
+            assert response.json() == absent.json(), root

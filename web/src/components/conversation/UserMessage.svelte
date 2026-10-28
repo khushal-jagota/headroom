@@ -4,7 +4,8 @@
   import { outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
   import { conversationHeight, CONVERSATION_MOVE_MS } from '../../lib/conversation/surfaceMotion';
-  let { row = null, local = null, conversationId, ownSenderLabel = null, onStopDrawingMessage, onSendAgain }: {
+  let { presentationRowKey = null, row = null, local = null, conversationId, ownSenderLabel = null, onStopDrawingMessage, onSendAgain }: {
+    presentationRowKey?: string | null;
     row?: Extract<TranscriptRow, {kind: 'prompt'|'prompt_refused'|'prompt_uncertain'|'prompt_discarded'}> | null;
     local?: OutgoingMessage | null;
     conversationId: string;
@@ -32,7 +33,7 @@
       {#if actions.includes('send_again')}<button type="button" class="chat-qrow-act" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
     </div>{/if}
   </div></div>
-  <MessagePieces content={row?.content ?? local?.content ?? []} {conversationId}/>
+  <MessagePieces {presentationRowKey} content={row?.content ?? local?.content ?? []} {conversationId}/>
 </article>
 <style>
   .chat-u { transition: box-shadow var(--message-move) linear; }

@@ -45,9 +45,11 @@
     title = null,
     onSkip,
     onResolved,
-    footer
+    footer,
+    embedded = false
   }: {
     identity: NavigationReviewProposalItem;
+    embedded?: boolean;
     onRendered?: () => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
@@ -157,7 +159,7 @@
 
   function currentIdentity(): boolean {
     const effective = navigation.state.effective;
-    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'proposal' && reviewProposalIdentity(item) === currentKey));
+    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'ticket' && item.proposal !== null && reviewProposalIdentity(item.proposal) === currentKey));
   }
 
   async function write(path: string, options: Parameters<typeof mutateJson>[1], operation:TicketNavigationOperation): Promise<unknown> {
@@ -233,14 +235,13 @@
 
   async function returnForRevision(): Promise<void> {
     const message = revisionDraft.trim();
-    const revision = detail.data?.pending_proposal?.revision;
-    if (!message || revisionBusy || revision === undefined) return;
+    if (!message || revisionBusy) return;
     revisionError = null;
     revisionBusy = true;
     try {
       await write(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
-        body: { message, expected_proposal_revision: revision }
+        body: { message }
       },"stage");
       revisionDraft = "";
       announceResolved();
@@ -289,6 +290,7 @@
       data-ticket-id={ticketId}
       data-field={field}
     >
+      {#if !embedded}
       <div class="review-ticket-decision-line review-arrive review-arrive--1">
         {#if onSkip}
           <button data-skip="" onclick={onSkip}>Skip &rsaquo;</button>
@@ -313,6 +315,7 @@
         </div>
       </div>
 
+      {/if}
       <div class="review-arrive review-arrive--3">
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}
@@ -322,7 +325,7 @@
               disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}
-              onReturn={async (message, revision) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message, expected_proposal_revision: revision } },"stage"); announceResolved(); }}
+              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } },"stage"); announceResolved(); }}
               {revisionEditor} />
             {/key}
           {/if}

@@ -243,7 +243,7 @@
     if (event.key === "Home") { event.preventDefault(); setWidth(null); }
   }
   function openFileOnTicket(file: ManagedFileTarget | null): void {
-    window.location.hash = workspaceAddress(address.selection, address.view, file);
+    window.location.hash = workspaceAddress(address.selection, address.view, file, address.selectedConversationId);
   }
   function selectCard(id: string, insideItemId: string | null): void {
     window.location.hash = workspaceAddress(insideItemId ? { kind: "ticket", id, openedFromManagerId: insideItemId } : { kind: "ticket", id }, opening.view);
@@ -374,7 +374,7 @@
           {#if externalPane}
             {@render externalPane()}
           {:else if opening.chiefMarked}
-            <ChiefConversation showRequestErrorLine={false} requestedConversationId={address.selectedConversationId ?? null} />
+            <ChiefConversation showRequestErrorLine={false} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
                pages that let the document scroll, so without this they have no scroller of

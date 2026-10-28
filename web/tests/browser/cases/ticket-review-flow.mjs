@@ -16,6 +16,7 @@ import { queryClient as client } from '../src/lib/queryClient';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
 import ReviewRoute from '../src/routes/ReviewRoute.svelte';
 import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
+import FilePreviewRoute from '../src/routes/FilePreviewRoute.svelte';
 import { navigationReviewPresentation } from '../src/lib/navigation/presentation';
 import { reviewBadgeDomMatches } from '../src/lib/shellDom';
 (window as any).__badgeProof=()=>{
@@ -51,14 +52,14 @@ navigation.owner.waitForVisibility=(fence,options)=>{
  const before=navigation.owner.getState().publication!;
  if(response.coverage.revision===before.continuity.revision)return;
  const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
- const frame:any={event:'patch',wire_version:3,projection_version:5,view_id:response.view_id,
+ const frame:any={event:'patch',wire_version:3,projection_version:6,view_id:response.view_id,
  scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
  coverage:response.coverage,previous_coverage:before.continuity,authority:response.authority,
  content_version:response.content_version,previous_content_version:before.view!.contentVersion,
  upserts:response.content.records,evictions:before.records.filter(row=>!keys.has(JSON.stringify([row.kind,row.id]))).map(row=>({kind:row.kind,id:row.id})),
- windows:response.content.windows,counts:response.content.counts};
+ windows:response.content.windows,counts:response.content.counts,review_context:response.content.review_context};
  const event=response.content_version===before.view!.contentVersion?'checkpoint':'patch';
- if(event==='checkpoint'){delete frame.upserts;delete frame.evictions;delete frame.windows;delete frame.counts;delete frame.previous_content_version;frame.event=event;}
+ if(event==='checkpoint'){delete frame.upserts;delete frame.evictions;delete frame.windows;delete frame.counts;delete frame.review_context;delete frame.previous_content_version;frame.event=event;}
  (window as any).__navigationSource.dispatchEvent(new MessageEvent(event,{data:JSON.stringify(frame)}));
  await tick();
 };
@@ -74,18 +75,24 @@ client.setDefaultOptions({ queries: { retry: false } });
 
 let review = $state(false);
 let reviewTicketId = $state('t_review');
-let historicalIdentity=$derived(navigation.selectors.effective ? navigationReviewPresentation(navigation.selectors.effective).items.find(item=>item.review_item_type==='proposal' && item.ticket_id===reviewTicketId) : undefined);
+let historicalIdentity=$derived(navigation.selectors.effective ? navigationReviewPresentation(navigation.selectors.effective).items.find(item=>item.review_item_type==='ticket' && item.ticket_id===reviewTicketId)?.proposal : undefined);
 let reviewField = $state('success_condition');
 let config = $state(false);
 let ticketId = $state('t_review');
+// The one-document preview address, mounted the way the shell mounts it: the route reads
+// the file out of the hash on arrival, so each visit has to be a fresh arrival.
+let preview = $state(false);
+let previewArrival = $state(0);
 $effect(() => navigation.owner.setDemand('historical-review-fixture', review && reviewTicketId === 't_personal_pending'
   ? {selected:{kind:'ticket',id:reviewTicketId},windows:[]} : undefined));
-(window as any).__showReview = (id = "t_review", field = "success_condition") => { reviewTicketId = id; reviewField = field; review = true; };
-(window as any).__showTicket = (id: string) => { review = false; ticketId = id; };
+(window as any).__showReview = (id = "t_review", field = "success_condition") => { preview = false; reviewTicketId = id; reviewField = field; review = true; };
+(window as any).__showTicket = (id: string) => { preview = false; review = false; ticketId = id; };
+(window as any).__showPreview = (hash: string) => { location.hash = hash; previewArrival += 1; preview = true; };
 (window as any).__showConfig = () => { config = true; };
 </script>
 <QueryClientProvider {client}>
 {#if config}<ConfigRoute roleKind="worker" roleId="coding" />
+{:else if preview}{#key previewArrival}<FilePreviewRoute />{/key}
 {:else if review}{#if reviewTicketId === "t_personal_pending"}{#if historicalIdentity}<ReviewProposalCard identity={historicalIdentity} ticketId={reviewTicketId} field={reviewField} />{/if}{:else}<ShellStatus connectionState="connected" /><ReviewRoute />{/if}
 
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}
