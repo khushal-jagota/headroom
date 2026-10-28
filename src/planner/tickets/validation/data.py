@@ -254,7 +254,12 @@ def record_launch_validation_in_transaction(
 
 
 def _prepare_written_configuration_validation(
-    conn: sqlite3.Connection, ticket_id: str, validation: CanonicalModelValidation, *, now: int
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    validation: CanonicalModelValidation,
+    *,
+    now: int,
+    departed: bool = False,
 ) -> tuple[CanonicalModelValidation, CatalogWorkspaceBinding]:
     """Preserve the canonical identity, evidence and policy checks for both owners."""
     selection = read_launch_selection(conn, ticket_id)
@@ -308,11 +313,26 @@ def _prepare_written_configuration_validation(
             try:
                 check_policy_dependencies(conn, dependencies)
             except AdmissionRefused as error:
-                raise PlannerError(
-                    ErrorCode.validation,
-                    "model policy changed before configuration was committed",
-                    {"reason": error.reason, "corrective_action": error.corrective_action},
-                ) from error
+                if (
+                    departed
+                    and error.reason == ValidationReason.model_incompatible.value
+                    and error.corrective_action == CorrectiveAction.choose_model.value
+                ):
+                    # A definitive provider receipt is already a fact. Keep its exact
+                    # evidence and identity while denying any subsequent launch.
+                    validation = replace(
+                        validation,
+                        state=ValidationState.incompatible,
+                        reason=ValidationReason.model_incompatible,
+                        corrective_action=CorrectiveAction.choose_model,
+                        launch_token=None,
+                    )
+                else:
+                    raise PlannerError(
+                        ErrorCode.validation,
+                        "model policy changed before configuration was committed",
+                        {"reason": error.reason, "corrective_action": error.corrective_action},
+                    ) from error
     context = (
         validation.evidence.context
         if validation.evidence
@@ -396,3 +416,31 @@ def initialize_unresolved_validation_in_transaction(
         unresolved_validation(selection, ValidationReason.catalog_unavailable),
         now=now,
     )
+
+
+def store_departed_configuration_validation_in_transaction(
+    conn: sqlite3.Connection, ticket_id: str, validation: CanonicalModelValidation, *, now: int
+) -> None:
+    """Settle a definitive departure without treating a later disable as non-delivery.
+
+    The exact admission evidence stays attached. Current disabled policy becomes a
+    non-authorizing validation; the caller's original-selection CAS still runs first.
+    This entry does not authorize provider writes or settle uncertain commands.
+    """
+    if not conn.in_transaction:
+        raise RuntimeError("departed launch validation requires an owned transaction")
+    validation, workspace = _prepare_written_configuration_validation(
+        conn,
+        ticket_id,
+        validation,
+        now=now,
+        departed=True,
+    )
+    if not record_launch_validation_in_transaction(
+        conn,
+        ticket_id,
+        validation,
+        expected_workspace=workspace,
+        now=now,
+    ):
+        raise PlannerError(ErrorCode.already_running, "launch context changed during configuration")

@@ -2402,3 +2402,168 @@ def test_explicit_kind_rejects_orphans_and_does_not_leak_to_a_later_send() -> No
         await capture()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("newer_kind", [False, True])
+def test_actual_departure_settles_a_later_disable_without_overwriting_newer_intent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newer_kind: bool
+) -> None:
+    """Policy after acceptance changes future permission, never the actual receipt.
+
+    The second parameter proves the internal canonical classification CAS boundary;
+    it does not claim the owner UI permits editing an active Ticket's configuration.
+    """
+    import time
+    from datetime import UTC, datetime
+    from typing import Any
+
+    from fastapi import FastAPI, Request
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.conversation.api import OwnerSendBody, SentTextPiece
+    from planner.conversation.backend_state import write_model_enablement
+    from planner.conversation.contracts import PromptDeliveryRefused
+    from planner.conversation.events import PromptEventPayload
+    from planner.conversation.storage import StoredConversationEvent
+    from planner.core.authctx import RequestContext
+    from planner.core.clock import TestClock
+    from planner.runtime import conversation_start
+    from planner.tickets import api as ticket_api
+    from planner.tickets import data as tickets
+    from planner.tickets.validation.data import (
+        read_launch_selection,
+        read_launch_validation,
+        set_selection_kind,
+    )
+
+    stamp = int(time.time())
+    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
+    launch = context(
+        backend_key=Backend.codex, workspace=binding, localized_workspace_folder=tmp_path
+    )
+    source = ScopedCatalogue(
+        observation(
+            (row("old-exact", efforts=()), row("new-exact", efforts=())), launch=launch, stamp=stamp
+        )
+    )
+    service, _, path = setup(tmp_path, source)
+    service._now = time.time
+    harness = _Harness(path)
+    harness.clock.now = float(stamp)
+    harness.system._model_resolver = service
+    harness.system.configure_destination_validation(source)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+
+    async def exercise() -> None:
+        conn = connect(str(path))
+        try:
+            ticket = tickets.create_ticket(
+                conn,
+                worker_type="coding",
+                title="Post-departure policy",
+                principal=OWNER_PRINCIPAL,
+                now=stamp,
+                title_max_chars=200,
+                employee_backend="codex",
+                employee_launch_model="old-exact",
+                selection_kind=SelectionKind.concrete,
+            )
+            original = read_launch_selection(conn, ticket.id)
+            append = harness.store.append_delivered_prompt
+            settlements = 0
+            admitted: list[CatalogEvidenceReference] = []
+
+            async def append_after_disable(
+                conversation_id: str, **kwargs: Any
+            ) -> tuple[StoredConversationEvent, ...]:
+                nonlocal settlements
+                settlements += 1
+                assert settlements == 1
+                # The actual adapter already accepted this exact sender content.
+                writes = harness.backend(conversation_id).writes
+                assert len(writes) == 1
+                assert writes[0].sender_content == text_message_content("One actual departure")
+                validation = kwargs["requested_ticket_validation"]
+                assert validation.state is ValidationState.compatible
+                assert validation.evidence is not None
+                admitted.append(validation.evidence)
+                assert not list(
+                    conn.execute("SELECT * FROM ticket_launch_authority WHERE mode='read'")
+                )
+                write_model_enablement(conn, Backend.codex, "new-exact", False)
+                if newer_kind:
+                    set_selection_kind(
+                        conn,
+                        ticket.id,
+                        SelectionKind.provider_alias,
+                        expected_selection_revision=original.selection_revision,
+                    )
+                return await append(conversation_id, **kwargs)
+
+            monkeypatch.setattr(harness.store, "append_delivered_prompt", append_after_disable)
+            body = OwnerSendBody(
+                content=[SentTextPiece(piece="text", text="One actual departure")],
+                sender_label="Owner",
+                sender_message_id="departed-before-disable",
+                model="new-exact",
+                selection_kind=SelectionKind.concrete,
+                reasoning_effort=None,
+            )
+            response = await ticket_api.send_to_ticket_conversation(
+                ticket.id,
+                body,
+                Request({"type": "http", "app": FastAPI()}),
+                conn,
+                RequestContext(OWNER_PRINCIPAL),
+                TestClock(datetime.fromtimestamp(stamp, UTC)),
+                harness.system,
+                harness.message_files,
+            )
+            assert response["fate"] == "started"
+            current = tickets.read_ticket(conn, ticket.id)
+            assert current.conversation_id is not None
+            conversation_id = current.conversation_id
+            events = await harness.events(conversation_id)
+            prompts = [
+                event.payload for event in events if isinstance(event.payload, PromptEventPayload)
+            ]
+            assert len(prompts) == 1
+            assert prompts[0].sender_message_id == "departed-before-disable"
+            assert prompts[0].content == text_message_content("One actual departure")
+            assert settlements == 1
+            assert len(harness.backend(conversation_id).writes) == 1
+            saved = read_launch_selection(conn, ticket.id)
+            if newer_kind:
+                assert saved.submitted_token == "old-exact"
+                assert saved.selection_kind is SelectionKind.provider_alias
+                assert saved.selection_revision != original.selection_revision
+            else:
+                assert saved.submitted_token == "new-exact"
+                assert saved.selection_kind is SelectionKind.concrete
+                checked = read_launch_validation(conn, ticket.id)
+                assert checked is not None and checked.current
+                assert checked.validation.state is ValidationState.incompatible
+                assert checked.validation.reason is ValidationReason.model_incompatible
+                assert checked.validation.corrective_action is CorrectiveAction.choose_model
+                assert checked.validation.launch_token is None
+                assert checked.validation.resolved_model_id == "new-exact"
+                assert checked.validation.evidence == admitted[0]
+                await harness.complete_turn(conversation_id)
+                async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
+                    refused = await conversation_start.send_to_ticket_conversation(
+                        harness.system,
+                        conn,
+                        ticket.id,
+                        text_message_content("Must not depart"),
+                        conversation_id=conversation_id,
+                        sender_label="Owner",
+                        now=stamp,
+                    )
+                assert isinstance(refused.fate, PromptDeliveryRefused)
+                assert len(harness.backend(conversation_id).writes) == 1
+                assert settlements == 1
+        finally:
+            await harness.system.shutdown()
+            conn.close()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))

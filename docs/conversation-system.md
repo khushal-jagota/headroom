@@ -782,7 +782,12 @@ scope and command. A lost outcome can keep that scope blocked until definitive
 settlement. Missing original recovery evidence can restrict policy changes for a whole
 backend, or all model-policy changes when even the backend is unknown. That exceptional
 barrier preserves startup and reads, and reports the evidence or settlement needed.
-Turning a model off does not undo prompts already emitted or cancel an active turn.
+Turning a model off does not undo prompts already emitted or cancel an active turn. If the
+provider has already accepted a prompt when a disable commits, settlement records the
+actual receipt and its exact authored choice. It retains the admission evidence and
+resolved identity, but marks current validation incompatible with “choose model” and
+no launch token. Later sends still require current admission checks. A newer Ticket
+choice wins the existing revision comparison and is not overwritten by that receipt.
 
 The strict executor protocol is 11. The native spool keeps outcome envelopes in its
 existing format 2 container. The VPS keeps command arguments in the existing

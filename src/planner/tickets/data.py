@@ -953,7 +953,7 @@ def write_explicit_ticket_launch_intent_in_transaction(
                 conn, ticket_id, now=now
             )
         else:
-            launch_validation.store_written_configuration_validation_in_transaction(
+            launch_validation.store_departed_configuration_validation_in_transaction(
                 conn, ticket_id, validation, now=now
             )
     return True
