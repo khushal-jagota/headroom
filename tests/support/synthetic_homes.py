@@ -58,10 +58,13 @@ def synthetic_home_environment(homes: Mapping[str, str]) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def synthetic_homes(
-    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     """Route synthetic setup before dependent fixtures; explicit cases retain routing."""
     if request.node.get_closest_marker("real_provider_homes") is None:
-        for name, value in create_synthetic_homes(tmp_path).items():
+        storage = tmp_path_factory.mktemp("synthetic-home-storage")
+        for name, value in create_synthetic_homes(storage).items():
             monkeypatch.setenv(name, value)
     yield
