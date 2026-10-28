@@ -1494,7 +1494,7 @@ class ConversationStore:
 
                         intent_permit = acquire_ticket_mutation(conn, row[0])
                         try:
-                            ticket_data.write_explicit_ticket_launch_intent(
+                            ticket_data.write_explicit_ticket_launch_intent_in_transaction(
                                 conn,
                                 row[0],
                                 expected_conversation_id=conversation_id,

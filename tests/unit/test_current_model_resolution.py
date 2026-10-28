@@ -2146,7 +2146,6 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
     from tests.support.principals import OWNER_PRINCIPAL
 
     from planner.conversation.api import OwnerSendBody, SentTextPiece
-    from planner.conversation.storage import ConversationStore
     from planner.conversation.system import _HeldPrompt
     from planner.core.authctx import RequestContext
     from planner.core.clock import TestClock
@@ -2188,6 +2187,7 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
 
     async def exercise() -> None:
+        nonlocal harness
         conn = connect(str(path))
         try:
             ticket = tickets.create_ticket(
@@ -2290,12 +2290,45 @@ def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
                     ),
                 )
                 conn.commit()
-                reopened = ConversationStore(str(path))
-                durable = reopened.read_executor_held_prompts_sync(conversation_id)
-                restored = TypeAdapter(_HeldPrompt).validate_json(durable[0][0])
+                durable = harness.store.read_executor_held_prompts_sync(conversation_id)
+                old_clock = harness.clock
+                await harness.system.shutdown()
+                harness = _Harness(path, clock=old_clock)
+                harness.system._model_resolver = service
+                harness.system.configure_destination_validation(source)
+                # The real constructor restores the durable queue; no queue or phase
+                # is assigned by this fixture and no prior provider effect is retried.
+                state = harness.system._conversations[conversation_id]
+                assert len(state.held_prompts) == 1
+                restored = state.held_prompts[0]
                 assert restored.selection_kind is SelectionKind.concrete
                 assert restored.reasoning_effort_is_set
-                state.held_prompts[0] = restored
+                assert restored.reasoning_effort_change is None
+                assert harness.store.read_executor_held_prompts_sync(conversation_id) == durable
+                assert harness.spawned_conversation_ids == []
+                replay_after_restart = await ticket_api.send_to_ticket_conversation(
+                    ticket.id,
+                    body,
+                    Request({"type": "http", "app": FastAPI()}),
+                    conn,
+                    RequestContext(OWNER_PRINCIPAL),
+                    TestClock(datetime.fromtimestamp(stamp, UTC)),
+                    harness.system,
+                    harness.message_files,
+                )
+                assert replay_after_restart["fate"] == "queued"
+                assert harness.spawned_conversation_ids == []
+                with pytest.raises(ValueError, match="different message"):
+                    await ticket_api.send_to_ticket_conversation(
+                        ticket.id,
+                        body.model_copy(update={"selection_kind": SelectionKind.provider_alias}),
+                        Request({"type": "http", "app": FastAPI()}),
+                        conn,
+                        RequestContext(OWNER_PRINCIPAL),
+                        TestClock(datetime.fromtimestamp(stamp, UTC)),
+                        harness.system,
+                        harness.message_files,
+                    )
                 # The old absent field retains its historical semantics on new readers.
                 held.pop("selection_kind")
                 assert TypeAdapter(_HeldPrompt).validate_python(held).selection_kind is None

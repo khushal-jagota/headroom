@@ -183,8 +183,6 @@ def _latest_attention(batches: list[SignalBatch]) -> ConversationAttention:
     )
 
 
-
-
 def test_actual_turn_pending_answer_and_end_share_source_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -320,8 +318,6 @@ def test_rejected_request_restores_actual_slot_fields_before_gate_release(
         asyncio.run(asyncio.wait_for(exercise(), 8))
 
 
-
-
 def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -408,10 +404,6 @@ def test_uncertain_committed_prompt_recovers_result_without_provider_retry(
         asyncio.run(asyncio.wait_for(exercise(), 8))
 
 
-
-
-
-
 def test_startup_reconciles_persisted_pending_but_preserves_unread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -465,3 +457,136 @@ def test_startup_reconciles_persisted_pending_but_preserves_unread(
         assert facts[0].status is LifecycleStatus.unavailable
         with pytest.raises(ConversationRuntimeAlreadyOwned):
             acquire_runtime_ownership(runtime.store._db_path)
+
+
+def test_departed_prompt_intent_and_publication_roll_back_as_one_owned_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A post-intent fault cannot commit a prompt, choice, validation or mutation lease."""
+    from dataclasses import replace
+
+    from tests.unit.test_current_model_resolution import context, observation, row
+
+    from planner.conversation.contracts import PromptDeliveryMode
+    from planner.conversation.events import PromptEventPayload
+    from planner.conversation.lifecycle import LifecycleTransition
+    from planner.conversation.model_resolution.contracts import SelectionKind
+    from planner.conversation.model_resolution.data import ModelResolutionStore
+    from planner.conversation.model_resolution.logic.validation import validate_model_selection
+    from planner.core.contracts import OWNER_PRINCIPAL
+    from planner.tickets import data as tickets
+    from planner.tickets.validation.data import read_launch_selection
+
+    ticket_ids: list[str] = []
+
+    def seed(path: Path) -> None:
+        connection = connect(str(path))
+        try:
+            ticket = tickets.create_ticket(
+                connection,
+                title="Owned departure",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=1000,
+                title_max_chars=200,
+                employee_backend="codex",
+                employee_launch_model="old-exact",
+                selection_kind=SelectionKind.concrete,
+            )
+            connection.execute("UPDATE tickets SET conversation_id='c' WHERE id=?", (ticket.id,))
+            connection.commit()
+            ticket_ids.append(ticket.id)
+        finally:
+            connection.close()
+        ModelResolutionStore(str(path)).keep_observation(
+            observation((row("new-exact", efforts=()),))
+        )
+
+    with _enabled_runtime(tmp_path, monkeypatch, seed=seed) as (
+        runtime,
+        coordinator,
+        batches,
+        attachment,
+    ):
+
+        async def exercise() -> None:
+            await controlled._start(
+                runtime, backend_key=ConversationBackendKey.codex, model="old-exact"
+            )
+            await runtime.store.reserve_turn("c")
+            connection = runtime.store._connect()
+            try:
+                original = read_launch_selection(connection, ticket_ids[0])
+            finally:
+                connection.close()
+            requested = replace(original, submitted_token="new-exact", reasoning_effort=None)
+            validation = validate_model_selection(
+                requested,
+                context(),
+                observation((row("new-exact", efforts=()),)),
+                now=1000,
+                attempt_id="attempt-1",
+            )
+            assert validation.launch_token == "new-exact"
+
+            def snapshot() -> dict[str, list[tuple[object, ...]]]:
+                with sqlite3.connect(f"file:{runtime.db_path}?mode=ro", uri=True) as connection:
+                    return {
+                        table: list(connection.execute(f"SELECT * FROM {table} ORDER BY rowid"))
+                        for table in (
+                            "conversation_events",
+                            "conversations",
+                            "tickets",
+                            "ticket_launch_validation",
+                            "ticket_launch_authority",
+                            "executor_command_outcomes",
+                            "executor_core_turns",
+                            "signal_publication_meta",
+                            "signal_publication_values",
+                            "signal_publication_operations",
+                            "signal_publication_batches",
+                        )
+                    }
+
+            before = snapshot()
+
+            def fail_after_intent(
+                connection: sqlite3.Connection, candidate: LifecycleTransition
+            ) -> None:
+                assert candidate.receipt_sequences
+                assert (
+                    connection.execute(
+                        "SELECT employee_launch_model FROM tickets WHERE id=?", (ticket_ids[0],)
+                    ).fetchone()[0]
+                    == "new-exact"
+                )
+                assert (
+                    read_launch_selection(connection, ticket_ids[0]).submitted_token == "new-exact"
+                )
+                assert (
+                    connection.execute(
+                        "SELECT validation_json FROM ticket_launch_validation WHERE ticket_id=?",
+                        (ticket_ids[0],),
+                    ).fetchone()[0]
+                    is not None
+                )
+                assert not list(connection.execute("SELECT * FROM ticket_launch_authority"))
+                raise RuntimeError("fault after exact intent before commit")
+
+            runtime.store._transaction_participant = fail_after_intent
+            with pytest.raises(RuntimeError, match="after exact intent"):
+                await runtime.store.append_delivered_prompt(
+                    "c",
+                    prompt=PromptEventPayload(
+                        content=text_message_content("Already departed"),
+                        sender_label="owner",
+                        mode=PromptDeliveryMode.queue,
+                    ),
+                    model_change=None,
+                    original_ticket_selection=original,
+                    requested_ticket_validation=validation,
+                )
+            assert snapshot() == before
+            assert not await runtime.store.read_events_after("c", 0)
+
+        asyncio.run(asyncio.wait_for(exercise(), 8))

@@ -820,6 +820,30 @@ def write_ticket_last_chosen_configuration(
         return _load_ticket_for_write(conn, ticket_id).conversation_id == expected_conversation_id
 
 
+def _explicit_ticket_launch_intent_kind(
+    *,
+    model: str,
+    reasoning_effort: str | None,
+    selection_kind: SelectionKind | str,
+    source_type: Literal["sender_override"],
+    validation: CanonicalModelValidation | None,
+) -> SelectionKind:
+    if source_type != "sender_override":
+        raise PlannerError(ErrorCode.validation, "explicit sender intent is required")
+    if not isinstance(model, str) or not model.strip():
+        raise PlannerError(ErrorCode.validation, "explicit model must be nonblank")
+    if reasoning_effort is not None and (
+        not isinstance(reasoning_effort, str) or not reasoning_effort.strip()
+    ):
+        raise PlannerError(ErrorCode.validation, "explicit effort must be nonblank or null")
+    kind = SelectionKind(selection_kind)
+    if validation is not None and validation.state is not ValidationState.compatible:
+        raise PlannerError(
+            ErrorCode.validation, "explicit departure requires compatible validation"
+        )
+    return kind
+
+
 def write_explicit_ticket_launch_intent(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -836,65 +860,101 @@ def write_explicit_ticket_launch_intent(
     authority_permit: launch_authority.LaunchAuthorityPermit | None = None,
     validation: CanonicalModelValidation | None = None,
 ) -> bool:
-    """Persist exact authorized sender intent only after its prompt departs.
-
-    Delivery finalization owns the proof of departure and the original requested
-    tuple. Queuing, provider alias resolution and effective launch identity cannot
-    invoke this transition. A newer conversation or choice wins over a late send.
-    The admission read permit must have settled before this mutation is acquired.
-    """
-    if source_type != "sender_override":
-        raise PlannerError(ErrorCode.validation, "explicit sender intent is required")
-    if not isinstance(model, str) or not model.strip():
-        raise PlannerError(ErrorCode.validation, "explicit model must be nonblank")
-    if reasoning_effort is not None and (
-        not isinstance(reasoning_effort, str) or not reasoning_effort.strip()
-    ):
-        raise PlannerError(ErrorCode.validation, "explicit effort must be nonblank or null")
-    kind = SelectionKind(selection_kind)
-    if validation is not None and validation.state is not ValidationState.compatible:
-        raise PlannerError(
-            ErrorCode.validation, "explicit departure requires compatible validation"
-        )
+    """Record departed sender intent with a standalone transaction or nested savepoint."""
+    kind = _explicit_ticket_launch_intent_kind(
+        model=model,
+        reasoning_effort=reasoning_effort,
+        selection_kind=selection_kind,
+        source_type=source_type,
+        validation=validation,
+    )
     with _txn(conn):
-        current = _load_ticket_for_write(conn, ticket_id)
-        from planner.tickets.validation import data as launch_validation
+        return write_explicit_ticket_launch_intent_in_transaction(
+            conn,
+            ticket_id,
+            expected_conversation_id=expected_conversation_id,
+            expected_configuration=expected_configuration,
+            expected_selection_revision=expected_selection_revision,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            selection_kind=kind,
+            source_type=source_type,
+            now=now,
+            employee_backend=employee_backend,
+            authority_permit=authority_permit,
+            validation=validation,
+        )
 
-        if (
-            current.conversation_id != expected_conversation_id
-            or employee_launch_configuration(current) != expected_configuration
-            or launch_validation.read_launch_selection(conn, ticket_id).selection_revision
-            != expected_selection_revision
-        ):
-            return False
-        backend = require_conversation_backend_key(employee_backend or current.employee_backend)
-        if backend != current.employee_backend:
-            actual = conn.execute(
-                "SELECT backend_key FROM conversations WHERE conversation_id=?",
-                (expected_conversation_id,),
-            ).fetchone()
-            if actual is None or actual[0] != backend.value:
-                raise PlannerError(
-                    ErrorCode.validation, "explicit backend does not match departed conversation"
-                )
-        with launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",), authority_permit):
-            conn.execute(
-                "UPDATE tickets SET employee_backend=?,employee_launch_model=?,"
-                "employee_launch_reasoning_effort=?,"
-                "updated_at=? WHERE id=?",
-                (backend, model, reasoning_effort, now, ticket_id),
+
+def write_explicit_ticket_launch_intent_in_transaction(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    expected_conversation_id: str,
+    expected_configuration: EmployeeLaunchConfiguration,
+    expected_selection_revision: str,
+    model: str,
+    reasoning_effort: str | None,
+    selection_kind: SelectionKind | str,
+    source_type: Literal["sender_override"],
+    now: int,
+    employee_backend: str | None = None,
+    authority_permit: launch_authority.LaunchAuthorityPermit | None = None,
+    validation: CanonicalModelValidation | None = None,
+) -> bool:
+    """Join the delivery owner's transaction; any failure must roll back that whole write.
+
+    The owner has already applied its runtime publication candidate. Opening a nested
+    savepoint here would violate that admission. Prompt receipt, exact intent, validation
+    and mutation lease remain part of the caller's single commit or rollback.
+    """
+    kind = _explicit_ticket_launch_intent_kind(
+        model=model,
+        reasoning_effort=reasoning_effort,
+        selection_kind=selection_kind,
+        source_type=source_type,
+        validation=validation,
+    )
+    if not conn.in_transaction:
+        raise RuntimeError("departed Ticket intent requires the delivery owner's transaction")
+    current = _load_ticket_for_write(conn, ticket_id)
+    from planner.tickets.validation import data as launch_validation
+
+    if (
+        current.conversation_id != expected_conversation_id
+        or employee_launch_configuration(current) != expected_configuration
+        or launch_validation.read_launch_selection(conn, ticket_id).selection_revision
+        != expected_selection_revision
+    ):
+        return False
+    backend = require_conversation_backend_key(employee_backend or current.employee_backend)
+    if backend != current.employee_backend:
+        actual = conn.execute(
+            "SELECT backend_key FROM conversations WHERE conversation_id=?",
+            (expected_conversation_id,),
+        ).fetchone()
+        if actual is None or actual[0] != backend.value:
+            raise PlannerError(
+                ErrorCode.validation, "explicit backend does not match departed conversation"
             )
-            selected = launch_validation.read_launch_selection(conn, ticket_id)
-            launch_validation.set_selection_kind(
-                conn, ticket_id, kind, expected_selection_revision=selected.selection_revision
+    with launch_authority.mutation_scope(conn, (f"ticket:{ticket_id}",), authority_permit):
+        conn.execute(
+            "UPDATE tickets SET employee_backend=?,employee_launch_model=?,"
+            "employee_launch_reasoning_effort=?,"
+            "updated_at=? WHERE id=?",
+            (backend, model, reasoning_effort, now, ticket_id),
+        )
+        selected = launch_validation.read_launch_selection(conn, ticket_id)
+        launch_validation.set_selection_kind(
+            conn, ticket_id, kind, expected_selection_revision=selected.selection_revision
+        )
+        if validation is None:
+            launch_validation.initialize_unresolved_validation(conn, ticket_id, now=now)
+        else:
+            launch_validation.store_written_configuration_validation(
+                conn, ticket_id, validation, now=now
             )
-            if validation is None:
-                launch_validation.initialize_unresolved_validation(conn, ticket_id, now=now)
-            else:
-                launch_validation.store_written_configuration_validation(
-                    conn, ticket_id, validation, now=now
-                )
-        return True
+    return True
 
 
 def clear_ticket_conversation_link(
