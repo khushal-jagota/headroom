@@ -13,6 +13,10 @@
   let {
     destination,
     locked = false,
+    canonicalLoading = false,
+    canonicalSaving = false,
+    canonicalError = null,
+    canonicalSaveError = null,
     canonicalRows,
     validation,
     onChooseDestination,
@@ -27,6 +31,10 @@
   }: {
     destination?: TicketLocale;
     locked?: boolean;
+    canonicalLoading?: boolean;
+    canonicalSaving?: boolean;
+    canonicalError?: unknown;
+    canonicalSaveError?: unknown;
     canonicalRows?: readonly PickerRow[];
     validation?: CanonicalModelValidation | null;
     onChooseDestination?: (destination: TicketLocale) => void;
@@ -44,22 +52,27 @@
     employee_backend: employeeBackend,
     employee_launch_model: employeeLaunchModel,
     employee_launch_reasoning_effort: employeeLaunchReasoningEffort
-  }), (next) => onSave(next));
+  }), (next) => onSave(next), () => canonicalRows === undefined);
+  let canonical = $derived(canonicalRows !== undefined);
+  let loading = $derived(canonical ? canonicalLoading : editor.loading);
+  let saving = $derived(canonical ? canonicalSaving : editor.saving);
+  let readError = $derived(canonical ? canonicalError : editor.backendsError);
+  let saveError = $derived(canonical ? canonicalSaveError : editor.saveError);
 </script>
 
 <div
   class="employee-configuration-setup"
   data-employee-configuration-setup
   data-ticket-id={ticketId}
-  data-employee-configuration-backend={editor.selected.employee_backend}
-  data-employee-configuration-model={editor.selected.employee_launch_model ?? ""}
-  data-employee-configuration-reasoning={editor.selected.employee_launch_reasoning_effort ?? ""}
+  data-employee-configuration-backend={canonical ? validation?.selection.backend_key ?? employeeBackend : editor.selected.employee_backend}
+  data-employee-configuration-model={canonical ? validation?.selection.submitted_token ?? employeeLaunchModel ?? "" : editor.selected.employee_launch_model ?? ""}
+  data-employee-configuration-reasoning={canonical ? (validation ? validation.selection.reasoning_effort ?? "" : employeeLaunchReasoningEffort ?? "") : editor.selected.employee_launch_reasoning_effort ?? ""}
 >
   <span class="employee-configuration-key">runs on</span>
   <ListboxPicker
     items={[{value: "macos", name: "Mac"}, {value: "vps", name: "VPS"}]}
     selectedValue={destination ?? null}
-    disabled={locked || editor.saving || !onChooseDestination || !destination}
+    disabled={locked || saving || !onChooseDestination || !destination}
     label={destination ? `Runs on ${machineName(destination)}` : "Destination unavailable"}
     chevron="none"
     scrollPanel
@@ -83,32 +96,32 @@
     {canonicalRows}
     {validation}
     {onRetry}
-    disabled={locked || editor.saving || (canonicalRows !== undefined && (!onChooseCanonicalModel || !onChooseCanonicalBackend))}
+    disabled={locked || saving || loading || (canonicalRows !== undefined && (!onChooseCanonicalModel || !onChooseCanonicalBackend))}
     keepOpenWhenDisabled
     attributes={{ "data-employee-configuration-picker": "" }}
     onChooseBackend={(backend, defaults) => canonicalRows ? onChooseCanonicalBackend?.(backend) : editor.chooseBackend(backend, defaults)}
     onChooseModel={(model, effort, row) => row ? onChooseCanonicalModel?.(row, effort) : editor.chooseModel(model, effort)}
   />
 
-  <span data-employee-configuration-loading={editor.loading || undefined}>
-    <SkeletonRegion shape="inline" loading={editor.loading} loadingText="Loading models…" />
+  <span data-employee-configuration-loading={loading || undefined}>
+    <SkeletonRegion shape="inline" {loading} loadingText="Loading models…" />
   </span>
 
-  {#if editor.backendsError}
+  {#if readError}
     <div class="employee-configuration-problem" data-employee-configuration-error>
-      <ErrorLine error={editor.backendsError} />
+      <ErrorLine error={readError} />
       <Button
         variant="quiet"
         data-employee-configuration-retry
-        disabled={editor.loading}
-        onclick={() => void editor.loadBackends()}
+        disabled={loading}
+        onclick={() => void (canonical ? onRetry?.() : editor.loadBackends())}
       >Retry</Button>
     </div>
   {/if}
 
-  {#if editor.saveError}
+  {#if saveError}
     <div class="employee-configuration-problem" data-employee-configuration-save-error>
-      <ErrorLine error={editor.saveError} />
+      <ErrorLine error={saveError} />
     </div>
   {/if}
 </div>

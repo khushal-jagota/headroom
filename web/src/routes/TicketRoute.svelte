@@ -23,6 +23,7 @@
   } from "../lib/lifecycle";
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
+  import { createTicketSetupModelChoices, initialTicketSetupChoicesState } from "../lib/conversation/ticketSetupModelChoices";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import { conversationDock } from "../lib/conversation/layout/dock";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
@@ -31,6 +32,7 @@
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
     readBackends,
+    readDestinationModelChoices,
     type BackendSnapshot,
     type DeliveredMessage,
     type OwnerSendBody
@@ -122,6 +124,23 @@
   let section=$state.raw<TicketSection | undefined>(undefined);
   $effect(()=>{if(admittedSection) section=admittedSection;});
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
+  let setupChoices = $state(initialTicketSetupChoicesState());
+  const setupModelChoices = createTicketSetupModelChoices({
+    read: readDestinationModelChoices,
+    save: (_ticketId, configuration) => saveEmployeeConfiguration(configuration),
+    move: (_ticketId, locale, expectedRecord) => {
+      assertCurrentSection();
+      return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'move'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/move`, {
+        method: 'POST', body: { locale, expected_record_sha256: expectedRecord }, responseMetadata
+      }));
+    },
+    onChange: value => { setupChoices = value; }
+  });
+  $effect(() => {
+    const value = section?.detail.employee_configuration_editable ? section.detail : null;
+    untrack(() => setupModelChoices.sync(value));
+  });
+  onDestroy(() => setupModelChoices.dispose());
   // A changed public control tuple needs its matching exact detail/configuration.
   // One request per mismatch avoids a repeated refetch for an incompatible manifest.
   let refreshedMismatch='';
@@ -527,6 +546,13 @@
             {#if detail.employee_configuration_editable}
               <WorkerConfigurationSetup destination={detail.locale} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                canonicalRows={setupChoices.response?.rows ?? []} validation={setupChoices.response?.validation ?? (setupChoices.request?.employee_backend || !detail.launch_validation?.current ? null : detail.launch_validation.validation)}
+                canonicalLoading={setupChoices.loading} canonicalSaving={setupChoices.saving}
+                canonicalError={setupChoices.error} canonicalSaveError={setupChoices.saveError}
+                onChooseDestination={(locale) => void setupModelChoices.chooseDestination(locale)}
+                onChooseCanonicalBackend={(backend) => void setupModelChoices.previewBackend(backend)}
+                onChooseCanonicalModel={(row, effort) => void setupModelChoices.chooseModel(row, effort)}
+                onRetry={() => setupModelChoices.retry()}
                 onSave={saveEmployeeConfiguration} />
             {/if}
           {/snippet}

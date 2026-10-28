@@ -6,7 +6,8 @@ import { readBackends, type BackendSnapshot, type ConversationBackendKey } from 
 /** Instance-local selection and persistence shared by Ticket setup and launch defaults. */
 export function createEmployeeConfigurationEditor(
   incoming: () => EmployeeConfigurationSnapshot,
-  save: (next: EmployeeConfigurationSnapshot) => Promise<EmployeeConfigurationSnapshot>
+  save: (next: EmployeeConfigurationSnapshot) => Promise<EmployeeConfigurationSnapshot>,
+  enabled: () => boolean = () => true
 ) {
   let selected = $state<EmployeeConfigurationSnapshot>({
     employee_backend: "claude",
@@ -41,7 +42,7 @@ export function createEmployeeConfigurationEditor(
   });
 
   async function loadBackends(): Promise<void> {
-    if (disposed) return;
+    if (disposed || !enabled()) return;
     const generation = ++requestGeneration;
     loading = true;
     backendsError = null;
