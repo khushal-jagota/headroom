@@ -459,11 +459,11 @@
       <main class="ticket-doc">
         <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <div class="worker-eyebrow" data-ticket-identity>
-            <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
-            <span aria-hidden="true">·</span>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
+            <span aria-hidden="true">·</span>
+            <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title" data-feedback-page-title>
