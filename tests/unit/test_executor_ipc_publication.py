@@ -472,8 +472,13 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
             original = executor.spool.pending()[0]
-            retried = await executor.handle_ipc(retry_request(child, "original"))
+            retried = await executor.handle_ipc(
+                replace(
+                    retry_request(child, "original"), response_deadline=time.monotonic() + 5
+                )
+            )
             assert retried.unconfirmed is not None and retried.unconfirmed.publication == "queued"
+            assert retried.unconfirmed.submission_id == original.submission_id == "original"
             assert executor.spool.pending() == (original,)
 
     asyncio.run(run())

@@ -7,7 +7,9 @@ import fcntl
 import os
 import sqlite3
 import sys
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -293,6 +295,36 @@ def test_ipc_waiter_cleanup_preserves_durable_publication(
         mac, request = ipc_writer(tmp_path, monkeypatch)
         source_work = mac.registry.source_work
         entered, release = asyncio.Event(), asyncio.Event()
+        receipt_wait = asyncio.Event()
+        receipt: asyncio.Future[AcceptanceReceipt] | None = None
+        clock_offset = 0.0
+
+        class ClockProxy:
+            def monotonic(self) -> float:
+                return time.monotonic() + clock_offset
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(time, name)
+
+        class AsyncioProxy:
+            def __getattr__(self, name: str) -> object:
+                return getattr(asyncio, name)
+
+            async def wait(
+                self,
+                futures: tuple[asyncio.Future[object], ...],
+                *,
+                timeout: float | None = None,
+                return_when: str = asyncio.ALL_COMPLETED,
+            ) -> tuple[set[asyncio.Future[object]], set[asyncio.Future[object]]]:
+                if len(futures) == 1 and futures[0] is receipt:
+                    assert publication.task.done()
+                    assert receipt is not None and not receipt.done()
+                    assert not task.done()
+                    if outcome == "timeout":
+                        assert timeout == 0
+                    receipt_wait.set()
+                return await asyncio.wait(futures, timeout=timeout, return_when=return_when)
 
         async def controlled(
             child: ChildReference,
@@ -301,62 +333,94 @@ def test_ipc_waiter_cleanup_preserves_durable_publication(
             new_work: bool,
         ) -> JournalPublication:
             async def publish() -> JournalPublication:
+                nonlocal clock_offset
+                entered.set()
+                await release.wait()
                 if outcome == "failure":
                     raise ValueError("publication refused")
                 if outcome == "publication_timeout":
                     raise TimeoutError("publication timed out")
-                if outcome == "cancel_publication":
-                    entered.set()
-                    await release.wait()
                 row = await work()
-                entered.set()
+                if outcome == "timeout":
+                    # Expire only the observer's clock, after physical publication.
+                    clock_offset = 60
                 return row
 
             return await source_work(child, publish, new_work=new_work)
 
         monkeypatch.setattr(mac.registry, "source_work", controlled)
-        monkeypatch.setattr(module, "CLI_RESULT_TIMEOUT_SECONDS", 0.01)
+        monkeypatch.setattr(module, "CLI_RESULT_TIMEOUT_SECONDS", 30)
+        monkeypatch.setattr(module, "asyncio", AsyncioProxy())
+        if outcome == "timeout":
+            monkeypatch.setattr(module, "time", ClockProxy())
+        request = replace(request, response_deadline=time.monotonic() + 30)
         task = asyncio.create_task(mac.handle_ipc(request))
         try:
-            if outcome.startswith("cancel"):
-                await entered.wait()
-                owned = mac._receipts[request.request_id]
-                publication = mac._publications[request.request_id]
+            await asyncio.wait_for(entered.wait(), 5)
+            publication = mac._publications[request.request_id]
+            receipt = mac._receipts[request.request_id]
+            if outcome == "cancel_publication":
                 task.cancel()
-                await asyncio.sleep(0)
-                if outcome == "cancel_publication":
-                    assert not publication.task.done()
-                    assert mac._receipts[request.request_id] is owned
-                    assert mac.registry._source_work == {
-                        ChildReference(
-                            mac.identity.executor_incarnation, str(request.child_id), "c_one"
-                        ): 1
-                    }
-                release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await task
-                await publication.task
-                await asyncio.sleep(0)
-                assert owned.cancelled()
-            elif outcome == "publication_timeout":
-                with pytest.raises(TimeoutError, match="publication timed out"):
-                    await task
+                assert not publication.task.done()
+                assert not receipt.done()
+                assert mac._publications[request.request_id] is publication
+                assert mac._receipts[request.request_id] is receipt
+                assert mac.registry._source_work == {
+                    ChildReference(
+                        mac.identity.executor_incarnation, str(request.child_id), "c_one"
+                    ): 1
+                }
+                release.set()
             else:
-                response = await task
-                if outcome == "failure":
-                    assert response.error is not None
-                    assert response.error["message"] == "publication refused"
+                release.set()
+                if outcome == "cancel_receipt":
+                    await asyncio.wait_for(receipt_wait.wait(), 5)
+                    assert publication.task.done()
+                    assert publication.task.result().pending
+                    assert not receipt.done()
+                    assert not task.done()
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                elif outcome == "publication_timeout":
+                    with pytest.raises(TimeoutError, match="publication timed out"):
+                        await task
                 else:
-                    assert response.queued is not None
-                    assert response.queued.submission_id == request.request_id
+                    response = await task
+                    if outcome == "failure":
+                        assert response.error is not None
+                        assert response.error["message"] == "publication refused"
+                    else:
+                        assert receipt_wait.is_set()
+                        assert response.queued is not None
+                        assert response.queued.submission_id == request.request_id
+                        assert response.error is None and response.unconfirmed is None
+            # Keep the actual task even after its callbacks remove the registry entry.
+            await asyncio.gather(publication.task, return_exceptions=True)
+            await asyncio.sleep(0)
+            assert receipt.cancelled()
+            assert not mac._publications
             assert not mac._receipts
             assert not mac.registry._source_work
-            assert mac.spool.has_pending() is (outcome not in ("failure", "publication_timeout"))
+            if outcome in ("failure", "publication_timeout"):
+                assert not mac.spool.has_pending()
+            else:
+                row = publication.task.result()
+                assert row.pending
+                assert row.envelope.submission_id == request.request_id
+                assert row.envelope.payload["operation"] == "ticket.note"
+                assert row.envelope.payload["arguments"] == {}
+                assert mac.spool.pending() == (row.envelope,)
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
             if mac._publications:
-                await asyncio.gather(*(row.task for row in mac._publications.values()))
+                await asyncio.gather(
+                    *(row.task for row in mac._publications.values()), return_exceptions=True
+                )
+            await asyncio.sleep(0)
             mac.spool.close()
 
     asyncio.run(run())
