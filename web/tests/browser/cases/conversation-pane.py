@@ -155,11 +155,11 @@ def _visibility_queue_proof(page):
     (output / "visibility-queue-proof.json").write_text(json.dumps(proof, indent=2))
     print("VISIBILITY_QUEUE_PROOF " + json.dumps(proof), flush=True)
     failures = [f"{row['name']}: expected {row['expected']}; observed {row.get('actual')}"
-                for row in proof["rows"] if not row["pass"]]
+                for row in [*proof["rows"], *proof["readiness"]["rows"]] if not row["pass"]]
     assert proof["nativeObserverRestored"], proof
     # Collect both directions before raising: one unchanged old-source run must
     # establish both stale-first failures, rather than stopping at admission.
-    assert not failures, "Queued visibility failures:\n" + "\n".join(failures)
+    assert not failures, "Visibility or presentation readiness failures:\n" + "\n".join(failures)
 
 
 def _preview_lifecycle(browser, url):
@@ -1056,7 +1056,11 @@ def _run(browser, urls):
             assert growth > 0, growth
         if held:
             assert held["text"].startswith("Tall paragraph"), held
-            actual = assert_native_growth(page, held, growth)
+            actual = (
+                assert_paragraph(page, held)
+                if capped_markdown
+                else assert_native_growth(page, held, growth)
+            )
             actual_scroll = newest_reading(page)["scrollTop"]
         else:
             actual = assert_newest(page)
@@ -1065,6 +1069,9 @@ def _run(browser, urls):
             assert abs((actual_scroll - before["scrollTop"]) - growth) <= 2, (growth, before, actual_scroll)
         if capped_markdown:
             assert abs(actual_scroll - before["scrollTop"]) <= 1, (before, actual)
+            after = newest_reading(page)
+            assert abs(after["scrollTop"] - before["scrollTop"]) <= 1, (before, after)
+            assert abs(after["bottom"] - before["bottom"]) <= 1, (before, after)
         if capped_following:
             assert abs(actual["bottom"] - before["bottom"]) <= 1, (before, actual)
         print(
