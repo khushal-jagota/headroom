@@ -155,11 +155,11 @@ def _visibility_queue_proof(page):
     (output / "visibility-queue-proof.json").write_text(json.dumps(proof, indent=2))
     print("VISIBILITY_QUEUE_PROOF " + json.dumps(proof), flush=True)
     failures = [f"{row['name']}: expected {row['expected']}; observed {row.get('actual')}"
-                for row in proof["rows"] if not row["pass"]]
+                for row in [*proof["rows"], *proof["readiness"]["rows"]] if not row["pass"]]
     assert proof["nativeObserverRestored"], proof
     # Collect both directions before raising: one unchanged old-source run must
     # establish both stale-first failures, rather than stopping at admission.
-    assert not failures, "Queued visibility failures:\n" + "\n".join(failures)
+    assert not failures, "Visibility or presentation readiness failures:\n" + "\n".join(failures)
 
 
 def _preview_lifecycle(browser, url):
