@@ -1479,11 +1479,13 @@ def verify_rail_overflow(page, fixture, evidence):
     }, indent=2))
 
 
-def verify_owner_updates(browser, url):
+def verify_owner_updates(browser, url, *, problem_only=False):
     """Browser clicks cross real owner routes and durable receipts on the existing host.
 
-    The provider records external dispatch only. A synthetic SHA change proves the
-    browser's refresh hold, not a running deployment or database migration.
+    The provider records external dispatch only. The Problem composition must keep
+    confirmation, retry, and cancellation usable beside the failure explanation.
+    The narrow problem_only path skips unrelated recovery and cutover checks.
+    A synthetic SHA change proves refresh hold, not deployment or database migration.
     """
     from dataclasses import replace
 
@@ -1549,17 +1551,39 @@ def verify_owner_updates(browser, url):
         expect(box).to_be_visible()
         expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
         page.screenshot(path=str(evidence / "update-available.png"))
-        # A live connection must still disclose an expired runner record. Then the
-        # normal update controls return through the existing contentless change signal.
-        recovery = "Recovery required: the candidate did not complete its commit."
-        deployment.update(state="unknown", detail=recovery)
+        if not problem_only:
+            # A live connection must still disclose an expired runner record. Then the
+            # normal update controls return through the existing contentless change signal.
+            recovery = "Recovery required: the candidate did not complete its commit."
+            deployment.update(state="unknown", detail=recovery)
+            signal()
+            expect(card.get_by_text(recovery, exact=True)).to_be_visible()
+            expect(card.get_by_text("Reconnecting", exact=True)).to_be_visible()
+            page.screenshot(path=str(evidence / "recovery-required.png"))
+            deployment.update(state="idle", detail=None)
+            signal()
+            expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+
+        # The actual ShellStatus composition must retain controls under a permanent
+        # deployment failure. Opening confirmation before the transition also proves
+        # that the shared UpdateActions instance keeps its local decision state.
+        failure = "The previous update failed. The installed application remains available."
+        card.get_by_role("button", name="Update now", exact=True).click()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="problem", outcome="failed", detail=failure)
         signal()
-        expect(card.get_by_text(recovery, exact=True)).to_be_visible()
-        expect(card.get_by_text("Reconnecting", exact=True)).to_be_visible()
-        page.screenshot(path=str(evidence / "recovery-required.png"))
-        deployment.update(state="idle", detail=None)
+        expect(card.get_by_text("Problem", exact=True)).to_be_visible()
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="idle", outcome=None, detail=None)
         signal()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        deployment.update(state="problem", outcome="failed", detail=failure)
+        signal()
+        expect(card.get_by_role("button", name="Proceed with update", exact=True)).to_be_visible()
+        card.get_by_role("button", name="Go back", exact=True).click()
         expect(card.get_by_role("button", name="Update now", exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "problem-with-update-actions.png"))
 
         for activity, warning in (("unknown", "Activity is unknown."), ("busy", "Work is active.")):
             backend.activity.activity = activity
@@ -1584,8 +1608,28 @@ def verify_owner_updates(browser, url):
                             "mode": "now", "confirm_activity": True}
             assert posts[-1]["boot_sha"] == "a" * 40
             assert backend.provider.dispatched[-1].request_id == receipt.request_id
+            expect(card.get_by_text("Problem", exact=True)).to_be_visible()
+            expect(card.get_by_text(failure, exact=True)).to_be_visible()
+            if activity == "busy":
+                # A failed request leaves an available publication usable for retry.
+                # Its failure and the deployment failure remain visible at each step.
+                failed_request = "The runner refused the previous attempt."
+                backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail=failed_request)
+                signal()
+                expect(card.get_by_text(failed_request, exact=True)).to_be_visible()
+                card.get_by_role("button", name="Update now", exact=True).click()
+                expect(card.get_by_text("Work is active.", exact=False)).to_be_visible()
+                expect(card.get_by_text(failure, exact=True)).to_be_visible()
+                expect(card.get_by_text(failed_request, exact=True)).to_be_visible()
+                assert len(backend.provider.dispatched) == before_dispatches + 1
+                page.screenshot(path=str(evidence / "problem-with-retry-confirmation.png"))
+                card.get_by_role("button", name="Proceed with update", exact=True).click()
+                expect(card.get_by_text("Update queued", exact=False)).to_be_visible()
+                assert len(backend.provider.dispatched) == before_dispatches + 2
+                expect(card.get_by_text(failure, exact=True)).to_be_visible()
             card.get_by_role("button", name="Cancel update", exact=True).click()
             expect(card.get_by_role("button", name="Update when idle", exact=True)).to_be_visible()
+            expect(card.get_by_text(failure, exact=True)).to_be_visible()
             assert backend.store.read().state == "cancelled"
 
         backend.activity.activity = "unknown"
@@ -1594,7 +1638,9 @@ def verify_owner_updates(browser, url):
         card.get_by_role("button", name="Update when idle", exact=True).click()
         expect(card.get_by_text("Update waits for idle", exact=False)).to_be_visible()
         assert backend.store.read().state == "pending"
-        assert len(backend.provider.dispatched) == 2
+        assert len(backend.provider.dispatched) == 3
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        page.screenshot(path=str(evidence / "problem-with-pending-cancel.png"))
         pinned = backend.store.read().release
         backend.provider.offered = replace(pinned, artifact_id=201, manifest=replace(pinned.manifest, app_sha="f" * 40))
         backend.service.refresh_available(force=True)
@@ -1604,7 +1650,17 @@ def verify_owner_updates(browser, url):
         card.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card.get_by_text("Update available · fffffff", exact=True)).to_be_visible()
         assert backend.store.read().state == "cancelled"
+        expect(card.get_by_text(failure, exact=True)).to_be_visible()
+        if problem_only:
+            assert errors == [], errors
+            (evidence / "problem-composition-proof.json").write_text(json.dumps({
+                "seconds": round(time.perf_counter() - started, 3), "newHosts": 0,
+                "dispatchCount": len(backend.provider.dispatched), "requests": posts,
+                "boundary": "Mounted ShellStatus preserves Problem explanation and UpdateActions through confirmation, failed retry, and pending cancellation",
+            }, indent=2))
+            return
 
+        deployment.update(state="idle", outcome=None, detail=None)
         backend.provider.offered = pinned
         backend.service.refresh_available(force=True)
         backend.activity.activity = "idle"
@@ -1618,7 +1674,7 @@ def verify_owner_updates(browser, url):
         signal()
         expect(card.get_by_text("Update in progress", exact=False)).to_be_visible()
         expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
-        assert len(backend.provider.dispatched) == 3
+        assert len(backend.provider.dispatched) == 4
 
         # The application version changes synthetically. The retained App and its
         # actual composer keep the unsent draft until the owner clears it.

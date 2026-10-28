@@ -187,11 +187,13 @@
         </button>
       {:else}
         <div class="status-card" data-state={card.state}
+          class:with-update-actions={displayedWord === "owner-update" || displayedWord === "Problem"}
           data-connection-status data-connection-state={connectionState} data-status-state={statusState}>
-          {#if displayedWord === "owner-update" && updates.data}
-            <UpdateActions status={updates.data} now={clock} />
-          {:else}
+          {#if displayedWord !== "owner-update"}
             {@render cardBody(card)}
+          {/if}
+          {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
+            <UpdateActions status={updates.data} now={clock} />
           {/if}
         </div>
       {/if}
@@ -218,7 +220,7 @@
   }
   .status-card[data-state="wrong"] { background: var(--error-surface); color: var(--text-strong); }
   .status-detail { flex-basis: 100%; }
-  .status-card:has(.status-detail) { flex-wrap: wrap; }
+  .status-card:has(.status-detail), .status-card.with-update-actions { flex-wrap: wrap; }
   .status-mark { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent-bright); }
   .status-card[data-state="wrong"] .status-mark { background: var(--accent-error); }
   .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }

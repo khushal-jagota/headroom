@@ -115,8 +115,8 @@ export function resolveStatusCard(
   statusState: VisibleDeploymentState,
   release: ReleaseSnapshot
 ): StatusCardKey | null {
-  // A failed deploy is the one state the user must not act on, so it displaces the
-  // update prompt. A rolled back release can still differ from the booted one.
+  // A failed deploy keeps its explanation visible over the page refresh prompt.
+  // ShellStatus retains owner update controls beside that failure explanation.
   if (statusState === "problem") return "Problem";
   if (release.updateAvailable) {
     return release.reloadRequested && release.compositionActive ? "update-held" : "update-ready";
