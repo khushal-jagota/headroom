@@ -683,6 +683,10 @@ def _preview_cards(page):
             route.fulfill(content_type="audio/wav", headers={"Accept-Ranges": "bytes"}, body=body)
 
     page.route("**/files/tickets/t_card/proof.wav", serve_audio)
+    page.route(
+        "**/files/tickets/t_card/invalid.wav",
+        lambda route: route.fulfill(content_type="audio/wav", body=b"not an audio resource"),
+    )
     page.set_viewport_size({"width": 1100, "height": 900})
     page.evaluate("window.__preview('proof.md')")
     fixture = page.locator("[data-card-fixture]")
@@ -758,7 +762,48 @@ def _preview_cards(page):
     assert fixture.locator("audio").count() == 0 and audio_requests == []
     slider = fixture.locator("[data-audio-seek]")
     expect(slider).to_have_attribute("aria-disabled", "true")
-    fixture.locator("[data-media-play]").click()
+    # Keep the original native promise: immediate pause must cancel a real start.
+    page.evaluate("""() => {
+      const nativePlay = HTMLMediaElement.prototype.play;
+      window.__audioCancellation = {nativePlay};
+      HTMLMediaElement.prototype.play = function(...args) {
+        const proof = window.__audioCancellation;
+        proof.player = this;
+        proof.slider = document.querySelector('[data-card-fixture] [data-audio-seek]');
+        const pending = nativePlay.apply(this, args);
+        this.pause();
+        pending.catch(error => {
+          proof.rejection = {isDOMException: error instanceof DOMException, name: error.name};
+        });
+        return pending;
+      };
+    }""")
+    try:
+        fixture.locator("[data-media-play]").click()
+        page.wait_for_function("window.__audioCancellation.rejection")
+        assert page.evaluate("window.__audioCancellation.rejection") == {
+            "isDOMException": True,
+            "name": "AbortError",
+        }
+        assert page.evaluate("""() => {
+          const proof = window.__audioCancellation;
+          return proof.player === document.querySelector('[data-card-fixture] audio')
+            && proof.slider === document.querySelector('[data-card-fixture] [data-audio-seek]');
+        }""")
+        expect(slider).to_have_attribute("role", "slider")
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(0)
+        expect(fixture.locator(".quiet-line")).to_have_count(0)
+        screenshot("audio-after-cancellation.png")
+    finally:
+        page.evaluate("""() => {
+          HTMLMediaElement.prototype.play = window.__audioCancellation.nativePlay;
+        }""")
+    fixture.get_by_role("button", name="Play proof.wav", exact=True).click()
+    page.wait_for_function("document.querySelector('[data-card-fixture] audio')?.currentTime > .1")
+    assert page.evaluate(
+        "window.__audioCancellation.player === document.querySelector('[data-card-fixture] audio')"
+    )
+    page.evaluate("delete window.__audioCancellation")
     page.wait_for_function("document.querySelector('[data-card-fixture] audio')?.duration >= 8")
     expect(slider).to_have_attribute("aria-disabled", "false")
     screenshot("preview-audio-phone.png")
@@ -784,4 +829,48 @@ def _preview_cards(page):
     expect(fixture.locator("audio")).to_have_count(0)
     expect(fixture.locator("[data-audio-seek]")).to_have_attribute("aria-disabled", "true")
     expect(fixture.locator("[data-audio-seek]")).to_have_attribute("aria-valuenow", "0")
+    # Policy rejection must still reach FilePreview's failure state.
+    page.evaluate("""() => {
+      window.__audioNativePlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {
+        return Promise.reject(new DOMException('Playback denied', 'NotAllowedError'));
+      };
+    }""")
+    try:
+        page.evaluate("window.__preview('proof.wav')")
+        fixture.get_by_role("button", name="Play proof.wav", exact=True).click()
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(1)
+        expect(fixture.locator(".quiet-line")).to_contain_text("proof.wav — file fetch failed")
+        expect(fixture.locator("[data-audio-seek]")).to_have_count(0)
+        screenshot("preview-audio-policy-failure.png")
+    finally:
+        page.evaluate("""() => {
+          HTMLMediaElement.prototype.play = window.__audioNativePlay;
+          delete window.__audioNativePlay;
+        }""")
+    # An invalid resource must emit a native media error and retain the failure UI.
+    page.evaluate("""() => {
+      window.__audioResourceError = null;
+      window.__observeAudioError = event => {
+        if (event.target instanceof HTMLAudioElement) {
+          window.__audioResourceError = {trusted: event.isTrusted, code: event.target.error?.code};
+        }
+      };
+      document.addEventListener('error', window.__observeAudioError, true);
+      window.__preview('invalid.wav');
+    }""")
+    try:
+        fixture.get_by_role("button", name="Play invalid.wav", exact=True).click()
+        page.wait_for_function("window.__audioResourceError")
+        assert page.evaluate("window.__audioResourceError") == {"trusted": True, "code": 4}
+        expect(fixture.locator("[data-visible-content-failed]")).to_have_count(1)
+        expect(fixture.locator(".quiet-line")).to_contain_text("invalid.wav — file fetch failed")
+        expect(fixture.locator("[data-audio-seek]")).to_have_count(0)
+        screenshot("preview-audio-resource-failure.png")
+    finally:
+        page.evaluate("""() => {
+          document.removeEventListener('error', window.__observeAudioError, true);
+          delete window.__observeAudioError;
+          delete window.__audioResourceError;
+        }""")
     page.evaluate("window.__preview('')")
