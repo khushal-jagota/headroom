@@ -2,7 +2,8 @@
   import ReviewChiefMessage from './ReviewChiefMessage.svelte';
   import ErrorLine from './ErrorLine.svelte';
 
-  let { waitingCount, runningWorkerCount, returning = false, returnError = null, onReturn }: {
+  let { returnLabel = 'Back to review', waitingCount, runningWorkerCount, returning = false, returnError = null, onReturn }: {
+    returnLabel?: string;
     waitingCount: number | null;
     runningWorkerCount: number | null;
     returning?: boolean;
@@ -31,7 +32,7 @@
     </div>
     <ReviewChiefMessage onBusy={value => messageBusy = value} />
     <div class="return-slot">
-      <button type="button" class:primary={waitingCount !== null && waitingCount > 0} data-review-return disabled={returning || messageBusy} onclick={onReturn}>Back to review</button>
+      <button type="button" class:primary={waitingCount !== null && waitingCount > 0} data-review-return disabled={returning || messageBusy} onclick={onReturn}>{returnLabel}</button>
     </div>
     {#if returnError}<ErrorLine error={returnError} />{/if}
   </div>

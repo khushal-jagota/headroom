@@ -22,7 +22,7 @@ from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuth
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
-VIEW_PROJECTION_VERSION = 6
+VIEW_PROJECTION_VERSION = 7
 
 ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
 ViewGroup = Literal[
@@ -65,8 +65,18 @@ class ViewWindowRequest(TypedDict):
     limit: int
 
 
+class ReviewHistoryKey(TypedDict):
+    kind: Literal["ticket", "conversation"]
+    id: str
+
+
+class ReviewSummary(TypedDict):
+    skipped: int
+    new: int
+
+
 class ViewRequest(TypedDict):
-    projection_version: Literal[6]
+    projection_version: Literal[7]
     scope_generation: int
     locale: str
     selected: ViewOwner | None
@@ -74,6 +84,8 @@ class ViewRequest(TypedDict):
     # Exact painted Review conversations whose canonical owners must stay visible
     # while a bounded reply outcome resolves, even after unread membership clears.
     review_conversation_ids: list[str]
+    review_skipped_keys: list[ReviewHistoryKey]
+    review_priority_keys: list[ReviewHistoryKey]
     windows: list[ViewWindowRequest]
 
 
@@ -178,11 +190,12 @@ class ViewContent(TypedDict):
     windows: list[ViewWindow]
     counts: ViewCounts
     review_context: list[ReviewConversationContext]
+    review_summary: ReviewSummary
 
 
 class ViewIdentity(TypedDict):
     wire_version: Literal[3]
-    projection_version: Literal[6]
+    projection_version: Literal[7]
     view_id: str
     scope_generation: int
     ordering_generation: str
@@ -221,6 +234,7 @@ class ViewPatch(ViewIdentity):
     windows: list[ViewWindow]
     counts: ViewCounts
     review_context: list[ReviewConversationContext]
+    review_summary: ReviewSummary
 
 
 class ViewCheckpoint(ViewIdentity):

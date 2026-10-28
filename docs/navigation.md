@@ -19,13 +19,18 @@ The Review global count comes from grouped membership, independently of ordinary
 Review windows use Ticket keys even for message-only Tickets, and address keys for Manager and Chief cards.
 A Ticket's complete address and conversation closure enters the page atomically under the existing budgets.
 State reversals and constituent changes refresh membership and publication, including changes that preserve the earliest timestamp.
+Review keeps temporary skip history for the current visit. The server compares that history with the whole current queue,
+so a removed card does not count and a card outside the current page still counts.
+Each return fixes the previously skipped cohort for that pass. New work precedes that cohort across continuation pages.
+A new skip changes the next return's history, without moving that card into the current pass again.
+Ticket identities and standalone conversation identities remain distinct. This history never changes unread or approval state.
 Painted Review conversations request bounded canonical-owner context while a reply or read resolves.
 The server supplies the canonical address and owner even when unread membership clears or that owner becomes excluded.
 An explicit null address records absence. A missing address in an unrelated page does not establish canonical removal.
 This context preserves uncertain reply attempts without retaining a conversation after its canonical owner becomes excluded.
 It includes only the requested conversation identities and follows existing record, byte, and request budgets.
 
-Scoped projection version 6 and the review-v3 ordering generation replace separate proposal and message membership.
+Scoped projection version 7 and the review-v4 ordering generation include skip summaries and the return cohort in bounded Review delivery.
 The forward review_work_cards migration rebuilds derived state from source and rotates its epoch.
 Old cursors reset through existing snapshot recovery. Runtime Signal activation alone grants current authority.
 No message rows or unread watermarks change. A normal reopen does not rebuild either projection.
@@ -269,7 +274,7 @@ Existing frontend browser hosts exercise the converted consumers with strict syn
 
 Code paths: `web/src/lib/navigation/`, `web/tests/navigation-*`, and `scripts/navigation_browser_harness.py`.
 
-_Last verified: 2026-10-18._
+_Last verified: 2026-10-28._
 
 ## Signal installation and delivery
 
