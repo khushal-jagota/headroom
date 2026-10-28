@@ -154,6 +154,9 @@ def build_app(config: Config) -> FastAPI:
         backend_child_factories_for_test={key: make_child for key in ConversationBackendKey},
     )
     install_connected_controls(app, config.db_path)
+    from tests.e2e.ticket_model_controls import install_ticket_model_controls
+
+    install_ticket_model_controls(app)
 
     @app.post("/api/test/signals/{conversation_id}/start")
     async def start(conversation_id: str) -> dict[str, bool]:
