@@ -35,7 +35,11 @@ def preserve_alias_history(
     validation: CanonicalModelValidation, prior: CanonicalModelValidation | None,
 ) -> CanonicalModelValidation:
     """Repeated checks retain the last distinct target and its original evidence."""
-    if prior is None or validation.current_alias_resolution is None or prior.current_alias_resolution is None:
+    if (
+        prior is None
+        or validation.current_alias_resolution is None
+        or prior.current_alias_resolution is None
+    ):
         return validation
     if (
         validation.selection.submitted_token == prior.selection.submitted_token

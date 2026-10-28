@@ -86,14 +86,16 @@ def test_move_wins_before_send_and_start_is_refused(tmp_db: Connection, ticket: 
                     conversation_id=None, sender_label="Owner", now=21,
                 )
         assert data.read_ticket(tmp_db, ticket.id).conversation_id is None
-        from planner.tickets.validation.data import read_launch_validation
         from planner.conversation.model_resolution.contracts import ValidationState
+        from planner.tickets.validation.data import read_launch_validation
         stored = read_launch_validation(tmp_db, ticket.id)
         assert stored is not None and stored.current
         assert stored.validation.state is ValidationState.unresolved
         assert stored.validation.selection.destination is TicketLocale.macos
         assert stored.validation.selection.submitted_token == ticket.employee_launch_model
-        assert stored.validation.selection.reasoning_effort == ticket.employee_launch_reasoning_effort
+        assert (
+            stored.validation.selection.reasoning_effort == ticket.employee_launch_reasoning_effort
+        )
     asyncio.run(exercise())
 
 

@@ -29,7 +29,7 @@ class StartObservingSystem(InMemoryConversationSystem):
     def __init__(self) -> None:
         super().__init__()
         self.starts: list[str] = []
-        self.start_backends: list[ConversationBackendKey] = []
+        self.start_backends: list[ConversationBackendKey | None] = []
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self.starts.append(request.conversation_id)

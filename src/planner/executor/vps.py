@@ -1356,6 +1356,7 @@ class ExecutorEndpoint:
                         body,
                         connection,
                         self.runtime.system,
+                        principal=principal,
                     )
                     refuse_known_incompatibility(creation_validation)
                 except PlannerError as error:
@@ -1364,15 +1365,30 @@ class ExecutorEndpoint:
                     preparation_error = error
                 finally:
                     connection.close()
-            # Preparation can await. Recheck the assignment before the canonical transaction.
-            if self._assignment(write.child) != principal:
-                raise PlannerError(ErrorCode.agent_forbidden, "child assignment changed", {})
             from planner.tickets.contracts import ReviewTransferNotice
             from planner.tickets.review_transfer import notify_review_transfers
 
             notices: list[ReviewTransferNotice] = []
 
             def mutate(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
+                # This read shares the receipt's BEGIN IMMEDIATE and domain write.
+                # A separate post-probe read cannot fence closure committed while
+                # the receipt transaction waits for its SQLite write lock.
+                current_assignment = connection.execute(
+                    "SELECT principal_kind,principal_id FROM executor_child_assignments "
+                    "WHERE executor_incarnation=? AND child_id=? AND conversation_id=? "
+                    "AND closed_at_ms IS NULL",
+                    (
+                        write.child.executor_incarnation,
+                        write.child.child_id,
+                        write.child.conversation_id,
+                    ),
+                ).fetchone()
+                if current_assignment is None or tuple(current_assignment) != (
+                    principal.kind.value,
+                    principal.id,
+                ):
+                    raise PlannerError(ErrorCode.agent_forbidden, "child assignment changed", {})
                 if preparation_error is not None:
                     raise preparation_error
                 return write_ticket_mutation(

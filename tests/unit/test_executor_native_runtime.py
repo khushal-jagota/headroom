@@ -646,7 +646,8 @@ def test_restart_preserves_uncertain_outcome_bytes_and_receipts_without_old_chil
             assert executor.spool.sender_id == sender_id
             assert (
                 executor.spool._db.execute(
-                    "SELECT submission_id,envelope_json,pending FROM envelopes ORDER BY submission_id"
+                    "SELECT submission_id,envelope_json,pending FROM envelopes "
+                    "ORDER BY submission_id"
                 ).fetchall()
                 == before
             )

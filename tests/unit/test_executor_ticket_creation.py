@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -54,6 +55,7 @@ class ScriptedPreparation:
         self.path = path
         self.calls = 0
         self.refuse = refuse
+        self.after_probe: Callable[[], None] | None = None
         self.service = ModelResolutionService(
             snapshots=Catalogue(()),
             store=ModelResolutionStore(path),
@@ -88,7 +90,10 @@ class ScriptedPreparation:
                     other.rollback()
                 finally:
                     other.close()
-                return await super().observe(*args, **kwargs)
+                result = await super().observe(*args, **kwargs)
+                if preparation.after_probe is not None:
+                    preparation.after_probe()
+                return result
 
         source = Probe(
             observation((row(desired.submitted_token, enabled=not self.refuse),), launch=launch)
@@ -107,6 +112,7 @@ def _setup(
     monkeypatch: pytest.MonkeyPatch,
     *,
     refuse: bool = False,
+    child_actor: tuple[str, str] = ("chief", "chief"),
 ) -> tuple[ExecutorEndpoint, ScriptedPreparation, QueuedEnvelope, ExecutorIdentity]:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
 
@@ -122,7 +128,7 @@ def _setup(
     endpoint.store.begin_connection(identity, 1000)
     endpoint.store.mark_ready(identity, 1001)
     child = ChildReference("incarnation", "child", "source-conversation")
-    endpoint.store.register_child(child, "chief", "chief", 1002)
+    endpoint.store.register_child(child, *child_actor, 1002)
     resolver = ScriptedPreparation(path, refuse=refuse)
     endpoint.runtime = SimpleNamespace(model_resolution=resolver.service, system=resolver)
     payload = encode_value(
@@ -211,3 +217,49 @@ def test_receipt_insert_failure_rolls_back_the_real_creation_writer(
     assert resolver.calls == 1
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
     assert endpoint.store.lookup_receipt(envelope.sender_id, envelope.submission_id) is None
+
+
+def test_native_creation_unauthorized_child_refuses_before_metadata_and_replays(
+    tmp_db: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
+        "created_at,updated_at) "
+        "VALUES('outside','Other chain','project_other','codex','gpt-6-sol',1,1)"
+    )
+    tmp_db.commit()
+    endpoint, preparation, envelope, identity = _setup(
+        tmp_db,
+        tmp_path,
+        monkeypatch,
+        child_actor=("manager", "outside"),
+    )
+    receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
+    assert receipt.disposition is ReceiptDisposition.refused
+    error = receipt.result["error"]
+    assert isinstance(error, dict) and error["code"] == "agent_forbidden"
+    assert preparation.calls == 0
+    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
+    tmp_db.execute("UPDATE executor_child_assignments SET closed_at_ms=2000")
+    tmp_db.commit()
+    assert asyncio.run(endpoint.accept_envelope(envelope, identity)) == receipt
+    assert preparation.calls == 0
+
+
+def test_native_creation_source_closure_during_probe_is_a_durable_refusal(
+    tmp_db: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint, preparation, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch)
+    original = ChildReference("incarnation", "child", "source-conversation")
+    preparation.after_probe = lambda: endpoint.store.close_child(original, 2000)
+    receipt = asyncio.run(endpoint.accept_envelope(envelope, identity))
+    assert receipt.disposition is ReceiptDisposition.refused
+    assert "child assignment changed" in str(receipt.result)
+    assert preparation.calls == 1
+    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
+    assert asyncio.run(endpoint.accept_envelope(envelope, identity)) == receipt
+    assert preparation.calls == 1
