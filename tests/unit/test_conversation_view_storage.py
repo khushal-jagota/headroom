@@ -681,3 +681,73 @@ def test_owner_preview_is_null_without_a_reply_and_private_in_latest_rest_event(
         }
         assert rest["latest_owner_message_preview"] == "Answer\n\nDetail"
         assert '"_owner_message_preview"' not in json.dumps(rest)
+
+
+def test_refusal_view_projects_canonical_validation_and_rebuilds_only_cache() -> None:
+    """The selected view must retain the real corrective action and old absent history."""
+    from pydantic import TypeAdapter
+
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.model_resolution.contracts import (
+        CanonicalModelValidation,
+        CorrectiveAction,
+        ModelSelection,
+        SelectionKind,
+        ValidationReason,
+        ValidationState,
+    )
+    from planner.conversation.views.storage import encode_wire, read_row
+    from planner.conversation.views.writer import rebuild_projection
+    from planner.tickets.contracts import TicketLocale
+
+    validation = CanonicalModelValidation(
+        ModelSelection(
+            TicketLocale.vps,
+            ConversationBackendKey.claude,
+            "exact-token",
+            SelectionKind.concrete,
+            None,
+            "7",
+        ),
+        ValidationState.unavailable,
+        ValidationReason.credentials_unavailable,
+        CorrectiveAction.authenticate_provider,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    stored = TypeAdapter(CanonicalModelValidation).dump_python(validation, mode="json")
+    payload = {
+        "text": "Blocked message",
+        "sender_label": "owner",
+        "mode": "queue",
+        "refusal_reason": "model_resolution_failed",
+        "model_validation": stored,
+    }
+    old_payload = {key: value for key, value in payload.items() if key != "model_validation"}
+    with database(
+        [
+            event(1, "prompt_delivery_refused", payload),
+            event(2, "prompt_delivery_refused", old_payload),
+        ]
+    ) as conn:
+        original = list(conn.execute("SELECT * FROM conversation_events ORDER BY sequence"))
+        first = json.loads(encode_wire(read_row(conn, "fixture", 1)[0]))
+        assert first["body"]["value"]["model_validation"] == stored
+        assert (
+            json.loads(encode_wire(read_row(conn, "fixture", 2)[0]))["body"]["value"][
+                "model_validation"
+            ]
+            is None
+        )
+        conn.execute("UPDATE conversation_view_state SET projection_version=2")
+        rebuild_projection(conn)
+        assert (
+            conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
+            == 3
+        )
+        assert json.loads(encode_wire(read_row(conn, "fixture", 1)[0])) == first
+        assert list(conn.execute("SELECT * FROM conversation_events ORDER BY sequence")) == original

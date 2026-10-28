@@ -2130,3 +2130,186 @@ def test_known_effort_mismatch_refuses_restart_before_killing_source(
             await harness.system.shutdown()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("initial", [True, False])
+def test_ticket_owner_explicit_kind_reaches_initial_and_reopened_held_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial: bool
+) -> None:
+    """A deliberate same-token kind choice must survive the actual send and held store."""
+    import json
+    import time
+    from datetime import UTC, datetime
+
+    from fastapi import FastAPI, Request
+    from pydantic import TypeAdapter
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.conversation.api import OwnerSendBody, SentTextPiece
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import _HeldPrompt
+    from planner.core.authctx import RequestContext
+    from planner.core.clock import TestClock
+    from planner.executor.codec import encode_value
+    from planner.runtime import conversation_start
+    from planner.tickets import api as ticket_api
+    from planner.tickets import data as tickets
+    from planner.tickets.validation.data import read_launch_selection
+
+    stamp = int(time.time())
+    binding = CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None)
+    launch = context(
+        backend_key=Backend.claude, workspace=binding, localized_workspace_folder=tmp_path
+    )
+    alias = CatalogRow(
+        "fable",
+        SelectionKind.provider_alias,
+        "claude-fable-1",
+        "Fable",
+        ("high",),
+        False,
+        True,
+        None,
+        "provider",
+    )
+    concrete = replace(
+        alias,
+        selection_kind=SelectionKind.concrete,
+        resolved_model_id="fable",
+        identity_preserving_launch_token="fable",
+    )
+    source = ScopedCatalogue(observation((alias, concrete), launch=launch, stamp=stamp))
+    service, _, path = setup(tmp_path, source)
+    service._now = time.time
+    harness = _Harness(path)
+    harness.clock.now = float(stamp)
+    harness.system._model_resolver = service
+    harness.system.configure_destination_validation(source)
+    monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
+
+    async def exercise() -> None:
+        conn = connect(str(path))
+        try:
+            ticket = tickets.create_ticket(
+                conn,
+                worker_type="coding",
+                title="Exact picker kind",
+                principal=OWNER_PRINCIPAL,
+                now=stamp,
+                title_max_chars=200,
+                employee_backend="claude",
+                employee_launch_model="fable",
+                selection_kind=SelectionKind.provider_alias,
+            )
+            if not initial:
+                async with conversation_start.conversation_link_lock(f"ticket:{ticket.id}"):
+                    first = await conversation_start.send_to_ticket_conversation(
+                        harness.system,
+                        conn,
+                        ticket.id,
+                        text_message_content("First"),
+                        conversation_id=None,
+                        sender_label="Owner",
+                        now=stamp,
+                    )
+                conversation_id = first.conversation_id
+                assert conversation_id is not None
+            body = OwnerSendBody(
+                content=[SentTextPiece(piece="text", text="Explicit concrete choice")],
+                model="fable",
+                selection_kind=SelectionKind.concrete,
+                reasoning_effort=None,
+                sender_label="Owner",
+                sender_message_id="exact-kind",
+            )
+            response = await ticket_api.send_to_ticket_conversation(
+                ticket.id,
+                body,
+                Request({"type": "http", "app": FastAPI()}),
+                conn,
+                RequestContext(OWNER_PRINCIPAL),
+                TestClock(datetime.fromtimestamp(stamp, UTC)),
+                harness.system,
+                harness.message_files,
+            )
+            assert response["fate"] == ("started" if initial else "queued")
+            if not initial:
+                state = await harness.system._conversation_state(conversation_id)
+                assert state is not None
+                held = encode_value(state.held_prompts[0])
+                assert isinstance(held, dict)
+                assert held["selection_kind"] == "concrete"
+                conn.execute(
+                    "INSERT INTO executor_native_messages(sender_id,submission_id,payload_sha256,"
+                    "principal_json,recipient_json,state,created_at_ms,held_prompt_json,"
+                    "held_target_conversation_id,held_admission_order,held_state) "
+                    "VALUES('fixture','exact-kind','fixture',?,?,'bound',?,?,?,1,'pending')",
+                    (
+                        json.dumps(held["sender"]),
+                        json.dumps(held["recipient"]),
+                        stamp * 1000,
+                        json.dumps(held),
+                        conversation_id,
+                    ),
+                )
+                conn.commit()
+                reopened = ConversationStore(str(path))
+                durable = reopened.read_executor_held_prompts_sync(conversation_id)
+                restored = TypeAdapter(_HeldPrompt).validate_json(durable[0][0])
+                assert restored.selection_kind is SelectionKind.concrete
+                assert restored.reasoning_effort_is_set
+                state.held_prompts[0] = restored
+                # The old absent field retains its historical semantics on new readers.
+                held.pop("selection_kind")
+                assert TypeAdapter(_HeldPrompt).validate_python(held).selection_kind is None
+                await harness.complete_turn(conversation_id)
+            selection = read_launch_selection(conn, ticket.id)
+            assert selection.selection_kind is SelectionKind.concrete
+            assert selection.submitted_token == "fable"
+            assert selection.reasoning_effort is None
+            current = tickets.read_ticket(conn, ticket.id)
+            assert current.conversation_id is not None
+            assert harness.backend(current.conversation_id).model == "fable"
+        finally:
+            await harness.system.shutdown()
+            conn.close()
+
+    asyncio.run(exercise())
+
+
+def test_explicit_kind_rejects_orphans_and_does_not_leak_to_a_later_send() -> None:
+    """The asynchronous capture belongs to one send, including its exceptional exit."""
+    from pydantic import ValidationError
+
+    from planner.conversation.api import OwnerSendBody, SentTextPiece
+    from planner.conversation.launch_intent import effort_presence, selection_kind
+    from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
+
+    with pytest.raises(ValidationError, match="explicit model"):
+        OwnerSendBody(
+            content=[SentTextPiece(piece="text", text="No model")],
+            sender_label="Owner",
+            selection_kind=SelectionKind.concrete,
+        )
+    with pytest.raises(ValueError, match="explicit model"):
+        ConversationStartOverrides(selection_kind=SelectionKind.concrete)
+
+    @effort_presence
+    async def capture(
+        *, model_change: str | None = None, selection_kind: SelectionKind | None = None
+    ) -> None:
+        from planner.conversation.launch_intent import selection_kind as captured_kind
+
+        assert captured_kind() is selection_kind
+        if model_change is not None:
+            raise RuntimeError("send failed")
+
+    async def exercise() -> None:
+        with pytest.raises(ValueError, match="explicit model"):
+            await capture(selection_kind=SelectionKind.concrete)
+        with pytest.raises(RuntimeError, match="send failed"):
+            await capture(model_change="exact", selection_kind=SelectionKind.concrete)
+        assert selection_kind() is None
+        await capture()
+
+    asyncio.run(exercise())

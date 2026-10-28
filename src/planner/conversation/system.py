@@ -133,6 +133,9 @@ from planner.conversation.launch_intent import (
 from planner.conversation.launch_intent import (
     reasoning_effort_is_set as effort_presence_is_set,
 )
+from planner.conversation.launch_intent import (
+    selection_kind as authored_selection_kind,
+)
 from planner.conversation.lifecycle import (
     LifecycleFact,
     LifecycleKind,
@@ -176,6 +179,7 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     PickerRow,
     ProviderCatalogObserver,
+    SelectionKind,
     ValidationReason,
     ValidationState,
 )
@@ -388,6 +392,7 @@ class _HeldPrompt:
     delivery_uncertain: bool = False
 
     reasoning_effort_is_set: bool = False
+    selection_kind: SelectionKind | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,6 +663,7 @@ class SqliteProcessConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
+        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -674,6 +680,7 @@ class SqliteProcessConversationSystem:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             reasoning_effort_is_set=reasoning_effort_is_set,
+            selection_kind=selection_kind,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -695,6 +702,7 @@ class SqliteProcessConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
+        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -2536,6 +2544,8 @@ class SqliteProcessConversationSystem:
                         or held.sender_label != sender_label
                         or held.model_change != model_change
                         or held.reasoning_effort_change != reasoning_effort_change
+                        or held.reasoning_effort_is_set != effort_presence_is_set()
+                        or held.selection_kind != authored_selection_kind()
                         or held.sender != sender
                         or held.recipient != recipient
                         or held.recovery_references != recovery_references
@@ -2630,6 +2640,7 @@ class SqliteProcessConversationSystem:
         """Put one admitted message at the tail. The conversation lock must be held."""
         held = _HeldPrompt(
             reasoning_effort_is_set=effort_presence_is_set(),
+            selection_kind=authored_selection_kind(),
             held_prompt_id=f"held_{uuid4().hex}",
             content=content,
             sender_label=sender_label,
@@ -2990,6 +3001,7 @@ class SqliteProcessConversationSystem:
             (
                 _HeldPrompt(
                     reasoning_effort_is_set=effort_presence_is_set(),
+                    selection_kind=authored_selection_kind(),
                     held_prompt_id="",
                     content=content,
                     sender_label=sender_label,
@@ -3187,6 +3199,7 @@ class SqliteProcessConversationSystem:
         reservation.messages = (
             _HeldPrompt(
                 reasoning_effort_is_set=effort_presence_is_set(),
+                selection_kind=authored_selection_kind(),
                 held_prompt_id="",
                 content=content,
                 sender_label=sender_label,
@@ -3226,6 +3239,7 @@ class SqliteProcessConversationSystem:
                 messages=(
                     _HeldPrompt(
                         reasoning_effort_is_set=effort_presence_is_set(),
+                        selection_kind=authored_selection_kind(),
                         held_prompt_id="",
                         content=content,
                         sender_label=sender_label,
@@ -3706,6 +3720,7 @@ class SqliteProcessConversationSystem:
         )
         model = kwargs.get("model_change")
         effort = kwargs.get("reasoning_effort_change")
+        explicit_kind = messages[0].selection_kind if messages else authored_selection_kind()
         try:
             row = conn.execute(
                 "SELECT id FROM tickets WHERE conversation_id=?",
@@ -3763,8 +3778,6 @@ class SqliteProcessConversationSystem:
             model = kwargs.get("model_change")
             effort = kwargs.get("reasoning_effort_change")
             if model is not None or effort is not None or effort_is_set:
-                from planner.conversation.model_resolution.contracts import SelectionKind
-
                 selection = replace(
                     selection,
                     submitted_token=selection.submitted_token if model is None else model,
@@ -3774,9 +3787,13 @@ class SqliteProcessConversationSystem:
                         else selection.backend_key
                     ),
                     selection_kind=(
-                        selection.selection_kind
-                        if model is None or model == selection.submitted_token
-                        else SelectionKind.legacy_unclassified
+                        explicit_kind
+                        if explicit_kind is not None
+                        else (
+                            selection.selection_kind
+                            if model is None or model == selection.submitted_token
+                            else SelectionKind.legacy_unclassified
+                        )
                     ),
                     reasoning_effort=(
                         selection.reasoning_effort
@@ -4289,6 +4306,8 @@ class SqliteProcessConversationSystem:
             model_change is not None
             or reasoning_effort_change is not None
             or effort_presence_is_set()
+            or authored_selection_kind() is not None
+            or any(message.selection_kind is not None for message in reservation.messages)
             or any(message.reasoning_effort_is_set for message in reservation.messages)
         )
         if model_resolution is not None:

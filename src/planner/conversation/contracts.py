@@ -25,7 +25,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Literal, Protocol, TypedDict
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypedDict
+
+if TYPE_CHECKING:
+    from planner.conversation.model_resolution.contracts import SelectionKind
 
 from planner.conversation.message_content import MessageContent
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError, Principal
@@ -782,6 +785,7 @@ class ConversationSystem(Protocol):
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
+        selection_kind: SelectionKind | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
@@ -839,6 +843,7 @@ class ConversationSystem(Protocol):
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
+        selection_kind: SelectionKind | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,

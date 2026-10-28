@@ -1,4 +1,4 @@
-import type { CanonicalModelValidation, DestinationModelChoicesRequest, DestinationModelChoicesResponse } from "./modelResolutionWire";
+import type { SelectionKind, CanonicalModelValidation, DestinationModelChoicesRequest, DestinationModelChoicesResponse } from "./modelResolutionWire";
 export type { PickerRow, CanonicalModelValidation, ModelSelection, DestinationModelChoicesRequest, DestinationModelChoicesResponse, TicketModelChoicesRequest, DraftModelChoicesRequest } from "./modelResolutionWire";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
@@ -518,7 +518,10 @@ export type OwnerSendBody = {
   conversation_id: string | null;
   backend_key?: string;
   model?: string;
-  reasoning_effort?: string;
+  /** Omitted preserves effort; null explicitly requests provider default. */
+  reasoning_effort?: string | null;
+  /** Ticket model intent only; omitted preserves historical classification. */
+  selection_kind?: SelectionKind;
   content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;

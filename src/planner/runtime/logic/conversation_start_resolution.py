@@ -37,6 +37,7 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     WorkspacePathPolicy,
 )
+from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.core.contracts import ErrorCode, PlannerError
 
 # The role each agent is told to be. These are copies of the texts the old ACP kickoff
@@ -88,6 +89,13 @@ class ConversationStartOverrides:
     model: str | None = None
     reasoning_effort: str | None = None
     reasoning_effort_is_set: bool = False
+    selection_kind: SelectionKind | None = None
+
+    def __post_init__(self) -> None:
+        if self.selection_kind is not None and (
+            self.model is None or self.selection_kind is SelectionKind.legacy_unclassified
+        ):
+            raise ValueError("selection_kind requires an explicit model and explicit kind")
 
 
 NO_CONVERSATION_START_OVERRIDES: Final = ConversationStartOverrides()

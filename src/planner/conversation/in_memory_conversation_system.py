@@ -49,6 +49,9 @@ from planner.conversation.launch_intent import (
 from planner.conversation.launch_intent import (
     reasoning_effort_is_set as effort_presence_is_set,
 )
+from planner.conversation.launch_intent import (
+    selection_kind as authored_selection_kind,
+)
 from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -64,6 +67,7 @@ from planner.conversation.message_content import (
     require_message_content,
     sender_labeled_composed_message_content,
 )
+from planner.conversation.model_resolution.contracts import SelectionKind
 from planner.core.contracts import Principal
 
 
@@ -206,6 +210,7 @@ class _HeldPrompt:
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
     reasoning_effort_is_set: bool = False
+    selection_kind: SelectionKind | None = None
 
 
 @dataclass
@@ -297,6 +302,7 @@ class InMemoryConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
+        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -313,6 +319,7 @@ class InMemoryConversationSystem:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             reasoning_effort_is_set=reasoning_effort_is_set,
+            selection_kind=selection_kind,
             owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -334,6 +341,7 @@ class InMemoryConversationSystem:
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         reasoning_effort_is_set: bool = False,
+        selection_kind: SelectionKind | None = None,
         owner_read_through_sequence: int | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
@@ -364,7 +372,20 @@ class InMemoryConversationSystem:
                     held.sender_label,
                     held.sender,
                     held.recipient,
-                ) != (content, sender_label, sender, recipient):
+                    held.model_change,
+                    held.reasoning_effort_change,
+                    held.reasoning_effort_is_set,
+                    held.selection_kind,
+                ) != (
+                    content,
+                    sender_label,
+                    sender,
+                    recipient,
+                    model_change,
+                    reasoning_effort_change,
+                    effort_presence_is_set(),
+                    authored_selection_kind(),
+                ):
                     raise ValueError("sender_message_id already names a different message")
                 return AddressedPromptDeliveryReceipt(
                     PromptDeliveryQueued(queue_position=position), newly_accepted=False
@@ -519,6 +540,7 @@ class InMemoryConversationSystem:
         state.held_prompts.append(
             _HeldPrompt(
                 reasoning_effort_is_set=effort_presence_is_set(),
+                selection_kind=authored_selection_kind(),
                 held_prompt_id=f"held-{state.held_prompts_created}",
                 content=content,
                 sender_label=sender_label,
@@ -1119,6 +1141,7 @@ class InMemoryConversationSystem:
         messages = recorded_messages or (
             _HeldPrompt(
                 reasoning_effort_is_set=effort_presence_is_set(),
+                selection_kind=authored_selection_kind(),
                 held_prompt_id="",
                 content=content,
                 sender_label=sender_label,

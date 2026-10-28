@@ -1417,6 +1417,7 @@ def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverr
         model=body.model,
         reasoning_effort=body.reasoning_effort,
         reasoning_effort_is_set="reasoning_effort" in body.model_fields_set,
+        selection_kind=body.selection_kind,
     )
 
 
