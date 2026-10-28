@@ -78,6 +78,10 @@
   let refreshing = $state(false);
   let picker = $state<ListboxPickerController>(null!);
 
+  let currentRows = $derived(canonicalRows?.filter(row => row.current_selection) ?? []);
+  let canonicalSelection = $derived(currentRows.length === 1 ? currentRows[0] : undefined);
+  let effectiveValidation = $derived(validation ?? canonicalSelection?.validation ?? null);
+  let currentEffort = $derived(canonicalRows && effectiveValidation ? effectiveValidation.selection.reasoning_effort : view.reasoningEffort || null);
   let effortRows = $derived(
     ((pendingCanonicalRow ?? canonicalSelection) ? (pendingCanonicalRow ?? canonicalSelection)?.supported_reasoning_efforts ?? [] : effortOptionsFor(models, pendingModel ?? view.modelValue, backendEffortOptions))
       .map((effort) => ({ value: effort, name: effort }))
@@ -85,10 +89,6 @@
   let factualRows = $derived(canonicalRows?.map((row, index) => ({value: `canonical-${index}`, name: pickerRowName(row)})));
   let rows = $derived((showing === "models" ? factualRows ?? view.models : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? canonicalRows ? currentRows.length === 1 ? `canonical-${canonicalRows.indexOf(currentRows[0])}` : null : view.modelValue : currentEffort);
-  let currentRows = $derived(canonicalRows?.filter(row => row.current_selection) ?? []);
-  let canonicalSelection = $derived(currentRows.length === 1 ? currentRows[0] : undefined);
-  let effectiveValidation = $derived(validation ?? canonicalSelection?.validation ?? null);
-  let currentEffort = $derived(canonicalRows && effectiveValidation ? effectiveValidation.selection.reasoning_effort : view.reasoningEffort || null);
   let triggerFace = $derived(canonicalRows ? currentRows.length > 1 ? "Multiple current selection facts" : canonicalSelection ? pickerRowName(canonicalSelection) : effectiveValidation?.selection.submitted_token ?? "Selection unobserved" : view.face);
   let foot = $derived(feedback ?? (effectiveValidation && effectiveValidation.state !== "compatible" ? validationSummary(effectiveValidation) : null) ?? (canonicalRows ? null : view.staleModelReason ?? view.catalogueWarning));
   let pickerBusy = $derived(disabled || refreshing);
