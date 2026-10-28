@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildLifecycle, preferredScopeCeilingFor, type WorkerTypeManifest } from "../src/lib/lifecycle";
+import { advanceTargetFor, buildLifecycle, preferredScopeCeilingFor, type WorkerTypeManifest } from "../src/lib/lifecycle";
 
 function manifest(stages: string[], advance: Record<string, string>): WorkerTypeManifest {
   return {
@@ -21,5 +21,20 @@ describe("preferredScopeCeilingFor", () => {
     }));
     expect(preferredScopeCeilingFor(coding, "needs_success")).toBe("needs_success");
     expect(preferredScopeCeilingFor(research, "needs_findings")).toBe("needs_findings");
+  });
+});
+
+describe("manifest terminal stages", () => {
+  it("preserves terminal metadata for the actual advance target with an unfamiliar name", () => {
+    const definition = manifest(["needs_answer", "archived", "needs_other"], { needs_answer: "archived" });
+    // Position and the presence of an advance edge do not define terminal stages.
+    definition.stages[1]!.is_terminal = true;
+    definition.stages[2]!.is_terminal = false;
+    const lifecycle = buildLifecycle(definition);
+    const target = advanceTargetFor(lifecycle, "needs_answer", "needs_answer");
+    expect(target).toBe("archived");
+    expect(lifecycle.stageIsTerminal[target!]).toBe(true);
+    expect(lifecycle.stageIsTerminal.needs_answer).toBe(false);
+    expect(lifecycle.stageIsTerminal.needs_other).toBe(false);
   });
 });

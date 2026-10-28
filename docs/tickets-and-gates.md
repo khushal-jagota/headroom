@@ -414,16 +414,23 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 ## The approval gate and Ticket leash
 
 Anyone standing above the Ticket can decide a parked proposal, whoever it is addressed
-to. Whenever they approve a step, they must name the next ceiling and holder. The system
-refuses an approval that omits either. Approving is a ceiling-setting moment like any
-other, so the approve row carries the same control the Ticket page does, and the approver
-can hand the Ticket onward rather than only keeping it.
+to. Every acceptance request includes the next ceiling and holder. The server refuses
+a request that omits either. At earlier gates, the reader chooses both through the
+approval control and can hand the Ticket onward. At the final gate, the interface
+supplies both values automatically.
 
-The direct Approve entry starts with the immediate next valid Stage and the owner
-selected. The waiting card uses the same editable stage/reviewer picker as the
-running card. Choosing scope first shows the approval or reroute consequence before
-commit. A new proposal revision restores the draft. Unrelated refreshes retain
-proposal edits and unfinished picker choices.
+At earlier gates, Approve opens the stage/reviewer picker with the immediate next
+valid Stage and the owner selected. When the actual next Stage is terminal in the
+Worker type manifest, Approve immediately accepts the visible proposal with no
+further ceiling (`none`) and the saved holder. Local edits and the visible proposal
+revision go through the same acceptance transaction. There is no extra choice.
+The reviewer heading still lets the reader reroute the final proposal without
+approving it.
+
+The waiting card shares the running card's editable stage/reviewer picker. Choosing
+scope first shows the approval or reroute consequence before commit. A new proposal
+revision restores the draft. Unrelated refreshes retain proposal edits and unfinished
+picker choices.
 
 The ceiling sentence states the saved stage and reviewer and opens both choices
 directly with one click. Controls use User,
