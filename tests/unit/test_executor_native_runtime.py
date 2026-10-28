@@ -1603,7 +1603,7 @@ def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(
                 return WireMessage(
                     WireMessageKind.hello_accepted,
                     "hello",
-                    as_object(replace(executor.identity, protocol_version=1)),
+                    as_object(replace(executor.identity, protocol_version=8)),
                 )
             return await original(kind, payload)
 
@@ -1945,6 +1945,14 @@ def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_inp
     """The drain receipt cannot overtake an admitted but unscheduled transfer."""
     from unittest.mock import AsyncMock
 
+    from planner.executor.contracts import (
+        FileManifest,
+        FileScope,
+        FileTransfer,
+        InputTransferRequest,
+    )
+    from planner.executor.wire import ProtocolRefused, encode_frame
+
     async def run() -> None:
         executor = make_executor(tmp_path)
         pending = asyncio.create_task(asyncio.Event().wait())
@@ -1959,10 +1967,24 @@ def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_inp
             assert response.error is None and response.result is not None
             assert response.result["exit_committed"] is False
             assert not executor._stop.is_set()
-            await executor._input(WireMessage(WireMessageKind.file_slot, "late-input", {}))
-            message = send.call_args.args[0]
-            assert message.kind is WireMessageKind.error
-            assert message.request_id == "late-input"
+            slot = FileTransfer(
+                "transfer",
+                "download",
+                FileManifest("publication", FileScope.conversation, "c_one", "file", "a" * 64, 1),
+            )
+            reader = asyncio.StreamReader()
+            reader.feed_data(
+                encode_frame(
+                    WireMessage(
+                        WireMessageKind.file_slot,
+                        "late-input",
+                        as_object(InputTransferRequest("command", slot)),
+                    )
+                )
+            )
+            with pytest.raises(ProtocolRefused, match="handshake"):
+                await executor._read_loop(reader)
+            send.assert_not_called()
         finally:
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
@@ -2068,7 +2090,14 @@ def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
 ) -> None:
     from unittest.mock import AsyncMock
 
-    from planner.executor.contracts import FileManifest, FileScope, FileTransfer
+    from planner.executor.contracts import (
+        FileManifest,
+        FileScope,
+        FileTransfer,
+        InputTransferRequest,
+    )
+    from planner.executor.input_transfers import InputTransferDeadline
+    from planner.executor.wire import encode_frame
 
     async def run() -> None:
         executor = make_executor(tmp_path)
@@ -2086,10 +2115,26 @@ def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
             "download",
             FileManifest("publication", FileScope.conversation, "c_one", "input", "a" * 64, 1),
         )
+        executor._input_transfers = {
+            str(index): InputTransferDeadline(InputTransferRequest(str(index), slot))
+            for index in range(4)
+        }
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            encode_frame(
+                WireMessage(
+                    WireMessageKind.file_slot,
+                    "caller",
+                    as_object(InputTransferRequest("command", slot)),
+                )
+            )
+        )
+        reader.feed_eof()
         try:
-            await executor._input(WireMessage(WireMessageKind.file_slot, "caller", as_object(slot)))
+            with pytest.raises(asyncio.IncompleteReadError):
+                await executor._read_loop(reader)
             message = send.call_args.args[0]
-            assert message.kind is WireMessageKind.error and message.request_id == "caller"
+            assert message.kind is WireMessageKind.input_failed and message.request_id == "caller"
             assert "capacity" in message.payload["message"]
             assert executor._transfers == 4
         finally:
@@ -2382,9 +2427,9 @@ def test_absent_stop_requires_exact_identity_settled_prefix_and_preserves_old_ou
             return await original_execute(command)
 
         monkeypatch.setattr(registry, "_execute", delayed_execute)
-        delayed = asyncio.create_task(registry.execute_command(
-            replace(start, command_id="delayed-start")
-        ))
+        delayed = asyncio.create_task(
+            registry.execute_command(replace(start, command_id="delayed-start"))
+        )
         await entered.wait()
         stop = ChildCommand("cleanup", start.child, ChildOperation.stop, None, {})
         blocked = await registry.execute_command(stop)
@@ -2512,7 +2557,10 @@ def test_stop_waits_for_admitted_answer_outer_publication(
         publication_kind = "application" if boundary == "application" else "outcome"
         monkeypatch.setattr(registry, "_publish_" + publication_kind, publish)
         command = ChildCommand(
-            "answer", start.child, ChildOperation.steer, turn,
+            "answer",
+            start.child,
+            ChildOperation.steer,
+            turn,
             {"content": encode_value(text_message_content("late"))},
         )
         publication: asyncio.Task[object]
@@ -2551,5 +2599,173 @@ def test_stop_waits_for_admitted_answer_outer_publication(
         else:
             assert rows[-2].kind is EnvelopeKind.answer_application
             assert native.answers == [("ask", "allow")]
+
+    asyncio.run(run())
+
+
+def test_input_revocation_ack_precedes_disk_settlement_without_releasing_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A canceled disk thread still owns its descriptor, temp file, and slot."""
+    import threading
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from planner.executor.app_transport import ExecutorAppClient
+    from planner.executor.contracts import (
+        FileManifest,
+        FileScope,
+        FileTransfer,
+        InputTransferCancel,
+        InputTransferRequest,
+    )
+    from planner.executor.transfers import settled_io
+    from planner.executor.wire import encode_frame
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        executor._handshake_accepted = True
+        writer = Mock()
+        writer.drain = AsyncMock()
+        executor._writer = writer
+        entered, release = threading.Event(), threading.Event()
+        temporary: Path | None = None
+        received: list[WireMessage] = []
+
+        def disk_work(path: Path) -> None:
+            with path.open("wb") as stream:
+                stream.write(b"test")
+                stream.flush()
+                entered.set()
+                assert release.wait(5)
+                assert path.exists() and not stream.closed
+
+        async def download(slot: object, path: Path, progress: object) -> None:
+            nonlocal temporary
+            temporary = path
+            await settled_io(disk_work, path)
+
+        async def send(message: WireMessage) -> None:
+            received.append(message)
+
+        executor._app_client = cast(ExecutorAppClient, SimpleNamespace(download=download))
+        monkeypatch.setattr(executor, "_send", send)
+        reader = asyncio.StreamReader()
+        slot = FileTransfer(
+            "a" * 32,
+            "download",
+            FileManifest("publication", FileScope.conversation, "c_one", "file", "a" * 64, 4),
+        )
+        reader.feed_data(
+            encode_frame(
+                WireMessage(
+                    WireMessageKind.file_slot,
+                    "blocked",
+                    as_object(InputTransferRequest("command", slot)),
+                )
+            )
+        )
+        reading = asyncio.create_task(executor._read_loop(reader))
+        try:
+            await asyncio.wait_for(asyncio.to_thread(entered.wait), 2)
+            reader.feed_data(
+                encode_frame(
+                    WireMessage(
+                        WireMessageKind.input_cancel,
+                        "blocked",
+                        as_object(InputTransferCancel("command", slot.transfer_id)),
+                    )
+                )
+            )
+            async with asyncio.timeout(2):
+                while not any(frame.kind is WireMessageKind.input_cancelled for frame in received):
+                    await asyncio.sleep(0)
+            reader.feed_data(
+                encode_frame(
+                    WireMessage(
+                        WireMessageKind.input_cancel,
+                        "blocked",
+                        as_object(InputTransferCancel("command", slot.transfer_id)),
+                    )
+                )
+            )
+            async with asyncio.timeout(2):
+                while sum(frame.kind is WireMessageKind.input_cancelled for frame in received) < 2:
+                    await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert executor._input_transfers["blocked"].revoked
+            assert executor._transfers == 1 and executor._transfer_capacity._value == 3
+            assert temporary is not None and temporary.exists()
+            assert not executor._input_workers["blocked"].done()
+            # Three unrelated reservations exhaust the four-transfer capacity.
+            for _ in range(3):
+                await executor._transfer_capacity.acquire()
+            waiting = asyncio.create_task(executor._transfer_capacity.acquire())
+            await asyncio.sleep(0)
+            assert not waiting.done()
+            release.set()
+            await asyncio.wait_for(waiting, 2)
+            async with asyncio.timeout(2):
+                while executor._input_transfers:
+                    await asyncio.sleep(0)
+            assert not temporary.exists() and executor._transfers == 0
+            assert not writer.write.called
+        finally:
+            release.set()
+            reader.feed_eof()
+            await asyncio.gather(reading, return_exceptions=True)
+            await asyncio.gather(*executor._transfer_tasks, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_input_progress_socket_failure_closes_original_writer_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from planner.executor.app_transport import ExecutorAppClient
+    from planner.executor.contracts import (
+        FileManifest,
+        FileScope,
+        FileTransfer,
+        InputTransferRequest,
+    )
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        executor._handshake_accepted = True
+        original, replacement = Mock(), Mock()
+
+        async def fail_drain() -> None:
+            executor._writer = replacement
+            raise OSError("control socket failed")
+
+        original.drain = AsyncMock(side_effect=fail_drain)
+        replacement.drain = AsyncMock()
+        executor._writer = original
+
+        async def download(slot: object, path: Path, progress: object) -> None:
+            from collections.abc import Awaitable, Callable
+
+            await cast(Callable[[str, int], Awaitable[None]], progress)("download", 1)
+
+        executor._app_client = cast(ExecutorAppClient, SimpleNamespace(download=download))
+        slot = FileTransfer(
+            "a" * 32, "download",
+            FileManifest("publication", FileScope.conversation, "c_one", "file", "a" * 64, 1),
+        )
+        try:
+            await executor._input(WireMessage(
+                WireMessageKind.file_slot, "input", as_object(InputTransferRequest("command", slot))
+            ))
+            original.close.assert_called_once_with()
+            replacement.close.assert_not_called()
+            replacement.write.assert_not_called()
+            assert not executor._input_transfers and executor._transfers == 0
+        finally:
+            executor.spool.close()
 
     asyncio.run(run())

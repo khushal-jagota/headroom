@@ -26,6 +26,7 @@ from planner.executor.contracts import (
     CommandDisposition,
     CommandOutcome,
     JsonObject,
+    RemoteInputTransferFailed,
     WireMessage,
     WireMessageKind,
 )
@@ -151,7 +152,15 @@ class RemoteBackendChild:
                 )
             except ProtocolRefused as error:
                 raise backend.BackendSpawnFailed(str(error)) from error
-        result = await self._send_command(command)
+        try:
+            result = await self._send_command(command)
+        except RemoteInputTransferFailed as error:
+            error_type = (
+                backend.BackendSpawnFailed
+                if operation is ChildOperation.start
+                else backend.PromptWriteFailed
+            )
+            raise error_type(str(error)) from error
         if result.disposition is CommandDisposition.uncertain:
             if operation is ChildOperation.steer:
                 return {

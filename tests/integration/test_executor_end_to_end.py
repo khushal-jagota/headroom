@@ -64,6 +64,7 @@ from planner.executor.contracts import (
     ConnectionState,
     EnvelopeKind,
     ExecutorIdentity,
+    FrameWriter,
     IpcOperation,
     IpcRequest,
     JsonObject,
@@ -194,14 +195,17 @@ class CutReceiptEndpoint(ExecutorEndpoint):
             envelope, identity, **({"observer": observer} if observer is not None else {})
         )
 
-    async def _send(self, message: WireMessage) -> None:
+    async def _send_reconciliation(
+        self, message: WireMessage, identity: ExecutorIdentity, writer: FrameWriter
+    ) -> bool:
+        sent = await super()._send_reconciliation(message, identity, writer)
         if message.kind is WireMessageKind.file_slot and self.cut_input:
             self.cut_input = False
             self.input_cut_count += 1
-            await super()._send(message)
-            assert self.writer is not None
-            self.writer.close()
-            return
+            writer.close()
+        return sent
+
+    async def _send(self, message: WireMessage) -> None:
         if (
             message.kind == WireMessageKind.receipt
             and message.payload.get("submission_id") == self.cut_submission
@@ -1051,6 +1055,9 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile, MessageText
+    from planner.executor import vps
+    from planner.executor.contracts import ChildCommand
+    from planner.executor.transfers import GenerationTransfers
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -1063,7 +1070,32 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
                 standard_error_tail=None,
             )
             await eventually(lambda: harness.events("turn_ended") == 1, "initial turn did not end")
-            contents = bytes(range(256)) * 3000
+            generation = harness.mac.identity.connection_generation
+            monkeypatch.setattr(vps, "REQUEST_TIMEOUT_SECONDS", 0.15)
+            emitted: list[ChildCommand] = []
+            emit = harness.endpoint._emit_command
+
+            async def record_command(command: ChildCommand, *args: Any) -> bool:
+                result = await emit(command, *args)
+                if result:
+                    emitted.append(command)
+                return result
+
+            monkeypatch.setattr(harness.endpoint, "_emit_command", record_command)
+            first_chunk = asyncio.Event()
+            claim_download = GenerationTransfers.claim_download
+
+            def paced_download(service: GenerationTransfers, transfer_id: str) -> Any:
+                async def chunks() -> Any:
+                    async for chunk in claim_download(service, transfer_id):
+                        await asyncio.sleep(0.08)
+                        first_chunk.set()
+                        yield chunk
+
+                return chunks()
+
+            monkeypatch.setattr(GenerationTransfers, "claim_download", paced_download)
+            contents = bytes(range(256)) * 800
             kept = await harness.endpoint.runtime.message_files.keep(
                 "c_scripted", contents, media_type="application/octet-stream"
             )
@@ -1074,7 +1106,8 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
             )
             harness.native.required_input_path = native_path
             harness.native.required_input_contents = contents
-            await asyncio.wait_for(
+            started = asyncio.get_running_loop().time()
+            sending = asyncio.create_task(
                 harness.system.send(
                     "c_scripted",
                     (
@@ -1087,11 +1120,20 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(
                         ),
                     ),
                     sender_label="Test",
-                ),
-                5,
+                )
             )
-            assert harness.native.prompt_count == 2
+            await asyncio.wait_for(first_chunk.wait(), 2)
+            control = await harness.endpoint._request(
+                WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
+            )
+            assert control.kind is WireMessageKind.health
+            result = await asyncio.wait_for(sending, 5)
+            assert harness.native.prompt_count == 2, repr(result)
+            assert asyncio.get_running_loop().time() - started > 0.15
+            assert harness.mac.identity.connection_generation == generation
             assert native_path.read_bytes() == contents
+            assert len(emitted) == 1
+            assert harness.mac.registry._commands[emitted[0].command_id] == emitted[0]
         finally:
             await harness.close()
 
@@ -1911,7 +1953,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     asyncio.run(run())
 
 
-def test_vps_refuses_protocol_one_before_replay_without_fencing_current_peer(
+def test_vps_refuses_protocol_eight_before_replay_without_fencing_current_peer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from uuid import uuid4
@@ -1935,7 +1977,7 @@ def test_vps_refuses_protocol_one_before_replay_without_fencing_current_peer(
             peer = await ws_context.__aenter__()
             stream = ControlWebSocket(peer)
             old = ExecutorHealth(
-                ExecutorIdentity(1, "a" * 40, 1, str(uuid4()), 1),
+                ExecutorIdentity(8, "a" * 40, 2, str(uuid4()), 1),
                 42,
                 ConnectionState.disconnected,
                 False,
@@ -2055,9 +2097,12 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
 def test_input_receipt_must_validate_before_command_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
+    from pydantic import TypeAdapter
+
     from planner.conversation.message_content import MessageFile
     from planner.executor.codec import encode_value
-    from planner.executor.contracts import ChildCommand, ChildOperation
+    from planner.executor.contracts import ChildCommand, ChildOperation, RemoteInputTransferFailed
+    from planner.executor.wire import encode_frame
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -2065,13 +2110,13 @@ def test_input_receipt_must_validate_before_command_dispatch(
         try:
             reject = True
             rejected = asyncio.Event()
-            completions = 0
             commands = 0
-            send = harness.mac._send
-            request = harness.endpoint._request
+            assert harness.mac._writer is not None
+            write = harness.mac._writer.write
             emit_command = harness.endpoint._emit_command
 
-            async def corrupt_ack(message: WireMessage) -> None:
+            def corrupt_ack(data: bytes) -> None:
+                message = TypeAdapter(WireMessage).validate_json(data[4:])
                 if reject and message.kind is WireMessageKind.file_accepted:
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
@@ -2084,13 +2129,7 @@ def test_input_receipt_must_validate_before_command_dispatch(
                         payload,
                     )
                     rejected.set()
-                await send(message)
-
-            async def count_completions(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
-                nonlocal completions
-                if kind is WireMessageKind.file_slot:
-                    completions += 1
-                return await request(kind, payload)
+                write(encode_frame(message))
 
             async def count_commands(command: ChildCommand) -> bool:
                 nonlocal commands
@@ -2099,8 +2138,7 @@ def test_input_receipt_must_validate_before_command_dispatch(
                     commands += 1
                 return emitted
 
-            monkeypatch.setattr(harness.mac, "_send", corrupt_ack)
-            monkeypatch.setattr(harness.endpoint, "_request", count_completions)
+            monkeypatch.setattr(harness.mac._writer, "write", corrupt_ack)
             monkeypatch.setattr(harness.endpoint, "_emit_command", count_commands)
             contents = bytes(range(256)) * 3000
             kept = await harness.endpoint.runtime.message_files.keep(
@@ -2137,30 +2175,20 @@ def test_input_receipt_must_validate_before_command_dispatch(
             harness.native.required_input_contents = contents
             caller = asyncio.create_task(harness.endpoint.send_command(command))
             await asyncio.wait_for(rejected.wait(), 8)
-            await eventually(
-                lambda: harness.mac.identity.connection_generation > generation,
-                "Invalid input acknowledgment did not reconnect",
-            )
-            assert not caller.done()
-            pending = harness.endpoint.pending_commands[command.command_id]
-            assert pending[0] == command and not pending[1].done()
-            assert commands == 0
-            assert completions > 0
-            assert harness.native.prompt_count == 1
-            assert target.exists()
+            with pytest.raises(RemoteInputTransferFailed):
+                await asyncio.wait_for(caller, 8)
+            assert harness.mac.identity.connection_generation == generation
+            assert commands == 0 and harness.native.prompt_count == 1
+            assert command.command_id not in harness.endpoint.pending_commands
+            assert target.read_bytes() == contents
             assert (
                 await harness.endpoint.runtime.message_files.read("c_scripted", kept.stored_file_id)
                 == contents
             )
-            rejected_completions = completions
-            reject = False
-            outcome = await asyncio.wait_for(asyncio.shield(caller), 8)
-            assert outcome.command_id == command.command_id
-            assert outcome.disposition is CommandDisposition.succeeded
-            assert target.read_bytes() == contents
-            assert completions == rejected_completions + 1 and commands == 1
-            assert harness.native.prompt_count == 2
-            assert command.command_id not in harness.endpoint.pending_commands
+            control = await harness.endpoint._request(
+                WireMessageKind.health, {"clock_probe": {"vps_sent_at_ms": 1000}}
+            )
+            assert control.kind is WireMessageKind.health
 
         finally:
             if caller is not None and not caller.done():

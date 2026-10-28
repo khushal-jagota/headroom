@@ -112,6 +112,8 @@ def test_external_cancellation_preserves_writer_and_cleans_pending() -> None:
 def test_unexpected_request_task_failure_closes_original_generation(failure: str) -> None:
     async def run() -> None:
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
+        endpoint._input_exchanges = {}
+        endpoint._revoked_input_commands = set()
         original, replacement = peer(), peer()
         identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 2, "incarnation", 1)
         endpoint.identity = identity
@@ -158,6 +160,8 @@ def test_unexpected_request_task_failure_closes_original_generation(failure: str
 def test_request_task_cancellation_propagates() -> None:
     async def run() -> None:
         endpoint = ExecutorEndpoint.__new__(ExecutorEndpoint)
+        endpoint._input_exchanges = {}
+        endpoint._revoked_input_commands = set()
         original = peer()
 
         async def cancel(*args: object) -> None:

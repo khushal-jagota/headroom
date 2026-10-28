@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import re
 import struct
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -279,7 +279,12 @@ class ExecutorAppClient:
             if response.status != 204:
                 raise ConnectionError("executor upload refused")
 
-    async def download(self, slot: FileTransfer, path: Path) -> None:
+    async def download(
+        self,
+        slot: FileTransfer,
+        path: Path,
+        progress: Callable[[str, int], Awaitable[None]] | None = None,
+    ) -> None:
         import os
 
         from planner.executor.transfers import _write_all
@@ -301,8 +306,12 @@ class ExecutorAppClient:
                     if count > slot.manifest.byte_count:
                         raise ValueError("download exceeds manifest")
                     await settled_io(_write_all, descriptor, chunk)
+                    if progress is not None and chunk:
+                        await progress("download", count)
                 if count != slot.manifest.byte_count:
                     raise ValueError("download shorter than manifest")
+                if progress is not None:
+                    await progress("finalization", count)
                 await settled_io(os.fsync, descriptor)
         finally:
             os.close(descriptor)

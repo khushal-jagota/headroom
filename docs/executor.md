@@ -27,7 +27,7 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 8. Earlier peers refuse work before replay. The
+The wire protocol is version 9. Earlier peers refuse work before replay. The
 journal format is version 2. Earlier journal formats refuse ordinary startup
 and deployment before mutation. Wire compatibility and journal compatibility are
 separate checks. Neither compatibility check converts stored work.
@@ -62,7 +62,7 @@ Ticket fields retain their served `/files/tickets/<ticket-id>/<relative-path>` l
 
 The complete encoded start command must fit the existing one-megabyte frame limit.
 Oversized or invalid snapshots refuse startup without truncation or another transport.
-Protocol 8 requires this bootstrap on both peers. Journal format 2 stays unchanged.
+Protocol 9 requires this bootstrap on both peers. Journal format 2 stays unchanged.
 
 Code paths: `src/planner/executor/skills.py`, `src/planner/executor/remote.py`,
 `src/planner/executor/runtime.py`, `src/planner/executor/vps.py`.
@@ -133,7 +133,16 @@ The receiver makes a fresh verified copy before atomic publication and rechecks 
 Input downloads also pass through receiver quarantine and verification before the dependent native command.
 Lost completion retains the original publication or command identity for reconciliation.
 
-Generation loss closes admission before cleanup waits. Cancellation settles admitted filesystem work, including receiver copies in threads, before slot release or directory removal.
+Input downloads use a separate progress contract. Ordinary control requests retain their 30-second deadline.
+A download fails after 30 seconds without positive byte progress. Final verification and installation have a fixed 120-second deadline after download EOF.
+Repeated progress or health frames cannot extend finalization. Inputs can exceed the ordinary control deadline while bytes continue to advance.
+
+Cancellation fences command dispatch immediately. The VPS waits at most five seconds for the Mac to acknowledge transfer revocation.
+A missing acknowledgment leaves remote revocation unconfirmed. Cancellation cannot undo native effects after a command crosses the wire.
+Transfer failure leaves unrelated conversations connected. Genuine control connection failures retain their normal recovery path.
+
+Generation loss closes admission before cleanup waits. Filesystem work can outlive logical failure or cancellation.
+The transfer retains its files, descriptors, and capacity until that work settles. Cleanup never deletes a resource that admitted work still uses.
 Ordinary account access stays intact. Accepted bytes remain protected by receiver verification and atomic publication.
 
 Snapshots and hashes use bounded streams. One submission per conversation can
@@ -376,7 +385,7 @@ The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Earlier peers refuse the protocol 8 handshake before replay.
+Earlier peers refuse the protocol 9 handshake before replay.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac
@@ -409,7 +418,7 @@ Any permitted untagged device under the allowed owner login can assert it. No ne
 Auxiliary routes also check the current incarnation, generation, and reserved transfer or stream ID.
 Domain writes still require the original assigned child's authority. Native authentication grants no Worker owner authority.
 
-Protocol 8 requires matching Mac and VPS packages before replay. Journal format 2 stays unchanged.
+Protocol 9 requires matching Mac and VPS packages before replay. Journal format 2 stays unchanged.
 The Mac retains its native children during app restarts and reconnects through inventory, reconciliation, replay, and readiness.
 There is no fallback transport. Lost replies leave native effects unconfirmed rather than repeating them.
 

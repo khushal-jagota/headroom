@@ -19,13 +19,26 @@ from planner.executor.contracts import ExecutorIdentity, FileManifest, FileSnaps
 from planner.executor.files import copy_verified, directory_descriptor, regular_descriptor
 
 
+async def wait_for_settlement(task: asyncio.Task[Any]) -> None:
+    """Repeated caller cancellation cannot cancel the owned physical operation."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except BaseException:
+            break
+    if task.done() and not task.cancelled():
+        task.exception()
+
+
 async def settled_io[Result](function: Callable[..., Result], *args: Any) -> Result:
     """Keep file resources alive until an admitted thread operation settles."""
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
         return await asyncio.shield(task)
     except BaseException:
-        await asyncio.gather(task, return_exceptions=True)
+        await wait_for_settlement(task)
         raise
 
 
@@ -35,6 +48,8 @@ class _Transfer:
     started: bool = False
     completed: bool = False
     consumed: bool = False
+    readers: int = 0
+    release_requested: bool = False
 
 
 class GenerationTransfers:
@@ -103,7 +118,7 @@ class GenerationTransfers:
         try:
             await asyncio.shield(task)
         except BaseException:
-            await asyncio.gather(task, return_exceptions=True)
+            await wait_for_settlement(task)
             self.release(transfer_id)
             raise
         finally:
@@ -149,6 +164,7 @@ class GenerationTransfers:
             task = asyncio.current_task()
             assert task is not None
             self.active.add(task)
+            transfer.readers += 1
             try:
                 with regular_descriptor(self.root / transfer_id) as descriptor:
                     count = 0
@@ -164,6 +180,9 @@ class GenerationTransfers:
                         raise ValueError("download is short")
             finally:
                 self.active.discard(task)
+                transfer.readers -= 1
+                if transfer.release_requested:
+                    self.release(transfer_id)
 
         return chunks()
 
@@ -181,6 +200,10 @@ class GenerationTransfers:
         return self.root / transfer_id
 
     def release(self, transfer_id: str) -> None:
+        transfer = self.transfers.get(transfer_id)
+        if transfer is not None and transfer.readers:
+            transfer.release_requested = True
+            return
         if self.transfers.pop(transfer_id, None) is not None:
             with directory_descriptor(self.root) as parent:
                 try:
@@ -193,10 +216,10 @@ class GenerationTransfers:
         tasks = tuple(self.active)
         for task in tasks:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        if self.preparations:
-            await asyncio.gather(*self.preparations, return_exceptions=True)
+        for task in tasks:
+            await wait_for_settlement(task)
+        for task in tuple(self.preparations):
+            await wait_for_settlement(task)
         for transfer_id in tuple(self.transfers):
             self.release(transfer_id)
 

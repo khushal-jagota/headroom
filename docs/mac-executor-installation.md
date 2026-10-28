@@ -96,11 +96,11 @@ PY
 ```
 
 Check that the resolved commit equals the reviewed full SHA.
-Record the candidate constants: wire protocol 8 and journal format 2.
-Both Mac and VPS peers must match protocol 8 before work. Coordinate the peer
+Record the candidate constants: wire protocol 9 and journal format 2.
+Both Mac and VPS peers must match protocol 9 before work. Coordinate the peer
 transition through the Manager and installation Worker before any application.
 
-Protocol 8 retains exact canonical database skills before each new native Worker starts.
+Protocol 9 retains exact canonical database skills before each new native Worker starts.
 It repairs canonical entries in the normal account's Codex skills home and preserves unrelated account skills and credentials.
 Review that account path before authorized application. Do not redirect HOME or CODEX_HOME to bypass a conflict.
 Retain the existing executor root and journal. The bootstrap uses local copies beneath that root.
