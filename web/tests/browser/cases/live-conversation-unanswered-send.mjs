@@ -65,7 +65,9 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   );
   await writeFile(
     mainPath,
-    String.raw`import {viewSnapshot, viewChanges} from "../tests/support/conversation/view-fixture";
+    String.raw`import {observeNativeWheel} from "../tests/browser/support/native-wheel-completion.mjs";
+(window as any).__observeNativeWheel = observeNativeWheel;
+import {viewSnapshot, viewChanges} from "../tests/support/conversation/view-fixture";
 import type {ConversationViewLens} from "../src/lib/conversation/view/contracts";
 const snapshot = {
   conversation_id: "conversation-one",
