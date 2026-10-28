@@ -100,7 +100,7 @@
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
   <div class="kicker">{kicker}</div>
-  <div class="title">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} ticketId={currentWorker.id} />{/if}<span>{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="title">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
@@ -123,6 +123,7 @@
   .kicker { font-size:12px; color:var(--text-faintest); margin-bottom:5px; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
   .title { font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); overflow-wrap:anywhere; }
+  .title-text { flex:1; min-width:0; }
   .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--surface-recessed); border-radius:var(--radius-md); font-size:12.5px; line-height:1.5; color:var(--text-default); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */

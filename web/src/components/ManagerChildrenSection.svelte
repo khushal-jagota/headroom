@@ -111,7 +111,7 @@
     <div class="manager-workspace-status-body">
       {#each items as ticket (ticket.id)}
         <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
-          <WorkerRow locale={ticket.locale} ticketId={ticket.id} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+          <WorkerRow locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
             quiet={ticket.stage === "done"}
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}

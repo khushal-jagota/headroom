@@ -451,11 +451,13 @@ def verify_card_geometry(page, url, fixture, evidence):
 
     def ticket(identity, parent="geometry_a"):
         return {"id": identity, "manager_id": parent, "title": "Worker " + identity,
-                "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+                "worker_type": "coding", "locale": "vps", "stage": "needs_implementation", "ticket_status": "agent",
                 "conversation_id": "conversation_" + identity,
                 "conversation_signal": {"working": False, "message_for_owner": False}}
 
     first, second = ticket("geometry_one"), ticket("geometry_two")
+    first["title"] = "Rebuild the Mac and VPS controls to the approved design"
+    first["conversation_signal"]["working"] = True
     chief_ticket = ticket("geometry_chief", None)
     fixture.update(enabled=True, board={"managers": [
         {"id": "geometry_a", "title": "A manager title that wraps across several lines in the narrow sidebar", "created_at": 1, "tickets": [first, second]},
@@ -469,6 +471,60 @@ def verify_card_geometry(page, url, fixture, evidence):
     page.reload(wait_until="domcontentloaded")
     expect(page.locator('[data-ticket-id="geometry_two"]')).to_be_visible()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    # Existing final-state row tests omit actual machine mark size and wrapped hover density.
+    # Reuse this App host and its existing hover path. The short title stays naturally one line.
+    density_started = time.perf_counter()
+    page.evaluate('document.fonts.ready')
+    def contrast(node):
+        return node.evaluate(r"""node => {
+          const rgb = value => value.match(/[\d.]+/g).map(Number);
+          const luminance = color => color.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
+          const color = getComputedStyle(node).color;
+          let parent=node, background='rgb(0, 0, 0)';
+          while(parent){const next=getComputedStyle(parent).backgroundColor;const parts=rgb(next);if(parts.length===3 || parts[3]===1){background=next;break;}parent=parent.parentElement;}
+          const a=luminance(rgb(color)),b=luminance(rgb(background));
+          return {color,background,ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};
+        }""")
+    density_samples = []
+    for width in [1280, 390]:
+        page.set_viewport_size({"width": width, "height": 900})
+        if width == 390:
+            page.locator('.workspace-mobile-nav [data-screen="workspace"]').click()
+        rail_row = page.locator('[data-ticket-id="geometry_one"]')
+        expect(rail_row).to_be_visible()
+        expect(rail_row).to_have_accessible_name(first['title'] + ' Working')
+        rail_bounds = rail_row.bounding_box()
+        assert rail_bounds and abs(rail_bounds['height'] - 27.5) < .1, rail_bounds
+        row_contrast = contrast(rail_row)
+        assert row_contrast['ratio'] >= 4.5, row_contrast
+        expect(page.locator('.approved-rail .machine-identity')).to_have_count(0)
+        expect(page.locator('.machine-toolbar, [data-machine-notice]')).to_have_count(0)
+        expect(page.get_by_role('button', name='Create Ticket', exact=True)).to_have_count(0)
+        hover_samples = []
+        for identity, expected_height in [('geometry_one', 42), ('geometry_two', 21)]:
+            page.locator(f'[data-ticket-id="{identity}"]').hover()
+            panel = page.locator('[data-rail-hover-panel].visible')
+            expect(panel.locator('.title-text')).to_be_visible()
+            page.wait_for_timeout(100)
+            title_bounds = panel.locator('.title-text').bounding_box()
+            mark_bounds = panel.locator('.machine-identity').bounding_box()
+            assert title_bounds and abs(title_bounds['height'] - expected_height) < .1, title_bounds
+            assert mark_bounds and mark_bounds['width'] == 15 and mark_bounds['height'] == 15
+            assert panel.locator('.title').evaluate('n => n.firstElementChild.classList.contains("machine-identity")')
+            assert panel.locator('.machine-identity').get_attribute('tabindex') is None
+            assert panel.locator('.machine-identity').inner_text() == ''
+            status_contrast = contrast(panel.locator('.doing'))
+            assert status_contrast['ratio'] >= 4.5, status_contrast
+            hover_samples.append({"ticket": identity, "title": title_bounds, "mark": mark_bounds, "statusContrast": status_contrast})
+            page.screenshot(path=str(evidence / f'machine-hover-{identity}-{width}.png'), animations='disabled')
+        density_samples.append({"width": width, "rail": rail_bounds, "rowContrast": row_contrast, "hover": hover_samples})
+        page.mouse.move(width - 10, 800)
+    (evidence / 'machine-rail-density.json').write_text(json.dumps({"samples": density_samples, "seconds": time.perf_counter() - density_started, "newHosts": 0}, indent=2))
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.evaluate("location.hash='#/workspace/utility/settings'")
+    expect(page.locator('[data-settings]')).to_be_visible()
+    page.mouse.move(1100, 800)
+
     page.evaluate("""() => {
       window.__cardProof = [];
       window.__cardSample = id => {
@@ -1136,6 +1192,24 @@ def verify_conversation_overlay(browser, url):
             page.mouse.up()
             page.wait_for_timeout(100)
         expect(document.get_by_text(final_text, exact=True)).to_have_count(1)
+        if not ticket_host:
+            # The existing Chief layout proves the shared Manager row on desktop and phone.
+            sample_width = 1280 if name == 'wide-chief' else width
+            page.set_viewport_size({"width": sample_width, "height": height})
+            page.evaluate('document.fonts.ready')
+            manager_row = document.locator('[data-worker-ticket-id="t_overlay1"]')
+            expect(manager_row).to_be_visible()
+            manager_bounds = manager_row.bounding_box()
+            assert manager_bounds and abs(manager_bounds['height'] - 38) < .1, manager_bounds
+            mark = manager_row.locator('.machine-identity')
+            mark_bounds = mark.bounding_box()
+            assert mark_bounds and mark_bounds['width'] == 15 and mark_bounds['height'] == 15
+            expect(mark).to_have_attribute('aria-label', 'Runs on VPS')
+            assert manager_row.locator('button, a, [tabindex]').count() == 0
+            proof.setdefault('machineRows', []).append({"width": sample_width, "row": manager_bounds, "mark": mark_bounds})
+            page.screenshot(path=str(evidence / f'machine-manager-{sample_width}.png'), animations='disabled')
+            page.set_viewport_size({"width": width, "height": height})
+
         # Initial selection stays product-owned. Choose dock state for this proof.
         if pane.get_attribute('data-conversation-state') == 'opened':
             page.locator('[data-conversation-collapse]').click()

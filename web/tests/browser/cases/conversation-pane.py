@@ -4102,7 +4102,9 @@ def _machine_evidence(browser, url):
     errors=[]
     page.on("pageerror",lambda error:errors.append(str(error)))
     page.goto(url+"?machines",wait_until="domcontentloaded")
-    expect(page.locator('[data-machine-notice]')).to_be_visible()
+    expect(page.locator('[data-machine-notice]')).to_have_count(0)
+    expect(page.get_by_role("button", name="Runs on Mac")).to_have_count(0)
+    expect(page.get_by_role("img", name="Runs on Mac")).to_be_visible()
     expect(page.locator('[data-conversation-id="vps-conversation"] [data-conversation-signal="working"]')).to_be_visible()
     expect(page.locator('[data-conversation-id="machine-conversation"] [data-conversation-signal="working"]')).to_have_count(0)
     assert page.locator('.ticket-row button, .ticket-row a').count()==0
@@ -4131,26 +4133,6 @@ def _machine_evidence(browser, url):
     assert post['request_id']=='public-turn:user_input:native-questions'
     assert post['executor_ask']['ask_id']=='native-questions'
     assert len(post['answers'])==2
-    page.get_by_role('button',name='Runs on Mac. Show machine details').click()
-    dialog=page.get_by_role('dialog')
-    dialog.get_by_role('button',name='Move Ticket…').click()
-    dialog.get_by_role('button',name='Move Ticket',exact=True).click()
-    expect(dialog.get_by_role('alert')).to_contain_text('Source state unknown.')
-    dialog.get_by_role('button',name='Close').click()
-    page.evaluate('()=>window.__machineCreating()')
-    form=page.get_by_role('form',name='Create a Ticket')
-    form.get_by_label('Title',exact=True).fill('Current Manager creation')
-    form.get_by_label('Brief',exact=True).fill('Canonical brief bytes')
-    form.get_by_label('Manager',exact=True).select_option('manager-fixture')
-    form.get_by_label('Run on',exact=True).select_option('macos')
-    expect(form.get_by_text('Resolved machine: Mac.',exact=True)).to_be_visible()
-    form.get_by_role('button',name='Create Ticket',exact=True).click()
-    page.wait_for_function('()=>window.__machineCreated === "created-worker"')
-    created=page.evaluate('()=>window.__machine.creates[0]')
-    assert created['manager']=={'kind':'manager','id':'manager-fixture'}
-    assert created['brief']=='Canonical brief bytes'
-    assert created['locale']=='macos'
-    assert 'orchestrator' not in created and 'kickoff_note' not in created
     assert not errors,errors
     page.close()
     print('MACHINE_EVIDENCE_PROOF seconds='+str(round(time.perf_counter()-started,3))+' newHosts=0',flush=True)

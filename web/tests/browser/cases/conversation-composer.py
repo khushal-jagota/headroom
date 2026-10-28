@@ -6,6 +6,7 @@ def run(browser, urls):
 
     import base64
     import os
+    import json
     from pathlib import Path
 
     INPUT = "[data-conversation-input]"
@@ -338,6 +339,90 @@ def run(browser, urls):
     settled(page)
     assert page.locator(INPUT).input_value() == "newer draft"
     assert names(page) == ["new.txt"]
+    # Canonical picker facts reuse this component host. This proves presentation,
+    # callback retry and focus only. No lifecycle endpoint or Ticket mutation runs.
+    page.route("**/api/conversation/backends", lambda route: route.fulfill(json={"backends": []}))
+    for width in [1280, 390]:
+        page.set_viewport_size({"width": width, "height": 800})
+        page.goto(urls[0] + "?picker", wait_until="domcontentloaded")
+        destination = page.locator("[data-employee-destination-picker] button")
+        assert destination.is_disabled()
+        assert destination.get_attribute("aria-label") == "Runs on Mac"
+        picker = page.locator(".picker-proof > [data-conversation-model-picker]")
+        trigger = picker.locator("[data-conversation-picker-trigger]")
+        assert "opus → claude-opus-5" in trigger.inner_text()
+        assert picker.locator(".listbox-picker-chevron,.listbox-picker-chevron-drawn").count() == 0
+        trigger.press("ArrowDown")
+        options = picker.get_by_role("option")
+        assert options.count() == 14
+        assert "current selection" in options.first.get_attribute("aria-label")
+        assert "Effort: unknown" in options.first.get_attribute("aria-label")
+        assert "Effort: none" in options.nth(1).get_attribute("aria-label")
+        panel = picker.locator("[data-conversation-picker-panel]")
+        bounds = panel.bounding_box()
+        assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
+        assert bounds["y"] >= 0 and bounds["y"] + bounds["height"] <= 720
+        # The empty support fact does not erase explicit intent on selection.
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        assert page.evaluate("window.__pickerChoices") == [{"model": "claude-opus-5", "effort": "high"}]
+        assert trigger.evaluate("e => e === document.activeElement")
+        trigger.press("ArrowDown")
+        page.keyboard.press("ArrowLeft")
+        page.keyboard.press("End")
+        assert picker.locator("[data-model-picker-check]").evaluate("e => e === document.activeElement")
+        page.keyboard.press("ArrowUp")
+        page.keyboard.press("Space")
+        why = picker.locator("[data-model-picker-why]")
+        assert why.get_attribute("aria-expanded") == "true"
+        assert "Reason: catalog_unavailable" in picker.locator(".model-picker-detail").inner_text()
+        assert panel.is_visible()
+        output = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+        if output:
+            Path(output).mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(Path(output) / f"canonical-picker-{width}.png"))
+        why.focus()
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        page.wait_for_function("window.__pickerReads.length === 1")
+        assert picker.get_by_role("listbox").evaluate("e => e === document.activeElement")
+        picker.locator("[data-model-picker-check]").click()
+        page.wait_for_function("window.__pickerReads.length === 2")
+        assert page.evaluate("JSON.stringify(window.__pickerReads[0]) === JSON.stringify(window.__pickerReads[1])")
+        # Tokens and inherited state text clear the 4.5:1 text contrast floor.
+        contrast = picker.locator(".model-picker-foot").evaluate(r"""e => {
+          const rgb=s=>s.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4});
+          const lum=s=>{const c=rgb(s);return .2126*c[0]+.7152*c[1]+.0722*c[2]};
+          const s=getComputedStyle(e),a=lum(s.color),b=lum(s.backgroundColor);
+          return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+        }""")
+        assert contrast >= 4.5, contrast
+        control_boxes = picker.locator("button").evaluate_all("els => els.map(e => ({label:e.getAttribute('aria-label') ?? e.textContent, width:e.getBoundingClientRect().width, height:e.getBoundingClientRect().height})).filter(b => b.width && b.height)")
+        control_boxes.append({"label": "destination", **destination.bounding_box()})
+        for box in control_boxes:
+            assert box["width"] >= 24 and box["height"] >= 24, box
+        if output:
+            (Path(output) / f"canonical-picker-{width}.json").write_text(json.dumps({
+                "scope": "component-only fixture callbacks; no real endpoint, durable Ticket write or connected acceptance",
+                "viewport": width, "panel": bounds, "contrast": contrast, "targets": control_boxes,
+                "retry_callback_arguments": page.evaluate("window.__pickerReads"),
+                "choices": page.evaluate("window.__pickerChoices"),
+            }, indent=2))
+        for control in [why, picker.locator("[data-model-picker-check]")]:
+            box = control.bounding_box()
+            assert box["width"] >= 24 and box["height"] >= 24, box
+        picker.get_by_role("listbox").focus()
+        page.keyboard.press("Escape")
+        assert trigger.evaluate("e => e === document.activeElement")
+        # Null effort metadata preserves intent too.
+        trigger.press("ArrowDown")
+        page.keyboard.press("Enter")
+        assert page.evaluate("window.__pickerChoices.at(-1)") == {"model": "opus", "effort": "high"}
+    page.goto(urls[0] + "?picker&missingRetry", wait_until="domcontentloaded")
+    picker = page.locator(".picker-proof > [data-conversation-model-picker]")
+    picker.locator("[data-conversation-picker-trigger]").click()
+    assert picker.locator("[data-model-picker-check]").is_disabled()
+    assert page.evaluate("window.__pickerReads.length") == 0
     assert not errors, errors
     pass  # Shared runner owns the browser lifecycle.
     print("conversation-composer-browser.test.mjs: all assertions passed")

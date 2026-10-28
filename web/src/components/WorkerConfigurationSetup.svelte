@@ -1,4 +1,8 @@
 <script lang="ts">
+  import type { PickerRow, CanonicalModelValidation } from "../lib/conversation/modelResolutionWire";
+  import { machineName, type TicketLocale } from "../lib/ticketMachines";
+  import ListboxPicker from "./conversation/ListboxPicker.svelte";
+  import MachineSymbol from "./machines/MachineSymbol.svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
   import { createEmployeeConfigurationEditor } from "../lib/conversation/employeeConfigurationEditor.svelte";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
@@ -7,12 +11,28 @@
   import UnifiedModelPicker from "./conversation/UnifiedModelPicker.svelte";
 
   let {
+    destination,
+    locked = false,
+    canonicalRows,
+    validation,
+    onChooseDestination,
+    onChooseCanonicalModel,
+    onChooseCanonicalBackend,
+    onRetry,
     ticketId,
     employeeBackend,
     employeeLaunchModel,
     employeeLaunchReasoningEffort,
     onSave
   }: {
+    destination?: TicketLocale;
+    locked?: boolean;
+    canonicalRows?: readonly PickerRow[];
+    validation?: CanonicalModelValidation | null;
+    onChooseDestination?: (destination: TicketLocale) => void;
+    onChooseCanonicalModel?: (row: PickerRow, effort: string | null) => void;
+    onChooseCanonicalBackend?: (backend: CanonicalModelValidation["selection"]["backend_key"]) => void;
+    onRetry?: () => Promise<void>;
     ticketId: string;
     employeeBackend: string;
     employeeLaunchModel: string | null;
@@ -36,17 +56,38 @@
   data-employee-configuration-reasoning={editor.selected.employee_launch_reasoning_effort ?? ""}
 >
   <span class="employee-configuration-key">runs on</span>
+  <ListboxPicker
+    items={[{value: "macos", name: "Mac"}, {value: "vps", name: "VPS"}]}
+    selectedValue={destination ?? null}
+    disabled={locked || editor.saving || !onChooseDestination || !destination}
+    label={destination ? `Runs on ${machineName(destination)}` : "Destination unavailable"}
+    chevron="none"
+    scrollPanel
+    below
+    attributes={{"data-employee-destination-picker": ""}}
+    onChoose={(value) => onChooseDestination?.(value as TicketLocale)}
+  >
+    {#snippet triggerContent()}
+      {#if destination}<MachineSymbol locale={destination} />{machineName(destination)}{:else}Destination unavailable{/if}
+    {/snippet}
+    {#snippet optionContent(choice)}<MachineSymbol locale={choice.value as TicketLocale} />{choice.name}{/snippet}
+  </ListboxPicker>
   <UnifiedModelPicker
     view={editor.picker}
     bind:snapshots={editor.backends}
     models={editor.snapshot?.available_models ?? []}
     backendEffortOptions={editor.snapshot?.reasoning_effort_options ?? []}
     below
-    disabled={editor.saving}
+    chevron="none"
+    scrollPanel
+    {canonicalRows}
+    {validation}
+    {onRetry}
+    disabled={locked || editor.saving || (canonicalRows !== undefined && (!onChooseCanonicalModel || !onChooseCanonicalBackend))}
     keepOpenWhenDisabled
     attributes={{ "data-employee-configuration-picker": "" }}
-    onChooseBackend={editor.chooseBackend}
-    onChooseModel={editor.chooseModel}
+    onChooseBackend={(backend, defaults) => canonicalRows ? onChooseCanonicalBackend?.(backend) : editor.chooseBackend(backend, defaults)}
+    onChooseModel={(model, effort, row) => row ? onChooseCanonicalModel?.(row, effort) : editor.chooseModel(model, effort)}
   />
 
   <span data-employee-configuration-loading={editor.loading || undefined}>
@@ -75,7 +116,7 @@
 <style>
   .employee-configuration-setup { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .employee-configuration-key {
-    color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs);
+    color: var(--text-muted); font-family: var(--font-mono); font-size: var(--type-xs);
   }
   .employee-configuration-problem { flex-basis: 100%; display: flex; align-items: center; gap: var(--space-2); }
 </style>

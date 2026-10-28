@@ -1,16 +1,8 @@
 <script lang="ts">
-  import { machineRows } from "../lib/machines/visibility";
-  const machineRegistry=machineRows();
-  const machinePageKey=Symbol();
-  $effect(() => {
-    const locale=ticket.data?.locale;
-    untrack(() => machineRegistry?.set(machinePageKey,locale,false));
-    return () => untrack(() => machineRegistry?.delete(machinePageKey));
-  });
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
-  import MachineKey from "../components/machines/MachineKey.svelte";
-  import MachineNotice from "../components/machines/MachineNotice.svelte";
+  import TicketMoveAction from "../components/machines/TicketMoveAction.svelte";
+  import { machineName } from "../lib/ticketMachines";
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
@@ -66,14 +58,12 @@
     // The artifact this screen is showing, when the host keeps that in its address, and
     // the way to write it there. The Workspace supplies both; without them, the screen
     // holds the value itself.
-    machineNoticeManaged = false,
     requestedConversationId = null,
     openFile = null,
     onOpenFile = null,
     navigationErrorHandledByParent = false
   }: {
     id: string;
-    machineNoticeManaged?: boolean;
     requestedConversationId?: string | null;
     navigationErrorHandledByParent?: boolean;
     openFile?: ManagedFileTarget | null;
@@ -467,10 +457,10 @@
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
-        <div class="machine-heading">{#if detail.locale}<MachineIdentity locale={masthead.locale} ticketId={detail.id} />{/if}<span>{detail.title}</span><MachineKey /></div>
-        {#if !machineNoticeManaged}<MachineNotice relevant={detail.locale === "macos"} />{/if}
         <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <div class="worker-eyebrow" data-ticket-identity>
+            <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
+            <span aria-hidden="true">·</span>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
@@ -507,6 +497,7 @@
           </div>
           {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
             {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
+            {#snippet moveAction()}<TicketMoveAction locale={masthead.locale} ticketId={stableId} />{/snippet}
           </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
@@ -534,7 +525,7 @@
         <div bind:this={sectionElement} use:sectionObservationEvents class="ticket-col" data-ticket-section={section.record.id} data-section-stage={section.record.value.stage}>
           {#snippet kickoffContextRow()}
             {#if detail.employee_configuration_editable}
-              <WorkerConfigurationSetup ticketId={stableId} employeeBackend={detail.employee_backend}
+              <WorkerConfigurationSetup destination={detail.locale} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
                 onSave={saveEmployeeConfiguration} />
             {/if}
@@ -640,8 +631,6 @@
 </section>
 
 <style>
-  .machine-heading { position:sticky; top:0; z-index:4; display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) var(--space-3); background:var(--surface-1); }
-  .machine-heading > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:48px; }
