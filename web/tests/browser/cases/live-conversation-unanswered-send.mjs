@@ -34,6 +34,12 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
     const delivery = (window as any).__delivery;
     if (delivery) {
       await new Promise<void>(resolve => {(window as any).__resolveDelivery = resolve;});
+      // This is the actual deferred HTTP acceptance return, before LiveConversation
+      // consumes it. The case checks the receipt instead of an earlier phase guess.
+      if ((window as any).__nativeRequireAcceptance) {
+        (window as any).__nativeAcceptance.push((window as any).__nativeMotion.capture('acceptance'));
+        (window as any).__nativeRequireAcceptance = false;
+      }
       if (delivery === 'unanswered') throw new Error('the connection went away');
       if (!['accepted','restored','cancelled','record-first','http-first','queued'].includes(delivery)) (window as any).__publishOutcome(body, delivery);
       return {conversation_id:'conversation-one',fate:['prompt','accepted','restored','cancelled','record-first','http-first'].includes(delivery)?'started':delivery,refusal_reason:'running_turn_changed_before_steer'};
