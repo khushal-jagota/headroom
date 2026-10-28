@@ -72,8 +72,11 @@ def test_portable_publication_gate_never_reuses_old_live_observation(
 
 
 def test_publication_selects_complete_suite_and_browser_catalog(tmp_path: Path) -> None:
-    catalog = {"schema": 1, "entries": [{"path": "web/tests/a-browser.test.mjs"},
-                                         {"path": "web/tests/b-browser.test.mjs"}]}
+    entries = [
+        {"path": "web/tests/a-browser.test.mjs"},
+        {"path": "web/tests/b-browser.test.mjs"},
+    ]
+    catalog = {"schema": 1, "entries": entries}
     path = tmp_path / "web/tests/browser/catalog.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(catalog))
@@ -87,4 +90,53 @@ def test_publication_selects_complete_suite_and_browser_catalog(tmp_path: Path) 
     for layer in ("unit", "integration", "e2e"):
         assert selection[layer] == [f"tests/{layer}/nested/test_nested.py",
                                      f"tests/{layer}/test_top.py"]
-    assert selection["browser"] == [entry["path"] for entry in catalog["entries"]]
+    assert selection["browser"] == [entry["path"] for entry in entries]
+
+
+@pytest.mark.parametrize("proof", ["portable", "legacy", "legacy-mismatch"])
+def test_deploy_cli_accepts_portable_proof_and_preserves_legacy_health_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, proof: str,
+) -> None:
+    """The adapter tests did not exercise the CLI's former unconditional observation read."""
+    from click.testing import CliRunner
+
+    from planner.environments import cli
+    from planner.environments.deployment import DeploymentResult
+
+    app = _app(tmp_path / "app", "a" * 40, "candidate")
+    health_url = "http://unused/api/health"
+    evidence = tmp_path / "evidence.json"
+    identity = {"requested_sha": "a" * 40, "artifact_digest": digest_app_artifact(app)}
+    if proof == "portable":
+        evidence.write_text(json.dumps(identity | {
+            "publication_run_id": 123, "archive_sha256": "b" * 64,
+        }))
+    else:
+        evidence.write_text(json.dumps(identity | {"observation": {
+            "current_root": str(tmp_path / "current"),
+            "health_url": (
+                "http://different/api/health" if proof == "legacy-mismatch" else health_url
+            ),
+            "manifest_state": "missing", "manifest": None, "base_sha": None,
+            "health": {"status": None, "body": None, "error": "ConnectError"},
+        }}))
+    deployments: list[object] = []
+
+    def deploy(**kwargs: object) -> DeploymentResult:
+        deployments.append(kwargs["gate_evidence"])
+        return DeploymentResult("succeeded", "a" * 40, None, None)
+
+    monkeypatch.setattr(cli, "deploy_app", deploy)
+    result = CliRunner().invoke(cli.environment, [
+        "app-deploy", "--candidate-app", str(app), "--current-root", str(tmp_path / "current"),
+        "--source-db", str(tmp_path / "database.sqlite"), "--backup-dir", str(tmp_path / "backups"),
+        "--health-url", health_url, "--service-manager", "systemctl", "--service-name", "unused",
+        "--gate-evidence", str(evidence),
+    ])
+    if proof == "legacy-mismatch":
+        assert result.exit_code == 1
+        assert "gate evidence health URL differs" in result.output
+        assert deployments == []
+    else:
+        assert result.exit_code == 0, result.output
+        assert deployments == [gate.read_gate_evidence(evidence)]
