@@ -10,6 +10,8 @@
   let error = $state<string | null>(null);
   const request = $derived(status.request);
   const active = $derived(activeUpdateRequest(request));
+  const hasContent = $derived(active || confirming !== null ||
+    (status.configured && usableUpdate(status.available, now)) || request?.state === "failed" || error !== null);
 
   async function submit(release: PublishedUpdate, mode: UpdateMode, confirmed = false): Promise<void> {
     if (submitting) return;
@@ -47,6 +49,7 @@
   }
 </script>
 
+{#if hasContent}
 <div class="update-actions" data-update-activity={status.activity}>
   {#if active && request}
     <span>{request.state === "applying" ? "Update in progress" : request.mode === "idle" && request.state === "pending" ? "Update waits for idle" : "Update queued"} · {request.release.manifest.app_sha.slice(0, 7)}</span>
@@ -66,6 +69,7 @@
   {#if !active && request?.state === "failed"}<span>{request.detail ?? "Update failed"}</span>{/if}
   {#if error}<span role="alert">{error}</span>{/if}
 </div>
+{/if}
 
 <style>
   .update-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); width: 100%; }
