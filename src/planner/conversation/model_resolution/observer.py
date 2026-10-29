@@ -55,6 +55,7 @@ from planner.conversation.model_resolution.diagnostics import (
     DiagnosticCapture,
     diagnostic_capture_invocation,
     diagnostic_observation,
+    diagnostic_provider_operation,
     offer_capture,
 )
 from planner.conversation.production_backends import (
@@ -390,11 +391,20 @@ class ProductionCatalogObserver:
                 )
                 complete, limited = catalog.complete, catalog.visibility_limited
             else:
-                claude_catalog = await probe_claude_model_catalog(
-                    str(executable), environment=environment,
-                    working_directory=captured.localized_workspace_folder,
-                    claude_scope_registry=self._claude_scope_registry,
-                )
+                with diagnostic_provider_operation(self) as provider_operation:
+                    if provider_operation is None:
+                        claude_catalog = await probe_claude_model_catalog(
+                            str(executable), environment=environment,
+                            working_directory=captured.localized_workspace_folder,
+                            claude_scope_registry=self._claude_scope_registry,
+                        )
+                    else:
+                        claude_catalog = await probe_claude_model_catalog(
+                            str(executable), environment=environment,
+                            working_directory=captured.localized_workspace_folder,
+                            claude_scope_registry=self._claude_scope_registry,
+                            _diagnostic_provider_operation=provider_operation,
+                        )
                 rows = tuple(
                     CatalogRow(
                         model.model_id,

@@ -27,6 +27,7 @@ from planner.conversation.backends.claude_settings import (
     read_claude_catalog_settings_snapshot,
 )
 from planner.conversation.backends.probe_lifetime import owned_probe
+from planner.conversation.model_resolution.diagnostics import _ProviderOperation
 
 # The whole probe — spawn, init handshake, stop — against a local child. Long enough
 # for a cold start on a slow machine, short enough that a card is never left waiting.
@@ -103,14 +104,24 @@ async def probe_claude_model_catalog(
     environment: Mapping[str, str] | None = None,
     working_directory: Path | None = None,
     claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
+    _diagnostic_provider_operation: _ProviderOperation | None = None,
 ) -> ClaudeModelCatalog:
     """Ask the installed claude what it can be run as. Raises when it will not say."""
-    try:
-        reported, provider_scope = await owned_probe(
-            lambda: _read_models_from_init(
+    async def operation() -> tuple[list[object], str | None]:
+        if _diagnostic_provider_operation is None:
+            return await _read_models_from_init(
                 claude_executable, environment=environment, working_directory=working_directory,
                 claude_scope_registry=claude_scope_registry,
-            ),
+            )
+        with _diagnostic_provider_operation.claim():
+            return await _read_models_from_init(
+                claude_executable, environment=environment, working_directory=working_directory,
+                claude_scope_registry=claude_scope_registry,
+            )
+
+    try:
+        reported, provider_scope = await owned_probe(
+            operation,
             timeout_seconds=MODEL_CATALOG_TIMEOUT_SECONDS,
         )
     except TimeoutError as never_answered:

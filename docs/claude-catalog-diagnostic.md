@@ -44,6 +44,10 @@ The fixed record contains `diagnostic_status` and only `equal`, `changed`, or `u
 
 The canonical collector certifies only the exact vector from its two complete, agreeing passes. The receipt belongs to one observer, operation, task, thread, and capture invocation. Copies, replacements, alternate collectors, and inherited contexts do not supply that proof. The collector accepts only exact native Path roots and an exact environment dictionary for certification. Ordinary collection keeps its existing behavior for other supported inputs.
 
+The outer observation issues one private provider permit for the real nested probe. That probe passes the permit explicitly to its inner task. The claim authorizes one snapshot callback from that exact task, observer, request, and thread. Inherited context alone grants no authority. Unrelated children, descendants, copied contexts, repeated claims, and repeated callbacks cannot supply provider evidence. Capture authority stays with the outer observation task.
+
+The permit expires when its child claim ends, the outer operation ends, or the sink finishes. Revocation releases its borrowed references. It never restores parent callback authority or permits another issuance for that observation. Separate short work segments charge issuance, claim, callback authorization, and revocation to the same budget. No segment spans a provider wait or cleanup await.
+
 Both complete launch contexts and both environment tuples pass bounded validation before the diagnostic compares the environments. Every environment key and value must be a string. A malformed tail suppresses all diagnostic evidence, including independent provider evidence.
 
 A completed environment comparison can survive an unrelated canonical vector limit. It reports only `equal` or `changed` for those two tuples. It supplies no selected-content, account, historical-trigger, or provider-child claim. Raw captures retain complete generic validation and conservative suppression after a vector limit.

@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -100,7 +100,7 @@ def binding(path: Path) -> CatalogWorkspaceBinding:
 
 
 @pytest.mark.parametrize("change", ["stable", "configuration", "provider"])
-def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
+def test_real_nested_claude_probe_preserves_provider_and_ordinary_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
 ) -> None:
     """Keep both real probe owners and the actual settings comparison callback."""
@@ -118,6 +118,51 @@ def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
     config = tmp_path / "claude-home" / "settings.json"
     config.parent.mkdir()
     (tmp_path / "managed" / "managed-settings.d").mkdir(parents=True)
+    filesystem: list[Any] = []
+    descriptors: dict[int, str] = {}
+    original_open, original_fdopen = os.open, os.fdopen
+
+    def opened(path: Any, *args: Any, **kwargs: Any) -> int:
+        filesystem.append(("open", str(path)))
+        descriptor = original_open(path, *args, **kwargs)
+        descriptors[descriptor] = str(path)
+        return descriptor
+
+    class Stream:
+        def __init__(self, stream: Any, path: str) -> None:
+            self.stream, self.path = stream, path
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.stream, name)
+
+        def __enter__(self) -> Stream:
+            self.stream.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            return self.stream.__exit__(*args)
+
+        def read(self, *args: Any) -> Any:
+            filesystem.append(("read", self.path))
+            return self.stream.read(*args)
+
+    def fdopened(descriptor: int, *args: Any, **kwargs: Any) -> Stream:
+        return Stream(original_fdopen(descriptor, *args, **kwargs), descriptors[descriptor])
+
+    def trace_operation(name: str) -> Any:
+        original = getattr(os, name)
+
+        def operation(path: Any, *args: Any, **kwargs: Any) -> Any:
+            filesystem.append((name, descriptors.get(path, path) if isinstance(path, int)
+                               else str(path)))
+            return original(path, *args, **kwargs)
+
+        return operation
+
+    monkeypatch.setattr(os, "open", opened)
+    monkeypatch.setattr(os, "fdopen", fdopened)
+    for name in ("stat", "lstat", "readlink", "scandir", "access", "fstat"):
+        monkeypatch.setattr(os, name, trace_operation(name))
     transports: list[ScriptedTransport] = []
     task_evidence: list[tuple[bool, bool, bool]] = []
     failures: list[dict[str, Any]] = []
@@ -168,14 +213,35 @@ def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
     async def run() -> None:
         results: list[Any] = []
         calls: list[Any] = []
-        for enabled in (False, True):
+        traces: list[Any] = []
+        original_compare = diagnostics._compare
+
+        def diagnostic_failure(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("synthetic diagnostic-only failure")
+
+        def ordinary_facts(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {key: ("ephemeral-reference" if key in {
+                    "context_ref", "observation_id", "observation_revision", "provider_scope",
+                } and isinstance(item, str) else ordinary_facts(item))
+                        for key, item in value.items()}
+            if isinstance(value, (tuple, list)):
+                return [ordinary_facts(item) for item in value]
+            return value
+
+        for mode in ("off", "on", "failure"):
+            enabled = mode != "off"
             config.write_text('{"model":"opus"}')
+            filesystem.clear()
+            descriptors.clear()
             environment = ScriptedLaunchEnvironment()
             reader = observer.ProductionCatalogObserver(
                 destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
-                launches=lambda: launches, environment=environment,
+                launches=lambda: launches, environment=environment, now=lambda: 100.0,
             )
             sink = diagnostics.DiagnosticSink(clock=lambda: 0.0)
+            monkeypatch.setattr(diagnostics, "_compare",
+                                diagnostic_failure if mode == "failure" else original_compare)
             scope = diagnostics.diagnostic_scope(sink) if enabled else contextlib.nullcontext()
             with scope:
                 result = await reader.observe(
@@ -184,19 +250,27 @@ def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
                 )
             results.append(result)
             calls.append(environment.calls)
+            traces.append(list(filesystem))
             if enabled:
                 record = sink.finish()
-                assert record == diagnostics.unavailable_record("internal_error")
-                assert task_evidence == [(True, True, True)]
-                assert [{key: value for key, value in failure.items() if key != "source"}
-                        for failure in failures] == [{
-                    "status": "internal_error",
-                    "caller": "offer_provider_comparison",
-                    "task_differs_from_lease": True,
-                    "thread_matches_lease": True,
-                }]
+                assert failures == []
+                assert task_evidence[-1] == (True, True, True)
+                if mode == "failure" and change != "provider":
+                    assert record == diagnostics.unavailable_record("internal_error")
+                else:
+                    assert record["diagnostic_status"] == (
+                        "capture_missing" if change == "provider" else "compared"
+                    )
+                    assert record["provider_source_snapshot"] == (
+                        "changed" if change == "provider" else "equal"
+                    )
+                    if change != "provider":
+                        assert record["roles"]["settings"]["semantic_content"] == (
+                            "changed" if change == "configuration" else "equal"
+                        )
                 print("finite nested reproduction: " + json.dumps({
                     "change": change,
+                    "mode": mode,
                     "callback_task_differs_from_lease": task_evidence[0][0],
                     "callback_thread_matches_lease": task_evidence[0][1],
                     "failure_absent_before_callback": task_evidence[0][2],
@@ -205,7 +279,10 @@ def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
                     "failure_calls": failures,
                     "ordinary_reason": getattr(result, "reason", "observation"),
                 }, default=str, sort_keys=True))
-        assert calls[0] == calls[1]
+        assert calls[0] == calls[1] == calls[2]
+        assert traces[0] == traces[1] == traces[2]
+        assert ordinary_facts(asdict(results[0])) == ordinary_facts(asdict(results[1]))
+        assert ordinary_facts(asdict(results[0])) == ordinary_facts(asdict(results[2]))
         if change == "stable":
             assert all(isinstance(result, CatalogObservation) for result in results)
             assert results[0].rows == results[1].rows
@@ -216,10 +293,90 @@ def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
                        for result in results)
         subtypes = [[frame["request"]["subtype"] for frame in transport.frames
                      if frame.get("type") == "control_request"] for transport in transports]
-        assert subtypes == [["initialize", "get_settings", "list_models", "get_settings"]] * 2
+        assert subtypes == [["initialize", "get_settings", "list_models", "get_settings"]] * 3
         assert all(not transport.is_ready() for transport in transports)
         assert all(all(frame.get("type") != "user" for frame in transport.frames)
                    for transport in transports)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("ending", ["cancel", "timeout"])
+def test_real_nested_provider_permit_survives_until_physical_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ending: str,
+) -> None:
+    from tests.unit.test_claude_settings_snapshot import ScriptedTransport
+
+    from planner.conversation.backends import claude_model_catalog
+    from planner.conversation.model_resolution import diagnostics
+
+    launches = launch_fixture(tmp_path, monkeypatch)
+    (tmp_path / "managed" / "managed-settings.d").mkdir(parents=True)
+
+    async def run() -> None:
+        cleanup_started, cleanup_release = asyncio.Event(), asyncio.Event()
+        transports: list[ScriptedTransport] = []
+        permits: list[Any] = []
+
+        class ExternalTransport(ScriptedTransport):
+            async def send(self, data: str) -> None:
+                import json
+
+                if json.loads(data).get("request", {}).get("subtype") == "list_models":
+                    self.pause = True
+                    permits.append(diagnostics._provider_operation.get())
+                await super().send(data)
+
+            async def close(self) -> None:
+                cleanup_started.set()
+                await cleanup_release.wait()
+                await super().close()
+
+        def factory(*, prompt: Any, options: Any) -> ExternalTransport:
+            transport = ExternalTransport(options)
+            transports.append(transport)
+            return transport
+
+        monkeypatch.setattr(claude_model_catalog, "SubprocessCLITransport", factory)
+        if ending == "timeout":
+            monkeypatch.setattr(claude_model_catalog, "MODEL_CATALOG_TIMEOUT_SECONDS", 0.05)
+        reader = observer.ProductionCatalogObserver(
+            destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
+            launches=lambda: launches, environment=ScriptedLaunchEnvironment(),
+        )
+        sink = diagnostics.DiagnosticSink(clock=lambda: 0.0)
+        with diagnostics.diagnostic_scope(sink):
+            task = asyncio.create_task(reader.observe(
+                ConversationBackendKey.claude, workspace=binding(tmp_path), attempt_id="cleanup",
+                deadline=asyncio.get_running_loop().time() + 10,
+            ))
+            while not transports:
+                await asyncio.sleep(0)
+            await asyncio.wait_for(transports[0].requests.wait(), 2)
+            if ending == "cancel":
+                task.cancel()
+            await asyncio.wait_for(cleanup_started.wait(), 2)
+            assert not task.done()
+            assert permits[0] is not None and permits[0].active
+            if ending == "cancel":
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+            cleanup_release.set()
+            if ending == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 2)
+            else:
+                result = await asyncio.wait_for(task, 2)
+                assert isinstance(result, CatalogUnavailable)
+                assert result.reason is ValidationReason.catalog_unavailable
+        assert not transports[0].is_ready()
+        permit = permits[0]
+        assert not permit.active
+        assert (permit.sink, permit.lease, permit.observer, permit.parent_task, permit.task) == (
+            None, None, None, None, None,
+        )
+        assert sink.finish()["diagnostic_status"] == "capture_missing"
 
     asyncio.run(run())
 
@@ -667,6 +824,7 @@ def test_private_diagnostic_preserves_ordinary_reads_refusal_and_admission_bound
         executable: str, *, environment: Mapping[str, str] | None = None,
         working_directory: Path | None = None,
         claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
+        **kwargs: Any,
     ) -> ClaudeModelCatalog:
         del executable, environment, working_directory
         config.write_text('{"changed":true}')
@@ -781,6 +939,15 @@ def test_canonical_shared_limit_preserves_service_and_prepared_launch_admission(
                 launch_environment: dict[str, str] = launch_environment,
                 **kwargs: Any,
             ) -> ClaudeModelCatalog:
+                permit = kwargs.pop("_diagnostic_provider_operation", None)
+                if permit is not None:
+                    async def child() -> ClaudeModelCatalog:
+                        with permit.claim():
+                            return await provider(
+                                *args, claude_scope_registry=claude_scope_registry,
+                                launch_environment=launch_environment, **kwargs,
+                            )
+                    return await owned_probe(child, timeout_seconds=10)
                 if change == "environment":
                     launch_environment["PRIVATE"] = "after"
                 elif change == "selected_content":

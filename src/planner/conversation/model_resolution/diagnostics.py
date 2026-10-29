@@ -640,6 +640,8 @@ class _ObservationLease:
     task: object | None
     thread: int
     active: bool = True
+    provider_issued: bool = False
+    provider_operation: _ProviderOperation | None = None
 
     def owned(self, sink: DiagnosticSink) -> bool:
         return (self.active and self.sink is sink and self.task is _task()
@@ -647,9 +649,84 @@ class _ObservationLease:
                 and not sink._finished)
 
     def clear(self) -> None:
+        if self.provider_operation is not None:
+            # Observation teardown already owns a work segment. Never nest its timer.
+            self.provider_operation._release()
+        self.provider_operation = None
         self.active = False
         self.sink = None
         self.observer = None
+        self.task = None
+
+
+@dataclass(slots=True, repr=False)
+class _ProviderOperation:
+    """Explicit one-use authority for one nested provider comparison task."""
+
+    sink: DiagnosticSink | None
+    lease: _ObservationLease | None
+    observer: object | None
+    parent_task: object | None
+    thread: int
+    task: object | None = None
+    active: bool = True
+    claimed: bool = False
+    consumed: bool = False
+
+    def registered(self, sink: DiagnosticSink) -> bool:
+        lease = self.lease
+        return (self.active and self.sink is sink and lease is not None
+                and lease.active and lease.sink is sink and sink._lease is lease
+                and lease.provider_issued and lease.provider_operation is self
+                and lease.observer is self.observer and lease.task is self.parent_task
+                and lease.thread == self.thread == threading.get_ident()
+                and not sink._finished)
+
+    def owned(self, sink: DiagnosticSink) -> bool:
+        return (self.registered(sink) and self.claimed and not self.consumed
+                and self.task is _task() and _provider_operation.get() is self
+                and _observation.get() is self.lease and _sink.get() is sink)
+
+    @contextmanager
+    def claim(self) -> Iterator[None]:
+        """Only the explicit inner operation closure receives this capability."""
+        sink = self.sink
+        token = None
+        if sink is not None:
+            with sink._work():
+                task = _task()
+                if (not self.registered(sink) or self.claimed or task is None
+                        or task is self.parent_task or _sink.get() is not sink
+                        or _observation.get() is not self.lease):
+                    sink._fail("internal_error")
+                else:
+                    self.claimed = True
+                    self.task = task
+                    token = _provider_operation.set(self)
+        try:
+            yield
+        finally:
+            try:
+                self.clear()
+            finally:
+                if token is not None:
+                    _provider_operation.reset(token)
+
+    def clear(self) -> None:
+        sink = self.sink
+        try:
+            if sink is not None:
+                with sink._work():
+                    self.active = False
+        finally:
+            self._release()
+
+    def _release(self) -> None:
+        self.active = False
+        self.sink = None
+        self.lease = None
+        self.observer = None
+        self.parent_task = None
         self.task = None
 
 
@@ -683,6 +760,33 @@ _observation: ContextVar[_ObservationLease | None] = ContextVar(
 _invocation: ContextVar[_CaptureInvocation | None] = ContextVar(
     "catalog_diagnostic_invocation", default=None,
 )
+_provider_operation: ContextVar[_ProviderOperation | None] = ContextVar(
+    "catalog_diagnostic_provider_operation", default=None,
+)
+
+
+@contextmanager
+def diagnostic_provider_operation(observer: object) -> Iterator[_ProviderOperation | None]:
+    """Issue once from the outer owner, never from an inherited child context."""
+    sink = _sink.get()
+    lease = _observation.get()
+    operation = None
+    if sink is not None and not sink._finished:
+        with sink._work():
+            if (lease is None or not lease.owned(sink) or lease.observer is not observer
+                    or lease.provider_issued):
+                sink._fail("internal_error")
+            else:
+                lease.provider_issued = True
+                operation = _ProviderOperation(
+                    sink, lease, observer, lease.task, lease.thread,
+                )
+                lease.provider_operation = operation
+    try:
+        yield operation
+    finally:
+        if operation is not None:
+            operation.clear()
 
 
 @contextmanager
@@ -817,8 +921,19 @@ def offer_provider_comparison(equal: bool) -> None:
     try:
         sink = _sink.get()
         lease = _observation.get()
-        if sink is not None and lease is not None:
-            if not lease.owned(sink):
+        if sink is not None and lease is not None and not sink._finished:
+            operation = _provider_operation.get()
+            if lease.provider_issued:
+                admitted = False
+                with sink._work():
+                    if operation is None or not operation.owned(sink):
+                        sink._fail("internal_error")
+                    else:
+                        operation.consumed = True
+                        admitted = True
+                if admitted:
+                    sink.provider(equal)
+            elif not lease.owned(sink):
                 with sink._work():
                     sink._fail("internal_error")
             else:

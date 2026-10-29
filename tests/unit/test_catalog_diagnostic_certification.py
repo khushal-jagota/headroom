@@ -377,3 +377,190 @@ def test_diagnostic_hook_failure_never_changes_ordinary_collector_return(
         with d.diagnostic_capture_invocation(owner):
             assert collect(sources) == expected
     assert sink.finish() == d.unavailable_record()
+
+
+def assert_provider_released(operation: Any) -> None:
+    assert not operation.active
+    assert all(getattr(operation, field) is None for field in (
+        "sink", "lease", "observer", "parent_task", "task",
+    ))
+
+
+@pytest.mark.parametrize("attack", [
+    "unrelated", "descendant", "thread", "missing_lease", "wrong_lease",
+    "foreign_sink", "wrong_observer", "duplicate_offer", "duplicate_claim",
+    "capture", "collector", "stale",
+])
+def test_provider_permit_refuses_inherited_foreign_reused_and_capture_authority(
+    sources: Any, attack: str,
+) -> None:
+    async def run() -> None:
+        sink, owner = d.DiagnosticSink(clock=lambda: 0.0), object()
+        foreign = d.DiagnosticSink(clock=lambda: 0.0)
+        with d.diagnostic_scope(sink), d.diagnostic_observation(owner):
+            offer(sources, owner)
+            offer(sources, owner)
+            with d.diagnostic_provider_operation(owner) as operation:
+                assert operation is not None
+                copied: contextvars.Context | None = None
+
+                async def child() -> None:
+                    nonlocal copied
+                    if attack == "unrelated":
+                        # Inheritance supplies the observation, never the explicit claim.
+                        d.offer_provider_comparison(True)
+                        return
+                    with operation.claim():
+                        copied = contextvars.copy_context()
+                        if attack == "descendant":
+                            async def descendant() -> None:
+                                d.offer_provider_comparison(True)
+                            await asyncio.create_task(descendant())
+                        elif attack == "thread":
+                            thread = threading.Thread(
+                                target=lambda: cast(contextvars.Context, copied).run(
+                                    d.offer_provider_comparison, True,
+                                ),
+                            )
+                            thread.start()
+                            thread.join()
+                        elif attack in {"missing_lease", "wrong_lease"}:
+                            lease = d._observation.get()
+                            token = d._observation.set(
+                                None if attack == "missing_lease" else replace(lease),
+                            )
+                            try:
+                                d.offer_provider_comparison(True)
+                            finally:
+                                d._observation.reset(token)
+                        elif attack == "foreign_sink":
+                            with d.diagnostic_scope(foreign):
+                                d.offer_provider_comparison(True)
+                        elif attack == "wrong_observer":
+                            operation.observer = object()
+                            d.offer_provider_comparison(True)
+                        elif attack == "duplicate_offer":
+                            d.offer_provider_comparison(True)
+                            d.offer_provider_comparison(True)
+                        elif attack == "duplicate_claim":
+                            with operation.claim():
+                                d.offer_provider_comparison(True)
+                        elif attack == "capture":
+                            d.offer_capture(capture())
+                        elif attack == "collector":
+                            with d.diagnostic_capture_invocation(owner):
+                                collect(sources)
+                        elif attack == "stale":
+                            d.offer_provider_comparison(True)
+                await asyncio.create_task(child())
+                if attack != "unrelated":
+                    assert_provider_released(operation)
+                if attack == "stale":
+                    assert copied is not None
+                    copied.run(d.offer_provider_comparison, True)
+            assert_provider_released(operation)
+        result = sink.finish()
+        if attack in {"missing_lease", "foreign_sink"}:
+            # The missing/foreign callback adds no fact to the original request.
+            assert result["provider_source_snapshot"] == "unavailable"
+            if attack == "foreign_sink":
+                assert foreign.finish() == d.unavailable_record()
+        else:
+            assert result == d.unavailable_record()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("attack", ["reissue", "late_parent", "parent_claim", "wrong_observer"])
+def test_provider_issuance_is_exact_and_irreversible(sources: Any, attack: str) -> None:
+    async def run() -> None:
+        sink, owner = d.DiagnosticSink(clock=lambda: 0.0), object()
+        with d.diagnostic_scope(sink), d.diagnostic_observation(owner):
+            offer(sources, owner)
+            offer(sources, owner)
+            with d.diagnostic_provider_operation(
+                object() if attack == "wrong_observer" else owner,
+            ) as operation:
+                if attack == "wrong_observer":
+                    assert operation is None
+                else:
+                    assert operation is not None
+                    if attack == "parent_claim":
+                        with operation.claim():
+                            d.offer_provider_comparison(True)
+                    else:
+                        async def child() -> None:
+                            with operation.claim():
+                                d.offer_provider_comparison(True)
+                        await asyncio.create_task(child())
+            if operation is not None:
+                assert_provider_released(operation)
+            if attack == "reissue":
+                with d.diagnostic_provider_operation(owner) as replacement:
+                    assert replacement is None
+            elif attack == "late_parent":
+                d.offer_provider_comparison(True)
+        assert sink.finish() == d.unavailable_record()
+    asyncio.run(run())
+
+
+def test_sink_finish_revokes_active_provider_before_late_callback(sources: Any) -> None:
+    async def run() -> None:
+        sink, owner = d.DiagnosticSink(clock=lambda: 0.0), object()
+        with d.diagnostic_scope(sink), d.diagnostic_observation(owner):
+            offer(sources, owner)
+            offer(sources, owner)
+            with d.diagnostic_provider_operation(owner) as operation:
+                assert operation is not None
+                async def child() -> None:
+                    with operation.claim():
+                        result = sink.finish()
+                        assert result["diagnostic_status"] == "compared"
+                        assert result["provider_source_snapshot"] == "unavailable"
+                        assert_provider_released(operation)
+                        d.offer_provider_comparison(True)
+                        assert sink._provider is None and sink._budget is None
+                await asyncio.create_task(child())
+        assert_provider_released(operation)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("resource", ["wait", "work", "time"])
+def test_provider_lifecycle_uses_shared_budget_without_timing_provider_wait(
+    sources: Any, resource: str,
+) -> None:
+    now = [0.0]
+    async def run() -> None:
+        sink, owner = d.DiagnosticSink(clock=lambda: now[0]), object()
+        with d.diagnostic_scope(sink), d.diagnostic_observation(owner):
+            offer(sources, owner)
+            offer(sources, owner)
+            budget = sink._budget
+            assert budget is not None
+            units = budget.units
+            with d.diagnostic_provider_operation(owner) as operation:
+                assert operation is not None and sink._budget is budget
+                assert budget.units > units and budget.started is None
+                async def child() -> None:
+                    with operation.claim():
+                        assert budget.started is None
+                        now[0] = 100.0  # Suspended ordinary provider time is free.
+                        await asyncio.sleep(0)
+                        assert budget.started is None and budget.elapsed == 0.0
+                        if resource == "work":
+                            budget.units = 262144
+                        elif resource == "time":
+                            budget.elapsed = 0.026
+                        d.offer_provider_comparison(True)
+                await asyncio.create_task(child())
+            assert_provider_released(operation)
+        result = sink.finish()
+        if resource == "wait":
+            assert result["diagnostic_status"] == "compared"
+            assert result["provider_source_snapshot"] == "equal"
+        else:
+            expected = d.unavailable_record(
+                "limit_work" if resource == "work" else "limit_time",
+            )
+            expected["provider_source_snapshot"] = "equal"
+            assert result == expected
+    asyncio.run(run())

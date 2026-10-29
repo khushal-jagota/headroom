@@ -1,6 +1,6 @@
 """Synthetic proofs across authenticated preview, owner IPC and native catalog.
 
-The existing TLS/WebSocket host is reused. Only provider probes, destination
+The existing TLS/WebSocket host is reused. Only external provider transport, destination
 filesystem localization and private input vectors are synthetic. This protects
 binding and failure isolation that disconnected classifier/API tests cannot prove.
 """
@@ -22,19 +22,14 @@ import httpx
 import pytest
 from pydantic import TypeAdapter
 from tests.integration.test_executor_end_to_end import boot, eventually
-from tests.unit.test_claude_settings_snapshot import SECRET, bench
+from tests.unit.test_claude_settings_snapshot import SECRET, ScriptedTransport
 from tests.unit.test_destination_catalog_observer import (
     ScriptedLaunchEnvironment,
     launch_fixture,
 )
 
 from planner.conversation import api
-from planner.conversation.backends import claude_settings
-from planner.conversation.backends.claude_model_catalog import ClaudeModel, ClaudeModelCatalog
-from planner.conversation.backends.claude_settings import (
-    ClaudeSettingsScopeRegistry,
-    read_claude_catalog_settings_snapshot,
-)
+from planner.conversation.backends import claude_model_catalog, claude_settings
 from planner.conversation.contracts import WorkspacePathPolicy
 from planner.conversation.model_resolution import diagnostics, observer
 from planner.conversation.model_resolution.claude_input_contracts import (
@@ -366,45 +361,28 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     return result
                 return _private_vector(tmp_path, current[0], scenario)
 
-            async def probe(
-                executable: str,
-                *,
-                environment: Any = None,
-                working_directory: Path | None = None,
-                claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
-            ) -> ClaudeModelCatalog:
-                del executable, environment, working_directory
-                calls.append("catalog")
-                current[0] = True
-                client, transport, inner, _ = bench()
-                if scenario == "provider_changed":
-                    original_send = inner.send
+            class ExternalTransport(ScriptedTransport):
+                async def send(self, data: str) -> None:
+                    frame = json.loads(data)
+                    if (scenario == "provider_changed"
+                            and frame.get("request", {}).get("subtype") == "list_models"):
+                        self.settings["sources"][0]["settings"]["model"] = "sonnet"
+                    await super().send(data)
 
-                    async def change_sources(data: str) -> None:
-                        frame = json.loads(data)
-                        if frame.get("request", {}).get("subtype") == "list_models":
-                            inner.settings["sources"][0]["settings"]["model"] = "sonnet"
-                        await original_send(data)
-
-                    monkeypatch.setattr(inner, "send", change_sources)
-                await client.connect()
-                try:
-                    sample = await read_claude_catalog_settings_snapshot(transport)
-                finally:
-                    await client.disconnect()
+                async def close(self) -> None:
                     calls.extend(
                         frame["request"]["subtype"]
-                        for frame in inner.frames
+                        for frame in self.frames
                         if frame.get("type") == "control_request"
                     )
-                if collected:
-                    source_file.write_text(source_after)
-                assert claude_scope_registry is not None
-                return ClaudeModelCatalog(
-                    (ClaudeModel("opus", "Opus", "claude-opus-5", ()),),
-                    (),
-                    provider_scope=claude_scope_registry.retain(sample.settings),
-                )
+                    if collected:
+                        source_file.write_text(source_after)
+                    await super().close()
+
+            def external_transport(*, prompt: Any, options: Any) -> ExternalTransport:
+                calls.append("catalog")
+                current[0] = True
+                return ExternalTransport(options)
 
             class SyntheticDestination(observer.ProductionCatalogObserver):
                 def _launch(self, *args: Any, **kwargs: Any) -> Any:
@@ -438,7 +416,7 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
 
             monkeypatch.setattr(observer, "_configuration_revisions", vector)
             monkeypatch.setattr(observer, "_account_generation", lambda *args: None)
-            monkeypatch.setattr(observer, "probe_claude_model_catalog", probe)
+            monkeypatch.setattr(claude_model_catalog, "SubprocessCLITransport", external_transport)
             harness.mac._catalog_observer = SyntheticDestination(
                 destination=TicketLocale.macos,
                 panels_server_url=harness.proxy.origin,
