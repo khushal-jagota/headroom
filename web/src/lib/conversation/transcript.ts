@@ -24,6 +24,7 @@ import type {
   UserInputQuestion
 } from "./wire";
 import { messageContentOf } from "./wire";
+import type { CredentialRequestRowBody } from './view/contracts';
 import type { ConversationFeed } from "./feed";
 import { isMessageOutcome, latestMessageOutcomes } from "./messageOutcome";
 
@@ -36,6 +37,7 @@ export type UserInputState = "live" | "answered" | "failed" | "dead";
 export type PermissionAskDeadReason = "turn_ended" | "no_ending_recorded";
 
 export type TranscriptRow =
+  | { key: string; kind: 'credential_request'; sequence: number; createdAt: number; request: CredentialRequestRowBody }
   | {
       key: string;
       kind: "prompt";
@@ -283,6 +285,7 @@ export function transcriptRows(
   const toolCallRowIndex = new Map<string, number>();
   const askRowIndex = new Map<string, number>();
   const userInputRowIndex = new Map<string, number>();
+  const credentialRequestRowIndex = new Map<string, number>();
   // Half-finished output belongs to a turn that is running. When the turn is gone,
   // whatever was left in flight is not arriving, and it is not drawn.
   const turnIsGone = reading.turnStoppedWithoutAnEnding === true;
@@ -300,6 +303,18 @@ export function transcriptRows(
     const sequence = event.sequence;
     const createdAt = event.created_at;
     switch (event.kind) {
+      case 'credential_request': {
+        const request = event.payload.request;
+        const previous = credentialRequestRowIndex.get(request.request_id);
+        if (previous === undefined) {
+          credentialRequestRowIndex.set(request.request_id, rows.length);
+          rows.push({ key: `e${sequence}`, kind: 'credential_request', sequence, createdAt, request });
+        } else {
+          const row = rows[previous];
+          if (row?.kind === 'credential_request') rows[previous] = { ...row, request };
+        }
+        break;
+      }
       case "prompt":
         rows.push({
           key: `e${sequence}`,

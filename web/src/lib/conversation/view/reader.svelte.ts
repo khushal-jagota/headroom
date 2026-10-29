@@ -279,7 +279,7 @@ export class ConversationViewReader {
             if (!admitted) { this.failEntry(); return; }
             const page = this.pages.find(page => page.scope.kind === 'timeline');
             const target = page?.items.find(item => item.kind === 'row' && [
-                'prompt', 'agent_message', 'prompt_refused', 'prompt_uncertain', 'prompt_discarded', 'permission_ask', 'user_input'
+                'prompt', 'agent_message', 'prompt_refused', 'prompt_uncertain', 'prompt_discarded', 'permission_ask', 'user_input', 'credential_request'
             ].includes(item.row_kind));
             if (target) {
                 this.entryTarget = { key: target.key, order: target.order, offset: 32, following: false };

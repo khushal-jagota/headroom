@@ -391,6 +391,20 @@ the deadline, the conversation lock reserves compaction first and holds the mess
 behind it. The message proceeds once after confirmed success, refusal, failure, or a
 completed turn with no compaction confirmation.
 
+## API key requests
+
+An employee can create a typed credential request in its exact current conversation. Its reserved `PLAN_CONVERSATION_ID` value travels through the existing CLI identity headers. The server checks the principal, stored conversation identity, and current association. Hosted owner ingress clears this agent claim. A retired process cannot route a request into a new conversation.
+
+The request and its outcomes are metadata-only conversation events. One inline card remains visible in Focus and Full through turn completion and refresh. Provider help is optional. The owner submits the secret through the private credential path. Ordinary question answers, chat content, browser storage, and delivery prompts never contain the value.
+
+Save or replacement, the terminal request outcome, and initial delivery intent share one transaction. Reject resolves the request without a credential change. Repeated or concurrent submission returns the one resolved result. A stale replacement requires review of the current revision and fresh input.
+
+Result delivery then uses the ordinary conversation send path without a reply obligation. Its prompt names the request, outcome, and actual credential reference. The card shows queued, refused, or uncertain delivery independently of Saved, Replaced, or Rejected. Later queue receipts update the original card. A provider receipt does not itself prove that the model read the result.
+
+Only proven non-admission permits explicit metadata-only retry. The public compatibility refusal for `write_to_backend_failed` remains uncertain for credential results. Lost intent or a lost held item also remains uncertain unless an exact receipt proves a later outcome. These results receive no automatic resend. Retry never repeats the credential write.
+
+New starts and lazy resumes add the reserved conversation identity to their existing role environment. Historical role text and principal identities remain intact. Retention accepts historical identities and checks that a new embedded identity matches its containing conversation. Credential requests add no provider callback or new working flag.
+
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this

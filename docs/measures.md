@@ -10,11 +10,17 @@ The owner chose trusted scripts and simple, replaceable secret storage. Scripts 
 
 Create a source with a name, Project, account, and responsible Manager or Chief. The existing assignment chain controls source work. The responsible agent and its assigned Workers can save scripts, configure schedules, test, and collect. There is no repair designation or publication step. Taken measures use that same source authority. Assembled and manual definitions use the existing owner/Chief authority for Project definitions.
 
-The backend supports future owner secret submission through `POST /api/credentials` and replacement through `PUT /api/credentials/{id}/secret`. Supported authentication kinds are bearer token, named header, and Basic authentication. This build includes no UI for these operations. The credential CLI lists descriptive names and metadata only. Metadata responses omit secret values. Scripts reference named keys rather than embed secret literals.
+Credentials use descriptive names such as `Panels_posthog_production`. The names identify their use without exclusive Project ownership. Source Project/account remain data metadata. The credential CLI lists names and metadata without secret values. Scripts reference named keys rather than embed secret literals.
+
+An agent can use `panels credential request` to request a bearer or named-header API key in its conversation. The owner saves or rejects the inline card. Replacement targets an existing credential and its revision. Basic authentication retains its existing private store operations outside this card. Secret submission uses the private owner path and never becomes a chat answer.
 
 Credentials use a separate replaceable cipher/resolver interface. The current implementation stores encrypted values in SQLite and a separate local encryption key. `credential_key_path` or `PLAN_CREDENTIAL_KEY_PATH` selects that key. New key files use private permissions. Back up the database and its key together. A missing or incorrect key causes a real credential failure; the system does not silently reset existing encrypted records.
 
-A reference consists of a scheme and descriptive name within the source's Project and account. `local` is the current storage scheme. A missing name does not fall back to another account, Project, or environment variable. There are no destination, method, path, or credential-origin grants.
+A reference consists of a scheme and reusable descriptive name. `local` is the current storage scheme. Lookup does not use source Project/account or an environment-variable fallback. A matching saved name needs no additional permission card. Multiple legacy matches report explicit ambiguity with metadata candidates. The owner can rename a selected credential by ID and expected revision. Update affected source references before the next run. There are no destination, method, path, or credential-origin grants.
+
+The migration preserves existing ciphertext, identities, names, and revisions with their original private decryption context. Rename authenticates and reencrypts the same saved value. Replacement authenticates the current record and requires its current revision.
+
+Saved, Replaced, and Rejected describe request resolution. Delivery has a separate result. A queued result waits in the conversation. Confirmed refusal permits metadata-only delivery retry. Unknown backend writes and lost queues remain uncertain and receive no automatic retry. A saved value does not prove that the provider accepts the key.
 
 Create a source through `panels measure-source create`, with JSON on stdin:
 
@@ -56,9 +62,13 @@ A script can declare unavailable history with a null value and `provider_has_no_
 
 Kinds (`reading`, `running_total`, `period_count`), units, timezone, and period are descriptive metadata. They do not constrain compatible arithmetic or whether values can rise or fall. Definitions can change after collection.
 
-Assembled expressions support constants, references with integer day offsets, addition, subtraction, multiplication, division, and an explicit `sum_daily` operation. `sum_daily` selects the requested date's day, ISO week, or calendar month. It does not require the current period to finish. If an input is absent, the result identifies the missing input. Division by zero and invalid arithmetic also remain explicit.
+Assembled expressions support constants, references with integer day offsets, arithmetic, real powers, minimums, maximums, elapsed calendar days, fixed-date references, and date branches. The explicit `sum_daily` operation selects the requested date's day, ISO week, or calendar month. It does not require the current period to finish. If an input is absent, the result identifies the missing input. Division by zero and invalid arithmetic also remain explicit.
 
-The system prevents dependency cycles and unknown input references. Formula reads use retained values and report the input provenance. They do not call providers or models. Cross-Project formulas are supported. They do not grant credential access across Projects.
+Date branches evaluate only the selected phase. The boundary date belongs to the new phase. Elapsed days count calendar dates across daylight-saving changes. A fixed-date reference follows corrections to that retained observation; a literal constant does not. Calendar-month growth and repeating completed-period steps are not supported. Do not substitute thirty-day months or fractional weeks for those meanings.
+
+Goal expectations use this same evaluator without creating another measure. Their date projections have separate operational bounds described in [Goals](goals.md).
+
+The system prevents dependency cycles and unknown input references. Formula reads use retained values and report the input provenance. They do not call providers or models. Cross-Project formulas are supported. Formula reads do not resolve credentials.
 
 There is no fixed history-window, day-offset, collection-row, source-output, expression-size, or evaluation-count product limit. Values use finite binary64 numbers in SQLite REAL fields. Python's date, nesting, and memory representation still applies. List APIs retain ordinary pagination. An explicit measure-read `limit` selects a result page rather than rejecting the requested history range.
 
