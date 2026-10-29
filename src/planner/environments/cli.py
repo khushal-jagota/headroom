@@ -240,6 +240,11 @@ def app_deploy(
         raise click.ClickException(
             "--lifecycle-path and --deployment-id must be supplied together"
         )
+    # Refuse self-stop before entering the handler that records deployment failures.
+    try:
+        service = SubprocessServiceController(service_manager, service_name)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
     lifecycle_store = (
         DeploymentLifecycleStore(lifecycle_path)
         if lifecycle_path is not None
@@ -281,7 +286,7 @@ def app_deploy(
             restore=lambda snapshot: restore_database_snapshot(
                 snapshot, source_db, live_stopped=True
             ),
-            service=SubprocessServiceController(service_manager, service_name),
+            service=service,
             health=HttpHealthClient(health_url),
             lock_path=lock_path,
             lifecycle_transition=publish_lifecycle if lifecycle_store is not None else None,

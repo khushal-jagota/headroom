@@ -62,9 +62,7 @@ def faults(tree: Path, answers: EnvironmentAnswers) -> list[str]:
     found: list[str] = []
 
     if answers.venv_prefix is not None and answers.venv_prefix != venv:
-        found.append(
-            f"the running interpreter belongs to {answers.venv_prefix}, not {venv}"
-        )
+        found.append(f"the running interpreter belongs to {answers.venv_prefix}, not {venv}")
     if answers.venv_origin is not None and answers.venv_origin != venv:
         found.append(
             f"{venv}/pyvenv.cfg records creation at {answers.venv_origin}, "
@@ -72,8 +70,7 @@ def faults(tree: Path, answers: EnvironmentAnswers) -> list[str]:
         )
     if answers.editable_root is not None and answers.editable_root != tree / "src":
         found.append(
-            f"the editable install in {venv} points at {answers.editable_root}, "
-            f"not {tree}/src"
+            f"the editable install in {venv} points at {answers.editable_root}, not {tree}/src"
         )
     if answers.planner_absent:
         found.append(f"planner is not installed in {venv}")
@@ -158,7 +155,7 @@ def venv_origin_from_pyvenv_cfg(text: str) -> Path | None:
             # The absolute target follows the interpreter and venv options.
             targets = [index for index, word in enumerate(words[1:], 1) if word.startswith("/")]
             if targets:
-                return Path(" ".join(words[targets[0]:])).resolve()
+                return Path(" ".join(words[targets[0] :])).resolve()
     return None
 
 
@@ -311,7 +308,17 @@ def preflight(tree: Path, *, ask_planner: bool) -> str | None:
     Import failures in planner after a clean preflight keep their original traceback.
     Both hooks return the same diagnosis and commands, even from another directory.
     """
+    scripts_path = str(Path(__file__).resolve().parent)
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+    from development_safety.contracts import SafetyRefusal
+    from development_safety.scanner import check_python
+
     tree = tree.resolve()
+    try:
+        check_python(tree / ".venv", tree)
+    except SafetyRefusal as exc:
+        return str(exc)
     found = faults(tree, running_answers(tree, ask_planner=False))
     if found:
         return _diagnosis(tree, found, dependencies=False)
@@ -335,17 +342,18 @@ def _diagnosis(tree: Path, found: list[str], *, dependencies: bool) -> str:
     else:
         heading = f"this environment does not belong to {tree}"
         command += (
-            "rm -rf .venv && python3 -m venv .venv"
-            " && .venv/bin/python -m pip install -r requirements.txt"
-            " && .venv/bin/python -m pip install --editable ."
+            "scripts/dev setup (in a fresh worktree). Preserve the suspect .venv "
+            "until its links and mounts receive deliberate repair"
         )
-        repair = "Rebuild the virtualenv in place"
+        repair = "Create independent dependencies in a fresh worktree"
     return (
-        f"{heading}:\n  " + "\n  ".join(found)
+        f"{heading}:\n  "
+        + "\n  ".join(found)
         + (
             "\nNo bypass is supported. After a pin change, refusal is expected "
             "until installed dependencies match the pins."
-            if dependencies else ""
+            if dependencies
+            else ""
         )
         + f"\nActive interpreter: {sys.executable}\n{repair}: {command}"
     )

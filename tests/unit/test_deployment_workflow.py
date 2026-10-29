@@ -78,6 +78,8 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
         assert steps[name]["with"]["retention-days"] == 30
     commands = "\n".join(step.get("run", "") for step in adoption["steps"])
     assert "update_runner apply" in commands
+    assert "systemd-run --user --wait --collect --pipe" in commands
+    assert '--unit="panels-adoption-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in commands
     assert "app-build" not in commands and "pytest" not in commands
     for key in ("REQUEST_ID", "PUBLICATION_RUN_ID", "ARTIFACT_ID", "PROOF_ARTIFACT_ID",
                 "APP_SHA", "ARTIFACT_DIGEST", "ARCHIVE_SHA256"):
