@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 from planner.core.contracts import Principal
 from planner.credentials.contracts import CredentialResolver
@@ -58,6 +58,20 @@ class SourceCreate:
     name: str
     scope: SourceScope
     responsible: Principal
+
+
+class SourceResponsibleBody(TypedDict):
+    kind: Literal["chief", "manager", "goal"]
+    id: str
+
+
+class SourceCreateBody(TypedDict):
+    """Flat author input, before normalization to SourceCreate."""
+
+    name: str
+    project_id: str
+    account: str
+    responsible: SourceResponsibleBody
 
 
 class SourceScheduleBody(TypedDict):
