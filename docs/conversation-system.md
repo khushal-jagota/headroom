@@ -1284,17 +1284,13 @@ Tickets. Hermes still offers no Panels reasoning control.
 Panels does not ask Hermes for update advice and does not offer a Hermes update action.
 Hermes version and model catalogue discovery remain available.
 
-Panels keeps the last successful allowance reading for each backend in its database.
-Ordinary allowance reads use that stored answer without a provider request.
-The Usage page's Refresh starts provider allowance reads and the separate local record
-import in parallel. Allowance reads use ordinary backend snapshots. They do not force
-model catalogues, versions, identities, or update advice to refresh.
+Panels keeps the last successful backend allowance reading in its database.
+The shared model picker's explicit Refresh can read provider allowances through the
+backend methods below. These reads do not refresh model catalogues or update advice.
 
-Codex and Claude allowance reads start independently. A failure leaves that backend's
-prior reading in place and preserves the other backend's new answer. The page first
-shows an ordinary backend snapshot. Catalogue and supported update advice refresh in
-the background, while cached reads remain available. The shared model picker's Refresh
-reads provider allowances only.
+The Usage page uses a separate local-history source. Its Refresh updates the price
+table, then completes the requested transcript scan. It does not start a backend,
+request provider allowance, or use the native-local refresh operation.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,
@@ -1332,79 +1328,54 @@ the concrete model used for each turn.
 
 ### Recorded local usage
 
-Tokens and Cost describe local Codex and Claude records on this server. They include
-CLI activity outside Panels. They do not describe a complete account bill or allowance
-history. Hermes has no source for these historical charts.
+Usage follows T3 Code's module layout and scan design. Tokens and Cost describe local
+Codex and Claude history on this server, including CLI activity outside Panels.
+They describe API-equivalent token cost, not the complete account bill.
 
-Opening the page, changing its period, or receiving a change signal reads stored usage.
-Only an explicit Refresh imports native files. Each request reads at most 256 MiB
-and cooperatively yields during source reads or parsing after 15 seconds or 2,000 file
-visits. Loading stored snapshots, merging records, serialization, and price refresh
-occur outside that deadline. It is not a hard HTTP response timeout.
-The next request resumes the stored
-queue. Small slices alternate providers and files. Large files and large JSON lines
-remain eligible. The streaming reader discards message and tool bodies as it reads.
-Its checkpoints contain syntax and selected usage fields. Complete block checks detect
-interior rewrites before a candidate replaces verified records. Source changes restart
-that candidate and preserve earlier records. Native files remain read-only.
+A summary request completes the requested scan. The service selects files with T3's
+modification-time slack. It reuses parsed records when provider, size and modification
+time match. A grown file resumes after a 64-byte guard check. Parser state and
+provisional tail records preserve the same duplicate rules across that boundary.
+A replaced file or failed guard takes T3's full-parse path.
 
-The queue covers source files modified within 90 days. Directory discovery has a
-100,000-entry and request-time limit. An unreadable or bounded inventory reports partial
-coverage. Progress describes this finite local read, not complete account history.
-SQLite commits the cursor and data together, so a restart resumes the same work.
-Append-only growth preserves the frozen prefix and its read progress. Every metadata
-generation change restarts block verification. A file that changes before every request
-needs a quiet verification window before its candidate enters the totals. Other files
-continue fairly, and its earlier verified records remain visible with partial coverage.
-A verified prefix can enter stored totals before its file finishes. An observed unread
-tail stays in the queue, and its byte count extends the progress total. Files first
-found during a pass wait for the next finite pass. Known pending files keep coverage
-partial and `more_work` true until a later request reads them.
-The same rule covers a completed member whose identity, size, or metadata changes in
-the latest inventory. Progress counts that file once and defers its new version to the
-next pass. Ready means that this latest bounded inventory has no known unvisited work.
+Concurrent requests for the same window share a scan. A client disconnect does not
+cancel its completion. The service persists the scan cache in the app's own state
+directory. It does not leave a bounded import queue for another manual Refresh.
 
-Copied records count once across files. Codex counts each stable completed response
-identity once. It keeps the response's original thread and session, even when another
-file contains a copy. Repeated counter updates and cumulative turn or thread totals do
-not add consumption. Old counter records need verified changes. Their producer history
-remains uncertain.
+The parsers, scan cache, aggregation, pricing and source-limit modules retain their
+T3 names. The browser copies the compatible TypeScript merge, format and chart-data
+files. Other modules adapt the language and framework without a different scan design.
+T3's test cases accompany the copy. Its MIT notice and pinned revision are retained.
 
-Claude uses message and request identities. Overlapping or conflicting identities
-remain excluded with partial coverage. Conversation events and allowance snapshots do
-not become extra chart records.
+The Usage page's Limits tab reads selected allowance fields from local history.
+Codex observations supply the main account windows and actual observation times.
+A separate companion cache preserves those observations on warm scans and restarts.
+Model-specific observations do not replace the main account windows. If Claude's
+local history lacks an allowance observation, the page reports it as unavailable.
+No provider request or credential read fills that gap.
 
-Missing required token counts remain unknown. As in T3 Code, an omitted optional Codex
-cache category means zero. An explicit null or invalid category remains unknown.
-The producer reports cache categories separately within inclusive input. A missing
-reasoning breakdown remains unknown and never adds another charge to output.
-A valid zero remains zero. Token totals with an
-unknown contributing value remain unknown. Cost follows T3 Code's price calculation.
-It uses source-reported USD when present. Otherwise it prices uncached input, cache reads,
-cache writes and output from the stored LiteLLM table. Reasoning remains part of output.
-Published fast and ultrafast rates apply to the recorded service tier. A tier without
-published rates uses its standard rates, as in T3 Code.
+Subscription reset credits and a provider credit balance are different values.
+The local adapter does not map a balance into T3's reset-credit field or label it as
+currency. It leaves values unfilled when the target contract has no matching field.
 
-The full external price document and fetch time remain in SQLite. Summary reads never
-fetch prices. Explicit Refresh can update the table, with T3's 60-second refresh floor,
-24-hour ordinary cache lifetime, a 10-second request timeout and a 16 MiB response bound.
-An unavailable source leaves the stored table available. Unknown model rates remain
-unpriced. Exact names and unambiguous aliases match the table. Bare family names do not
-select an invented generation.
+T3's exact rolling bounds define the 24-hour view. Its merge logic supplies totals,
+source ownership and distinct session counts. Its chart data fills absent periods
+with zero. Source status and unpriced records remain explicit. Pricing prefers a
+reported USD value unless a custom override applies. Otherwise it uses the stored
+LiteLLM rates with T3's model aliases and cache categories. Reasoning stays inside
+output and does not add another charge.
 
-Known cost subtotals remain visible with an Unpriced record count. The data contract
-keeps table-calculated and source-reported USD separate. This value does not establish
-actual account charges. Cost categories, cache savings and speed premiums use the same
-price rules as T3 Code. A source-reported total scales the category split proportionally.
+The price table and transcript caches belong to this app's state directory.
+The pricing-only refresh retains T3's 60-second floor and 24-hour ordinary cache life.
+A missing rate leaves the record unpriced. A failed price fetch can use the stored table.
 
-Input already includes cache tokens, and output includes reasoning tokens. Neither
-subset is added twice. Charts show observed periods and leave unrecorded intervals as gaps.
-
-_Code paths:_ `src/planner/conversation/usage/` owns the contract, native adapters,
-bounded import, storage, and summaries. Its `api.py` exposes
-`GET /api/conversation/usage/summary` for stored reads and
-`POST /api/conversation/usage/refresh` for explicit imports. The refresh accepts no
-browser-supplied source paths or credentials.
+_Code paths:_ `src/planner/conversation/usage/` contains `UsageService`,
+`usageTranscriptReader`, `usageTranscripts`, `usageScanCache`, `usageAggregation`,
+`usagePricing`, `UsageLimitSources`, and `cliproxyApi`. The approved local extension is
+`localUsageLimits`. `GET /api/conversation/usage/summary` accepts T3's explicit window
+and returns its bucket contract. `GET /api/conversation/usage/limits` returns local
+allowance windows. `POST /api/conversation/usage/rates/refresh` refreshes prices only.
+The old `POST /api/conversation/usage/refresh` import route is removed.
 
 ## The composer catalog
 
