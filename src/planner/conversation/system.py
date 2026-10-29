@@ -43,6 +43,7 @@ from uuid import uuid4
 
 from planner.conversation.backend_event_contracts import TurnEndingContext
 from planner.conversation.backends.contracts import (
+    AdmissionRefused,
     AgentMessageCompletedArguments,
     AgentMessageDeltaArguments,
     BackendChild,
@@ -312,6 +313,7 @@ class _ReservedTurn:
 @dataclass(slots=True)
 class _RunningTurn:
     token: TurnToken
+    launch_validation: CanonicalModelValidation | None = None
     automatic_compaction: bool = False
     compaction_confirmed: bool = False
     pending_permission_ask_ids: set[str] = field(default_factory=set)
@@ -2057,12 +2059,16 @@ class SqliteProcessConversationSystem:
                     else ()
                 ),
             )
-            steer_outcome = await steer_child.steer(
+            steer_outcome = await self._steer_with_admission(
+                state,
+                steer_child,
                 steer_turn_token,
                 wire_content,
                 sender_content=held.content,
                 sender_label=held.sender_label,
             )
+        except AdmissionRefused:
+            steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.model_resolution_failed)
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
         except asyncio.CancelledError:
@@ -3050,12 +3056,16 @@ class SqliteProcessConversationSystem:
                     else ()
                 ),
             )
-            steer_outcome = await child.steer(
+            steer_outcome = await self._steer_with_admission(
+                state,
+                child,
                 running.token,
                 wire_content,
                 sender_content=content,
                 sender_label=sender_label,
             )
+        except AdmissionRefused:
+            steer_outcome = BackendSteerRefused(PromptDeliveryRefusalReason.model_resolution_failed)
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
         except asyncio.CancelledError:
@@ -3635,6 +3645,120 @@ class SqliteProcessConversationSystem:
             ),
             previous_alias_resolution=previous_alias_resolution,
         )
+
+    async def _steer_with_admission(
+        self,
+        state: _ConversationState,
+        child: BackendChild,
+        token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent,
+        sender_label: str,
+    ) -> BackendSteerOutcome:
+        """Validate the running turn's accepted intent without changing next-turn intent."""
+        from typing import cast
+
+        from planner.conversation.admission.policy import (
+            check_policy_dependencies,
+            protect_validation_policy,
+        )
+        from planner.conversation.admission.service import (
+            AdmissionContextObserver,
+            admission_scope,
+            expectation_from_validation,
+        )
+        from planner.conversation.backends.contracts import BackendEmissionInputs
+        from planner.core.db import connect
+        from planner.tickets.launch_authority import acquire_read, launch_authority_scope
+
+        conn = connect(self._store._db_path)
+        permit = None
+        try:
+            ticket_row = conn.execute(
+                "SELECT id FROM tickets WHERE conversation_id=?",
+                (state.record.conversation_id,),
+            ).fetchone()
+            if ticket_row is None or state.record.backend_key is ConversationBackendKey.hermes:
+                return await child.steer(
+                    token, content, sender_content=sender_content, sender_label=sender_label
+                )
+            running = state.running_turn
+            basis = None if running is None else running.launch_validation
+            if (
+                running is None
+                or running.token != token
+                or state.child is not child
+                or basis is None
+                or basis.evidence is None
+            ):
+                raise AdmissionRefused("model verification running turn basis is unavailable")
+            attempt_id = uuid4().hex
+            validation = await self.validate_launch_selection(
+                basis.selection,
+                basis.evidence.context.workspace,
+                attempt_id=attempt_id,
+                previous_alias_resolution=basis.current_alias_resolution,
+            )
+            if (
+                state.running_turn is not running
+                or running.ended
+                or running.ending_is_the_cores
+                or state.child is not child
+                or validation.state is not ValidationState.compatible
+                or validation.evidence is None
+                or validation.selection != basis.selection
+                or validation.evidence.context != basis.evidence.context
+                or validation.launch_token != basis.launch_token
+                or validation.resolved_model_id != basis.resolved_model_id
+            ):
+                raise AdmissionRefused("model verification running turn context changed")
+            permit = acquire_read(
+                conn,
+                ticket_row["id"],
+                backend_key=basis.selection.backend_key,
+                submitted_token=basis.selection.submitted_token,
+            )
+            dependencies = protect_validation_policy(
+                conn, permit, validation, conversation_id=state.record.conversation_id
+            )
+            expectation = expectation_from_validation(
+                validation,
+                attempt_id=attempt_id,
+                conversation_id=state.record.conversation_id,
+                disabled_models_revision=self.launch_policy_revision(basis.selection.backend_key),
+                turn=token,
+            )
+            observer = cast(AdmissionContextObserver, self._catalog_observer)
+            accepted_running = running
+
+            class RunningContext:
+                def verify_context(inner, expected: LaunchContext) -> bool:
+                    check_policy_dependencies(conn, dependencies)
+                    return (
+                        state.running_turn is accepted_running
+                        and not accepted_running.ended
+                        and not accepted_running.ending_is_the_cores
+                        and state.child is child
+                        and observer is not None
+                        and observer.verify_context(expected)
+                    )
+
+                def verify_prepared_launch(
+                    inner, expected: LaunchContext, prepared: BackendEmissionInputs
+                ) -> bool:
+                    return inner.verify_context(expected) and observer.verify_prepared_launch(
+                        expected, prepared
+                    )
+
+            with launch_authority_scope(permit), admission_scope(expectation, RunningContext()):
+                return await child.steer(
+                    token, content, sender_content=sender_content, sender_label=sender_label
+                )
+        finally:
+            if permit is not None:
+                permit.release(conn)
+            conn.close()
 
     def picker_rows_for_validation(
         self,
@@ -4422,6 +4546,7 @@ class SqliteProcessConversationSystem:
 
                 accepted_turn = _RunningTurn(
                     token=reservation.token,
+                    launch_validation=canonical_validation,
                     automatic_compaction=reservation.automatic_compaction,
                     prompt_senders={
                         principal: None
@@ -5865,6 +5990,7 @@ class SqliteProcessConversationSystem:
         if reference is None:
             return None
         runtime = {
+            "launch_validation": encode_value(running.launch_validation),
             "automatic_compaction": running.automatic_compaction,
             "compaction_confirmed": running.compaction_confirmed,
             "automatic_notice": running.automatic_notice,
@@ -5947,6 +6073,11 @@ class SqliteProcessConversationSystem:
             return
         running = _RunningTurn(
             token=token,
+            launch_validation=(
+                TypeAdapter(CanonicalModelValidation).validate_python(runtime["launch_validation"])
+                if runtime.get("launch_validation") is not None
+                else None
+            ),
             automatic_compaction=runtime.get("automatic_compaction", False),
             compaction_confirmed=runtime.get("compaction_confirmed", False),
             automatic_notice=runtime.get("automatic_notice", False),

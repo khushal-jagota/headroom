@@ -770,6 +770,25 @@ to the actual executor. A final check follows asynchronous preparation at the pr
 transport write. It compares observable local revisions and prepared process inputs.
 It does not control external credential revocation or establish provider entitlement.
 
+Claude scope uses a provider-reported snapshot, under the owner's accepted narrower contract.
+The native cache key under `cachedGrowthBookFeatures` is opaque data, not a source selector.
+Panels resolves the provider's global state path and keeps source roles separate.
+Discovery reads settings, current model rows, and settings again in the same child.
+The two source snapshots must match. Actual user emission repeats that sequence in
+its own child and requires a single-use receipt for that exact UUID and attempt.
+Prepared launch checks remain separate from the connected child's snapshot.
+
+The scope covers reported sources, captured launch inputs, and reported model and effort.
+It does not expose every later applied environment or credential-routing change inside Claude.
+A control reply does not freeze policy until the later user write. Unknown or malformed
+snapshots still refuse admission. Raw settings and credential digests never cross Panels wires.
+The destination compares transient settings privately and sends only opaque scope references.
+
+Direct and held steering validate the immutable selection accepted for the running turn.
+They do not apply newer Ticket choices. Each steer needs fresh attempt-owned evidence
+and a receipt for its watched UUID. A proved pre-write refusal stays a known refusal.
+A failure after possible emission remains uncertain and does not permit automatic replay.
+
 Canonical launch-affecting writers share a narrow durable fence. Uncertain commands
 retain their source ownership until their exact outcome settles. A timeout does not
 release that ownership. A blocked mutation names its affected sources and commands.
@@ -789,7 +808,7 @@ resolved identity, but marks current validation incompatible with “choose mode
 no launch token. Later sends still require current admission checks. A newer Ticket
 choice wins the existing revision comparison and is not overwritten by that receipt.
 
-The strict executor protocol is 11. The native spool keeps outcome envelopes in its
+The strict executor protocol is 12. The native spool keeps outcome envelopes in its
 existing format 2 container. The VPS keeps command arguments in the existing
 `executor_core_turns.runtime_json` record. Legacy commands receive no invented
 verification authority. Known outcomes replay as recorded. Unknown outcomes never
@@ -823,10 +842,15 @@ provider default. Queued messages, promotion and explicit retry retain those dis
 Manager and Chief composers retain their existing authorized behavior. This Ticket-scoped
 catalog path does not establish destination validation for them.
 
+Migration `claude_policy_snapshot_scope`, after `held_selection_kind`, fences older readers
+before the new scope semantics enter saved metadata or held and runtime records. It rewrites
+no history. Protocol 11 expectations grant no new admission authority. Known outcomes remain
+historical receipts, while unknown outcomes retain their existing uncertainty.
+
 Migration `held_selection_kind`, after `ticket_launch_validation`, marks the semantic
 change to `executor_native_messages.held_prompt_json`. Older builds refuse that database
 through the existing version gate before application readiness or dispatch. Legacy rows
-without the field retain their original uncertainty. Native protocol 11 and spool 2 do
+without the field retain their original uncertainty. Native protocol 12 requires the compatible observer and child adapters. Spool 2 does
 not change.
 
 After this migration, rollback requires a compatible build or an explicitly reviewed

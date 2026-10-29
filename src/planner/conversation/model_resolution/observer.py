@@ -8,7 +8,9 @@ import os
 import sys
 import time
 import tomllib
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -17,6 +19,7 @@ from planner.conversation.backends.claude_model_catalog import (
     ClaudeModelCatalogUnavailable,
     probe_claude_model_catalog,
 )
+from planner.conversation.backends.claude_settings import ClaudeSettingsScopeRegistry
 from planner.conversation.backends.codex_app_server.client import child_environment
 from planner.conversation.backends.codex_app_server.login import (
     CodexLoginGeneration,
@@ -30,7 +33,10 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
 from planner.conversation.backends.contracts import BackendEmissionInputs
 from planner.conversation.backends.probe_lifetime import owned_probe
 from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
-from planner.conversation.model_resolution.config import CATALOGUE_COLD_START_TIMEOUT_SECONDS
+from planner.conversation.model_resolution.config import (
+    CATALOGUE_COLD_START_TIMEOUT_SECONDS,
+    CLAUDE_MAX_RETAINED_FINALIZATIONS,
+)
 from planner.conversation.model_resolution.contracts import (
     CatalogEvidenceReference,
     CatalogObservation,
@@ -43,6 +49,11 @@ from planner.conversation.model_resolution.contracts import (
     PrerequisiteStatus,
     SelectionKind,
     ValidationReason,
+)
+from planner.conversation.model_resolution.logic.claude_configuration import (
+    ClaudeConfigurationRole,
+    claude_global_candidates,
+    claude_has_unsupported_source,
 )
 from planner.conversation.production_backends import (
     ProductionBackendLaunches,
@@ -77,6 +88,7 @@ class ProductionCatalogObserver:
         launches: Callable[[], ProductionBackendLaunches] | None = None,
         environment: SubprocessBackendProbeEnvironment | None = None,
         now: Callable[[], float] = time.time,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
     ) -> None:
         if (destination is TicketLocale.macos) != (executor_identity is not None):
             raise ValueError("Destination and executor identity disagree")
@@ -88,6 +100,11 @@ class ProductionCatalogObserver:
         )
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._now = now
+        self._claude_scope_registry = claude_scope_registry or ClaudeSettingsScopeRegistry()
+        self._finalized: dict[LaunchContext, LaunchContext] = {}
+        self._final_contexts: OrderedDict[tuple[LaunchContext, str], LaunchContext] = OrderedDict()
+        self._observations: OrderedDict[CatalogObservation, LaunchContext] = OrderedDict()
+        self._input_contexts: OrderedDict[LaunchContext, None] = OrderedDict()
         self._scopes: dict[tuple[ConversationBackendKey, Path], tuple[object, str]] = {}
         self._contexts: dict[tuple[object, ...], str] = {}
 
@@ -156,16 +173,25 @@ class ProductionCatalogObserver:
                 kept = (fingerprint, uuid4().hex)
                 self._scopes[key] = kept
             scope = kept[1]
+        input_ref = scope
+        if backend_key is ConversationBackendKey.claude:
+            scope = None
         generation = _account_generation(backend_key, environment, localized)
         facts = (
             self.destination, backend_key, self.executor_identity, workspace,
-            localized, executable_identity, version, scope, generation,
+            localized, executable_identity, version, scope, generation, input_ref,
         )
         context_ref = self._contexts.setdefault(facts, uuid4().hex)
-        return LaunchContext(
+        context = LaunchContext(
             context_ref, self.destination, backend_key, self.executor_identity, workspace,
             localized, executable_identity, version, scope, generation,
         )
+        if revisions is not None:
+            self._input_contexts[context] = None
+            self._input_contexts.move_to_end(context)
+            if len(self._input_contexts) > CLAUDE_MAX_RETAINED_FINALIZATIONS:
+                self._input_contexts.popitem(last=False)
+        return context
 
     def verify_context(self, expected: LaunchContext) -> bool:
         """Compare observable launch facts without a probe or an asynchronous gap.
@@ -194,16 +220,54 @@ class ProductionCatalogObserver:
             revisions = _configuration_revisions(expected.backend_key, localized, environment)
             fingerprint = (tuple(sorted(environment.items())), revisions, identity)
             retained = self._scopes.get((expected.backend_key, localized))
+            scope = expected.provider_scope
+            if expected.backend_key is ConversationBackendKey.claude:
+                finalized = self._finalized.get(expected)
+                if (
+                    finalized is None or scope is None
+                    or not self._claude_scope_registry.contains(scope)
+                ):
+                    return False
+                input_context = finalized
+                input_facts = (
+                    self.destination, expected.backend_key, self.executor_identity,
+                    expected.workspace,
+                    localized, identity, expected.executable_version, None,
+                    _account_generation(expected.backend_key, environment, localized),
+                    retained[1] if retained is not None else None,
+                )
+                if self._contexts.get(input_facts) != input_context.context_ref:
+                    return False
+                scope = retained[1] if retained is not None else None
             return (
                 identity == expected.executable_identity
                 and revisions is not None
                 and retained is not None
-                and retained == (fingerprint, expected.provider_scope)
+                and retained == (fingerprint, scope)
                 and _account_generation(expected.backend_key, environment, localized)
                 == expected.account_generation
             )
         except (OSError, ValueError):
             return False
+
+    def verify_observation_basis(
+        self, before: LaunchContext, after: LaunchContext,
+        observation: CatalogObservation, *, attempt_id: str,
+    ) -> bool:
+        """Only this observer can promote a stable Claude input basis."""
+        final = observation.evidence.context
+        if observation.evidence.attempt_id != attempt_id or before != after:
+            return False
+        if before.backend_key is not ConversationBackendKey.claude:
+            return final == before
+        return (
+            before.provider_scope is None
+            and final.provider_scope is not None
+            and self._finalized.get(final) == before
+            and self._observations.get(observation) == before
+            and self._claude_scope_registry.contains(final.provider_scope)
+            and self.verify_context(final)
+        )
 
     def verify_prepared_launch(
         self, expected: LaunchContext, prepared: BackendEmissionInputs
@@ -258,7 +322,18 @@ class ProductionCatalogObserver:
                     backend_key, captured, ValidationReason.installation_unavailable,
                     CorrectiveAction.install_provider,
                 )
-            if captured.provider_scope is None or captured.executable_version is None:
+            if (
+                backend_key is ConversationBackendKey.claude
+                and captured.executable_version != "2.1.267"
+            ):
+                return self._unavailable(
+                    backend_key, captured, ValidationReason.configuration_scope_unknown
+                )
+            if (
+                (backend_key is ConversationBackendKey.codex and captured.provider_scope is None)
+                or captured.executable_version is None
+                or captured not in self._input_contexts
+            ):
                 return self._unavailable(
                     backend_key, captured, ValidationReason.configuration_scope_unknown
                 )
@@ -309,6 +384,7 @@ class ProductionCatalogObserver:
                 claude_catalog = await probe_claude_model_catalog(
                     str(executable), environment=environment,
                     working_directory=captured.localized_workspace_folder,
+                    claude_scope_registry=self._claude_scope_registry,
                 )
                 rows = tuple(
                     CatalogRow(
@@ -316,9 +392,9 @@ class ProductionCatalogObserver:
                         SelectionKind.concrete if model.model_id == model.resolved_model_id
                         else SelectionKind.provider_alias,
                         model.resolved_model_id, model.display_name or None,
-                        model.reasoning_effort_options, False, None,
+                        model.reasoning_effort_options, False, model.enabled,
                         model.model_id if model.model_id == model.resolved_model_id else None,
-                        "claude:init",
+                        "claude:list_models",
                     )
                     for model in claude_catalog.models
                 )
@@ -326,13 +402,34 @@ class ProductionCatalogObserver:
             current = await self.capture_context(backend_key, workspace=workspace)
             if current != captured:
                 return self._unavailable(backend_key, captured, ValidationReason.context_changed)
+            if backend_key is ConversationBackendKey.claude:
+                scope = claude_catalog.provider_scope
+                if scope is None or not self._claude_scope_registry.contains(scope):
+                    return self._unavailable(
+                        backend_key, captured, ValidationReason.configuration_scope_unknown
+                    )
+                finalized = self._final_contexts.setdefault(
+                    (captured, scope),
+                    replace(captured, context_ref=uuid4().hex, provider_scope=scope),
+                )
+                self._final_contexts.move_to_end((captured, scope))
+                self._finalized[finalized] = captured
+                if len(self._final_contexts) > CLAUDE_MAX_RETAINED_FINALIZATIONS:
+                    _, evicted = self._final_contexts.popitem(last=False)
+                    self._finalized.pop(evicted, None)
+                captured = finalized
             identity = uuid4().hex
-            return CatalogObservation(
+            observation = CatalogObservation(
                 CatalogEvidenceReference(
                     identity, identity, captured, observed_at, attempt_id, 0.0
                 ),
                 rows, complete, limited, False, PrerequisiteStatus.available, credentials,
             )
+            if backend_key is ConversationBackendKey.claude:
+                self._observations[observation] = current
+                if len(self._observations) > CLAUDE_MAX_RETAINED_FINALIZATIONS:
+                    self._observations.popitem(last=False)
+            return observation
 
         try:
             return await owned_probe(
@@ -355,6 +452,13 @@ class ProductionCatalogObserver:
             return self._unavailable(
                 backend_key, captured, ValidationReason.configuration_scope_unknown
             )
+
+
+def _claude_managed_directory() -> Path:
+    return (
+        Path("/Library/Application Support/ClaudeCode") if sys.platform == "darwin"
+        else Path("/etc/claude-code")
+    )
 
 
 def _configuration_revisions(
@@ -381,19 +485,21 @@ def _configuration_revisions(
         )
     else:
         config = Path(environment.get("CLAUDE_CONFIG_DIR", str(home / ".claude")))
-        managed = (
-            Path("/Library/Application Support/ClaudeCode") if sys.platform == "darwin"
-            else Path("/etc/claude-code")
-        )
+        managed = _claude_managed_directory()
+        preferred, legacy = claude_global_candidates(environment, home)
+        try:
+            selected_global = preferred if preferred.exists() else legacy
+        except OSError:
+            return None
         paths = [
             config / "settings.json", config / "settings.local.json",
-            home / ".claude.json", managed / "managed-settings.json",
+            preferred, legacy, managed / "managed-settings.json",
+            config / "remote-settings.json",
         ]
         try:
-            paths.extend(managed.glob("managed-settings.d/*.json"))
-            # The directory revision detects insertion or removal of managed files.
-            if (managed / "managed-settings.d").exists():
-                paths.append(managed / "managed-settings.d")
+            paths.extend(sorted(managed.glob("managed-settings.d/*.json")))
+            # Track candidate directories even when the selected document is absent.
+            paths.extend(path for path in (config, managed / "managed-settings.d") if path.exists())
         except OSError:
             return None
         paths.extend(
@@ -405,11 +511,26 @@ def _configuration_revisions(
     for path in paths:
         try:
             info = path.stat()
-            if path.is_file():
+            if path.is_file() and (
+                backend_key is ConversationBackendKey.codex
+                or path not in (preferred, legacy) or path == selected_global
+            ):
                 text = path.read_text()
                 document = tomllib.loads(text) if path.suffix == ".toml" else json.loads(text)
-                if _has_indirect_source(document):
-                    return None
+                if backend_key is ConversationBackendKey.codex:
+                    if _has_indirect_source(document):
+                        return None
+                elif path not in (preferred, legacy) or path == selected_global:
+                    role = (
+                        ClaudeConfigurationRole.global_state if path == selected_global
+                        else ClaudeConfigurationRole.remote_policy_cache
+                        if path == config / "remote-settings.json"
+                        else ClaudeConfigurationRole.managed_settings
+                        if path.is_relative_to(managed)
+                        else ClaudeConfigurationRole.settings
+                    )
+                    if claude_has_unsupported_source(document, role):
+                        return None
             revisions.append(
                 (
                     str(path),

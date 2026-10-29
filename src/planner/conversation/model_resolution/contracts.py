@@ -137,7 +137,9 @@ class LaunchContext:
     Executor identity is null only on VPS. The canonical workspace binding and
     localized directory must both match the captured observation context.
     executable_identity identifies the selected binary, not an unrelated PATH hit.
-    provider_scope names effective nonsecret settings, never raw configuration.
+    Claude provider_scope names a private provider-reported source snapshot.
+    It excludes unreported applied state and reply-to-write continuity. Input-only
+    Claude captures have null scope. No raw configuration crosses this boundary.
     Codex generation reuses the saved account ID and refresh stamp. Missing
     generation requires a fresh observation owned by each validation attempt.
     No token, credential digest, raw environment, or credential path belongs here.
@@ -421,6 +423,17 @@ class ProviderCatalogObserver(Protocol):
     async def capture_context(
         self, backend_key: ConversationBackendKey, *, workspace: CatalogWorkspaceBinding
     ) -> LaunchContext: ...
+
+    def verify_observation_basis(
+        self,
+        before: LaunchContext,
+        after: LaunchContext,
+        observation: CatalogObservation,
+        *,
+        attempt_id: str,
+    ) -> bool:
+        """Validate a destination-owned finalization against stable input captures."""
+        ...
 
     async def observe(
         self,

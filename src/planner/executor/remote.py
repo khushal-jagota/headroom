@@ -124,7 +124,7 @@ class RemoteBackendChild:
     async def _call(
         self, operation: ChildOperation, turn: backend.TurnToken | None = None, **arguments: Any
     ) -> JsonObject:
-        if operation in (ChildOperation.start, ChildOperation.write_prompt):
+        if operation in (ChildOperation.start, ChildOperation.write_prompt, ChildOperation.steer):
             from planner.conversation.admission.service import (
                 bind_command,
                 current_admission_expectation,

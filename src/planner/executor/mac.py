@@ -178,6 +178,12 @@ class MacExecutor:
         self._input_workers: dict[str, asyncio.Task[None]] = {}
         self._transfer_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
+        from planner.conversation.backends.claude_settings import ClaudeSettingsScopeRegistry
+
+        self._claude_scope_registry = (
+            getattr(catalog_observer, "_claude_scope_registry", None)
+            or ClaudeSettingsScopeRegistry()
+        )
         self._catalog_observer = catalog_observer
         self._catalog_tasks: dict[str, tuple[CatalogRequest, FrameWriter, asyncio.Task[None]]] = {}
         self.registry = registry or NativeChildRegistry(
@@ -242,7 +248,8 @@ class MacExecutor:
                 replace(
                     launches.claude,
                     environment_overrides=launches.claude.environment_overrides + overrides,
-                )
+                ),
+                claude_scope_registry=self._claude_scope_registry,
             )
 
         return factory
@@ -477,6 +484,7 @@ class MacExecutor:
                 destination=TicketLocale.macos,
                 panels_server_url=self.server_url,
                 executor_identity=identity,
+                claude_scope_registry=self._claude_scope_registry,
             )
             self._catalog_observer = observer
         owner = asyncio.current_task()

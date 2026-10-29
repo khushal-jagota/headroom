@@ -101,6 +101,12 @@ from claude_agent_sdk import (
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
+from planner.conversation.backends.claude_settings import (
+    ClaudeControlTransport,
+    ClaudeSettingsScopeRegistry,
+    ClaudeSettingsUnavailable,
+    read_claude_catalog_settings_snapshot,
+)
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEmissionInputs,
@@ -112,6 +118,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    BackendUserEmissionReceipt,
     BackendUserInputRequest,
     EmissionCheck,
     NeedsRebind,
@@ -121,6 +128,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
     UserInputAnswerWriteFailed,
     current_emission_check,
+    current_user_emission_requirement,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -359,7 +367,10 @@ class ClaudeSdkClient(Protocol):
 type ClaudeSdkClientFactory = Callable[[ClaudeAgentOptions], ClaudeSdkClient]
 
 
-def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
+def claude_sdk_client(
+    options: ClaudeAgentOptions, *,
+    claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
+) -> ClaudeSdkClient:
     """The real SDK client, with the SDK's public custom-transport observation seam."""
 
     async def empty_prompt() -> AsyncIterator[dict[str, Any]]:
@@ -372,7 +383,7 @@ def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
     transport = _ClaudeProtocolTransport(
         _ClaudeCleanupTransport(prompt=empty_prompt(), options=transport_options)
     )
-    return _ObservedClaudeSdkClient(options, transport)
+    return _ObservedClaudeSdkClient(options, transport, claude_scope_registry=claude_scope_registry)
 
 
 class _ClaudeCleanupTransport(SubprocessCLITransport):
@@ -470,11 +481,11 @@ def _settle(observed: _ObservedUserMessage) -> None:
         observed.settled.set_result(None)
 
 
-class _ClaudeProtocolTransport(Transport):
+class _ClaudeProtocolTransport(ClaudeControlTransport):
     """Pass the SDK transport through and retain only Claude's correlation receipts."""
 
     def __init__(self, inner: Transport) -> None:
-        self._inner = inner
+        super().__init__(inner)
         self._user_messages: dict[str, _ObservedUserMessage] = {}
         self._result_user_message_uuids: dict[str, frozenset[str]] = {}
         self._control_responses: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
@@ -499,6 +510,7 @@ class _ClaudeProtocolTransport(Transport):
                 self._observe(message)
                 yield message
         finally:
+            self.settle_control()
             for observed in self._user_messages.values():
                 if not observed.admission.done():
                     observed.admission.set_result(None)
@@ -508,6 +520,7 @@ class _ClaudeProtocolTransport(Transport):
                     response.set_result(None)
 
     def _observe(self, message: dict[str, Any]) -> None:
+        self.observe_control(message)
         if message.get("type") == "command_lifecycle":
             command_uuid = message.get("command_uuid")
             state = message.get("state")
@@ -551,6 +564,13 @@ class _ClaudeProtocolTransport(Transport):
             if waiting is not None and not waiting.done():
                 payload = response.get("response")
                 waiting.set_result(payload if isinstance(payload, dict) else None)
+
+    def forget_user_message(self, user_message_uuid: str) -> None:
+        observed = self._user_messages.pop(user_message_uuid, None)
+        if observed is not None:
+            if not observed.admission.done():
+                observed.admission.set_result(False)
+            _settle(observed)
 
     def watch_user_message(self, user_message_uuid: str) -> None:
         loop = asyncio.get_running_loop()
@@ -652,6 +672,7 @@ class _ClaudeProtocolTransport(Transport):
         return cancelled, still_queued
 
     async def close(self) -> None:
+        self.settle_control()
         await self._inner.close()
 
     def is_ready(self) -> bool:
@@ -665,10 +686,15 @@ class _ObservedClaudeSdkClient:
     """Expose typed SDK messages plus the raw receipts that the parser omits."""
 
     def __init__(
-        self, options: ClaudeAgentOptions, transport: _ClaudeProtocolTransport
+        self, options: ClaudeAgentOptions, transport: _ClaudeProtocolTransport,
+        *, claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
     ) -> None:
         self._client = ClaudeSDKClient(options, transport=transport)
         self._transport = transport
+        self._options = options
+        self._scope_registry = claude_scope_registry
+        self._child_lifetime = uuid.uuid4().hex
+        self._user_admission_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         await self._client.connect()
@@ -678,33 +704,71 @@ class _ObservedClaudeSdkClient:
 
     async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
         check = current_emission_check()
-        if check is None:
+        requirement = current_user_emission_requirement()
+        if check is None and requirement is None:
             await self._client.query(prompt)
             return
+        if check is None or requirement is None or self._scope_registry is None:
+            raise AdmissionRefused("model verification Claude user proof unavailable")
+        registry = self._scope_registry
+        if self._options.effort != requirement.reasoning_effort:
+            raise AdmissionRefused("model verification Claude prepared effort changed")
+
+        pending_receipts: list[BackendUserEmissionReceipt] = []
 
         async def exact_messages() -> AsyncIterator[dict[str, Any]]:
-            if isinstance(prompt, str):
-                message = {
-                    "type": "user",
-                    "message": {"role": "user", "content": prompt},
-                    "parent_tool_use_id": None,
-                }
-                message_uuid = str(uuid.uuid4())
-                message["uuid"] = message_uuid
-                self._transport.bind_user_check(message_uuid, check)
-                yield message
-            else:
-                async for original in prompt:
-                    message = dict(original)
+            async def messages() -> AsyncIterator[dict[str, Any]]:
+                if isinstance(prompt, str):
+                    yield {"type": "user", "message": {"role": "user", "content": prompt},
+                           "parent_tool_use_id": None}
+                else:
+                    async for original in prompt:
+                        yield dict(original)
+
+            async for message in messages():
+                message_uuid = message.get("uuid")
+                if not isinstance(message_uuid, str) or not message_uuid:
                     message_uuid = str(uuid.uuid4())
                     message["uuid"] = message_uuid
-                    self._transport.bind_user_check(message_uuid, check)
-                    yield message
+                try:
+                    sample = await read_claude_catalog_settings_snapshot(self._transport)
+                except ClaudeSettingsUnavailable:
+                    raise AdmissionRefused(
+                        "model verification Claude user snapshot unavailable"
+                    ) from None
+                receipt = registry.issue_receipt(
+                    sample, requirement, child_lifetime=self._child_lifetime,
+                    message_uuid=message_uuid,
+                )
+                pending_receipts.append(receipt)
 
-        await self._client.query(exact_messages())
+                def final_check(
+                    prepared: BackendEmissionInputs | None = None, *,
+                    receipt: BackendUserEmissionReceipt = receipt, message_uuid: str = message_uuid,
+                ) -> None:
+                    check(prepared)
+                    requirement.check(receipt)
+                    registry.consume(receipt, child_lifetime=self._child_lifetime,
+                                     message_uuid=message_uuid)
+
+                try:
+                    self._transport.bind_user_check(message_uuid, final_check)
+                    yield message
+                finally:
+                    registry.discard(receipt)
+
+        async with self._user_admission_lock:
+            try:
+                await self._client.query(exact_messages())
+            finally:
+                for pending in pending_receipts:
+                    registry.discard(pending)
 
     def receive_messages(self) -> AsyncIterator[Message]:
         return self._client.receive_messages()
+
+    def forget_user_message(self, user_message_uuid: str) -> None:
+        self._transport.forget_user_message(user_message_uuid)
 
     def watch_user_message(self, user_message_uuid: str) -> None:
         self._transport.watch_user_message(user_message_uuid)
@@ -732,6 +796,8 @@ class _ObservedClaudeSdkClient:
         return await self._transport.interrupt_and_cancel_queued()
 
     async def disconnect(self) -> None:
+        if self._scope_registry is not None:
+            self._scope_registry.discard_child(self._child_lifetime)
         await self._client.disconnect()
         # A failed connect can spawn a process before the SDK creates its query.
         # SDK disconnect then drops its transport without closing it. Keep our
@@ -816,12 +882,18 @@ class ClaudeAgentSdkBackendChild:
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
         client_factory: ClaudeSdkClientFactory = claude_sdk_client,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
     ) -> None:
         self._launch = launch
         self._resolved_start = resolved_start
         self._sink = event_sink
         self._message_files = message_files
-        self._client_factory = client_factory
+        self._client_factory = (
+            (lambda options: claude_sdk_client(
+                options, claude_scope_registry=claude_scope_registry
+            ))
+            if client_factory is claude_sdk_client else client_factory
+        )
         self._client: ClaudeSdkClient | None = None
         self._session_id: str | None = None
         self._resume_confirmed = False
@@ -1093,6 +1165,11 @@ class ClaudeAgentSdkBackendChild:
         turn.owned_steer_uuids.add(user_message_uuid)
         try:
             await client.query(asked)
+        except AdmissionRefused:
+            turn.owned_steer_uuids.discard(user_message_uuid)
+            if isinstance(client, _ObservedClaudeSdkClient):
+                client.forget_user_message(user_message_uuid)
+            return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
         except Exception:
             # The command can have crossed the process boundary before this failure. Keep
             # its ownership on the turn so Claude's later receipt for it remains captured.
@@ -1896,9 +1973,11 @@ class ClaudeAgentSdkBackendChildFactory:
         launch: ClaudeAgentSdkChildLaunch,
         *,
         client_factory: ClaudeSdkClientFactory = claude_sdk_client,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
     ) -> None:
         self._launch = launch
         self._client_factory = client_factory
+        self._claude_scope_registry = claude_scope_registry
 
     def __call__(
         self,
@@ -1913,6 +1992,7 @@ class ClaudeAgentSdkBackendChildFactory:
             event_sink=event_sink,
             message_files=message_files,
             client_factory=self._client_factory,
+            claude_scope_registry=self._claude_scope_registry,
         )
 
 

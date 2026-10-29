@@ -184,8 +184,15 @@ class ModelResolutionService:
                     return replace(validation, state=ValidationState.unavailable)
                 return validation
             after = await capture()
-            if after != context or result.evidence.context != context:
+            verify_basis = getattr(source, "verify_observation_basis", None)
+            basis_valid = (
+                verify_basis(context, after, result, attempt_id=attempt_id)
+                if callable(verify_basis)
+                else after == context == result.evidence.context
+            )
+            if not basis_valid:
                 return unresolved_validation(selection, ValidationReason.context_changed)
+            context = result.evidence.context
             if result.evidence.attempt_id != attempt_id:
                 return unresolved_validation(
                     selection, ValidationReason.account_observation_required

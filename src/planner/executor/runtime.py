@@ -589,12 +589,16 @@ class NativeChildRegistry:
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
         if command.child.executor_incarnation != self.incarnation:
             outcome = CommandOutcome(
-                command.command_id, command.child, CommandDisposition.refused,
+                command.command_id,
+                command.child,
+                CommandDisposition.refused,
                 {"reason": "incarnation_gone"},
             )
         elif self._reference_conflicts(command.child, command.command_id):
             outcome = CommandOutcome(
-                command.command_id, command.child, CommandDisposition.refused,
+                command.command_id,
+                command.child,
+                CommandDisposition.refused,
                 {"reason": "child_reference_conflict"},
             )
         elif command.operation == ChildOperation.stop:
@@ -637,7 +641,11 @@ class NativeChildRegistry:
             try:
                 native_command = command
                 expectation = None
-                if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
+                if command.operation in (
+                    ChildOperation.start,
+                    ChildOperation.write_prompt,
+                    ChildOperation.steer,
+                ):
                     from planner.conversation.admission.service import parse_expectation
 
                     raw_expectation = command.arguments.get("admission_expectation")
@@ -778,12 +786,13 @@ class NativeChildRegistry:
                             or command.child.child_id in self._retiring_children
                         ):
                             raise _CommandAdmissionRefused("source child identity is retiring")
-                        if command.operation == ChildOperation.write_prompt:
+                        if command.operation in (ChildOperation.write_prompt, ChildOperation.steer):
                             if self.admission_stopped:
                                 raise _CommandAdmissionRefused("executor is quiescing")
                         if command.operation in (
                             ChildOperation.start,
                             ChildOperation.write_prompt,
+                            ChildOperation.steer,
                         ) and (
                             (
                                 child.ticket_id is not None
@@ -807,7 +816,8 @@ class NativeChildRegistry:
                                     "model verification retained process context changed"
                                 )
                             if (
-                                command.operation is ChildOperation.write_prompt
+                                command.operation
+                                in (ChildOperation.write_prompt, ChildOperation.steer)
                                 and child.backend_key is ConversationBackendKey.claude
                                 and child.model == expectation.launch_token
                                 and child.resolved_model_id != expectation.resolved_model_id
@@ -815,7 +825,10 @@ class NativeChildRegistry:
                                 raise NeedsRebind(
                                     "the provider alias target changed before admission"
                                 )
-                            if command.operation == ChildOperation.write_prompt and (
+                            if command.operation in (
+                                ChildOperation.write_prompt,
+                                ChildOperation.steer,
+                            ) and (
                                 (
                                     child.model
                                     if command.arguments.get("model_change") is None

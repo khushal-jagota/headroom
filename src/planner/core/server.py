@@ -229,12 +229,16 @@ def create_app(
         remembered_codex_login_rejection = DurableCodexLoginRejection(
             config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
         )
+        from planner.conversation.backends.claude_settings import ClaudeSettingsScopeRegistry
+
+        claude_scope_registry = ClaudeSettingsScopeRegistry()
         backend_factories = (
             backend_child_factories_for_test
             if backend_child_factories_for_test is not None
             else production_backend_child_factories(
                 panels_server_url=f"http://{HOST}:{config.port}",
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
+                claude_scope_registry=claude_scope_registry,
             )
         )
         if os.environ.get("PLAN_EXECUTOR_MODE") == "remote":
@@ -321,6 +325,7 @@ def create_app(
                     ProductionCatalogObserver(
                         destination=TicketLocale.vps,
                         panels_server_url=f"http://{HOST}:{config.port}",
+                        claude_scope_registry=claude_scope_registry,
                     ),
                     endpoint=executor_endpoint,
                 )

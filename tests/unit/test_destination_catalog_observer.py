@@ -12,6 +12,10 @@ import anyio
 import pytest
 
 from planner.conversation.backends.claude_model_catalog import ClaudeModel, ClaudeModelCatalog
+from planner.conversation.backends.claude_settings import (
+    ClaudeSettingsScopeRegistry,
+    ClaudeSettingsSnapshot,
+)
 from planner.conversation.backends.codex_app_server.model_catalog import (
     CodexModel,
     CodexModelCatalog,
@@ -53,10 +57,11 @@ class ScriptedLaunchEnvironment(SubprocessBackendProbeEnvironment):
     ) -> CommandOutcome:
         del timeout_seconds
         self.calls.append((tuple(argv), dict(environment_overrides or {}), working_directory))
-        return CommandOutcome(0, "1.2.3" if argv[-1] == "--version" else "Logged in", "")
+        return CommandOutcome(0, "2.1.267" if argv[-1] == "--version" else "Logged in", "")
 
 
 def launch_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ProductionBackendLaunches:
+    monkeypatch.setattr(observer, "_claude_managed_directory", lambda: tmp_path / "managed")
     executable = tmp_path / "selected-cli"
     executable.write_text("fixture, never executed")
     executable.chmod(0o700)
@@ -75,6 +80,11 @@ def launch_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Productio
             environment_overrides=(("PROVIDER_FIXTURE", "selected"),),
         ),
     )
+
+
+def synthetic_scope(registry: ClaudeSettingsScopeRegistry | None) -> str:
+    assert registry is not None
+    return registry.retain(ClaudeSettingsSnapshot({}, (), "claude-opus-5", None))
 
 
 def binding(path: Path) -> CatalogWorkspaceBinding:
@@ -104,12 +114,14 @@ def test_observation_uses_selected_launch_and_preserves_row_facts(
     async def claude(
         executable: str, *, environment: Mapping[str, str] | None = None,
         working_directory: Path | None = None,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
     ) -> ClaudeModelCatalog:
         probe_calls.append((executable, environment, working_directory))
         clock[0] = 120.0
         return ClaudeModelCatalog(
             (ClaudeModel("fable", "Fable", "claude-fable-5", None),
              ClaudeModel("claude-fable-4", "Fable 4", "claude-fable-4", ())), (),
+            provider_scope=synthetic_scope(claude_scope_registry),
         )
 
     monkeypatch.setattr(observer, "probe_codex_model_catalog", codex)
@@ -164,10 +176,14 @@ def test_configuration_change_during_observation_is_unresolved(
     async def claude(
         executable: str, *, environment: Mapping[str, str] | None = None,
         working_directory: Path | None = None,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
     ) -> ClaudeModelCatalog:
         del executable, environment, working_directory
         config.write_text('{"changed":true}')
-        return ClaudeModelCatalog((ClaudeModel("opus", "Opus", "claude-opus-5", ()),), ())
+        return ClaudeModelCatalog(
+            (ClaudeModel("opus", "Opus", "claude-opus-5", ()),), (),
+            provider_scope=synthetic_scope(claude_scope_registry),
+        )
 
     monkeypatch.setattr(observer, "probe_claude_model_catalog", claude)
 
@@ -382,9 +398,13 @@ def test_observation_preserves_affirmative_credential_denial_and_unknown_status(
     async def catalog(
         executable: str, *, environment: Mapping[str, str] | None = None,
         working_directory: Path | None = None,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
     ) -> ClaudeModelCatalog:
         del executable, environment, working_directory
-        return ClaudeModelCatalog((ClaudeModel("opus", "Opus", "claude-opus-5", ()),), ())
+        return ClaudeModelCatalog(
+            (ClaudeModel("opus", "Opus", "claude-opus-5", ()),), (),
+            provider_scope=synthetic_scope(claude_scope_registry),
+        )
 
     monkeypatch.setattr(observer, "probe_claude_model_catalog", catalog)
 
@@ -448,7 +468,7 @@ def test_executable_identity_uses_launch_cwd_and_relative_effective_path(
         second = await reader.capture_context(
             ConversationBackendKey.codex, workspace=binding(workspace)
         )
-        assert first.executable_version == second.executable_version == "1.2.3"
+        assert first.executable_version == second.executable_version == "2.1.267"
         assert second.executable_identity != first.executable_identity
         assert second.context_ref != first.context_ref
 

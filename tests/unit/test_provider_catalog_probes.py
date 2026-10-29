@@ -101,8 +101,9 @@ def test_claude_probe_keeps_unknown_effort_distinct_and_no_prompt(
     disconnected: list[bool] = []
 
     class Client:
-        def __init__(self, *, options: ClaudeAgentOptions) -> None:
+        def __init__(self, *, options: ClaudeAgentOptions, transport: Any) -> None:
             self.options = options
+            transport.control_request = self.control_request
 
         async def __aenter__(self) -> Client:
             options.append(self.options)
@@ -111,7 +112,11 @@ def test_claude_probe_keeps_unknown_effort_distinct_and_no_prompt(
         async def __aexit__(self, *args: object) -> None:
             disconnected.append(True)
 
-        async def get_server_info(self) -> dict[str, object]:
+        async def control_request(self, subtype: str) -> dict[str, object]:
+            if subtype == "get_settings":
+                return {"effective": {}, "sources": [],
+                        "applied": {"model": "claude-opus-5", "effort": "high"}}
+            assert subtype == "list_models"
             return {"models": [
                 {"value": "opus", "resolvedModel": "claude-opus-5"},
                 {"value": "claude-opus-4", "resolvedModel": "claude-opus-4",

@@ -3,7 +3,7 @@
 import math
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
 from typing import Protocol
@@ -14,9 +14,13 @@ from planner.conversation.admission.contracts import AdmissionExpectation
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
     BackendEmissionInputs,
+    BackendUserEmissionReceipt,
     TurnToken,
+    UserEmissionRequirement,
     emission_check_scope,
+    user_emission_requirement_scope,
 )
+from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.model_resolution.config import CATALOGUE_FRESH_SECONDS
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
@@ -209,8 +213,35 @@ def admission_scope(
             ):
                 raise AdmissionRefused("model verification prepared launch context changed")
 
+    def check_user(receipt: BackendUserEmissionReceipt) -> None:
+        if (
+            receipt.scope_ref != expectation.context.provider_scope
+            or receipt.attempt_id != expectation.attempt_id
+            or receipt.turn != expectation.turn
+            or receipt.resolved_model != expectation.resolved_model_id
+            or receipt.reasoning_effort != expectation.reasoning_effort
+        ):
+            raise AdmissionRefused("model verification user receipt changed")
+        check()
+
     try:
-        with emission_check_scope(check):
+        with ExitStack() as stack:
+            stack.enter_context(emission_check_scope(check))
+            if expectation.selection.backend_key is ConversationBackendKey.claude:
+                assert expectation.context.provider_scope is not None
+                stack.enter_context(
+                    user_emission_requirement_scope(
+                        UserEmissionRequirement(
+                            scope_ref=expectation.context.provider_scope,
+                            submitted_token=expectation.launch_token,
+                            resolved_model=expectation.resolved_model_id,
+                            reasoning_effort=expectation.reasoning_effort,
+                            attempt_id=expectation.attempt_id,
+                            turn=expectation.turn,
+                            check=check_user,
+                        )
+                    )
+                )
             yield
     finally:
         _expectation.reset(token)

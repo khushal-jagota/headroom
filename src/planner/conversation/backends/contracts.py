@@ -23,7 +23,7 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -78,6 +78,49 @@ def emission_check_scope(check: EmissionCheck) -> Iterator[None]:
         yield
     finally:
         _emission_check.reset(token)
+
+
+@dataclass(frozen=True, slots=True)
+class BackendUserEmissionReceipt:
+    """One destination-private proof bound to an actual child and user frame."""
+
+    receipt_ref: str
+    scope_ref: str
+    child_lifetime: str
+    message_uuid: str
+    attempt_id: str
+    turn: TurnToken | None
+    resolved_model: str
+    reasoning_effort: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class UserEmissionRequirement:
+    scope_ref: str
+    submitted_token: str
+    resolved_model: str
+    reasoning_effort: str | None
+    attempt_id: str
+    turn: TurnToken | None
+    check: Callable[[BackendUserEmissionReceipt], None]
+
+
+_user_emission_requirement: ContextVar[UserEmissionRequirement | None] = ContextVar(
+    "provider_user_emission_requirement", default=None
+)
+
+
+def current_user_emission_requirement() -> UserEmissionRequirement | None:
+    return _user_emission_requirement.get()
+
+
+@contextmanager
+def user_emission_requirement_scope(requirement: UserEmissionRequirement) -> Iterator[None]:
+    token = _user_emission_requirement.set(requirement)
+    try:
+        yield
+    finally:
+        _user_emission_requirement.reset(token)
 
 
 class BackendAdapterError(Exception):

@@ -25,6 +25,7 @@ from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
     ClaudeAgentSdkChildLaunch,
 )
+from planner.conversation.backends.claude_settings import ClaudeSettingsScopeRegistry
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChildFactory,
     CodexChildLaunch,
@@ -103,6 +104,7 @@ def production_backend_child_factories(
     panels_server_url: str,
     executable_path: ExecutablePathResolver = shutil.which,
     remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
+    claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
 ) -> Mapping[ConversationBackendKey, BackendChildFactory]:
     """One child factory per backend, pointed at this machine's copy of each agent.
 
@@ -118,7 +120,9 @@ def production_backend_child_factories(
         ConversationBackendKey.codex: CodexAppServerBackendChildFactory(
             launches.codex, remembered_login_rejection=remembered_codex_login_rejection
         ),
-        ConversationBackendKey.claude: ClaudeAgentSdkBackendChildFactory(launches.claude),
+        ConversationBackendKey.claude: ClaudeAgentSdkBackendChildFactory(
+            launches.claude, claude_scope_registry=claude_scope_registry
+        ),
     }
 
 
@@ -143,9 +147,7 @@ def _claude_launch(panels_server_url: str) -> ClaudeAgentSdkChildLaunch:
     override = os.environ.get(CLAUDE_EXECUTABLE_OVERRIDE)
     return ClaudeAgentSdkChildLaunch(
         claude_executable=(
-            Path(override).expanduser()
-            if override is not None
-            else PANELS_OWNED_CLAUDE_EXECUTABLE
+            Path(override).expanduser() if override is not None else PANELS_OWNED_CLAUDE_EXECUTABLE
         ),
         environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
     )

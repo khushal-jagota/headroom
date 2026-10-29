@@ -750,6 +750,20 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             },
         )
         await registry.execute_command(prompt)
+        uncertain = ChildCommand(
+            "uncertain",
+            reference,
+            ChildOperation.steer,
+            turn,
+            {
+                "content": encode_value(text_message_content("steer")),
+                "sender_label": "Owner",
+                "admission_expectation": encode_value(replace(expectation, turn=turn)),
+            },
+        )
+        assert (
+            await registry.execute_command(uncertain)
+        ).disposition == CommandDisposition.uncertain
         assert (await registry.quiesce()).active_turn_count == 1
         artifact = tmp_path / "artifacts" / "tickets" / "t_example" / "result.bin"
         artifact.parent.mkdir(parents=True, exist_ok=True)
@@ -784,13 +798,6 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         kinds = [entry.kind for entry in spool.pending()]
         assert EnvelopeKind.answer_application in kinds
         assert EnvelopeKind.authorized_action in kinds
-        uncertain = ChildCommand(
-            "uncertain",
-            reference,
-            ChildOperation.steer,
-            turn,
-            {"content": encode_value(text_message_content("steer")), "sender_label": "Owner"},
-        )
         assert (
             await registry.execute_command(uncertain)
         ).disposition == CommandDisposition.uncertain
@@ -2488,7 +2495,9 @@ def test_mac_factory_selects_existing_provider_with_inherited_launch_environment
     launches = production_backend_launches(panels_server_url="https://unused")
     observed: list[object] = []
 
-    def selected(launch: object) -> BackendChildFactory:
+    def selected(launch: object, **kwargs: object) -> BackendChildFactory:
+        if backend is ConversationBackendKey.claude:
+            assert kwargs["claude_scope_registry"] is executor._claude_scope_registry
         observed.append(launch)
         return cast(BackendChildFactory, object())
 
