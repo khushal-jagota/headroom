@@ -25,6 +25,7 @@ from planner.environments.deployment_gate import verify_gate_evidence
 from planner.environments.deployment_gate_contracts import GateEvidence
 from planner.environments.interruption_capture import capture_after_stop
 from planner.environments.runtime_admission import admit_runtime
+from planner.environments.service_execution import require_external_service_execution
 
 
 class DeploymentError(RuntimeError):
@@ -50,6 +51,9 @@ LifecycleTransition = Callable[..., None]
 class SubprocessServiceController:
     manager: str
     service_name: str
+
+    def __post_init__(self) -> None:
+        require_external_service_execution(self.manager, self.service_name)
 
     def stop(self) -> None:
         if self.manager == "systemctl":

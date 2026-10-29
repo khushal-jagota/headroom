@@ -67,6 +67,7 @@ def validate_schema_ancestry(database: Path, migrations: Path = MIGRATIONS_DIREC
 
 
 def apply(arguments: argparse.Namespace) -> dict[str, object]:
+    service = SubprocessServiceController("systemctl", "panels-live.service")
     root = arguments.current_root.expanduser().resolve()
     database = root / "data" / "planner.db"
     store = FileUpdateRequestStore(root / "data" / "owner-update-request.json")
@@ -194,7 +195,7 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
             restore=lambda snapshot: restore_database_snapshot(
                 snapshot, database, live_stopped=True
             ),
-            service=SubprocessServiceController("systemctl", "panels-live.service"),
+            service=service,
             health=HttpHealthClient(arguments.health_url),
             gate_evidence=evidence,
             deployment_id=deployment_id,
