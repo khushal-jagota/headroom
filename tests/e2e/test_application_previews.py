@@ -13,7 +13,7 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -21,28 +21,8 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
-from playwright.sync_api import Browser, Playwright, WebSocket, expect, sync_playwright
+from playwright.sync_api import Browser, WebSocket, expect
 from tests.support.server import REPO_ROOT, ServerHandle
-
-# Capture Linux's browser-cache location during collection, before the server
-# fixtures replace HOME. Honor a caller's explicit Playwright override, including 0.
-_BROWSER_CACHE = os.environ.get(
-    "PLAYWRIGHT_BROWSERS_PATH",
-    str(Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"),
-)
-
-
-@pytest.fixture(scope="session")
-def playwright() -> Iterator[Playwright]:
-    # The driver snapshots its environment at startup; launch args are too late.
-    # Keep the private HOME and restore this process's environment immediately.
-    with pytest.MonkeyPatch.context() as environment:
-        environment.setenv("PLAYWRIGHT_BROWSERS_PATH", _BROWSER_CACHE)
-        driver = sync_playwright().start()
-    try:
-        yield driver
-    finally:
-        driver.stop()
 
 
 @pytest.fixture(scope="session")

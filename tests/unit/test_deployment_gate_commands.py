@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sysconfig
 import time
@@ -16,10 +17,19 @@ import venv
 from dataclasses import dataclass
 from pathlib import Path
 
+import playwright
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+# Capture the browser input before test setup replaces HOME with a private home.
+_BROWSER_CACHE = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or str(
+    Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
+)
+if _BROWSER_CACHE != "0":
+    _BROWSER_CACHE = str(
+        (Path(os.environ.get("INIT_CWD") or Path.cwd()) / _BROWSER_CACHE).resolve()
+    )
 SCENARIO_SELECTORS = (
     "CONVERSATION_SETTLED_CASE", "CONVERSATION_LATEST_CASE",
     "CONVERSATION_SCROLL_CASE", "PANELS_CONVERSATION_MENU_ONLY",
@@ -45,6 +55,7 @@ class CommandGate:
     environment: dict[str, str]
     scripts: dict[str, str]
     selection: dict[str, object]
+    browser_cache: Path
 
     def run(self, *names: str, fault: str = "") -> subprocess.CompletedProcess[str]:
         (self.gate / "selection.json").write_text(json.dumps(self.selection))
@@ -57,7 +68,9 @@ class CommandGate:
         )
         command += "\nprintf admitted > " + shlex.quote(str(admitted))
         result = subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", command],
+            ["bwrap", "--bind", "/", "/", "--dev-bind", "/dev", "/dev",
+             "--ro-bind", str(self.browser_cache), str(self.browser_cache), "--",
+             "bash", "-euo", "pipefail", "-c", command],
             env=self.environment | {"GATE_FAULT": fault},
             text=True, capture_output=True, timeout=90,
         )
@@ -72,6 +85,12 @@ def command_gate(tmp_path_factory: pytest.TempPathFactory) -> CommandGate:
     reports = gate / "reports"
     for directory in (source, reports, gate / "artifact-shadow", shadow, temporary / "tools"):
         directory.mkdir(parents=True)
+    browser_cache = (
+        Path(playwright.__file__).resolve().parent / "driver/package/.local-browsers"
+        if _BROWSER_CACHE == "0" else Path(_BROWSER_CACHE)
+    ).resolve()
+    if not browser_cache.is_dir():
+        pytest.fail(f"Required preinstalled Playwright browser cache is absent: {browser_cache}")
     # A fresh interpreter environment, with the already installed pinned test
     # dependencies. Never copy or symlink an existing virtualenv.
     venv.EnvBuilder(with_pip=False).create(source / ".venv")
@@ -116,8 +135,18 @@ def pytest_sessionfinish(session, exitstatus):
     if os.environ.get('GATE_FAULT') == 'invalid-report':
         report.write_text('not XML')
 """)
+    # Keep the real npm dependency guard local to the disposable requested source.
+    fixture_scripts = source / "scripts"
+    (fixture_scripts / "development_safety").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts/dev", fixture_scripts / "dev")
+    for name in ("__init__.py", "bootstrap.py", "contracts.py", "launcher.py", "scanner.py"):
+        shutil.copy2(
+            ROOT / "scripts/development_safety" / name,
+            fixture_scripts / "development_safety" / name,
+        )
     web = source / "web"
-    for name in ("package.json", "package-lock.json"):
+    # Keep copied runtime imports complete when these real helpers change.
+    for name in ("package.json", "package-lock.json", "usage-aliases.mjs"):
         write(web / name, (ROOT / "web" / name).read_text())
     (web / "node_modules").symlink_to(ROOT / "web/node_modules", target_is_directory=True)
     write(web / "vitest.config.ts", """
@@ -206,6 +235,7 @@ await run(['gate']);
         "PANELS_DEPLOY_VENV": str(source / ".venv"), "GITHUB_WORKSPACE": str(ROOT),
         "PANELS_REQUESTED_SHA": revision, "GITHUB_RUN_ID": "gate-proof", "GITHUB_RUN_ATTEMPT": "1",
         "PYTHONPATH": str(source / "src"), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PLAYWRIGHT_BROWSERS_PATH": _BROWSER_CACHE,
         "GATE_PROTECTED_MARKER": str(shadow / "marker"),
         "GATE_LEGACY_MARKER": str(gate / "legacy-route"),
         "GATE_RUNNER_MARKER": str(gate / "requested-runner"),
@@ -221,7 +251,7 @@ await run(['gate']);
         "e2e": ["tests/e2e/test_gate.py"], "vitest": ["web/tests/gate.test.ts"],
         "browser": ["web/tests/gate-browser.test.mjs"], "browser_format": "shared-v1",
     }
-    return CommandGate(source, gate, environment, scripts, selection)
+    return CommandGate(source, gate, environment, scripts, selection, browser_cache)
 
 
 def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
