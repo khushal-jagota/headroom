@@ -356,3 +356,7 @@ def test_assigned_worker_can_manage_taken_definitions(
         actions.delete_measure(tmp_db, measure.id, principal=outsider, now=NOW)
     actions.delete_measure(tmp_db, measure.id, principal=worker, now=NOW)
     assert tmp_db.execute("SELECT 1 FROM measures WHERE id=?", (measure.id,)).fetchone() is None
+    # Goal reads tolerate deleted formula inputs, while save/read defaults remain strict.
+    assert data.read_definitions(tmp_db, (measure.id,), missing_ok=True) == {}
+    with pytest.raises(PlannerError, match="measure not found"):
+        data.read_definitions(tmp_db, (measure.id,))
