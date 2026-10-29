@@ -6,7 +6,7 @@ import re
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
-from planner.files.contracts import ManagerFile, TicketFile
+from planner.files.contracts import GoalFile, ManagerFile, TicketFile
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENCODED_UNSAFE_RE = re.compile(r"%(?:25|2e|2f|5c)", re.IGNORECASE)
@@ -29,6 +29,17 @@ def conversation_files_root(db_path: str | Path) -> Path:
 def manager_files_root(db_path: str | Path) -> Path:
     # Retain the existing private directory so both URL generations resolve the same bytes.
     return Path(db_path).parent / "files" / "sprint-items"
+
+
+def goal_files_root(db_path: str | Path) -> Path:
+    return Path(db_path).parent / "files" / "goals"
+
+
+def resolve_goal_file(db_path: str | Path, goal_id: str, relative_path: str) -> GoalFile:
+    _validate_safe_id(goal_id, "goal")
+    _validate_relative_path(relative_path)
+    target = _resolve_managed_file(goal_files_root(db_path), goal_id, relative_path)
+    return GoalFile(goal_id, relative_path, target)
 
 
 def resolve_ticket_file(db_path: str | Path, ticket_id: str, relative_path: str) -> TicketFile:
@@ -122,9 +133,9 @@ def html_navigation_owner(href: str) -> tuple[str, str, str]:
         raise ValueError("encoded managed traversal or separator")
     path = unquote(url.path, errors="strict")
     parts = path.split("/", 4)
-    if len(parts) != 5 or parts[2] not in ("tickets", "managers", "sprint-items"):
+    if len(parts) != 5 or parts[2] not in ("tickets", "managers", "sprint-items", "goals"):
         raise ValueError("unsafe managed URL")
-    kind = "tickets" if parts[2] == "tickets" else "managers"
+    kind = "managers" if parts[2] == "sprint-items" else parts[2]
     _validate_safe_id(parts[3], "managed owner")
     _validate_relative_path(parts[4])
     if "\x00" in parts[4] or Path(parts[4]).suffix.lower() not in (".html", ".htm"):
@@ -145,13 +156,16 @@ def resolve_html_navigation(db_path: str | Path, root_href: str, candidate_href:
         raise ValueError("different managed owner")
     logical_root = PurePosixPath(root_relative).parent
     PurePosixPath(candidate_relative).relative_to(logical_root)
-    resolver = resolve_ticket_file if kind == "tickets" else resolve_manager_file
     # Resolve the lexical parent itself, not the resolved root document's parent:
     # a root document can itself be a symlink to another directory.
-    owner_root = (ticket_files_root(db_path) if kind == "tickets" else manager_files_root(db_path))
+    owner_root = {
+        "tickets": ticket_files_root,
+        "managers": manager_files_root,
+        "goals": goal_files_root,
+    }[kind](db_path)
     artifact_root = (owner_root / owner / logical_root).resolve(strict=True)
-    root_file = resolver(db_path, owner, root_relative)
-    root_file.absolute_path.relative_to(artifact_root)
-    candidate = resolver(db_path, owner, candidate_relative)
-    candidate.absolute_path.relative_to(artifact_root)
-    return candidate.absolute_path
+    root_file = _resolve_managed_file(owner_root, owner, root_relative)
+    root_file.relative_to(artifact_root)
+    candidate = _resolve_managed_file(owner_root, owner, candidate_relative)
+    candidate.relative_to(artifact_root)
+    return candidate

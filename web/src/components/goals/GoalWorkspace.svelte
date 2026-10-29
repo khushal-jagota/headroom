@@ -15,6 +15,7 @@
  import type {ConversationState} from '../../lib/conversation/conversationState';
  import type {ManagedFileTarget} from '../../lib/filePreview';
  import ManagerFrame from '../ManagerFrame.svelte';
+ import ArtifactsBand from '../ArtifactsBand.svelte';
  import LiveConversation from '../conversation/LiveConversation.svelte';
  import PageDocument from '../pageKit/PageDocument.svelte';
  import PageChart from '../pageKit/PageChart.svelte';
@@ -27,7 +28,7 @@
  let conversationState=$state<ConversationState>('rest'),selectedPastConversationId=$state<string|null>(null),backends=$state<readonly BackendSnapshot[]>([]);
  let conversationId=$derived(selectedPastConversationId??goal?.conversation_id??null);
  let requestedApplied:string|null|undefined;
- $effect(()=>{if(goal&&requestedApplied!==requestedConversationId){requestedApplied=requestedConversationId;selectedPastConversationId=requestedConversationId&&requestedConversationId!==goal.conversation_id?requestedConversationId:null;if(requestedConversationId)conversationState='opened';}});
+ $effect(()=>{if(goal&&requestedApplied!==requestedConversationId){requestedApplied=requestedConversationId;selectedPastConversationId=requestedConversationId&&requestedConversationId!==goal.conversation_id?requestedConversationId:null;if(requestedConversationId&&!openedFile)conversationState='opened';}});
  $effect(()=>{navigation?.owner.setDemand('goal',{selected:{kind:'goal',id},selected_conversation_id:selectedPastConversationId,windows:[]});return()=>navigation?.owner.setDemand('goal',undefined);});
  $effect(()=>{if(content){const observer=new ResizeObserver(([entry])=>narrow=entry.contentRect.width<=640);observer.observe(content);return()=>observer.disconnect();}});
  $effect(()=>{if(goal)return refreshAtBoundary(Math.min(goal.next_refresh_at,readings.data?.next_refresh_at??Infinity),()=>{void detail.refetch();void readings.refetch();});});
@@ -61,6 +62,7 @@
  <!-- The saved page is the goal's content. It carries its own authored headings; the page
       renderer adds none, and nothing here wraps it in a section of our own naming. -->
  <div class="goal-page"><PageDocument document={goal.page} showHeader={false}/></div>
+ <ArtifactsBand owner={{kind:'goal',id}}/>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:goal:${id}`} label={goal?.title??'Goal'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={{kind:'goal',id}}/>{/snippet}
