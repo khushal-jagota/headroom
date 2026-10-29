@@ -24,6 +24,7 @@ from planner.environments.deployment_configuration import DEPLOYMENT_HEALTH_TIME
 from planner.environments.deployment_gate import verify_gate_evidence
 from planner.environments.deployment_gate_contracts import GateEvidence
 from planner.environments.interruption_capture import capture_after_stop
+from planner.environments.runtime_admission import admit_runtime
 
 
 class DeploymentError(RuntimeError):
@@ -253,6 +254,7 @@ def deploy_app(
         candidate_manifest = _validate_app(
             candidate_app, "candidate app", require_runtime=True
         )
+        _admit_candidate(candidate_app, candidate_manifest)
         prior_manifest = _validate_optional_current_app(current_app)
         if prior_manifest is None:
             if _persistent_state_exists(root):
@@ -306,6 +308,9 @@ def deploy_app(
                 and staged_manifest.artifact_digest != gate_evidence["artifact_digest"]
             ):
                 raise DeploymentError("copied candidate differs from checked artifact")
+            if staged_manifest != candidate_manifest:
+                raise DeploymentError("copied candidate differs from admitted manifest")
+            _admit_candidate(staged, staged_manifest)
             # Admission closes only after staging succeeds. A refused claim exits
             # through staging cleanup without entering stop/recovery handling.
             if before_stop is not None:
@@ -493,6 +498,9 @@ def _install_first_app(
         )
         if expected_digest and staged_manifest.artifact_digest != expected_digest:
             raise DeploymentError("copied candidate differs from checked artifact")
+        if staged_manifest != candidate_manifest:
+            raise DeploymentError("copied candidate differs from admitted manifest")
+        _admit_candidate(staged, staged_manifest)
         os.replace(staged, current_app)
         try:
             _publish_lifecycle(lifecycle_transition, "restarting")
@@ -661,3 +669,15 @@ def _capture_stopped_sessions(source_db: Path, deployment_id: str) -> None:
             "Deployment %s interruption capture failed; release gates remain unchanged",
             deployment_id,
         )
+
+
+def _admit_candidate(app: Path, manifest: AppManifest) -> None:
+    try:
+        admit_runtime(app, manifest)
+        verified = validate_app_manifest(
+            app / "manifest.json", expected_sha=manifest.app_sha, require_runtime=True
+        )
+        if verified != manifest:
+            raise AppValidationError("candidate manifest changed during runtime admission")
+    except AppValidationError as exc:
+        raise DeploymentError(f"candidate runtime admission refused: {exc}") from exc

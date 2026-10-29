@@ -4,6 +4,9 @@ Panels publishes checked applications separately from their installation. A push
 `main` creates a retained release on a disposable hosted runner. An owner update
 request sends that exact release to the existing deployment runner.
 
+[Executable archive runtime](archive-runtime.md) defines the supported host contract,
+sealed target proof, and compatibility refusal before service actions.
+
 ```text
 main → complete checks → build once → seal archive → smoke → disposable rehearsal
                                                                ↓
