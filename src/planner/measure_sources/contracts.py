@@ -8,6 +8,7 @@ from typing import Protocol, TypedDict
 
 from planner.core.contracts import Principal
 from planner.credentials.contracts import CredentialResolver
+from planner.datasets.contracts import CandidateDatasetResult, OutputDataset
 from planner.measures.contracts import (
     CandidateObservation,
     HistoryWindow,
@@ -155,6 +156,9 @@ class SourceRun:
     failure: RunFailure | None
     metrics: RunMetrics | None
     observation_count: int
+    dataset_outputs: tuple[OutputDataset, ...] = ()
+    dataset_result_count: int = 0
+    dataset_row_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,12 +186,14 @@ class RunResult:
     observations: tuple[CandidateObservation, ...]
     failure: RunFailure | None
     metrics: RunMetrics
+    dataset_results: tuple[CandidateDatasetResult, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class SourceRunDetail:
     run: SourceRun
     test_candidates: tuple[CandidateObservation, ...] | None
+    test_dataset_results: tuple[CandidateDatasetResult, ...] | None = None
 
 
 class SourceRuntime(Protocol):
@@ -242,6 +248,8 @@ class SourceRunSummary:
     finished_at: int | None
     failure: RunFailure | None
     observation_count: int
+    dataset_result_count: int = 0
+    dataset_row_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,3 +263,4 @@ class SourceStatus:
     failure_episode: FailureEpisode | None
     collection_failure: RunFailure | None
     running_run_id: str | None
+    dataset_output_count: int = 0

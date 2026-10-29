@@ -7,6 +7,7 @@ export interface ChartPoint {
 }
 
 export interface ChartSeries {
+  key?: string;
   color?: "blue" | "blue-muted" | "blue-dark";
   name: string;
   points: Array<ChartPoint>;
@@ -38,6 +39,45 @@ export interface ManualChartControls {
   increments?: Array<number>;
 }
 
+export interface DatasetFilter {
+  dimension: string;
+  codes: Array<string>;
+}
+
+export interface DatasetFieldMetric {
+  field: string;
+}
+
+export interface DatasetRatioMetric {
+  numerator: string;
+  denominator: string;
+  scale?: number;
+}
+
+export interface DatasetChartBinding {
+  kind: "dataset";
+  dataset_id: string;
+  group_by: string;
+  filters: Array<DatasetFilter>;
+  aggregation: "sum" | "latest";
+  metric: DatasetFieldMetric | DatasetRatioMetric;
+}
+
+export interface ScalarChartInput {
+  key: string;
+  label: string;
+  measure_id: string;
+  role?: "spent" | "planned";
+}
+
+export interface ScalarInputsChartBinding {
+  kind: "scalar_inputs";
+  inputs: Array<ScalarChartInput>;
+  aggregation: "sum" | "latest";
+}
+
+export type ChartBinding = DatasetChartBinding | ScalarInputsChartBinding;
+
 export interface ChartBlock {
   type: "chart";
   id: string;
@@ -48,6 +88,7 @@ export interface ChartBlock {
   period?: string;
   unit?: string;
   measure_id?: string;
+  binding?: ChartBinding;
   target?: number;
   domain?: [number, number];
   direction?: "atleast" | "atmost";
@@ -322,7 +363,112 @@ export interface ScalarChartProjection {
   summary_date: string | null;
 }
 
-export type ChartProjection = ScalarChartProjection;
+export interface CategoryChartValue {
+  status: "value" | "missing_input" | "division_by_zero" | "invalid_period" | "arithmetic_limit" | "invalid_value";
+  value: number | null;
+  numerator: number | null;
+  denominator: number | null;
+  partial: boolean;
+  missing_dates: Array<string>;
+  reasons: Array<string>;
+}
+
+export interface CategoryChartSummary {
+  actual: CategoryChartValue;
+  comparison: CategoryChartValue | null;
+  difference: number | null;
+  meets_expectation: boolean | null;
+  date: string | null;
+}
+
+export interface CategoryChartPoint {
+  key: string;
+  label: string;
+  date: string | null;
+  actual: CategoryChartValue;
+}
+
+export interface CategoryChartSeries {
+  key: string;
+  label: string;
+  points: Array<CategoryChartPoint>;
+  summary: CategoryChartValue | null;
+}
+
+export interface CategoryPointSummary {
+  key: string;
+  summary: CategoryChartSummary;
+}
+
+export interface CategoryChartRange {
+  id: "week" | "month" | "all";
+  label: string;
+  first_date: string;
+  last_date: string;
+  axis: "category" | "date";
+  series: Array<CategoryChartSeries>;
+  summary: CategoryChartSummary;
+  point_summaries: Array<CategoryPointSummary>;
+}
+
+export interface CategoryChartProjection {
+  kind: "category";
+  today: string;
+  timezone: string;
+  ranges: Array<CategoryChartRange>;
+  dataset_results: Array<DatasetResult>;
+  measure_values: Array<MeasureValue>;
+}
+
+export interface DatasetResult {
+  dataset_id: string;
+  date: string;
+  rows: Array<DatasetRow>;
+  query_end_at: number;
+  query_start_at: number | null;
+  unavailable_reason: string | null;
+  limitation: string | null;
+  provenance: DatasetProvenance;
+  output: OutputDataset;
+}
+
+export interface DatasetRow {
+  dimensions: Record<string, string>;
+  values: Record<string, number>;
+}
+
+export interface DatasetProvenance {
+  run_id: string;
+  source_id: string;
+  source_revision: number;
+  script_revision: number;
+  script_sha256: string;
+  definition_revision: number;
+  collected_at: number;
+}
+
+export interface OutputDataset {
+  dataset_id: string;
+  definition_revision: number;
+  timezone: string;
+  dimensions: Array<DatasetDimension>;
+  fields: Array<DatasetField>;
+  required_date: string;
+}
+
+export interface DatasetDimension {
+  name: string;
+  label: string;
+}
+
+export interface DatasetField {
+  name: string;
+  label: string;
+  unit: string;
+  kind: "count" | "amount" | "snapshot";
+}
+
+export type ChartProjection = ScalarChartProjection | CategoryChartProjection;
 
 export interface GoalReadingsResponse {
   goal_id: string;

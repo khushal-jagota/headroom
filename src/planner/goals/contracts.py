@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict
 
+from planner.datasets.contracts import DatasetResult
 from planner.measures.contracts import (
     ExpressionValue,
     FormulaExpression,
+    MeasureReadStatus,
     MeasureValue,
     SourceHealthSummary,
 )
@@ -27,6 +29,7 @@ class ChartPoint(TypedDict):
 
 
 class ChartSeries(TypedDict):
+    key: NotRequired[str]
     color: NotRequired[Literal["blue", "blue-muted", "blue-dark"]]
     name: str
     points: list[ChartPoint]
@@ -58,6 +61,46 @@ class ManualChartControls(TypedDict):
     increments: NotRequired[list[float]]
 
 
+class DatasetFilter(TypedDict):
+    dimension: str
+    codes: list[str]
+
+
+class DatasetFieldMetric(TypedDict):
+    field: str
+
+
+class DatasetRatioMetric(TypedDict):
+    numerator: str
+    denominator: str
+    scale: NotRequired[float]
+
+
+class DatasetChartBinding(TypedDict):
+    kind: Literal["dataset"]
+    dataset_id: str
+    group_by: str
+    filters: list[DatasetFilter]
+    aggregation: Literal["sum", "latest"]
+    metric: DatasetFieldMetric | DatasetRatioMetric
+
+
+class ScalarChartInput(TypedDict):
+    key: str
+    label: str
+    measure_id: str
+    role: NotRequired[Literal["spent", "planned"]]
+
+
+class ScalarInputsChartBinding(TypedDict):
+    kind: Literal["scalar_inputs"]
+    inputs: list[ScalarChartInput]
+    aggregation: Literal["sum", "latest"]
+
+
+type ChartBinding = DatasetChartBinding | ScalarInputsChartBinding
+
+
 class ChartBlock(TypedDict):
     type: Literal["chart"]
     id: str
@@ -68,6 +111,7 @@ class ChartBlock(TypedDict):
     period: NotRequired[str]
     unit: NotRequired[str]
     measure_id: NotRequired[str]
+    binding: NotRequired[ChartBinding]
     target: NotRequired[float]
     domain: NotRequired[tuple[float, float]]
     direction: NotRequired[Literal["atleast", "atmost"]]
@@ -304,7 +348,64 @@ class ScalarChartProjection(TypedDict):
     summary_date: str | None
 
 
-type ChartProjection = ScalarChartProjection
+class CategoryChartValue(TypedDict):
+    status: MeasureReadStatus
+    value: float | None
+    numerator: float | None
+    denominator: float | None
+    partial: bool
+    missing_dates: list[str]
+    reasons: list[str]
+
+
+class CategoryChartSummary(TypedDict):
+    actual: CategoryChartValue
+    comparison: CategoryChartValue | None
+    difference: float | None
+    meets_expectation: bool | None
+    date: str | None
+
+
+class CategoryChartPoint(TypedDict):
+    key: str
+    label: str
+    date: str | None
+    actual: CategoryChartValue
+
+
+class CategoryChartSeries(TypedDict):
+    key: str
+    label: str
+    points: list[CategoryChartPoint]
+    summary: CategoryChartValue | None
+
+
+class CategoryPointSummary(TypedDict):
+    key: str
+    summary: CategoryChartSummary
+
+
+class CategoryChartRange(TypedDict):
+    id: Literal["week", "month", "all"]
+    label: str
+    first_date: str
+    last_date: str
+    axis: Literal["category", "date"]
+    series: list[CategoryChartSeries]
+    summary: CategoryChartSummary
+    point_summaries: list[CategoryPointSummary]
+
+
+class CategoryChartProjection(TypedDict):
+    kind: Literal["category"]
+    today: str
+    timezone: str
+    ranges: list[CategoryChartRange]
+    dataset_results: list[DatasetResult]
+    measure_values: list[MeasureValue]
+
+
+type ChartProjection = ScalarChartProjection | CategoryChartProjection
 
 
 class GoalReadingsResponse(TypedDict):

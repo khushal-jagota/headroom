@@ -4,7 +4,7 @@ from alembic import op
 
 revision = "dimensional_datasets"
 # Development parent only; rebase after the checked credential/request handoff.
-down_revision = "primary_goal_checklist"
+down_revision = "reusable_named_credentials"
 branch_labels = None
 depends_on = None
 
