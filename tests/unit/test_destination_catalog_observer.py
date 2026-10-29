@@ -57,7 +57,10 @@ class ScriptedLaunchEnvironment(SubprocessBackendProbeEnvironment):
     ) -> CommandOutcome:
         del timeout_seconds
         self.calls.append((tuple(argv), dict(environment_overrides or {}), working_directory))
-        return CommandOutcome(0, "2.1.267" if argv[-1] == "--version" else "Logged in", "")
+        output = "2.1.267" if argv[-1] == "--version" else "Logged in"
+        if tuple(argv[1:]) == ("auth", "status", "--json"):
+            output = '{"loggedIn":true}'
+        return CommandOutcome(0, output, "")
 
 
 def launch_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ProductionBackendLaunches:

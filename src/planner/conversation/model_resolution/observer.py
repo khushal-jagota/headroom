@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import time
@@ -33,6 +32,8 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
 from planner.conversation.backends.contracts import BackendEmissionInputs
 from planner.conversation.backends.probe_lifetime import owned_probe
 from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
+from planner.conversation.model_resolution.claude_input_contracts import ClaudeInputVector
+from planner.conversation.model_resolution.claude_inputs import collect_claude_inputs
 from planner.conversation.model_resolution.config import (
     CATALOGUE_COLD_START_TIMEOUT_SECONDS,
     CLAUDE_MAX_RETAINED_FINALIZATIONS,
@@ -49,11 +50,6 @@ from planner.conversation.model_resolution.contracts import (
     PrerequisiteStatus,
     SelectionKind,
     ValidationReason,
-)
-from planner.conversation.model_resolution.logic.claude_configuration import (
-    ClaudeConfigurationRole,
-    claude_global_candidates,
-    claude_has_unsupported_source,
 )
 from planner.conversation.production_backends import (
     ProductionBackendLaunches,
@@ -463,7 +459,7 @@ def _claude_managed_directory() -> Path:
 
 def _configuration_revisions(
     backend_key: ConversationBackendKey, workspace: Path, environment: Mapping[str, str]
-) -> tuple[object, ...] | None:
+) -> tuple[object, ...] | ClaudeInputVector | None:
     home = Path(environment.get("HOME", str(Path.home())))
     # Unknown source indirection cannot establish an effective configuration scope.
     for key, value in environment.items():
@@ -473,64 +469,27 @@ def _configuration_revisions(
             and any(marker in key for marker in ("CONFIG_PATH", "SETTINGS", "MANAGED_CONFIG"))
         ):
             return None
-    if backend_key is ConversationBackendKey.codex:
-        paths = [
-            codex_home(environment) / "config.toml",
-            Path("/etc/codex/config.toml"),
-            Path("/etc/codex/managed_config.toml"),
-            Path("/Library/Application Support/Codex/config.toml"),
-        ]
-        paths.extend(
-            parent / ".codex" / "config.toml" for parent in (workspace, *workspace.parents)
+    if backend_key is ConversationBackendKey.claude:
+        return collect_claude_inputs(
+            workspace, environment, home=home, managed_directory=_claude_managed_directory()
         )
-    else:
-        config = Path(environment.get("CLAUDE_CONFIG_DIR", str(home / ".claude")))
-        managed = _claude_managed_directory()
-        preferred, legacy = claude_global_candidates(environment, home)
-        try:
-            selected_global = preferred if preferred.exists() else legacy
-        except OSError:
-            return None
-        paths = [
-            config / "settings.json", config / "settings.local.json",
-            preferred, legacy, managed / "managed-settings.json",
-            config / "remote-settings.json",
-        ]
-        try:
-            paths.extend(sorted(managed.glob("managed-settings.d/*.json")))
-            # Track candidate directories even when the selected document is absent.
-            paths.extend(path for path in (config, managed / "managed-settings.d") if path.exists())
-        except OSError:
-            return None
-        paths.extend(
-            parent / ".claude" / name
-            for parent in (workspace, *workspace.parents)
-            for name in ("settings.json", "settings.local.json")
-        )
+    paths = [
+        codex_home(environment) / "config.toml",
+        Path("/etc/codex/config.toml"),
+        Path("/etc/codex/managed_config.toml"),
+        Path("/Library/Application Support/Codex/config.toml"),
+    ]
+    paths.extend(
+        parent / ".codex" / "config.toml" for parent in (workspace, *workspace.parents)
+    )
     revisions: list[object] = []
     for path in paths:
         try:
             info = path.stat()
-            if path.is_file() and (
-                backend_key is ConversationBackendKey.codex
-                or path not in (preferred, legacy) or path == selected_global
-            ):
-                text = path.read_text()
-                document = tomllib.loads(text) if path.suffix == ".toml" else json.loads(text)
-                if backend_key is ConversationBackendKey.codex:
-                    if _has_indirect_source(document):
-                        return None
-                elif path not in (preferred, legacy) or path == selected_global:
-                    role = (
-                        ClaudeConfigurationRole.global_state if path == selected_global
-                        else ClaudeConfigurationRole.remote_policy_cache
-                        if path == config / "remote-settings.json"
-                        else ClaudeConfigurationRole.managed_settings
-                        if path.is_relative_to(managed)
-                        else ClaudeConfigurationRole.settings
-                    )
-                    if claude_has_unsupported_source(document, role):
-                        return None
+            if path.is_file():
+                document = tomllib.loads(path.read_text())
+                if _has_indirect_source(document):
+                    return None
             revisions.append(
                 (
                     str(path),

@@ -767,7 +767,7 @@ Text-only Brief changes introduce no provider discovery requirement.
 
 Codex and Claude Ticket execution carries the exact selection, workspace, and evidence
 to the actual executor. A final check follows asynchronous preparation at the provider
-transport write. It compares observable local revisions and prepared process inputs.
+transport write. It compares observable local inputs and prepared process inputs.
 It does not control external credential revocation or establish provider entitlement.
 
 Claude scope uses a provider-reported snapshot, under the owner's accepted narrower contract.
@@ -777,6 +777,35 @@ Discovery reads settings, current model rows, and settings again in the same chi
 The two source snapshots must match. Actual user emission repeats that sequence in
 its own child and requires a single-use receipt for that exact UUID and attempt.
 Prepared launch checks remain separate from the connected child's snapshot.
+
+Claude discovery and admission use the same private semantic identity for local inputs.
+It includes selected source paths, resolved targets, relevant candidate membership, and
+complete typed JSON content. Object order and formatting do not matter. Boolean,
+integer, and floating-point values remain distinct. Every selected field participates,
+including cache, account, remote-policy, and unknown fields.
+
+An equal-content file replacement, unrelated directory metadata change, or inactive
+legacy global change preserves that identity. A selected content change, source
+selection change, or symlink retarget changes it. Two guarded capture passes must
+agree. This is sampled consistency, not an atomic filesystem transaction.
+
+Duplicate JSON keys, nonfinite numbers, invalid encoding, and ambiguous or unsupported
+sources refuse collection. Configuration roots must be absolute. A defined-empty
+normal configuration root also refuses collection. The normal root uses NFC
+normalization. The legacy global selector preserves its raw nonempty override.
+
+The known fallback credential candidate uses metadata only. Its secure-storage
+override preserves the distinct empty and unset cases. Credential-file changes remain
+significant, and candidate symlinks refuse collection. Panels reads no credential bytes,
+helper, or keychain for this marker. The transient storage lock does not affect identity.
+The marker proves neither the active Mac account store nor complete account equality.
+
+Only the current private input vector remains in each existing backend/workspace scope.
+Older contexts retain opaque references. New observer instances cannot reuse old
+finalizations or receipts. No JSON content, environment value, or content digest enters
+public records. The correction introduces no wire field, protocol, spool, or schema change.
+It establishes neither the original Mac cause nor live discovery recovery. Selected cache
+content changes remain significant.
 
 The scope covers reported sources, captured launch inputs, and reported model and effort.
 It does not expose every later applied environment or credential-routing change inside Claude.

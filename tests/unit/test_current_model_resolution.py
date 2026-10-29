@@ -2567,3 +2567,155 @@ def test_actual_departure_settles_a_later_disable_without_overwriting_newer_inte
             conn.close()
 
     asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+@pytest.mark.parametrize(
+    "change", ["replacement", "directory", "inactive_legacy", "formatting",
+               "cache_content", "unknown_type", "invalid_json",
+               "account_content", "remote_policy", "nested_settings"],
+)
+def test_real_claude_discovery_uses_semantic_inputs_through_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    """Outer service captures and final basis checks must use the same identity.
+
+    These are the three reproduced false refusals and the JSON-formatting control.
+    Content/strict-parser controls prove that unchanged provider metadata cannot
+    excuse a meaningful or unreadable selected input, or persist its observation.
+    """
+    from collections.abc import Mapping
+
+    from tests.unit.test_destination_catalog_observer import (
+        ScriptedLaunchEnvironment,
+        binding,
+        launch_fixture,
+        synthetic_scope,
+    )
+
+    from planner.conversation.backends.claude_model_catalog import ClaudeModel, ClaudeModelCatalog
+    from planner.conversation.backends.claude_settings import ClaudeSettingsScopeRegistry
+    from planner.conversation.model_resolution import observer
+
+    launches = launch_fixture(tmp_path, monkeypatch)
+    root = tmp_path / "claude-home"
+    root.mkdir()
+    selected = root / ".config.json"
+    selected.write_text('{"cache":{"value":1},"unknown":"synthetic-private-input"}')
+    remote = root / "remote-settings.json"
+    settings = root / "settings.json"
+    remote.write_text('{"policy":{"unknown":1}}')
+    settings.write_text('{"nested":{"unknown":1}}')
+    probes = 0
+    mutate = False
+    captures: list[LaunchContext] = []
+    basis_checks: list[bool] = []
+
+    class Reader(observer.ProductionCatalogObserver):
+        async def capture_context(
+            self, backend_key: Backend, *, workspace: CatalogWorkspaceBinding,
+        ) -> LaunchContext:
+            captured = await super().capture_context(backend_key, workspace=workspace)
+            captures.append(captured)
+            return captured
+
+        def verify_observation_basis(
+            self, before: LaunchContext, after: LaunchContext,
+            observation: CatalogObservation, *, attempt_id: str,
+        ) -> bool:
+            accepted = super().verify_observation_basis(
+                before, after, observation, attempt_id=attempt_id,
+            )
+            basis_checks.append(accepted)
+            return accepted
+
+    async def catalog(
+        executable: str, *, environment: Mapping[str, str] | None = None,
+        working_directory: Path | None = None,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
+    ) -> ClaudeModelCatalog:
+        nonlocal probes
+        probes += 1
+        del executable, environment, working_directory
+        if not mutate:
+            pass
+        elif change == "replacement":
+            replacement = root / "replacement"
+            replacement.write_bytes(selected.read_bytes())
+            replacement.replace(selected)
+        elif change == "directory":
+            (root / "unrelated-lock").write_text("synthetic")
+        elif change == "inactive_legacy":
+            # Preferred exists, so even a malformed legacy document is inactive.
+            (root / ".claude.json").write_text("invalid private legacy data")
+        elif change == "formatting":
+            selected.write_text(
+                '{\n "unknown": "synthetic-private-input", "cache": {"value": 1}\n}'
+            )
+        elif change == "cache_content":
+            selected.write_text('{"cache":{"value":2},"unknown":"synthetic-private-input"}')
+        elif change == "unknown_type":
+            selected.write_text('{"cache":{"value":1},"unknown":true}')
+        elif change == "account_content":
+            selected.write_text(
+                '{"cache":{"value":1},"unknown":"synthetic-private-input","oauthAccount":{}}'
+            )
+        elif change == "remote_policy":
+            remote.write_text('{"policy":{"unknown":2}}')
+        elif change == "nested_settings":
+            settings.write_text('{"nested":{"unknown":2}}')
+        else:
+            selected.write_text('{"unknown":"synthetic-private-input","unknown":false}')
+        return ClaudeModelCatalog(
+            (ClaudeModel("opus", "Opus", "claude-opus-5", ("high",)),), (),
+            provider_scope=synthetic_scope(claude_scope_registry),
+        )
+
+    monkeypatch.setattr(observer, "probe_claude_model_catalog", catalog)
+
+    async def run() -> None:
+        nonlocal probes, mutate
+        reader = Reader(
+            destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
+            launches=lambda: launches, environment=ScriptedLaunchEnvironment(), now=lambda: 1000,
+        )
+        service, store, path = setup(tmp_path)
+        prior = await reader.observe(
+            Backend.claude, workspace=binding(tmp_path), attempt_id="prior-stable",
+            deadline=asyncio.get_running_loop().time() + 10,
+        )
+        assert isinstance(prior, CatalogObservation)
+        retained_finalizations = set(reader._finalized)
+        retained_observations = set(reader._observations)
+        assert reader.verify_context(prior.evidence.context)
+        probes = 0
+        captures.clear()
+        mutate = True
+        result = await service.validate_selection(
+            ModelSelection(TicketLocale.vps, Backend.claude, "opus",
+                           SelectionKind.provider_alias, "high", "selection-one"),
+            workspace=binding(tmp_path), attempt_id="semantic-discovery", observer=reader,
+        )
+        assert probes == 1
+        assert "synthetic-private-input" not in repr(result)
+        assert "invalid private legacy data" not in repr(result)
+        if change in {"replacement", "directory", "inactive_legacy", "formatting"}:
+            assert len(captures) == 4  # service outer pair plus observer inner pair
+            assert result.state is ValidationState.compatible, result.reason
+            assert basis_checks == [True]
+            assert result.evidence is not None
+            assert store.read_exact_observation(result.evidence) is not None
+            assert reader.verify_context(result.evidence.context)
+        else:
+            assert len(captures) == 3  # inner refusal stops before service final capture
+            assert result.reason is ValidationReason.context_changed
+            conn = connect(str(path))
+            try:
+                for table in ("scoped_model_catalog_observations", "scoped_model_catalog_rows"):
+                    assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            finally:
+                conn.close()
+            assert set(reader._finalized) == retained_finalizations
+            assert set(reader._observations) == retained_observations
+            assert not reader.verify_context(prior.evidence.context)
+
+    asyncio.run(run())

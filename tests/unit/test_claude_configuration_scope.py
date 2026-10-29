@@ -60,7 +60,13 @@ def test_selected_global_precedence_suffix_and_candidate_insertion(
     inserted = observer._configuration_revisions(Backend.claude, tmp_path, environment)
     assert inserted is not None and inserted != original
     legacy.write_text("invalid ignored legacy")
-    assert observer._configuration_revisions(Backend.claude, tmp_path, environment) is not None
+    assert observer._configuration_revisions(Backend.claude, tmp_path, environment) == inserted
+    legacy.unlink()
+    assert observer._configuration_revisions(Backend.claude, tmp_path, environment) == inserted
+    legacy.symlink_to(legacy)
+    assert observer._configuration_revisions(Backend.claude, tmp_path, environment) == inserted
+    preferred.unlink()
+    assert observer._configuration_revisions(Backend.claude, tmp_path, environment) is None
     preferred.write_text("invalid selected document")
     assert observer._configuration_revisions(Backend.claude, tmp_path, environment) is None
     assert claude_global_candidates({}, tmp_path) == (
