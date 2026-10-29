@@ -268,7 +268,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         },
     )
 
-    def collect(value: int) -> str:
+    def collect(value: int, limitation: str | None = None) -> str:
         current_source = api.get(server, f"/api/measure-sources/{source['id']}")
         configured = api.direct_put(
             server,
@@ -276,7 +276,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             {
                 "expected_revision": current_source["source_revision"],
                 "text": "output=context['required_outputs'][0]\n"
-                f"record(output['measure_id'], output['required_date'], {value})",
+                f"record(output['measure_id'], output['required_date'], {value}, "
+                f"limitation={limitation!r})",
             },
         )
         run = api.direct_post(
@@ -290,6 +291,42 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         return str(run["id"])
 
     first_run = collect(42)
+
+    def accepted_manual(name: str, kind: str, *, previous_date: bool = False) -> JsonObject:
+        body: JsonObject = {
+            "project_id": project["id"],
+            "name": name,
+            "unit": "items",
+            "origin": "manual",
+            "kind": kind,
+            "timezone": "UTC",
+        }
+        if kind == "period_count":
+            body["period"] = "day"
+        manual = api.direct_post(server, "/api/measures", body)
+        current_state = api.get(server, f"/api/measures/{manual['id']}/manual-state")
+        day = str(current_state["current_date"])
+        if previous_date:
+            from datetime import date, timedelta
+
+            day = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+        api.direct_post(
+            server,
+            f"/api/measures/{manual['id']}/manual-writes",
+            {
+                "request_id": name,
+                "date": day,
+                "basis": "date",
+                "operation": "replace",
+                "value": 12,
+                "expected_definition_revision": current_state["definition_revision"],
+                "expected_write_revision": current_state["write_revision"],
+            },
+        )
+        return manual
+
+    manual_period = accepted_manual("Period fallback", "period_count", previous_date=True)
+    manual_snapshot = accepted_manual("Snapshot daily control", "reading")
     goal = api.direct_post(
         server,
         "/api/goals",
@@ -333,6 +370,35 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
                         "items": [
                             {"id": "source-notes", "label": "Keep source notes", "state": "open"}
                         ],
+                    },
+                    {
+                        "type": "chart",
+                        "id": "coverage-gauge",
+                        "kind": "gauge",
+                        "placement": "supporting",
+                        "title": "Collected gauge",
+                        "measure_id": measure["id"],
+                        "target": 40,
+                    },
+                    {
+                        "type": "chart",
+                        "id": "manual-period-cumulative",
+                        "kind": "gauge",
+                        "placement": "supporting",
+                        "title": "Manual period fallback",
+                        "measure_id": manual_period["id"],
+                        "target": 12,
+                        "manual": {"model": "cumulative_target", "increments": [1]},
+                    },
+                    {
+                        "type": "chart",
+                        "id": "manual-snapshot-daily",
+                        "kind": "bar",
+                        "placement": "supporting",
+                        "title": "Manual snapshot quota control",
+                        "measure_id": manual_snapshot["id"],
+                        "target": 12,
+                        "manual": {"model": "daily_quota", "increments": [1]},
                     },
                 ],
             },
@@ -464,6 +530,49 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert api.get(server, f"/api/measure-source-runs/{first_run}")["run"]["status"] == "succeeded"
     collect(52)
     expect(reading).to_have_attribute("data-current", "52", timeout=WAIT_MS)
+    # The existing mounted host must invalidate cached animation state when only
+    # coverage changes. SSR and pure comparison tests cannot retain a filled gauge.
+    gauge_card = page.locator('[data-chart-id="coverage-gauge"]')
+    gauge = gauge_card.locator("figure[aria-label]")
+    gauge.scroll_into_view_if_needed(timeout=WAIT_MS)
+    expect(gauge).to_have_class(re.compile(r".*success.*"), timeout=WAIT_MS)
+    expect(gauge.locator('[role="meter"]')).to_have_attribute(
+        "aria-valuetext", re.compile("On target"), timeout=WAIT_MS
+    )
+    # Wait for the actual animated count to settle before a same-value correction.
+    expect(gauge.locator('span[class*="status"]')).to_have_text("On target", timeout=WAIT_MS)
+    collect(52, "The retained query covers only part of this reading.")
+    expect(gauge_card.locator(".comparison")).to_contain_text("Partial reading", timeout=WAIT_MS)
+    expect(gauge).to_have_class(re.compile(r".*neutral.*"), timeout=WAIT_MS)
+    expect(gauge.locator('[role="meter"]')).not_to_have_attribute(
+        "aria-valuetext", re.compile("On target"), timeout=WAIT_MS
+    )
+    expect(gauge.locator('span[class*="status"]')).to_have_count(0, timeout=WAIT_MS)
+    retained = api.get(server, path + "/readings")["values"]
+    assert any(
+        item["measure_id"] == measure["id"]
+        and item["value"] == 52
+        and item["coverage_status"] == "partial"
+        for item in retained
+    )
+
+    # Accepted manual models do not establish measure semantics. The cumulative
+    # count uses a prior date, while a reading accepts the daily control unchanged.
+    cumulative = page.locator('[data-chart-id="manual-period-cumulative"]')
+    expect(cumulative.get_by_role("meter")).to_have_attribute(
+        "aria-valuetext", "12 of 12, Coverage unavailable", timeout=WAIT_MS
+    )
+    expect(cumulative.locator(".completion")).to_have_text(
+        "Coverage unavailable · Difference (coverage unavailable): 0", timeout=WAIT_MS
+    )
+    expect(cumulative.locator(".radial-fill")).to_have_attribute(
+        "stroke", "var(--text-muted)", timeout=WAIT_MS
+    )
+    snapshot = page.locator('[data-chart-id="manual-snapshot-daily"]')
+    expect(snapshot.locator(".comparison")).to_have_text("Daily target reached", timeout=WAIT_MS)
+    assert (
+        snapshot.locator(".comparison").evaluate("node => node.style.color") == "var(--accent-done)"
+    )
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
 
     # Authored text is read-only on a goal page. The goal agent still writes the document,

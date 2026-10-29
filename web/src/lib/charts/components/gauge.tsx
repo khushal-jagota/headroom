@@ -6,7 +6,7 @@ import { motionTokens } from "../lib/chart-motion";
 import styles from "./gauge.module.css";
 import chartStyles from "./line-chart.module.css";
 
-type GaugeTone = "accent" | "success" | "warning" | "danger";
+type GaugeTone = "neutral" | "accent" | "success" | "warning" | "danger";
 /** A band that starts at `from`: the highest band the value reaches sets the tone and names the state, so it never rests on color alone. */
 export interface GaugeThreshold { from: number; tone: GaugeTone; label: string; }
 export interface GaugeProps { formatValue?: (value:number)=>string; unit?: string; value: number; min?: number; max?: number; label: string; detail?: string; tone?: GaugeTone; thresholds?: GaugeThreshold[]; target?: { value: number; label: string }; }
@@ -54,6 +54,7 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
   const bands = [...thresholds ?? []].sort((a, b) => a.from - b.from);
   const bandAt = (at: number) => bands.filter(threshold => at >= threshold.from - 1e-6).pop();
   const band = bandAt(value);
+  const thresholdsKey = JSON.stringify(bands);
   const ref = useRef<HTMLElement>(null);
   const sizer = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true, amount: .5 });
@@ -79,7 +80,7 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
   const count = useMotionValue(0);
   const digitsWidth = useMotionValue<number | "auto">("auto");
   const [filled, setFilled] = useState(false);
-  const [live, setLive] = useState(band);
+  const [live, setLive] = useState({ thresholdsKey, band });
   const path = useTransform(sweep, arcFor);
   // The cap fades in over the first sliver instead of popping in as a dot.
   const arcOpacity = useTransform(sweep, current => Math.min(1, Math.max(0, current / .02)));
@@ -100,11 +101,12 @@ export function Gauge({ formatValue = value => `${Math.round(value)}%`, unit = '
   // The state arrives as the first fill lands. After that it follows the number on screen, so the color and label change exactly as the count crosses a threshold.
   useMotionValueEvent(count, "change", current => {
     const next = bandAt(current);
-    const changed = next?.from !== live?.from || next?.label !== live?.label;
-    if (filled) { if (changed) setLive(next); }
-    else if (inView && Math.abs(current - value) < 1) { if (changed) setLive(next); setFilled(true); }
+    const changed = thresholdsKey !== live.thresholdsKey || next?.from !== live.band?.from || next?.label !== live.band?.label || next?.tone !== live.band?.tone;
+    if (filled) { if (changed) setLive({ thresholdsKey, band: next }); }
+    else if (inView && Math.abs(current - value) < 1) { if (changed) setLive({ thresholdsKey, band: next }); setFilled(true); }
   });
-  const shown = reduceMotion || !filled ? band : live;
+  // A changed comparison must invalidate the cached band even when the count stays still.
+  const shown = reduceMotion || !filled || thresholdsKey !== live.thresholdsKey ? band : live.band;
   const activeTone = shown?.tone ?? tone;
 
   // Digits are right aligned in a box sized to the target number, so the ones column never jumps while counting and the group recentres on a spring.

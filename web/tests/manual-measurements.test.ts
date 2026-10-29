@@ -44,8 +44,16 @@ describe('manual measurement editing boundary', () => {
 
 import {createManualMeasurementExamples} from '../src/lib/dev/manualMeasurementExamples';
 import {chartData} from '../src/lib/charts/presentation';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {ManualMeasurement} from '../src/lib/charts/components/manual-measurements';
 it('keeps accepted manual daily samples unknown while ordinary snapshots retain comparisons',async()=>{
  const examples=createManualMeasurementExamples();
+ for(const {block} of examples.definitions){
+  const markup=renderToStaticMarkup(createElement(ManualMeasurement,{block,values:examples.values,adapter:examples.adapters.get(block.measure_id!),preferenceKey:`initial-${block.id}`}));
+  expect(markup).toContain(`data-manual-model="${block.manual!.model}"`);
+  expect(markup).toContain('No reading');
+ }
  const daily=examples.definitions[0].block,reading=examples.definitions[2].block;
  const adapter=examples.adapters.get(daily.measure_id!)!;
  const next=await adapter.write({request_id:'manual-coverage',date:'2026-10-28',expected_definition_revision:1,expected_write_revision:0,basis:'date',operation:'replace',value:30});
