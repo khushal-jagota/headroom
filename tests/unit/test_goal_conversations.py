@@ -124,6 +124,14 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
                     "You are the agent for goal " + goal.id
                     in harness.backend(ids[-1]).writes[-1].text
                 )
+                for discovery in (
+                    "panels goal schema edit",
+                    "panels goal schema primary-chart",
+                    "panels measure-source schema",
+                    "panels measure schema",
+                ):
+                    assert discovery in start.role_materials.role_text
+                    assert discovery in harness.backend(ids[-1]).writes[-1].text
                 assert read_goal(tmp_db, goal.id).employee_launch_model == "opus"
                 await send_message(
                     harness.system,

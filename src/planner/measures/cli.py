@@ -7,11 +7,19 @@ import click
 
 from planner.cli import http
 from planner.cli.measure_io import emit, json_option, page_options, stdin_object
+from planner.measures.guidance import CREATE
 
 
 @click.group("measure")
 def measure() -> None:
-    """Define measures and read their dated values."""
+    """Define measures and read their dated values. See measure schema for create input."""
+
+
+@measure.command("schema")
+@json_option
+def request_schema(as_json: bool) -> None:
+    """Show create request schema, named examples and semantic notes; no server needed."""
+    emit(CREATE.reference(), as_json)
 
 
 @measure.command("list")
@@ -42,7 +50,7 @@ def show_measure(measure_id: str, as_json: bool) -> None:
 @measure.command("create")
 @json_option
 def create_measure(as_json: bool) -> None:
-    """Read the complete measure definition as JSON from stdin."""
+    """Read JSON from stdin. See measure schema --json for the complete create contract."""
     emit(
         http.send("POST", "/api/measures", json_body=stdin_object(as_json), as_json=as_json),
         as_json,

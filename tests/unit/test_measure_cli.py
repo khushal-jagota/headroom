@@ -9,6 +9,9 @@ from click.testing import CliRunner
 
 from planner.cli import http
 from planner.cli.main import main
+from planner.goals import cli as goal_cli
+from planner.measure_sources import cli as source_cli
+from planner.measures import cli as measure_cli
 
 
 @pytest.mark.parametrize(
@@ -163,3 +166,41 @@ def test_stdin_refusal_and_credential_commands_have_no_secret_entry(
     assert result.exit_code == 0
     assert "list" in result.output and "set-origins" not in result.output
     assert "replace-secret" not in result.output and "create" not in result.output
+
+
+def test_contract_guidance_is_discoverable_without_transport_or_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An agent can learn the write shape before it has a server or a payload."""
+
+    def unexpected(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("schema discovery must not read stdin or contact HTTP")
+
+    for module in (goal_cli, source_cli, measure_cli):
+        monkeypatch.setattr(module, "stdin_object", unexpected)
+    monkeypatch.setattr(http, "send", unexpected)
+    monkeypatch.setattr(httpx, "request", unexpected)
+    runner = CliRunner()
+    for group, command in (
+        ("goal", "create"),
+        ("goal", "edit"),
+        ("measure-source", "create"),
+        ("measure", "create"),
+    ):
+        for arguments in ([group, "--help"], [group, command, "--help"]):
+            help_result = runner.invoke(main, arguments)
+            assert help_result.exit_code == 0, help_result.output
+            assert "schema" in help_result.output
+    for arguments, example in (
+        (["goal", "schema", "create"], "chief_goal"),
+        (["goal", "schema", "edit"], "primary_line_chart"),
+        (["goal", "schema", "primary-chart"], "primary_line_chart"),
+        (["measure-source", "schema"], "goal_source"),
+        (["measure", "schema"], "taken_daily_count"),
+    ):
+        result = runner.invoke(main, [*arguments, "--json"], input="not JSON")
+        assert result.exit_code == 0, result.output
+        guidance = json.loads(result.output)
+        assert set(guidance) == {"schema", "examples", "notes"}
+        assert guidance["schema"] and guidance["notes"]
+        assert isinstance(guidance["examples"][example], dict)

@@ -1,10 +1,11 @@
 """Goal fact, page, and measure projection HTTP boundary."""
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 
 from planner.goals import actions, data, views
+from planner.goals.guidance import CREATE, EDIT
 from planner.tickets.api import Clk, Ctx, DbConn
 
 router = APIRouter()
@@ -18,7 +19,16 @@ async def list_goals(
 
 
 @router.post("/goals")
-async def create_goal(body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+async def create_goal(
+    body: Annotated[
+        dict[str, Any],
+        CREATE,
+        Body(description=CREATE.description, openapi_examples=CREATE.openapi_examples()),
+    ],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> Any:
     return views.goal_json(
         conn,
         actions.create_goal(conn, body, principal=ctx.principal, now=clk.now_unix()),
@@ -32,7 +42,17 @@ async def read_goal(goal_id: str, conn: DbConn, clk: Clk) -> Any:
 
 
 @router.patch("/goals/{goal_id}")
-async def update_goal(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+async def update_goal(
+    goal_id: str,
+    body: Annotated[
+        dict[str, Any],
+        EDIT,
+        Body(description=EDIT.description, openapi_examples=EDIT.openapi_examples()),
+    ],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> Any:
     return views.goal_json(
         conn,
         actions.update_goal(conn, goal_id, body, principal=ctx.principal, now=clk.now_unix()),

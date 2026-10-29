@@ -7,11 +7,19 @@ import click
 
 from planner.cli import http
 from planner.cli.measure_io import emit, json_option, page_options, stdin_object
+from planner.measure_sources.guidance import CREATE
 
 
 @click.group("measure-source")
 def measure_source() -> None:
-    """Configure collection sources, save scripts, and inspect asynchronous runs."""
+    """Configure sources and runs. See measure-source schema for create input."""
+
+
+@measure_source.command("schema")
+@json_option
+def request_schema(as_json: bool) -> None:
+    """Show create request schema, named examples and semantic notes; no server needed."""
+    emit(CREATE.reference(), as_json)
 
 
 @measure_source.command("list")
@@ -53,7 +61,7 @@ def source_status(source_id: str, as_json: bool) -> None:
 @measure_source.command("create")
 @json_option
 def create_source(as_json: bool) -> None:
-    """Read {name, project_id, account, responsible} JSON from stdin."""
+    """Read JSON from stdin. See measure-source schema --json for responsibility and fields."""
     emit(
         http.send("POST", "/api/measure-sources", json_body=stdin_object(as_json), as_json=as_json),
         as_json,
