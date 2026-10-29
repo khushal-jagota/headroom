@@ -552,7 +552,10 @@ def test_private_diagnostic_preserves_ordinary_reads_refusal_and_admission_bound
                                  "remote_policy_cache")
                 }
             else:
-                assert record == diagnostics.unavailable_record()
+                assert record == (
+                    diagnostics.unavailable_record("capture_missing") if mode == "off"
+                    else diagnostics.unavailable_record("internal_error")
+                )
             traces.append((list(opened), environment.calls))
         assert traces[0] == traces[1] == traces[2]
         assert traces[0][0]  # Count real collector file opens, not only callback entries.
