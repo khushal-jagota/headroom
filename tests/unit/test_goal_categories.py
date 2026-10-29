@@ -311,6 +311,39 @@ def test_partial_additive_intervals_keep_subtotals_without_zero_for_omitted_memb
     assert complete_view["summary"]["meets_expectation"] is False
 
 
+@pytest.mark.parametrize("numerator_kind", [DatasetFieldKind.count, DatasetFieldKind.snapshot])
+def test_mixed_ratio_keeps_additive_coverage_without_changing_snapshot_emptiness(
+    numerator_kind: DatasetFieldKind,
+) -> None:
+    """A snapshot denominator cannot certify a count numerator's partial day."""
+    fields = (
+        DatasetField("n", "Numerator", "", numerator_kind),
+        DatasetField("d", "Denominator", "", DatasetFieldKind.snapshot),
+    )
+    observed = replace(
+        result("2026-10-29", (row("actual", 5, 10),), fields=fields),
+        query_end_at=float(NOW),
+    )
+    chart: ChartBlock = {
+        **dataset_chart(
+            aggregation="latest", kind="number", metric={"numerator": "n", "denominator": "d"}
+        ),
+        "target": 0.4,
+    }
+    summary = selected(project(chart, (observed,), first="2026-10-29"))["summary"]
+    assert summary["actual"]["value"] == 0.5
+    assert summary["difference"] == pytest.approx(0.1)
+    if numerator_kind == DatasetFieldKind.count:
+        assert summary["actual"]["partial"]
+        assert summary["meets_expectation"] is None
+    else:
+        assert not summary["actual"]["partial"]
+        assert summary["meets_expectation"] is True
+    empty = selected(project(chart, (replace(observed, rows=()),), first="2026-10-29"))
+    assert empty["summary"]["actual"]["status"] == MeasureReadStatus.missing_input
+    assert empty["summary"]["actual"]["value"] is None
+
+
 def test_named_latest_keeps_unavailable_submission_and_dynamic_budget_comparison() -> None:
     """A new unavailable planned input defeats yesterday's complete shared snapshot."""
     values = (

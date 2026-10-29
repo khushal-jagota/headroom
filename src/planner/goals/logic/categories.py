@@ -408,7 +408,10 @@ def _dataset_value(
     if absent:
         return _missing(f"The retained declaration for {day} lacks: {', '.join(absent)}.")
     snapshot = any(fields[name].kind == DatasetFieldKind.snapshot for name in _fields(binding))
-    partial, reasons = _coverage(result, snapshot=snapshot)
+    partial, reasons = _coverage(
+        result,
+        snapshot=all(fields[name].kind == DatasetFieldKind.snapshot for name in _fields(binding)),
+    )
     if not rows and category and (partial or snapshot or binding["aggregation"] == "latest"):
         return _value(
             None,
