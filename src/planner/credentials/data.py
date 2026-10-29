@@ -9,16 +9,16 @@ from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.credentials import configuration as limits
 from planner.credentials.contracts import (
     CredentialAuthKind,
+    CredentialEncryptionContext,
     CredentialMetadata,
     CredentialReference,
     CredentialScheme,
-    CredentialScope,
     EncryptedCredential,
 )
-from planner.credentials.logic.validation import invalid
+from planner.credentials.logic.validation import invalid, validate_encryption_context
 from planner.list_reads.contracts import ListPage
 
-PUBLIC_COLUMNS = "id,project_id,account,scheme,name,auth_kind,revision,created_at,updated_at"
+PUBLIC_COLUMNS = "id,scheme,name,auth_kind,revision,created_at,updated_at"
 
 
 @contextmanager
@@ -48,7 +48,6 @@ def metadata_json(metadata: CredentialMetadata) -> JsonDict:
 def _metadata(row: sqlite3.Row) -> CredentialMetadata:
     return CredentialMetadata(
         row["id"],
-        CredentialScope(row["project_id"], row["account"]),
         CredentialReference(CredentialScheme(row["scheme"]), row["name"]),
         CredentialAuthKind(row["auth_kind"]),
         int(row["revision"]),
@@ -69,8 +68,6 @@ def read_metadata(conn: sqlite3.Connection, credential_id: str) -> CredentialMet
 def list_metadata(
     conn: sqlite3.Connection,
     *,
-    project_id: str | None,
-    account: str | None,
     limit: int,
     offset: int,
 ) -> ListPage[CredentialMetadata]:
@@ -81,16 +78,10 @@ def list_metadata(
         or offset < 0
     ):
         raise invalid("invalid bounded credential list")
-    where, args = [], []
-    for key, value in (("project_id", project_id), ("account", account)):
-        if value is not None:
-            where.append(f"{key}=?")
-            args.append(value)
-    clause = " WHERE " + " AND ".join(where) if where else ""
-    count = int(conn.execute("SELECT COUNT(*) FROM credentials" + clause, args).fetchone()[0])
+    count = int(conn.execute("SELECT COUNT(*) FROM credentials").fetchone()[0])
     rows = conn.execute(
-        f"SELECT {PUBLIC_COLUMNS} FROM credentials" + clause + " ORDER BY id LIMIT ? OFFSET ?",
-        (*args, limit, offset),
+        f"SELECT {PUBLIC_COLUMNS} FROM credentials ORDER BY id LIMIT ? OFFSET ?",
+        (limit, offset),
     )
     return ListPage(tuple(_metadata(row) for row in rows), count, limit, offset)
 
@@ -106,3 +97,35 @@ def read_encrypted(conn: sqlite3.Connection, credential_id: str) -> EncryptedCre
 
 def has_records(conn: sqlite3.Connection) -> bool:
     return conn.execute("SELECT 1 FROM credentials LIMIT 1").fetchone() is not None
+
+
+def read_encryption_context(
+    conn: sqlite3.Connection, credential_id: str
+) -> CredentialEncryptionContext:
+    row = conn.execute(
+        "SELECT encryption_version,encryption_context FROM credentials WHERE id=?",
+        (credential_id,),
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.not_found, "credential not found")
+    context = CredentialEncryptionContext(
+        int(row["encryption_version"]), bytes(row["encryption_context"])
+    )
+    validate_encryption_context(read_metadata(conn, credential_id), context)
+    return context
+
+
+def find_metadata(
+    conn: sqlite3.Connection, reference: CredentialReference
+) -> CredentialMetadata | None:
+    rows = conn.execute(
+        f"SELECT {PUBLIC_COLUMNS} FROM credentials WHERE scheme=? AND name=? ORDER BY id",
+        (reference.scheme, reference.name),
+    ).fetchall()
+    if len(rows) > 1:
+        raise PlannerError(
+            ErrorCode.validation,
+            "credential reference is ambiguous",
+            {"candidates": [metadata_json(_metadata(row)) for row in rows]},
+        )
+    return None if not rows else _metadata(rows[0])

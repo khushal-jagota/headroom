@@ -9,6 +9,7 @@ from planner.credentials.contracts import (
     BasicSecret,
     BearerSecret,
     CredentialAuthKind,
+    CredentialEncryptionContext,
     CredentialMetadata,
     CredentialScheme,
     CredentialSecret,
@@ -60,20 +61,17 @@ def validate_secret(secret: CredentialSecret, kind: CredentialAuthKind) -> None:
 
 
 def validate_write(write: CredentialWrite) -> CredentialWrite:
-    text(write.scope.project_id, maximum=limits.MAX_NAME_LENGTH)
-    text(write.scope.account, maximum=limits.MAX_ACCOUNT_LENGTH)
     text(write.reference.name, maximum=limits.MAX_NAME_LENGTH)
     if write.reference.scheme is not CredentialScheme.local:
         raise invalid("unsupported credential resolver")
     validate_secret(write.secret, write.auth_kind)
-    return CredentialWrite(write.scope, write.reference, write.auth_kind, write.secret)
+    return CredentialWrite(write.reference, write.auth_kind, write.secret)
 
 
 def associated_data(metadata: CredentialMetadata) -> bytes:
     return json.dumps(
         {
-            "project_id": metadata.scope.project_id,
-            "account": metadata.scope.account,
+            "credential_id": metadata.id,
             "scheme": metadata.reference.scheme,
             "name": metadata.reference.name,
             "auth_kind": metadata.auth_kind,
@@ -108,4 +106,31 @@ def decode_secret(raw: bytes) -> CredentialSecret:
         validate_secret(secret, kind)
         return secret
     except (TypeError, KeyError, ValueError, UnicodeError):
+        raise invalid("credential could not be decrypted") from None
+
+
+def validate_encryption_context(
+    metadata: CredentialMetadata, context: CredentialEncryptionContext
+) -> None:
+    """Retain legacy bytes while authenticating their public metadata binding."""
+    try:
+        body = json.loads(context.associated_data)
+        required = {"scheme", "name", "auth_kind"}
+        if context.version == 1:
+            required |= {"project_id", "account"}
+        elif context.version == 2:
+            required |= {"credential_id"}
+        else:
+            raise ValueError
+        if (
+            not isinstance(body, dict)
+            or set(body) != required
+            or not all(isinstance(value, str) for value in body.values())
+            or body["scheme"] != metadata.reference.scheme
+            or body["name"] != metadata.reference.name
+            or body["auth_kind"] != metadata.auth_kind
+            or (context.version == 2 and body["credential_id"] != metadata.id)
+        ):
+            raise ValueError
+    except (ValueError, TypeError, UnicodeError, RecursionError):
         raise invalid("credential could not be decrypted") from None

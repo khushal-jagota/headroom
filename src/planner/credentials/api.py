@@ -14,7 +14,6 @@ from planner.credentials.contracts import (
     CredentialAuthKind,
     CredentialReference,
     CredentialScheme,
-    CredentialScope,
     CredentialSecret,
     CredentialWrite,
     HeaderSecret,
@@ -62,14 +61,10 @@ def _revision(value: object) -> int:
 @router.get("/credentials")
 async def list_credentials(
     conn: DbConn,
-    project_id: str | None = None,
-    account: str | None = None,
     limit: int = limits.DEFAULT_LIST_LIMIT,
     offset: int = 0,
 ) -> JsonDict:
-    page = data.list_metadata(
-        conn, project_id=project_id, account=account, limit=limit, offset=offset
-    )
+    page = data.list_metadata(conn, limit=limit, offset=offset)
     return {
         "credentials": [data.metadata_json(row) for row in page.rows],
         "page": page.facts_json(),
@@ -83,8 +78,6 @@ async def create_credential(
     actions.require_plaintext_owner(ctx.principal)
     body = await _private_body(request)
     if set(body) != {
-        "project_id",
-        "account",
         "scheme",
         "name",
         "auth_kind",
@@ -96,10 +89,6 @@ async def create_credential(
     except (TypeError, ValueError):
         raise invalid("unsupported credential type") from None
     write = CredentialWrite(
-        CredentialScope(
-            text(body["project_id"], maximum=200),
-            text(body["account"], maximum=limits.MAX_ACCOUNT_LENGTH),
-        ),
         CredentialReference(scheme, text(body["name"], maximum=limits.MAX_NAME_LENGTH)),
         kind,
         _secret(body["secret"], kind),
@@ -139,3 +128,23 @@ async def replace_credential(
 async def delete_credential(credential_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     actions.delete_credential(conn, credential_id, principal=ctx.principal)
     return {"deleted": True}
+
+
+@router.patch("/credentials/{credential_id}")
+async def rename_credential(
+    credential_id: str, request: Request, conn: DbConn, ctx: Ctx, clk: Clk, cfg: Cfg
+) -> JsonDict:
+    actions.require_plaintext_owner(ctx.principal)
+    body = await _private_body(request)
+    if set(body) != {"name", "expected_revision"}:
+        raise invalid()
+    result = actions.rename_credential(
+        conn,
+        credential_id,
+        text(body["name"], maximum=limits.MAX_NAME_LENGTH),
+        expected_revision=_revision(body["expected_revision"]),
+        principal=ctx.principal,
+        now=clk.now_unix(),
+        key_path=Path(cfg.credential_key_path),
+    )
+    return data.metadata_json(result)

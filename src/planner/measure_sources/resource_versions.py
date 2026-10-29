@@ -147,8 +147,6 @@ class MeasureResources:
             def read_credentials() -> object:
                 page = credential_data.list_metadata(
                     conn,
-                    project_id=project_id,
-                    account=query.get("account", [None])[0],
                     limit=count,
                     offset=offset,
                 )

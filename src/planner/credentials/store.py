@@ -12,13 +12,11 @@ from planner.credentials import data
 from planner.credentials.contracts import (
     CredentialCipher,
     CredentialReference,
-    CredentialScope,
     CredentialSecret,
     EncryptedCredential,
     ResolvedCredential,
 )
 from planner.credentials.logic.validation import (
-    associated_data,
     decode_secret,
     encode_secret,
     invalid,
@@ -75,16 +73,13 @@ class DatabaseCredentialResolver:
         self._conn = conn
         self._cipher = cipher
 
-    def resolve(self, scope: CredentialScope, reference: CredentialReference) -> ResolvedCredential:
-        row = self._conn.execute(
-            "SELECT id FROM credentials WHERE project_id=? AND account=? AND scheme=? AND name=?",
-            (scope.project_id, scope.account, reference.scheme, reference.name),
-        ).fetchone()
-        if row is None:
-            raise invalid("credential is unavailable in this scope")
-        metadata = data.read_metadata(self._conn, row["id"])
+    def resolve(self, reference: CredentialReference) -> ResolvedCredential:
+        metadata = data.find_metadata(self._conn, reference)
+        if metadata is None:
+            raise invalid("credential is unavailable")
         secret = self._cipher.decrypt(
-            data.read_encrypted(self._conn, metadata.id), associated_data=associated_data(metadata)
+            data.read_encrypted(self._conn, metadata.id),
+            associated_data=data.read_encryption_context(self._conn, metadata.id).associated_data,
         )
         validate_secret(secret, metadata.auth_kind)
         return ResolvedCredential(metadata, secret)

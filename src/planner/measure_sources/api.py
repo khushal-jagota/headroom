@@ -9,12 +9,12 @@ from fastapi import APIRouter
 
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.credentials.contracts import CredentialScope
 from planner.measure_sources import actions, data, run_actions, views
 from planner.measure_sources.contracts import (
     RunMode,
     SourceCreate,
     SourceScheduleBody,
+    SourceScope,
     SourceScriptBody,
 )
 from planner.measure_sources.settings import DEFAULT_PAGE_LIMIT
@@ -81,7 +81,7 @@ async def create_source(body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) 
     keys(body, {"name", "project_id", "account", "responsible"})
     request = SourceCreate(
         text(body, "name"),
-        CredentialScope(text(body, "project_id"), text(body, "account")),
+        SourceScope(text(body, "project_id"), text(body, "account")),
         principal(body.get("responsible")),
     )
     return asdict(actions.create_source(conn, request, principal=ctx.principal, now=clk.now_unix()))

@@ -10,7 +10,6 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.credentials.contracts import (
     CredentialReference,
     CredentialResolver,
-    CredentialScope,
     ResolvedCredential,
 )
 from planner.credentials.store import DatabaseCredentialResolver, FileCredentialCipher
@@ -26,9 +25,9 @@ class _LazyCredentialResolver:
         self.conn = conn
         self.key_path = key_path
 
-    def resolve(self, scope: CredentialScope, reference: CredentialReference) -> ResolvedCredential:
+    def resolve(self, reference: CredentialReference) -> ResolvedCredential:
         cipher = FileCredentialCipher(self.key_path, has_records=True)
-        return DatabaseCredentialResolver(self.conn, cipher).resolve(scope, reference)
+        return DatabaseCredentialResolver(self.conn, cipher).resolve(reference)
 
 
 def prepare_admission(
@@ -51,7 +50,6 @@ def prepare_admission(
         admission = RunAdmission(
             run=run,
             script_text=script.text,
-            scope=source.scope,
             previous=previous,
             limits=limits,
             deadline_monotonic=monotonic() + limits.wall_seconds,
