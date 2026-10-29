@@ -14,7 +14,7 @@ from planner.measures.contracts import SourceHealthSummary
 
 
 class DatasetFieldKind(StrEnum):
-    count = "count"
+    count = "count"  # type: ignore[assignment]  # Enum member intentionally shadows str.count.
     amount = "amount"
     snapshot = "snapshot"
 
