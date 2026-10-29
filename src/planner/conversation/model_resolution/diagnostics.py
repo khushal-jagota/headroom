@@ -12,8 +12,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
+from planner.conversation.contracts import ConversationBackendKey, WorkspacePathPolicy
 from planner.conversation.model_resolution.claude_input_contracts import (
     ClaudeCredentialMarker,
     ClaudeInputDirectory,
@@ -23,17 +24,22 @@ from planner.conversation.model_resolution.claude_input_contracts import (
     ClaudeJsonValue,
 )
 from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, LaunchContext
+from planner.conversation.model_resolution.diagnostic_contracts import (
+    _ROLE_NAMES,
+    _ROLES,
+    DiagnosticStatus,
+)
+from planner.conversation.model_resolution.diagnostic_contracts import (
+    DiagnosticState as DiagnosticState,
+)
+from planner.conversation.model_resolution.diagnostic_contracts import (
+    unavailable_record as unavailable_record,
+)
+from planner.conversation.model_resolution.diagnostic_contracts import (
+    validate_record as validate_record,
+)
 from planner.executor.contracts import ExecutorIdentity, JsonObject
-
-DiagnosticState = Literal["equal", "changed", "unavailable"]
-_ROLES = ("selected_global_state", "settings", "managed_settings", "remote_policy_cache")
-_ROLE_NAMES = ("global_state", "settings", "managed_settings", "remote_policy_cache")
-_FACTS = ("executable_identity", "executable_version", "launch_environment", "workspace",
-          "executor_identity")
-_OTHER = ("source_selection", "inactive_global_candidate", "candidate_directory",
-          "credential_metadata", "provider_source_snapshot", "ordinary_file_metadata",
-          "raw_byte_equality")
-_STATES = ("equal", "changed", "unavailable")
+from planner.tickets.contracts import TicketLocale
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -56,61 +62,78 @@ _RECORD_TYPES = (
 )
 
 
-def unavailable_record() -> JsonObject:
-    return {
-        **dict.fromkeys((*_FACTS, *_OTHER), "unavailable"),
-        "roles": {role: {"source_validity": "unavailable", "semantic_content": "unavailable"}
-                  for role in _ROLES},
-    }
+# Container item expectations are checked during the existing bounded walk.
+# They add no traversal of private data and never invoke arbitrary equality.
+_FIELD_SHAPES: dict[type, dict[str, str]] = {
+    DiagnosticCapture: {"context": "context", "environment": "environment", "vector": "vector"},
+    LaunchContext: {
+        "context_ref": "nonempty_string", "destination": "destination", "backend_key": "backend",
+        "executor_identity": "optional_executor", "workspace": "workspace",
+        "localized_workspace_folder": "path", "executable_identity": "optional_nonempty_string",
+        "executable_version": "optional_nonempty_string",
+        "provider_scope": "optional_nonempty_string",
+        "account_generation": "absent",
+    },
+    CatalogWorkspaceBinding: {
+        "workspace_folder": "path", "workspace_path_policy": "path_policy",
+        "workspace_home_relative": "optional_string",
+    },
+    ExecutorIdentity: {
+        "protocol_version": "integer", "application_revision": "string",
+        "spool_format_version": "integer", "executor_incarnation": "string",
+        "connection_generation": "integer",
+    },
+    ClaudeInputVector: {
+        "global_selection": "string", "documents": "documents", "directories": "directories",
+        "credential": "credential",
+    },
+    ClaudeInputDocument: {"role": "string", "location": "location", "content": "content"},
+    ClaudeInputDirectory: {"location": "location", "candidates": "paths"},
+    ClaudeInputLocation: {"logical": "path", "resolved": "path"},
+    ClaudeCredentialMarker: {
+        "location": "location", "resolved_parent": "path", "metadata": "metadata",
+    },
+}
+_ITEM_SHAPES = {
+    "environment": "environment_pair", "environment_pair": "string",
+    "documents": "document", "directories": "directory", "paths": "path", "metadata": "integer",
+}
+_SHAPE_TYPES: dict[str, type] = {
+    "context": LaunchContext, "vector": ClaudeInputVector, "document": ClaudeInputDocument,
+    "directory": ClaudeInputDirectory, "credential": ClaudeCredentialMarker,
+    "location": ClaudeInputLocation, "content": ClaudeJsonValue, "string": str, "integer": int,
+    "workspace": CatalogWorkspaceBinding, "optional_executor": ExecutorIdentity,
+    "destination": TicketLocale, "backend": ConversationBackendKey,
+    "path_policy": WorkspacePathPolicy,
+    "nonempty_string": str, "optional_nonempty_string": str, "optional_string": str,
+    "absent": type(None),
+}
+_OPTIONAL_SHAPES = (
+    "vector", "content", "metadata", "optional_executor",
+    "optional_nonempty_string", "optional_string",
+)
 
 
-def validate_record(value: object) -> JsonObject:
-    """Reject nonfinite or extended evidence before any output serialization."""
-    template = unavailable_record()
-    if type(value) is not dict or len(value) != len(template):
-        raise ValueError("Invalid diagnostic record")
-    if any(type(key) is not str or len(key) > 32 for key in value):
-        raise ValueError("Invalid diagnostic record")
-    if value.keys() != template.keys():
-        raise ValueError("Invalid diagnostic record")
-    for key in (*_FACTS, *_OTHER):
-        state = value[key]
-        if type(state) is not str or len(state) > 11 or state not in _STATES:
-            raise ValueError("Invalid diagnostic record")
-        template[key] = state
-    roles = value["roles"]
-    if type(roles) is not dict or len(roles) != len(_ROLES):
-        raise ValueError("Invalid diagnostic record")
-    if any(type(key) is not str or len(key) > 32 for key in roles) or roles.keys() != set(_ROLES):
-        raise ValueError("Invalid diagnostic record")
-    clean_roles: JsonObject = {}
-    for role in _ROLES:
-        states = roles[role]
-        if type(states) is not dict or len(states) != 2:
-            raise ValueError("Invalid diagnostic record")
-        if (any(type(key) is not str or len(key) > 32 for key in states)
-                or states.keys() != {"source_validity", "semantic_content"}):
-            raise ValueError("Invalid diagnostic record")
-        clean: JsonObject = {}
-        for key in ("source_validity", "semantic_content"):
-            state = states[key]
-            if type(state) is not str or len(state) > 11 or state not in _STATES:
-                raise ValueError("Invalid diagnostic record")
-            clean[key] = state
-        clean_roles[role] = clean
-    template["roles"] = clean_roles
-    return template
+class _Limit(Exception):
+    """Only the finite first failing bound may escape private comparison."""
+
+    def __init__(self, status: DiagnosticStatus) -> None:
+        self.status = status
 
 
-class _Unavailable(Exception):
-    """No private details belong in this failure."""
+def _clock_value(clock: Callable[[], float]) -> float:
+    value = clock()
+    if type(value) not in (float, int) or not math.isfinite(value):
+        raise ValueError("Invalid diagnostic clock")
+    return value
 
 
 class _Budget:
     def __init__(self, clock: Callable[[], float], elapsed: float = 0.0) -> None:
         self.elapsed = elapsed
         self.clock = clock
-        self.started = clock()
+        self.started = _clock_value(clock)
+        self.last = self.started
         self.units = 0
         self.nodes = 0
         self.documents = 0
@@ -120,95 +143,127 @@ class _Budget:
     def step(self) -> None:
         self.units += 1
         # Cap wrapper/structural work too, including zero-length private scalars.
-        if self.units > 262_144 or self.elapsed + self.clock() - self.started > 0.025:
-            raise _Unavailable
+        if self.units > 262_144:
+            raise _Limit("limit_work")
+        now = _clock_value(self.clock)
+        if now < self.last:
+            raise ValueError("Invalid diagnostic clock")
+        self.last = now
+        if self.elapsed + now - self.started > 0.025:
+            raise _Limit("limit_time")
 
     def scalar(self, value: object) -> None:
         if isinstance(value, str):
             if len(value) > 4096:
-                raise _Unavailable
+                raise _Limit("limit_string")
             self.scalars += 4 * len(value)
         elif type(value) is int:
             bits = value.bit_length()
             if bits > 4096:
-                raise _Unavailable
+                raise _Limit("limit_integer")
             self.scalars += (bits + 7) // 8
         elif type(value) is float:
             if not math.isfinite(value):
-                raise _Unavailable
+                raise ValueError("Invalid diagnostic input")
             self.scalars += 8
         elif type(value) is bool:
             self.scalars += 1
         if self.scalars > 1_048_576:
-            raise _Unavailable
+            raise _Limit("limit_scalars")
 
-    def check(self, value: object, depth: int = 0) -> None:
+    def check(self, value: object, depth: int = 0, shape: str | None = None) -> None:
         """Preflight every input, including unequal tails, before any equality."""
         self.step()
+        if shape is not None and not (value is None and shape in _OPTIONAL_SHAPES):
+            if shape == "path":
+                valid = isinstance(value, Path)
+            elif shape in _ITEM_SHAPES:
+                valid = type(value) is tuple
+                if valid and shape == "environment_pair":
+                    valid = len(cast(tuple[object, ...], value)) == 2
+            else:
+                valid = type(value) is _SHAPE_TYPES[shape]
+                if valid and shape in ("nonempty_string", "optional_nonempty_string"):
+                    valid = len(cast(str, value)) > 0
+            if not valid:
+                raise ValueError("Invalid diagnostic input")
         if isinstance(value, str) or value is None or type(value) in (int, bool, float):
             self.scalar(value)
         elif isinstance(value, Path):
             # Bound the existing path components before constructing its string.
             if len(value.parts) > 4096:
-                raise _Unavailable
+                raise _Limit("limit_string")
             length = 0
             for part in value.parts:
                 self.step()
                 length += len(part)
                 if length > 4096:
-                    raise _Unavailable
+                    raise _Limit("limit_string")
             self.scalar(str(value))
         elif type(value) is tuple:
             if len(value) > 32768:
-                raise _Unavailable
+                raise _Limit("limit_sequence")
             for item in value:
-                self.check(item, depth)
+                self.check(item, depth, _ITEM_SHAPES.get(shape or ""))
         elif type(value) in _RECORD_TYPES:
             if isinstance(value, ClaudeInputVector):
+                if type(value.documents) is not tuple or type(value.directories) is not tuple:
+                    raise ValueError("Invalid diagnostic input")
                 self.documents += len(value.documents)
                 if self.documents > 64:
-                    raise _Unavailable
+                    raise _Limit("limit_documents")
                 for directory in value.directories:
                     self.step()
+                    if (type(directory) is not ClaudeInputDirectory
+                            or type(directory.candidates) is not tuple):
+                        raise ValueError("Invalid diagnostic input")
                     self.candidates += len(directory.candidates)
                     if self.candidates > 256:
-                        raise _Unavailable
+                        raise _Limit("limit_candidates")
             if isinstance(value, ClaudeInputDocument):
-                if len(value.role) > 32 or value.role not in _ROLE_NAMES:
-                    raise _Unavailable
+                if (type(value.role) is not str or len(value.role) > 32
+                        or value.role not in _ROLE_NAMES):
+                    raise ValueError("Invalid diagnostic input")
             if isinstance(value, ClaudeJsonValue):
                 self.nodes += 1
-                if self.nodes > 32768 or depth > 64:
-                    raise _Unavailable
-                self.scalar(value.kind)
+                if self.nodes > 32768:
+                    raise _Limit("limit_nodes")
+                if depth > 64:
+                    raise _Limit("limit_depth")
                 kind, content = value.kind, value.value
+                if type(kind) is not str or len(kind) > 7:
+                    raise ValueError("Invalid diagnostic input")
                 expected: dict[str, type] = {
                     "null": type(None), "boolean": bool, "integer": int,
                     "float": float, "string": str, "array": tuple, "object": tuple,
                 }
                 if kind not in expected or type(content) is not expected[kind]:
-                    raise _Unavailable
+                    raise ValueError("Invalid diagnostic input")
+                self.scalar(kind)
                 children = cast(tuple[object, ...], content)
                 if kind in ("array", "object") and len(children) > 32768:
-                    raise _Unavailable
+                    raise _Limit("limit_sequence")
                 if kind == "array":
                     for item in children:
                         self.step()
                         if type(item) is not ClaudeJsonValue:
-                            raise _Unavailable
+                            raise ValueError("Invalid diagnostic input")
                 elif kind == "object":
                     for pair in children:
                         self.step()
                         if (type(pair) is not tuple or len(pair) != 2
                                 or type(pair[0]) is not str
                                 or type(pair[1]) is not ClaudeJsonValue):
-                            raise _Unavailable
+                            raise ValueError("Invalid diagnostic input")
                 self.check(content, depth + 1)
             else:
                 for field in fields(cast(_Record, value)):
-                    self.check(getattr(value, field.name), depth)
+                    self.check(
+                        getattr(value, field.name), depth,
+                        _FIELD_SHAPES.get(type(value), {}).get(field.name),
+                    )
         else:
-            raise _Unavailable
+            raise ValueError("Invalid diagnostic input")
 
     def equal(self, left: object, right: object) -> bool:
         """Only called after complete preflight; never invoke container equality."""
@@ -228,7 +283,7 @@ class _Budget:
                        for field in fields(cast(_Record, left)))
         if left is None or type(left) in (int, bool, float):
             return bool(left == right)
-        raise _Unavailable
+        raise ValueError("Invalid diagnostic input")
 
     def state(self, left: object, right: object) -> DiagnosticState:
         return "equal" if self.equal(left, right) else "changed"
@@ -237,7 +292,7 @@ class _Budget:
 def _compare(before: DiagnosticCapture, after: DiagnosticCapture, budget: _Budget) -> JsonObject:
     budget.check(before)
     budget.check(after)
-    result = unavailable_record()
+    result = unavailable_record("capture_missing")
     left, right = before.context, after.context
     for key in ("executable_identity", "executable_version"):
         a, b = getattr(left, key), getattr(right, key)
@@ -288,6 +343,7 @@ def _compare(before: DiagnosticCapture, after: DiagnosticCapture, budget: _Budge
                        "semantic_content": content}
     result["roles"] = roles
     result["source_selection"] = "equal" if sources_equal else "changed"
+    result["diagnostic_status"] = "compared"
     budget.step()
     return result
 
@@ -299,41 +355,45 @@ class DiagnosticSink:
         self._clock = clock or time.monotonic
         self._captures: list[DiagnosticCapture] = []
         self._provider: bool | None = None
-        self._failed = False
+        self._failure: DiagnosticStatus | None = None
         self._finished = False
         self._elapsed = 0.0
+
+    def _fail(self, status: DiagnosticStatus) -> None:
+        if self._failure is None or status == "internal_error":
+            self._failure = status
 
     @contextmanager
     def _work(self) -> Iterator[None]:
         # Charge diagnostic-only hooks, excluding all ordinary collection/waits.
         started: float | None = None
         try:
-            started = self._clock()
+            started = _clock_value(self._clock)
         except Exception:
-            self._failed = True
+            self._fail("internal_error")
         try:
             yield
         except Exception:
-            self._failed = True
+            self._fail("internal_error")
         finally:
             if started is not None:
                 try:
-                    elapsed = self._clock() - started
+                    elapsed = _clock_value(self._clock) - started
                     if not math.isfinite(elapsed) or elapsed < 0:
-                        self._failed = True
+                        self._fail("internal_error")
                     else:
                         self._elapsed += elapsed
                         if self._elapsed > 0.025:
-                            self._failed = True
+                            self._fail("limit_time")
                 except Exception:
-                    self._failed = True
+                    self._fail("internal_error")
 
     def capture(self, value: DiagnosticCapture) -> None:
         if self._finished:
             return
         with self._work():
             if type(value) is not DiagnosticCapture or len(self._captures) == 2:
-                self._failed = True
+                self._fail("internal_error")
                 return
             self._captures.append(value)
 
@@ -342,30 +402,41 @@ class DiagnosticSink:
             return
         with self._work():
             if type(equal) is not bool or self._provider is not None:
-                self._failed = True
+                self._fail("internal_error")
                 return
             self._provider = equal
 
+    def _with_provider(self, result: JsonObject) -> JsonObject:
+        if self._provider is not None:
+            result["provider_source_snapshot"] = "equal" if self._provider else "changed"
+        return result
+
     def finish(self) -> JsonObject:
         try:
-            if self._finished or self._failed:
+            if self._finished or self._failure == "internal_error":
                 return unavailable_record()
             budget = _Budget(self._clock, self._elapsed)
-            result = unavailable_record()
-            if len(self._captures) == 2:
-                result = _compare(self._captures[0], self._captures[1], budget)
-            if self._provider is not None:
-                result["provider_source_snapshot"] = "equal" if self._provider else "changed"
-            budget.step()
-            clean = validate_record(result)
-            budget.step()
-            return clean
+            try:
+                if self._failure is not None:
+                    raise _Limit(self._failure)
+                result = unavailable_record("capture_missing")
+                if len(self._captures) == 2:
+                    result = _compare(self._captures[0], self._captures[1], budget)
+                self._with_provider(result)
+                budget.step()
+                clean = validate_record(result)
+                budget.step()
+                return clean
+            except _Limit as limit:
+                # Outer comparisons are incomplete; the independently supplied,
+                # cardinality-checked provider boolean remains an observation.
+                return validate_record(self._with_provider(unavailable_record(limit.status)))
         except Exception:
             return unavailable_record()
         finally:
             self._captures.clear()
             self._provider = None
-            self._failed = False
+            self._failure = None
             self._elapsed = 0.0
             self._finished = True
 

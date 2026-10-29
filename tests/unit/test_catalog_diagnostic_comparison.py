@@ -5,7 +5,7 @@ import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -20,6 +20,7 @@ from planner.conversation.model_resolution.claude_input_contracts import (
     ClaudeJsonValue,
 )
 from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, LaunchContext
+from planner.conversation.model_resolution.diagnostic_contracts import DiagnosticStatus
 from planner.conversation.model_resolution.diagnostics import (
     DiagnosticCapture,
     DiagnosticSink,
@@ -79,6 +80,7 @@ def test_complete_typed_content_is_significant_for_every_role(kind: str, value: 
     before = capture()
     result = compare(before, change_content(before, ClaudeJsonValue(kind, value)))
     assert result["source_selection"] == "equal"
+    assert result["diagnostic_status"] == "compared"
     assert all(role["semantic_content"] == "changed" for role in result["roles"].values())
     assert all(role["source_validity"] == "equal" for role in result["roles"].values())
     assert SECRET not in json.dumps(result)
@@ -130,12 +132,15 @@ def test_confirmed_absence_and_collector_failure_are_distinct() -> None:
     absent = capture(None)
     assert compare(absent, absent)["roles"]["settings"]["semantic_content"] == "equal"
     unavailable = replace(absent, vector=None)
-    assert compare(absent, unavailable)["roles"]["settings"]["semantic_content"] == "unavailable"
+    result = compare(absent, unavailable)
+    assert result["roles"]["settings"]["semantic_content"] == "unavailable"
+    assert result["diagnostic_status"] == "capture_missing"
     sink = DiagnosticSink()
     sink.provider(False)
     result = sink.finish()
     assert result["provider_source_snapshot"] == "changed"
     assert result["source_selection"] == "unavailable"
+    assert result["diagnostic_status"] == "capture_missing"
 
 
 def oversized(kind: str) -> DiagnosticCapture:
@@ -176,7 +181,15 @@ def oversized(kind: str) -> DiagnosticCapture:
     "documents", "candidates", "string", "integer", "environment", "path", "nodes", "depth",
 ])
 def test_every_private_input_bound_fails_closed_before_equality(bound: str) -> None:
-    assert compare(capture(), oversized(bound)) == unavailable_record()
+    status = {"environment": "limit_scalars", "path": "limit_string"}.get(
+        bound, "limit_" + bound,
+    )
+    result = compare(capture(), oversized(bound))
+    assert result["diagnostic_status"] == status
+    expected = unavailable_record()  # Existing component keys stay closed and unavailable.
+    expected["diagnostic_status"] = status
+    expected["provider_source_snapshot"] = "equal"
+    assert result == expected
 
 
 def test_exact_semantic_depth_and_integer_limits_are_accepted() -> None:
@@ -234,7 +247,9 @@ def test_unknown_private_objects_never_receive_equality_or_repr_calls() -> None:
     assert compare(before, poisoned) == unavailable_record()
 
 
-@pytest.mark.parametrize("mutation", ["outer", "role", "detail", "state", "large"])
+@pytest.mark.parametrize("mutation", [
+    "outer", "role", "detail", "state", "large", "missing_status", "unknown_status",
+])
 def test_closed_schema_rejects_freeform_or_extended_output(mutation: str) -> None:
     record: dict[str, Any] = unavailable_record()
     if mutation == "outer":
@@ -245,6 +260,10 @@ def test_closed_schema_rejects_freeform_or_extended_output(mutation: str) -> Non
         record["roles"]["settings"][SECRET] = "equal"
     elif mutation == "state":
         record["workspace"] = SECRET
+    elif mutation == "missing_status":
+        del record["diagnostic_status"]
+    elif mutation == "unknown_status":
+        record["diagnostic_status"] = "context_changed"
     else:
         record["workspace"] = "x" * 10000
     with pytest.raises(ValueError, match="Invalid diagnostic record"):
@@ -291,9 +310,9 @@ def test_concurrent_request_scopes_cannot_share_private_inputs() -> None:
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("seconds_per_hook,expected", [(0.001, "equal"), (0.009, "unavailable")])
+@pytest.mark.parametrize("seconds_per_hook,status", [(0.001, "compared"), (0.009, "limit_time")])
 def test_budget_accumulates_hooks_but_excludes_provider_wait(
-    seconds_per_hook: float, expected: str,
+    seconds_per_hook: float, status: str,
 ) -> None:
     # One hundred seconds of ordinary wait between hooks does not enter the cap.
     times = iter((0.0, seconds_per_hook, 100.0, 100.0 + seconds_per_hook,
@@ -302,7 +321,9 @@ def test_budget_accumulates_hooks_but_excludes_provider_wait(
     sink.capture(capture())
     sink.capture(capture())
     sink.provider(True)
-    assert sink.finish()["provider_source_snapshot"] == expected
+    result = sink.finish()
+    assert result["diagnostic_status"] == status
+    assert result["provider_source_snapshot"] == "equal"
 
 
 def test_schema_validation_time_is_charged_to_the_same_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -318,7 +339,9 @@ def test_schema_validation_time_is_charged_to_the_same_cap(monkeypatch: pytest.M
     sink.capture(capture())
     sink.capture(capture())
     monkeypatch.setattr(diagnostics, "validate_record", delayed)
-    assert sink.finish() == unavailable_record()
+    expected = unavailable_record("limit_time")
+    expected["provider_source_snapshot"] = "unavailable"
+    assert sink.finish() == expected
 
 
 def test_exact_document_candidate_string_and_node_limits_are_accepted() -> None:
@@ -354,7 +377,7 @@ def test_offer_failures_never_escape_to_ordinary_observation() -> None:
     with diagnostic_scope(sink), diagnostic_observation():
         offer_capture(capture())
         offer_provider_comparison(True)
-    assert sink.finish() == unavailable_record()
+    assert sink.finish() == unavailable_record("capture_missing")
 
 
 @pytest.mark.parametrize("kind", ["documents", "candidates"])
@@ -370,4 +393,194 @@ def test_record_caps_accumulate_across_both_captures(kind: str) -> None:
             directory, candidates=directory.candidates * 200,
         ),))
     before = replace(before, vector=vector)
-    assert compare(before, before) == unavailable_record()
+    result = compare(before, before)
+    assert result["diagnostic_status"] == "limit_" + kind
+    assert result["provider_source_snapshot"] == "equal"
+    expected = unavailable_record()
+    expected["diagnostic_status"] = "limit_" + kind
+    expected["provider_source_snapshot"] = "equal"
+    assert result == expected
+
+
+@pytest.mark.parametrize("typed", [False, True])
+def test_sequence_limit_covers_structural_and_typed_containers(typed: bool) -> None:
+    before = capture()
+    after = (change_content(before, ClaudeJsonValue("array", (DEFAULT_CONTENT,) * 32769))
+             if typed else replace(before, environment=(("", ""),) * 32769))
+    result = compare(before, after)
+    assert result["diagnostic_status"] == "limit_sequence"
+    assert result["provider_source_snapshot"] == "equal"
+
+
+def test_traversal_work_limit_is_distinct_and_keeps_independent_provider() -> None:
+    # Existing traversal units include zero-length scalar wrappers. This stays
+    # below the sequence and aggregate scalar bounds and exceeds total work.
+    before = replace(capture(), environment=(("", ""),) * 32768)
+    result = compare(before, before)
+    assert result["diagnostic_status"] == "limit_work"
+    assert result["provider_source_snapshot"] == "equal"
+
+
+@pytest.mark.parametrize("clock_values", [
+    (float("nan"),), (float("inf"),), (1.0, 0.0),
+])
+def test_invalid_clocks_are_internal_errors(clock_values: tuple[float, ...]) -> None:
+    values = iter(clock_values)
+    sink = DiagnosticSink(clock=lambda: next(values, 0.0))
+    sink.provider(True)
+    assert sink.finish() == unavailable_record()
+
+
+@pytest.mark.parametrize("extra_offer", ["capture", "provider"])
+def test_protocol_error_overrides_prior_limit(extra_offer: str) -> None:
+    values = iter((0.0, 0.026))
+    sink = DiagnosticSink(clock=lambda: next(values, 0.026))
+    sink.capture(capture())
+    sink.capture(capture())
+    sink.provider(True)
+    if extra_offer == "capture":
+        sink.capture(capture())
+    else:
+        sink.provider(False)
+    assert sink.finish() == unavailable_record()
+
+
+def test_offers_after_finish_cannot_restore_private_references_or_mutate_result() -> None:
+    sink = DiagnosticSink(clock=lambda: 0.0)
+    sink.capture(capture())
+    sink.provider(True)
+    result = sink.finish()
+    sink.capture(capture())
+    sink.provider(False)
+    assert sink._captures == []
+    assert sink._provider is None
+    assert result["diagnostic_status"] == "capture_missing"
+    assert result["provider_source_snapshot"] == "equal"
+    assert sink.finish() == unavailable_record()
+
+
+@pytest.mark.parametrize("status", get_args(DiagnosticStatus))
+def test_every_status_uses_the_same_closed_bounded_record(status: Any) -> None:
+    result = unavailable_record(status)
+    assert validate_record(result) == result
+    assert len(json.dumps(result).encode()) < 4096
+
+
+@pytest.mark.parametrize("malformation", [
+    "environment_container", "environment_member", "documents_container", "document_location",
+    "directory_candidate", "credential_metadata", "typed_kind", "typed_member", "nonfinite_float",
+])
+def test_supported_but_malformed_private_shapes_are_internal_errors(malformation: str) -> None:
+    before = capture()
+    vector = before.vector
+    assert vector is not None
+    if malformation == "environment_container":
+        after = replace(before, environment=None)  # type: ignore[arg-type]
+    elif malformation == "environment_member":
+        after = replace(before, environment=(("key", 1),))  # type: ignore[arg-type]
+    elif malformation == "documents_container":
+        after = replace(before, vector=replace(vector, documents=""))  # type: ignore[arg-type]
+    elif malformation == "document_location":
+        after = replace(before, vector=replace(vector, documents=(replace(
+            vector.documents[0], location="wrong",  # type: ignore[arg-type]
+        ),)))
+    elif malformation == "directory_candidate":
+        after = replace(before, vector=replace(vector, directories=(replace(
+            vector.directories[0], candidates=("wrong",),  # type: ignore[arg-type]
+        ),)))
+    elif malformation == "credential_metadata":
+        after = replace(before, vector=replace(vector, credential=replace(
+            vector.credential, metadata=(True,),
+        )))
+    elif malformation == "typed_kind":
+        after = change_content(before, ClaudeJsonValue("unknown", None))
+    elif malformation == "typed_member":
+        after = change_content(before, ClaudeJsonValue("array", (None,)))  # type: ignore[arg-type]
+    else:
+        after = change_content(before, ClaudeJsonValue("float", float("nan")))
+    assert compare(before, after) == unavailable_record()
+
+
+def test_limit_does_not_invent_a_missing_provider_comparison() -> None:
+    sink = DiagnosticSink(clock=lambda: 0.0)
+    sink.capture(capture())
+    sink.capture(oversized("documents"))
+    assert sink.finish() == unavailable_record("limit_documents")
+
+
+def test_final_record_validation_error_overrides_a_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject(value: object) -> Any:
+        raise ValueError(SECRET)
+
+    sink = DiagnosticSink(clock=lambda: 0.0)
+    sink.capture(capture())
+    sink.capture(oversized("documents"))
+    sink.provider(True)
+    monkeypatch.setattr(diagnostics, "validate_record", reject)
+    assert sink.finish() == unavailable_record()
+
+
+@pytest.mark.parametrize("malformation", [
+    "oversized_documents_string", "directories_container", "directory_record",
+    "oversized_candidates_string", "long_kind", "kind_type",
+])
+def test_malformed_shapes_cannot_be_classified_as_resource_limits(malformation: str) -> None:
+    before = capture()
+    vector = before.vector
+    assert vector is not None
+    if malformation == "oversized_documents_string":
+        after = replace(before, vector=replace(vector, documents="x" * 65))  # type: ignore[arg-type]
+    elif malformation == "directories_container":
+        after = replace(before, vector=replace(vector, directories=""))  # type: ignore[arg-type]
+    elif malformation == "directory_record":
+        after = replace(before, vector=replace(vector, directories=("",)))  # type: ignore[arg-type]
+    elif malformation == "oversized_candidates_string":
+        after = replace(before, vector=replace(vector, directories=(replace(
+            vector.directories[0], candidates="x" * 257,  # type: ignore[arg-type]
+        ),)))
+    elif malformation == "long_kind":
+        after = change_content(before, ClaudeJsonValue("x" * 4097, None))
+    else:
+        after = change_content(before, ClaudeJsonValue(1, None))  # type: ignore[arg-type]
+    assert compare(before, after) == unavailable_record()
+
+
+@pytest.mark.parametrize("record,field,value", [
+    ("context", "context_ref", 1),
+    ("context", "destination", "macos"),
+    ("context", "backend_key", "claude"),
+    ("context", "executor_identity", "wrong"),
+    ("context", "workspace", "wrong"),
+    ("context", "localized_workspace_folder", "wrong"),
+    ("context", "executable_identity", 1),
+    ("context", "executable_version", 1),
+    ("context", "provider_scope", 1),
+    ("context", "account_generation", 1),
+    ("workspace", "workspace_folder", "wrong"),
+    ("workspace", "workspace_path_policy", "native_absolute"),
+    ("workspace", "workspace_home_relative", 1),
+    ("executor", "protocol_version", True),
+    ("executor", "application_revision", 1),
+    ("executor", "spool_format_version", "wrong"),
+    ("executor", "executor_incarnation", 1),
+    ("executor", "connection_generation", True),
+])
+def test_malformed_launch_fact_scalars_never_report_measured_results(
+    record: str, field: str, value: Any,
+) -> None:
+    before = capture()
+    context = before.context
+    if record == "context":
+        context = replace(context, **{field: value})
+    elif record == "workspace":
+        context = replace(context, workspace=replace(context.workspace, **{field: value}))
+    else:
+        assert context.executor_identity is not None
+        context = replace(context, executor_identity=replace(
+            context.executor_identity, **{field: value},
+        ))
+    malformed = replace(before, context=context)
+    # Equality of the malformed values must never make them valid observations.
+    assert compare(malformed, malformed) == unavailable_record()

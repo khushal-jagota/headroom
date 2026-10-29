@@ -23,11 +23,12 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     SelectionKind,
 )
-from planner.conversation.model_resolution.diagnostics import (
-    DiagnosticSink,
+from planner.conversation.model_resolution.diagnostic_contracts import (
+    DiagnosticStatus,
     unavailable_record,
     validate_record,
 )
+from planner.conversation.model_resolution.diagnostics import DiagnosticSink
 from planner.executor.contracts import (
     CatalogDiagnosticArm,
     CatalogDiagnosticResult,
@@ -200,13 +201,13 @@ class NativeCatalogDiagnostics:
         self.receipt: JsonObject | None = None
         self.expires = 0.0
         self._timer: asyncio.TimerHandle | None = None
-        self.invalidated = False
+        self._terminal_status: DiagnosticStatus | None = None
 
     def _expire(self) -> None:
         if time.monotonic() < self.expires:
             return
         if self.state == "armed":
-            self.invalidate()
+            self.invalidate("arm_expired")
         elif self.state == "settled":
             self.receipt = None
             self.request = None
@@ -266,18 +267,27 @@ class NativeCatalogDiagnostics:
 
     def cancel(self, request_id: str, request: CatalogRequest, writer: FrameWriter) -> None:
         if self.request_id == request_id and self.request == request and self.writer is writer:
-            self.invalidate()
+            self.invalidate("cancelled")
 
-    def invalidate(self) -> None:
+    def invalidate(self, status: DiagnosticStatus = "invalidated") -> None:
+        if self.state not in {"armed", "active"}:
+            return
+        if self._terminal_status is None:
+            self._terminal_status = status
         if self.state == "armed":
             self.state = "settled"
             self.request = None
             self.writer = None
-            self.receipt = unavailable_record()
+            self._settle_record(unavailable_record(self._terminal_status))
             self._deadline()
-        elif self.state == "active":
-            self.invalidated = True
         # Active references belong to the physical provider cleanup's finally.
+
+    def _settle_record(self, record: JsonObject) -> None:
+        try:
+            self.receipt = validate_record(record)
+            bounded_payload(self.receipt)
+        except Exception:
+            self.receipt = unavailable_record()
 
     def finish(self, request_id: str) -> None:
         if self.state != "active" or request_id != self.request_id:
@@ -285,11 +295,14 @@ class NativeCatalogDiagnostics:
         sink, self.sink = self.sink, None
         try:
             record = sink.finish() if sink is not None else unavailable_record()
-            self.receipt = unavailable_record() if self.invalidated else validate_record(record)
-            bounded_payload(self.receipt)
         except Exception:
-            self.receipt = unavailable_record()
+            record = unavailable_record()
         finally:
+            # Native terminal observations supersede sink outcomes, including errors.
+            # Final validation/serialization still has authority over that finite record.
+            if self._terminal_status is not None:
+                record = unavailable_record(self._terminal_status)
+            self._settle_record(record)
             self.request = None
             self.writer = None
             self.state = "settled"

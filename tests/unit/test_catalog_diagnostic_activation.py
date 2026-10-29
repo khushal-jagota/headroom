@@ -29,7 +29,7 @@ from planner.conversation.model_resolution.contracts import (
     ModelSelection,
     SelectionKind,
 )
-from planner.conversation.model_resolution.diagnostics import unavailable_record
+from planner.conversation.model_resolution.diagnostic_contracts import unavailable_record
 from planner.executor import catalog_diagnostics as diagnostic
 from planner.executor import ipc_client
 from planner.executor.cli import catalog_diagnostic_arm, catalog_diagnostic_result
@@ -70,7 +70,8 @@ def test_pending_cancel_is_terminal_before_catalog_task_arrives() -> None:
         assert not executor._catalog_tasks
         assert executor._catalog_diagnostics.begin(request_id, request, executor._writer) is None
         assert (
-            executor._catalog_diagnostics.result({"request_id": request_id}) == unavailable_record()
+            executor._catalog_diagnostics.result({"request_id": request_id})
+            == unavailable_record("cancelled")
         )
         with pytest.raises(ValueError):
             executor._catalog_diagnostics.arm(payload, executor.identity, executor._writer)
@@ -94,6 +95,7 @@ def test_arm_expiry_and_receipt_expiry_never_restore_activation(
         clock[0] += 61
         assert controller.begin(request_id, request, executor._writer) is None
         assert controller.state == "settled"
+        assert controller.receipt == unavailable_record("arm_expired")
         clock[0] += 61
         with pytest.raises(ValueError):
             controller.result({"request_id": request_id})
@@ -163,7 +165,7 @@ def test_active_disconnect_receipt_is_unavailable_after_physical_cleanup() -> No
             controller.result({"request_id": request_id})
         controller.finish(request_id)
         assert controller.sink is None and controller.request is None
-        assert controller.result({"request_id": request_id}) == unavailable_record()
+        assert controller.result({"request_id": request_id}) == unavailable_record("invalidated")
 
     asyncio.run(run())
 
@@ -253,3 +255,132 @@ def test_cli_arm_caps_raw_input_and_result_uses_real_strict_json_contract(
     )
     with pytest.raises(OSError, match="synthetic socket"):
         ipc_client.request(IpcOperation.catalog_diagnostic_result, {"request_id": request_id})
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("cancelled", "invalidated"), ("invalidated", "cancelled")],
+)
+@pytest.mark.parametrize("sink_raises", [False, True])
+def test_first_native_terminal_reason_survives_sink_and_repeated_cleanup(
+    monkeypatch: pytest.MonkeyPatch, first: str, second: str, sink_raises: bool
+) -> None:
+    """Native observation wins over even a failing sink, without early settlement."""
+    async def run() -> None:
+        executor = catalog_native(peer())
+        writer = executor._writer
+        assert writer is not None
+        request_id, request, payload = binding(executor.identity)
+        controller = executor._catalog_diagnostics
+        controller.arm(payload, executor.identity, writer)
+        sink = controller.begin(request_id, request, writer)
+        assert sink is not None
+        calls: list[bool] = []
+
+        def finish() -> dict[str, Any]:
+            calls.append(True)
+            if sink_raises:
+                raise RuntimeError("synthetic private finalization error")
+            record = unavailable_record("limit_nodes")
+            record["provider_source_snapshot"] = "changed"
+            return record
+
+        monkeypatch.setattr(sink, "finish", finish)
+
+        def terminate(reason: str) -> None:
+            if reason == "cancelled":
+                controller.cancel(request_id, request, writer)
+            else:
+                controller.invalidate()
+
+        # A mismatched cancellation has no authority over the diagnostic.
+        controller.cancel(str(uuid4()), request, writer)
+        terminate(first)
+        terminate(second)
+        assert controller.state == "active" and controller.sink is sink
+        with pytest.raises(ValueError):
+            controller.result({"request_id": request_id})
+        controller.finish(request_id)
+        assert controller.state == "settled" and calls == [True]
+        assert controller.sink is None and controller.request is None and controller.writer is None
+        controller.finish(request_id)
+        terminate(second)
+        result = controller.result({"request_id": request_id})
+        assert result["diagnostic_status"] == first
+        assert result["provider_source_snapshot"] == "unavailable"
+        assert calls == [True]
+        controller.finish(request_id)
+        terminate(second)
+        with pytest.raises(ValueError):
+            controller.result({"request_id": request_id})
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["constructor", "finish", "schema", "size", "terminal_size"])
+def test_native_internal_failure_is_bounded_and_consumed_once(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Constructor, finalization and output failures cannot leak or change domain behavior."""
+    async def run() -> None:
+        executor = catalog_native(peer())
+        writer = executor._writer
+        assert writer is not None
+        request_id, request, payload = binding(executor.identity)
+        controller = executor._catalog_diagnostics
+        controller.arm(payload, executor.identity, writer)
+
+        def broken() -> Any:
+            raise RuntimeError("private synthetic data")
+
+        if failure == "constructor":
+            monkeypatch.setattr(diagnostic, "DiagnosticSink", broken)
+        sink = controller.begin(request_id, request, writer)
+        if failure == "constructor":
+            assert sink is None
+        else:
+            assert sink is not None
+            if failure == "finish":
+                monkeypatch.setattr(sink, "finish", broken)
+            elif failure == "schema":
+                monkeypatch.setattr(sink, "finish", lambda: {"private": "sentinel"})
+            else:
+                check = diagnostic.bounded_payload
+
+                def reject_receipt(value: dict[str, Any]) -> None:
+                    if "diagnostic_status" in value:
+                        raise ValueError("synthetic serialization/size failure")
+                    check(value)
+
+                monkeypatch.setattr(diagnostic, "bounded_payload", reject_receipt)
+                if failure == "terminal_size":
+                    controller.cancel(request_id, request, writer)
+        controller.finish(request_id)
+        result = controller.result({"request_id": request_id})
+        assert result == unavailable_record("internal_error")
+        assert len(json.dumps(result).encode()) <= diagnostic.DIAGNOSTIC_MAX_BYTES
+        with pytest.raises(ValueError):
+            controller.result({"request_id": request_id})
+        assert controller.sink is None and controller.writer is None and controller.request is None
+
+    asyncio.run(run())
+
+
+def test_pending_arm_expiry_receipt_is_retrievable_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        clock = [1.0]
+        monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+        executor = catalog_native(peer())
+        writer = executor._writer
+        assert writer is not None
+        request_id, request, payload = binding(executor.identity)
+        controller = executor._catalog_diagnostics
+        controller.arm(payload, executor.identity, writer)
+        clock[0] += diagnostic.DIAGNOSTIC_LIFETIME_SECONDS
+        assert controller.begin(request_id, request, writer) is None
+        controller.invalidate()
+        assert controller.result({"request_id": request_id}) == unavailable_record("arm_expired")
+        with pytest.raises(ValueError):
+            controller.result({"request_id": request_id})
+
+    asyncio.run(run())

@@ -76,6 +76,7 @@ path. The Manager reads canonical Item and Ticket state before it acts on a noti
   shows a conversation — a Ticket's and the Chief of Staff's.
 - **The Mac executor** (`executor.md`) — host-local children, one outbound journal,
   complete files, and reconciliation against the authoritative VPS record.
+- **Temporary Claude diagnostic operator** (`catalog-diagnostic-operator.md`) — matching package checks, finite receipt validation, and one-use recovery limits.
 - **Mac installation and updates** (`mac-executor-installation.md`) — fixed native environment,
   explicit LaunchAgent inputs, graceful shutdown, and operator recovery.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
