@@ -1,13 +1,20 @@
 """Goal agents and owners use the same canonical writer."""
 
+import json
 import sys
+from typing import Any, NoReturn
 from urllib.parse import quote
 
 import click
 
 from planner.cli import http
 from planner.cli.artifact_io import read_artifact_source
-from planner.cli.measure_io import emit, json_option, stdin_object
+from planner.cli.measure_io import json_option, stdin_object
+
+
+def _emit_goal_response(data: Any, as_json: bool) -> NoReturn:
+    """A goal's page is authored content, never pagination metadata."""
+    http.emit(data, as_json, json.dumps(data, ensure_ascii=False, indent=2))
 
 
 @click.group("goal")
@@ -25,21 +32,25 @@ def list_goals(active: bool | None, project_id: str | None, as_json: bool) -> No
         params["active"] = str(active).lower()
     if project_id is not None:
         params["project_id"] = project_id
-    emit(http.send("GET", "/api/goals", params=params, as_json=as_json), as_json)
+    _emit_goal_response(http.send("GET", "/api/goals", params=params, as_json=as_json), as_json)
 
 
 @goal.command("show")
 @click.argument("goal_id")
 @json_option
 def show_goal(goal_id: str, as_json: bool) -> None:
-    emit(http.send("GET", f"/api/goals/{quote(goal_id, safe='')}", as_json=as_json), as_json)
+    _emit_goal_response(
+        http.send("GET", f"/api/goals/{quote(goal_id, safe='')}", as_json=as_json), as_json
+    )
 
 
 @goal.command("create")
 @json_option
 def create_goal(as_json: bool) -> None:
     """Read the goal JSON from stdin."""
-    emit(http.send("POST", "/api/goals", json_body=stdin_object(as_json), as_json=as_json), as_json)
+    _emit_goal_response(
+        http.send("POST", "/api/goals", json_body=stdin_object(as_json), as_json=as_json), as_json
+    )
 
 
 @goal.command("edit")
@@ -47,7 +58,7 @@ def create_goal(as_json: bool) -> None:
 @json_option
 def edit_goal(goal_id: str, as_json: bool) -> None:
     """Read changed facts/page and expected_revision from stdin."""
-    emit(
+    _emit_goal_response(
         http.send(
             "PATCH",
             f"/api/goals/{quote(goal_id, safe='')}",
@@ -69,7 +80,7 @@ def read_goal(goal_id: str, first_date: str | None, last_date: str | None, as_js
         for key, value in {"first_date": first_date, "last_date": last_date}.items()
         if value is not None
     }
-    emit(
+    _emit_goal_response(
         http.send(
             "GET", f"/api/goals/{quote(goal_id, safe='')}/readings", params=params, as_json=as_json
         ),

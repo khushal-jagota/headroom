@@ -17,6 +17,8 @@ from planner.files.catalog import links
 from planner.files.catalog.api import _cache
 from planner.files.catalog.api import _read as artifact_page
 from planner.files.catalog.config import PAGE_MAX_BYTES
+from planner.files.goal_files import write_file
+from planner.files.logic.paths import resolve_goal_file
 from planner.goals.actions import create_goal
 from planner.tickets.data import create_ticket
 
@@ -222,3 +224,42 @@ def test_goal_catalog_discovers_direct_files_without_a_goal_link_index(
     assert links.managed_href(
         f"/files/goals/{goal.id}/../outside.md", "http://testserver"
     ) is None
+
+
+def test_goal_catalog_accepts_configured_ancestor_links_but_rejects_managed_root_links(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    goal = create_goal(
+        tmp_db, {"title": "Deployment files", "project_id": "project_vylo"},
+        principal=OWNER_PRINCIPAL, now=1,
+    )
+    req = _request(tmp_db)
+    real_db = Path(req.app.state.config.db_path)
+    current = real_db.parent / "current"
+    current.symlink_to(real_db.parent, target_is_directory=True)
+    configured_db = current / real_db.name
+    req.app.state.config.db_path = str(configured_db)
+    write_file(
+        tmp_db, OWNER_PRINCIPAL, goal.id, str(configured_db), "artifacts/note.md", "retained"
+    )
+    saved_file = resolve_goal_file(configured_db, goal.id, "artifacts/note.md")
+    assert saved_file.absolute_path.read_text() == "retained"
+    page = artifact_page(req, "goal", goal.id, "artifacts", 0, 60)
+    assert [entry["href"] for entry in page["entries"]] == [
+        f"/files/goals/{goal.id}/artifacts/note.md"
+    ]
+    # Resolving the configured ancestor must not legitimize either managed boundary.
+    family = real_db.parent / "files" / "goals"
+    owner = family / goal.id
+    moved_owner = family / "moved-owner"
+    owner.rename(moved_owner)
+    owner.symlink_to(moved_owner, target_is_directory=True)
+    _cache.clear()
+    assert artifact_page(req, "goal", goal.id, "", 0, 60)["entries"] == []
+    owner.unlink()
+    moved_owner.rename(owner)
+    moved_family = family.with_name("moved-goals")
+    family.rename(moved_family)
+    family.symlink_to(moved_family, target_is_directory=True)
+    _cache.clear()
+    assert artifact_page(req, "goal", goal.id, "", 0, 60)["entries"] == []

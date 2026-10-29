@@ -320,3 +320,50 @@ def test_goal_artifact_list_consumes_root_and_nested_pages_and_folded_index(
     assert json.loads(folded.stdout)["artifacts"] == ["index.html"]
     asset = _goal_invoke(runner, goal_id, "read", goal_id, paths[0])
     assert asset.exit_code == 0 and asset.stdout == "note"
+
+
+def test_goal_record_commands_emit_saved_pages_in_human_and_json_modes(
+    artifact_cli: tuple[TestClient, CliRunner],
+) -> None:
+    client, runner = artifact_cli
+    for as_json in (False, True):
+        options = ["--json"] if as_json else []
+        document = {
+            "kind": "headroom.page", "version": 1, "title": "雪 · café", "summary": "",
+            "blocks": [{"type": "text", "text": "Saved goal content"}],
+        }
+        created = runner.invoke(
+            main, ["goal", "create", *options],
+            input=json.dumps({
+                "title": "Inspect context", "project_id": "project_other", "page": document,
+            }),
+        )
+        assert created.exit_code == 0, created.output
+        record = json.loads(created.stdout)
+        goal_id = record["id"]
+        saved_page = record["page"]
+        assert saved_page["title"] == document["title"]
+        assert saved_page["blocks"][0]["text"] == "Saved goal content"
+        shown = runner.invoke(main, ["goal", "show", goal_id, *options])
+        assert shown.exit_code == 0, shown.output
+        assert json.loads(shown.stdout)["page"] == saved_page
+        edited = runner.invoke(
+            main, ["goal", "edit", goal_id, *options],
+            input=json.dumps({
+                "expected_revision": record["revision"],
+                "page": {**saved_page, "summary": "Updated context"},
+            }),
+        )
+        assert edited.exit_code == 0, edited.output
+        changed_page = json.loads(edited.stdout)["page"]
+        assert changed_page["summary"] == "Updated context"
+        assert client.get(f"/api/goals/{goal_id}").json()["page"] == changed_page
+        listed = runner.invoke(main, ["goal", "list", *options])
+        assert listed.exit_code == 0, listed.output
+        listed_goal = next(
+            row for row in json.loads(listed.stdout)["goals"] if row["id"] == goal_id
+        )
+        assert listed_goal["page"] == changed_page
+        readings = runner.invoke(main, ["goal", "read", goal_id, *options])
+        assert readings.exit_code == 0, readings.output
+        assert json.loads(readings.stdout)["goal_id"] == goal_id

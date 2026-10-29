@@ -207,7 +207,10 @@ def _read(
         else:
             if conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
                 raise PlannerError(ErrorCode.not_found, "ticket not found", {})
-        db_path = request.app.state.config.db_path
+        configured_db = Path(request.app.state.config.db_path)
+        # Deployment ancestors are configured, not managed file links. Resolve only
+        # those ancestors so inventory still rejects a linked family or owner root.
+        db_path = configured_db.parent.resolve() / configured_db.name
         root = {
             "ticket": ticket_files_root,
             "manager": manager_files_root,
