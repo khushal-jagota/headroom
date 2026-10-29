@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
+import time
 from dataclasses import replace
 from typing import Any
 from uuid import uuid4
@@ -59,6 +61,7 @@ def binding(identity: Any) -> tuple[str, CatalogRequest, dict[str, Any]]:
 def test_pending_cancel_is_terminal_before_catalog_task_arrives() -> None:
     async def run() -> None:
         executor = catalog_native(peer())
+        assert executor._writer is not None
         request_id, request, payload = binding(executor.identity)
         executor._catalog_diagnostics.arm(payload, executor.identity, executor._writer)
         executor._catalog_frame(
@@ -82,9 +85,10 @@ def test_arm_expiry_and_receipt_expiry_never_restore_activation(
 ) -> None:
     async def run() -> None:
         clock = [1.0]
-        monkeypatch.setattr(diagnostic.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(time, "monotonic", lambda: clock[0])
         controller = diagnostic.NativeCatalogDiagnostics()
         executor = catalog_native(peer())
+        assert executor._writer is not None
         request_id, request, payload = binding(executor.identity)
         controller.arm(payload, executor.identity, executor._writer)
         clock[0] += 61
@@ -104,6 +108,7 @@ def test_arm_expiry_and_receipt_expiry_never_restore_activation(
 def test_native_rejects_child_claims_and_closed_oversized_arm_before_admission() -> None:
     async def run() -> None:
         executor = catalog_native(peer())
+        assert executor._writer is not None
         executor._ipc_stopping = False
         _, _, payload = binding(executor.identity)
         for child, capability in (("child", None), (None, "capability")):
@@ -144,6 +149,7 @@ def test_native_rejects_child_claims_and_closed_oversized_arm_before_admission()
 def test_active_disconnect_receipt_is_unavailable_after_physical_cleanup() -> None:
     async def run() -> None:
         executor = catalog_native(peer())
+        assert executor._writer is not None
         request_id, request, payload = binding(executor.identity)
         controller = executor._catalog_diagnostics
         controller.arm(payload, executor.identity, executor._writer)
@@ -163,8 +169,9 @@ def test_active_disconnect_receipt_is_unavailable_after_physical_cleanup() -> No
 
 
 def test_reservation_exact_selection_writer_revision_and_scope_reset() -> None:
-    endpoint = catalog_endpoint(peer())
-    endpoint.writer.is_closing.return_value = False
+    writer = peer()
+    writer.is_closing.return_value = False
+    endpoint = catalog_endpoint(writer)
     assert endpoint.identity is not None
     _, request, _ = binding(endpoint.identity)
     selection = ModelSelection(
@@ -238,7 +245,7 @@ def test_cli_arm_caps_raw_input_and_result_uses_real_strict_json_contract(
     monkeypatch.delenv("PLAN_EXECUTOR_CHILD_ID", raising=False)
     monkeypatch.delenv("PLAN_EXECUTOR_CAPABILITY", raising=False)
     monkeypatch.setattr(
-        ipc_client.socket,
+        socket,
         "socket",
         lambda *args: (_ for _ in ()).throw(
             OSError("synthetic socket"),
