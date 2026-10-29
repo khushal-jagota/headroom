@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from development_safety.contracts import Diagnostic, SafetyRefusal
-from development_safety.scanner import check_paths, check_python, check_tree
+from development_safety.scanner import check_paths, check_python, check_python_lookup, check_tree
 
 TREE = Path(__file__).resolve().parents[2]
 PACKAGES = ("web", "agent_backends")
@@ -218,6 +218,7 @@ def python_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> l
 
 def setup(tree: Path, env: Mapping[str, str]) -> int:
     """Create fresh local dependencies; never remove or reuse a suspect destination."""
+    check_python_lookup(tree, environment=env)
     destinations = [tree / ".venv", *(tree / item / "node_modules" for item in PACKAGES)]
     check_tree(tree, environment=env)
     check_paths(destinations, environment=env)

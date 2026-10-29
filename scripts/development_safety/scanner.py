@@ -11,7 +11,7 @@ import pwd
 import re
 import stat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NoReturn
 
@@ -437,16 +437,39 @@ _SETUPTOOLS_HOOK = (
 )
 
 
-def check_python(venv: Path, tree: Path, *, environment: Mapping[str, str] | None = None) -> None:
-    """Statically admit a virtualenv and its supported Python lookup paths."""
+def check_python_lookup(
+    tree: Path,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> None:
+    """Reject ambient lookup redirects with a repair for their actual cause."""
     environment = os.environ if environment is None else environment
     for key in ("PYTHONPATH", "PYTHONHOME"):
-        if environment.get(key):
+        if not environment.get(key):
+            continue
+        repair = (
+            f"Lookup variable: {key}. Start a clean development shell or unset {key} "
+            "so this worktree's virtualenv supplies imports, then retry the guarded command. "
+            "This removes the lookup redirect; the safety check still runs."
+        )
+        try:
             check_paths(
                 [Path(part or os.curdir) for part in environment[key].split(os.pathsep)],
                 environment=environment,
             )
-            _refuse(tree, "Python lookup redirect", f"{key} changes interpreter lookup paths.")
+        except SafetyRefusal as error:
+            raise SafetyRefusal(
+                replace(error.diagnostic, detail=f"{error.diagnostic.detail}\n{repair}")
+            ) from error
+        _refuse(
+            tree, "Python lookup redirect", f"{key} changes interpreter lookup paths.\n{repair}"
+        )
+
+
+def check_python(venv: Path, tree: Path, *, environment: Mapping[str, str] | None = None) -> None:
+    """Statically admit a virtualenv and its supported Python lookup paths."""
+    environment = os.environ if environment is None else environment
+    check_python_lookup(tree, environment=environment)
     config = venv / "pyvenv.cfg"
     try:
         text = config.read_text()

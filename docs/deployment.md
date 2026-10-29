@@ -300,6 +300,16 @@ scripts/dev python -m pytest tests/unit/test_instrument.py
 scripts/dev .venv/bin/pytest tests/unit/test_instrument.py
 ```
 
+Use a clean development shell. If `PYTHONPATH` or `PYTHONHOME` points into a deployed
+runtime, remove that lookup before setup:
+
+```sh
+env -u PYTHONPATH -u PYTHONHOME scripts/dev setup
+```
+
+Use the same clean environment for later commands. This removes the shared lookup
+path, and the guard still checks the resulting dependencies.
+
 The launcher checks dependency storage before npm, pytest, or mypy starts.
 Setup requires absent `.venv` and package dependency directories. It refuses existing
 destinations without deleting them. It installs the pinned requirements, an editable
@@ -345,9 +355,8 @@ These checks do not add cache exclusions or change the digest rules.
 If a write reaches the installed tree, report it and leave it in place.
 Do not clean the installed tree to make an installation proceed. Preserve the evidence.
 
-The currently installed release contains no enforcement of these checks. Review or
-merge is not installed enforcement. No production operation forms part of this work.
-The separate installer pull request is neither a prerequisite nor acceptance evidence.
+Review or merge does not install these checks. Establish installed enforcement from
+the deployed revision separately from source checks and environment admission.
 
 The focused dependency safety workflow checks the proposed merge on an `ubuntu-24.04`
 hosted runner. It records environment evidence, admits independent dependencies, and

@@ -237,6 +237,17 @@ def test_real_scanner_blocks_shared_dependencies_before_npm_exec(
     assert str(deployment / "node_modules") in output
     assert not started
 
+    # Setup must refuse inherited deployed lookup before even creating its virtualenv.
+    monkeypatch.setenv("PYTHONPATH", str(deployment / "node_modules"))
+    children: list[object] = []
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: children.append(args))
+    assert launcher.main(["setup"]) == 2
+    output = capsys.readouterr().err
+    assert "shared deployment storage detected" in output
+    assert "PYTHONPATH" in output
+    assert not (tree / ".venv").exists()
+    assert not children
+
 
 def test_setup_pip_cannot_inherit_install_destination_redirects(
     tmp_path: Path,

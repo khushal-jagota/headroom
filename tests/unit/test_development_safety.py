@@ -194,8 +194,14 @@ def test_python_redirects_and_shared_system_interpreter(
     pth.write_text("import unsupported_redirect\n")
     with pytest.raises(SafetyRefusal, match="executable Python redirect"):
         scanner.check_python(independent, independent, environment={})
-    with pytest.raises(SafetyRefusal, match="shared deployment storage detected"):
+    with pytest.raises(SafetyRefusal, match="shared deployment storage detected") as refusal:
         scanner.check_python(independent, independent, environment={"PYTHONPATH": str(protected)})
+    assert refusal.value.diagnostic.examined == protected
+    assert refusal.value.diagnostic.signal == "path ancestry"
+    assert "unset PYTHONPATH" in str(refusal.value)
+    assert "safety check still runs" in str(refusal.value)
+    with pytest.raises(SafetyRefusal, match="unset PYTHONHOME"):
+        scanner.check_python_lookup(independent, environment={"PYTHONHOME": str(independent)})
 
 
 def test_real_disposable_bind_mount_namespace(tmp_path: Path) -> None:
