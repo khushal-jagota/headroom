@@ -553,10 +553,13 @@ or locale produces identical arbitrary-text ordering.
   writes the file into that directory itself, and Panels serves it. The server sends
   `nosniff`; only explicit image, audio, and video types are inline. Markdown, HTML,
   SVG, and unknown files are attachments when opened directly.
-- **Manager files use an isolated sibling root.** Item artifacts live under
-  `files/managers/<manager_id>/` and use
-  `/files/managers/<manager_id>/<relative-path>`. This contract is read-only and
-  applies the same safe-path, symlink, media-type, and `nosniff` response policy.
+- **Manager and goal files use sibling roots.** Manager files retain the private
+  `files/sprint-items/<manager_id>/` root and `/files/managers/` links. Goal files use
+  `files/goals/<goal_id>/` and `/files/goals/` links. Their file routes support reads,
+  text writes, and deletion through the existing owner, Chief, or own-agent authority.
+  Both use the same safe-path, symlink, media-type, and `nosniff` response policy.
+  Goal workspaces use the shared Artifacts catalog and preview frame. Goal completion,
+  deactivation, and conversation reset preserve the files. See `docs/goals.md` for the agent workflow.
 - **File previews use one contract.** Markdown turns a link that names a managed file,
   such as `/files/tickets/t_123/notes/plan.md`, into the shared file preview component,
   and every image into that same component wherever the image is hosted. Any other link

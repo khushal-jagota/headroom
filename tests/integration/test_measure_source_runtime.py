@@ -102,7 +102,12 @@ time.sleep(30)
         os.kill(pid, 0)
     # The source's child is terminated too. Its orphaned exit status belongs to init.
     status = Path(f"/proc/{descendant}/stat")
-    assert not status.exists() or status.read_text().split()[2] == "Z"
+    try:
+        process_state = status.read_text().split()[2]
+    except FileNotFoundError:
+        pass  # Reaping can remove the process between an existence check and a read.
+    else:
+        assert process_state == "Z"
     assert result.metrics.elapsed_milliseconds < 3000
 
 

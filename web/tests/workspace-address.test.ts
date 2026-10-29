@@ -122,11 +122,15 @@ it("retains a Chief artifact and selected conversation through reload and close"
 
 describe('goal conversation destinations',()=>{
  it('keeps the goal, historical conversation, artifact and rail view together',()=>{
-  const original=parseWorkspaceAddress('#/workspace/goal/goal%20one?view=tickets&conversation=past');
+  const file={kind:'goal-file' as const,goalId:'goal_one',path:'artifacts/report #1.md'};
+  const original=parseWorkspaceAddress(workspaceAddress({kind:'goal',id:'goal one'},'tickets',file,'past'));
+  expect(original?.openFile).toEqual(file);
   expect(original?.selection).toEqual({kind:'goal',id:'goal one'});
   expect(whatTheAddressOpens(original!).markedGoalId).toBe('goal one');
   expect(whatTheAddressOpens(original!).chiefMarked).toBe(true);
-  expect(workspaceAddress(original!.selection,original!.view,original!.openFile,original!.selectedConversationId)).toBe('#/workspace/goal/goal%20one?conversation=past&view=tickets');
+  expect(parseWorkspaceAddress(workspaceAddress(original!.selection,original!.view,original!.openFile,original!.selectedConversationId))).toEqual(original);
+  const closed=parseWorkspaceAddress(workspaceAddress(original!.selection,original!.view,null,original!.selectedConversationId));
+  expect(closed).toMatchObject({selection:{kind:'goal',id:'goal one'},selectedConversationId:'past',openFile:null,view:'tickets'});
   expect(parseWorkspaceAddress('#/workspace/goals')?.selection).toEqual({kind:'goals'});
  });
 });
