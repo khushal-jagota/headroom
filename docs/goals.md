@@ -2,7 +2,7 @@
 
 Goals live under Chief. Each goal has its own agent and conversation. Chief keeps the overall goal surface and sets goals.
 
-A goal stores its Project, title, why it matters, deadline, active state, completion state, primary chart, and flexible page document. The page uses the shared page-kit format. Text, checklists, tables, layouts, and supporting charts can appear in that document. Blocks and checklist items keep stable IDs when their order or words change.
+A goal stores its Project, title, why it matters, deadline, active state, primary chart, and flexible page document. It also stores its binary checked input and completion display. The page uses the shared page-kit format. Text, checklists, tables, layouts, and supporting charts can appear in that document. Blocks and checklist items keep stable IDs when their order or words change.
 
 Checklists belong to the page. Their checked state does not create a measurement. Numeric charts reference existing measures. Targets, reference paths, units, and number formats describe the chart. They do not create observations. The goal reader preserves signed values, fractions, missing dates, source health, and observation provenance from the existing measure system.
 
@@ -15,6 +15,33 @@ The detail query does not depend on measurement revisions. The separate readings
 The goal agent uses the same conversation system as Tickets. The first message starts a conversation. Opening a page alone does not start a model turn. Reset preserves prior conversation history. Goals do not acquire Ticket stages, continuation loops, or a new management hierarchy.
 
 `panels goal list` and `show` read saved goals. `create` and `edit` accept JSON on stdin. `edit` needs `expected_revision`. `read` returns the existing bound measure values, with optional `--first-date` and `--last-date`. The HTTP routes are `/api/goals`, `/api/goals/{id}`, and `/api/goals/{id}/readings`.
+
+## Completion displays
+
+Effective completion comes from the selected display's saved input. Panels derives it when it reads a goal. It does not save another completion flag. A binary display uses its saved checked input. A quantitative goal keeps its chart and uses that binary input for completion.
+
+A binary goal can select one saved checklist through Completion display in Edit goal. The selector also lists checklists inside layouts. The selected checklist appears in the primary area with its existing item controls. Its original page block stays intact and appears only once. Other checklists remain ordinary page content.
+
+A selected checklist completes the goal only when it contains items and every item is done. An empty checklist stays incomplete. Open and blocked items keep it incomplete. Uncheck an item or add an unfinished item to reopen the goal. Active state stays independent of these results.
+
+The ring shows the accepted number of done items and the total item count. Active goal cards show that same count. The goals table shows done items under Current and total items under Target. Numeric filters compare these counts. Checklist counts do not measure effort, create measurements, or become formula inputs.
+
+A pending save does not change accepted completion or count summaries. If a save fails, the checkbox returns to its accepted state. The checklist shows the error and permits an explicit retry.
+
+Agents select a checklist by its stable block ID through the existing revision-checked goal writer. `primary_checklist_block_id` applies only to binary goals. A null value selects the binary display. This edit selects the saved checklist named `approach`:
+
+```json
+{
+  "expected_revision": 4,
+  "primary_checklist_block_id": "approach"
+}
+```
+
+Selection resolves against the resulting saved page, so one edit can supply the page and its selector. An explicit missing or non-checklist ID fails atomically. Rename or reorder a block without a new ID to preserve its selection.
+
+Clear the selector or remove its selected block to return to the binary display. Panels copies the previous effective completion into the binary input for this transition. A change to quantitative kind also clears the selection. An explicit `completed` value in the same edit takes precedence over that copied value.
+
+The `completed` response field remains the effective completion for existing clients. In writes, `completed` remains the binary checked-input alias when the resulting display is binary. Existing goals retain their saved binary input. While a checklist stays selected, a matching `completed` value is a compatible no-op. A contradictory value fails because completion follows the saved checklist items. Panels compares against the resulting page, so a final check and `completed: true` can share one edit.
 
 ## Supporting files
 
@@ -58,3 +85,37 @@ A chart can bind approved manual controls to a shared manual measure. Daily quot
 The value is a native input over the shared animated counter. Enter or focus loss commits a changed valid draft. Escape restores the accepted value. A failed or invalid draft blocks date changes and increments. A pending commit finishes before the next explicit chart action. Writes use the accepted measure revision and an explicit date. Failed requests require an explicit retry. The browser does not retry writes automatically.
 
 The application development page includes all three models beside the approved chart examples. These manual samples use local adapters and explicit sample labels. Sample edits do not call measurement APIs or persist outside that page. Real goal charts use the same production controls with the shared authenticated measurement API.
+
+## Formula expectations
+
+A read-only scalar line chart or number readout can store an expected-value formula for each date. It can bind a retained manual measure. Editable manual widgets retain their fixed-target controls. Stacked charts, aggregate sums, and other geometries reject formula expectations explicitly.
+
+The formula takes precedence over saved references and targets. An unavailable formula never falls back to another target. Removing it restores the chart's existing reference and target behavior, including range-specific targets.
+
+Agents save the formula through the existing revision-checked goal edit. For example, this chart field expresses a baseline of 100 plus two per elapsed day:
+
+```json
+{
+  "expectation": {
+    "op": "add",
+    "left": {"op": "constant", "value": 100},
+    "right": {
+      "op": "multiply",
+      "left": {"op": "constant", "value": 2},
+      "right": {"op": "elapsed_days", "start": "2026-10-01"}
+    }
+  }
+}
+```
+
+Expressions compose ordinary arithmetic, powers, minimums, maximums, fixed-date references, and date branches through the shared [measurement evaluator](measures.md). A branch selects its new phase on the named date. Only the selected phase evaluates. Unsupported meanings require explicit explanation; calendar-month growth and repeating completed-period rules remain outside this language.
+
+Goal reads retain the existing values and source health. They also return chart-keyed scalar projections for formula charts. Each point contains actual and expected results, provenance, missing inputs, an exact difference, and a same-date comparison. Only display formatting rounds numbers. A missing or invalid value produces no comparison. Formula results never change goal completion or active state.
+
+Week and Month show the current seven-day and thirty-day windows. All time extends through the deadline even when actual observations stop earlier. Future expected values remain separate from observations and cannot replace the current headline. Missing today remains missing. A request for future dates alone has no current headline. Date inspection uses the formula on that exact date. Phase boundaries and missing expected values break the plotted line.
+
+Explicit date requests override the display interval and can extend beyond the deadline. Defaults start at the earlier of retained history and the current thirty-day window. Formula projections allow at most 3,660 dates per chart, 50,000 chart-date points per response, and 50,000 distinct demanded measurement/date pairs. Larger requests fail with an explicit limit instead of returning partial coverage. Ordinary measure reads keep their existing limits.
+
+Code paths: `src/planner/goals/`, `src/planner/measures/logic/`, and `web/src/lib/charts/`.
+
+_Last verified: October 29, 2026._

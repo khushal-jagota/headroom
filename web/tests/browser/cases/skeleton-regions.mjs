@@ -10,7 +10,29 @@ export async function prepare({scratchRoot}) {
     import {createManagedMarkdownSurface, type ReadOnlyManagedMarkdownSurface} from "../src/lib/managedMarkdown";
     import {MARKDOWN_WORKER_THRESHOLD} from "../src/lib/markdown/config";
     import MarkdownBlock from "../src/components/MarkdownBlock.svelte";
-    import {flushSync} from "svelte";
+    import {flushSync, setContext} from "svelte";
+    import PageChecklist from "../src/components/pageKit/PageChecklist.svelte";
+    import {PAGE_CONTEXT, type PageContext} from "../src/lib/pageKit/context";
+    import type {ChecklistBlock} from "../src/lib/pageKit";
+    let checklistShown = $state(false);
+    let checklist = $state<ChecklistBlock>({type:'checklist',id:'delivery',title:'Delivery',doneTitle:'Delivery complete',items:[
+      {id:'draft',label:'Draft',state:'done'},{id:'publish',label:'Publish',state:'open'}
+    ]});
+    let editQueue: Promise<unknown> = Promise.resolve();
+    setContext<PageContext>(PAGE_CONTEXT, {goalId:'fixture',revision:0,narrow:false,values:[],completed:false,status:'neutral',
+      updateBlock(_id, update) {
+        const operation = editQueue.catch(() => undefined).then(() => new Promise<void>((resolve, reject) => {
+          (window as any).__checklistReply = (accept: boolean) => {
+            (window as any).__checklistReply = null;
+            if (accept) { checklist = update(checklist) as ChecklistBlock; resolve(); }
+            else reject(new Error('Save rejected'));
+          };
+        }));
+        editQueue = operation;
+        return operation;
+      }
+    });
+    (window as any).__checklist = (shown: boolean) => flushSync(() => checklistShown = shown);
     import FileDocument from "../src/components/FileDocument.svelte";
     import FilePreview from "../src/components/FilePreview.svelte";
     let htmlMode = $state("");
@@ -31,6 +53,7 @@ export async function prepare({scratchRoot}) {
     (window as any).__flat = (value: boolean) => flushSync(() => flat = value);
     (window as any).__idle = (value: boolean) => flushSync(() => idle = value);
   </script>
+  {#if checklistShown}<section data-checklist-fixture><PageChecklist block={checklist}/></section>{/if}
   {#if htmlMode}<section data-html-fixture style="height:500px">
     {#if htmlMode === 'full'}<FileDocument target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />
     {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />{/if}

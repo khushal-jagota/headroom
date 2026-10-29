@@ -36,6 +36,19 @@ it('filters active completed goals independently and accepts signed numeric thre
  expect(goalMatches(goal,undefined,{...emptyFilters(),current:{op:'missing',value:''}})).toBe(true);
 });
 
+it('filters selected checklists in saved item units instead of chart values or percentages',()=>{
+ const checklist:Extract<Block,{type:'checklist'}>={type:'checklist',id:'steps',items:[{id:'first',label:'First',state:'done'},{id:'second',label:'Second',state:'done'},{id:'blocked',label:'Blocked',state:'blocked'}]};
+ const goal={title:'Delivery',kind:'binary',active:true,completed:false,primary_checklist_block_id:'steps',page:{kind:'headroom.page',version:1,title:'Delivery',summary:'',blocks:[checklist]}} as GoalResponse;
+ const filters={...emptyFilters(),current:{op:'eq' as const,value:'2'},target:{op:'eq' as const,value:'3'}};
+ expect(goalMatches(goal,66.67,filters,{target:100})).toBe(true);
+ expect(goalMatches(goal,66.67,{...filters,current:{op:'eq',value:'66.67'}})).toBe(false);
+ const reopened={...goal,page:{...goal.page,blocks:[{...checklist,items:checklist.items.map(item=>({...item,state:'open' as const}))}]}};
+ expect(goalMatches(reopened,undefined,{...filters,current:{op:'eq',value:'0'}})).toBe(true);
+ const empty={...goal,page:{...goal.page,blocks:[{...checklist,items:[]}]}};
+ expect(goalMatches(empty,undefined,{...filters,current:{op:'eq',value:'0'},target:{op:'eq',value:'0'}})).toBe(true);
+ expect(goalMatches({...goal,primary_checklist_block_id:null},undefined,{...emptyFilters(),current:{op:'missing',value:''},target:{op:'missing',value:''}})).toBe(true);
+});
+
 it('inspection follows a corrected dated value and a corrected gap without a pointer move',()=>{
  const before=chartData(chart,[value('2026-10-01',4),value('2026-10-02',5)],'all');
  const key=before[0].key;

@@ -22,6 +22,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "goal_conversations",
         # Manual measure provenance leaves diagnostic events and views unchanged.
         "manual_measures",
+        # The goal checklist selector leaves diagnostic events and views unchanged.
         "primary_goal_checklist",
         "reusable_named_credentials",
         "credential_conversation_requests",
