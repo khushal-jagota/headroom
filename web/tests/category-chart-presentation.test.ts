@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { CategoryChartProjection, CategoryChartRange, CategoryChartSummary, CategoryChartValue, ChartBlock } from '../src/lib/goals/contracts';
-import { allocationData, categoryDetails, chartData, chartHeadline, chartTone, comparisonText, selectedSeries } from '../src/lib/charts/presentation';
+import { allocationData, categoryDetails, chartData, chartHeadline, chartTone, comparisonText, formatAxisTick, hasCountAxis, selectedSeries } from '../src/lib/charts/presentation';
 import { ProgressCard, TimeBudgetCard } from '../src/lib/charts/components/goal-indicators';
+import { GoalChart } from '../src/lib/charts/GoalChart';
 
 const chart: ChartBlock = {
   type: 'chart', id: 'categories', kind: 'line', placement: 'primary',
@@ -36,6 +37,12 @@ const dateRange: CategoryChartRange = {
   ],
 };
 const projection = (range: CategoryChartRange): CategoryChartProjection => ({ kind: 'category', today: '2026-10-29', timezone: 'UTC', ranges: [range], dataset_results: [], measure_values: [] });
+const retainedResult = (): CategoryChartProjection['dataset_results'][number] => ({
+  dataset_id: 'sales', date: '2026-10-29', rows: [], query_start_at: null, query_end_at: Date.parse('2026-10-29T18:00:00Z') / 1000,
+  unavailable_reason: null, limitation: 'Partial interval',
+  provenance: { run_id: 'run', source_id: 'source', source_revision: 1, script_revision: 1, script_sha256: 'hash', definition_revision: 1, collected_at: 0 },
+  output: { dataset_id: 'sales', definition_revision: 1, timezone: 'UTC', dimensions: [], fields: [], required_date: '2026-10-29' },
+});
 
 describe('category chart projection adapters', () => {
   it('uses supplied range and point summaries, preserving namespaced keys and corrected labels', () => {
@@ -86,21 +93,63 @@ describe('category chart projection adapters', () => {
     expect(comparisonText(pointsChart, 45, 50, undefined, summary(reading(45), reading(50), -5, false, null))).toBe('5.0 pp below target');
     expect(categoryDetails(partial)).toContain('Provider returned a partial interval.');
     expect(categoryDetails(partial).join(' ')).toContain('1 missing date: 2026-10-28');
+    expect(comparisonText(chart, 0.45, undefined, undefined, { ...partial, comparison: null, difference: null })).toBe('Partial total');
     expect(chartData(chart, [], 'all')).toEqual([]);
     expect(chartHeadline(chart, [], null, undefined).value).toBeUndefined();
   });
 
-  it('describes an absent query start bound without claiming full earlier coverage', () => {
+  it('keeps partial summaries concise and exact query bounds in accessible inspection details', () => {
     const source = projection({ ...dateRange, summary: summary(reading(0.45, true), reading(0.5), -0.05, null, null) });
-    source.dataset_results = [{
-      dataset_id: 'sales', date: '2026-10-29', rows: [], query_start_at: null, query_end_at: Date.parse('2026-10-29T18:00:00Z') / 1000,
-      unavailable_reason: null, limitation: 'Partial interval',
-      provenance: { run_id: 'run', source_id: 'source', source_revision: 1, script_revision: 1, script_sha256: 'hash', definition_revision: 1, collected_at: 0 },
-      output: { dataset_id: 'sales', definition_revision: 1, timezone: 'UTC', dimensions: [], fields: [], required_date: '2026-10-29' },
-    }];
+    source.dataset_results = [retainedResult()];
     const details = categoryDetails(source.ranges[0].summary, source);
     expect(details.join(' ')).toContain('no supplied start restriction');
     expect(details.join(' ')).not.toContain('all earlier records');
+    source.ranges[0].summary.actual.reasons = ['Provider returned a partial interval.', 'The query covers only part of 2026-10-29.'];
+    for (const placement of ['primary', 'supporting'] as const) {
+      const markup = renderToStaticMarkup(createElement(GoalChart, {
+        block: { ...chart, placement }, values: [], projection: source, narrow: true, preferenceKey: `coverage-${placement}`,
+      }));
+      const inspection = markup.match(/<details\b[\s\S]*?<\/details>/)?.[0];
+      expect(inspection).toContain('<summary>Observation details</summary>');
+      expect(inspection).toContain('Provider returned a partial interval.');
+      expect(inspection).toContain('no supplied start restriction');
+      expect(inspection).toContain('2026-10-29T18:00:00.000Z');
+      const visible = markup.replace(/<details\b[\s\S]*?<\/details>/g, '');
+      expect(visible.match(/Partial difference:/g)).toHaveLength(1);
+      expect(visible).not.toContain('Provider returned');
+      expect(visible).not.toContain('The query covers');
+      expect(visible).not.toContain('2026-10-29T18:00:00.000Z');
+      if (placement === 'supporting') {
+        const header = markup.match(/<button class="support-summary"[\s\S]*?<\/button>/)?.[0];
+        expect(header).not.toContain('<details');
+        expect(markup.indexOf('<details')).toBeGreaterThan(markup.indexOf('</button>'));
+      }
+    }
+    source.dataset_results[0].query_start_at = Date.parse('2026-10-29T10:00:00Z') / 1000;
+    expect(categoryDetails(source.ranges[0].summary, source).join(' ')).toContain('2026-10-29T10:00:00.000Z');
+  });
+
+  it('uses whole count ticks and preserves distinct fractional ticks for amounts and ratios', () => {
+    const source = projection(dateRange);
+    source.dataset_results = [retainedResult()];
+    const countChart: ChartBlock = { ...chart, binding: { kind: 'dataset', dataset_id: 'sales', group_by: 'team', filters: [], aggregation: 'sum', metric: { field: 'won' } } };
+    source.dataset_results[0].output.fields = [{ name: 'won', label: 'Won', unit: 'tickets', kind: 'count' }];
+    expect(hasCountAxis(countChart, source)).toBe(true);
+    expect(hasCountAxis(chart, source)).toBe(false);
+    source.ranges[0] = { ...dateRange, summary: summary(reading(2), null, null, null, null), series: [{ key: 'actual', label: 'Won', summary: reading(2), points: [
+      { key: '2026-10-28', label: '2026-10-28', date: '2026-10-28', actual: reading(0) },
+      { key: '2026-10-29', label: '2026-10-29', date: '2026-10-29', actual: reading(2) },
+    ] }], point_summaries: [] };
+    const countMarkup = renderToStaticMarkup(createElement(GoalChart, { block: countChart, values: [], projection: source, narrow: false, preferenceKey: 'count-axis' }));
+    expect([...countMarkup.matchAll(/<b>(.*?)<\/b>/g)].map(match => match[1])).toEqual(['0', '1', '2']);
+    source.dataset_results[0].output.fields[0].kind = 'amount';
+    expect(hasCountAxis(countChart, source)).toBe(false);
+    const fractionalMarkup = renderToStaticMarkup(createElement(GoalChart, { block: countChart, values: [], projection: source, narrow: false, preferenceKey: 'amount-axis' }));
+    expect([...fractionalMarkup.matchAll(/<b>(.*?)<\/b>/g)].map(match => match[1])).toEqual(['0', '0.5', '1', '1.5', '2']);
+    expect([0, 0.25, 0.5, 0.75, 1].map(value => formatAxisTick(chart, value))).toEqual(['0', '0.25', '0.5', '0.75', '1']);
+    expect(formatAxisTick({ ...chart, unit: '%' }, 0.025)).toBe('0.025%');
+    expect(formatAxisTick({ ...chart, format: { prefix: '€' }, stacked: true }, 0.25)).toBe('€0.25');
+    expect(formatAxisTick({ ...chart, unit: 'tickets' }, 1000)).toBe('1000');
   });
 
   it('uses supplied allocation totals and excludes former snapshot members', () => {

@@ -23,10 +23,18 @@ export function formatTrimmedReading(block: ChartBlock, value: number): string {
 export function formatAxisTick(block: ChartBlock, value: number): string {
   const prefix = block.format?.prefix ?? '';
   const suffix = block.format?.suffix ?? block.unit ?? '';
-  if (prefix && (block.stacked || Math.abs(value) >= 1000)) return `${prefix}${(value / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k${suffix}`;
-  if (suffix === '%') return `${Number(value.toFixed(1))}%`;
-  if (prefix) return `${prefix}${Math.round(value).toLocaleString('en-US')}${suffix}`;
-  return String(Math.round(value));
+  if (prefix && Math.abs(value) >= 1000) return `${prefix}${Number((value / 1000).toPrecision(12)).toLocaleString('en-US', { maximumSignificantDigits: 12 })}k${suffix}`;
+  const number = Number(value.toPrecision(12)).toLocaleString('en-US', { maximumSignificantDigits: 12, useGrouping: !!prefix });
+  return prefix ? `${prefix}${number}${suffix}` : suffix === '%' ? `${number}%` : number;
+}
+
+/** Only retained field declarations establish count semantics; ratios remain fractional. */
+export function hasCountAxis(block: ChartBlock, projection?: ChartProjection, range = 'all'): boolean {
+  const binding = block.binding;
+  if (binding?.kind !== 'dataset' || !('field' in binding.metric) || projection?.kind !== 'category') return false;
+  const field = binding.metric.field, selected = categoryRange(projection, range);
+  const results = projection.dataset_results.filter(item => item.dataset_id === binding.dataset_id && selected && item.date >= selected.first_date && item.date <= selected.last_date);
+  return results.length > 0 && results.every(item => item.output.fields.find(item => item.name === field)?.kind === 'count');
 }
 
 export function categoryRange(projection: ChartProjection | undefined, range = 'all'): CategoryChartRange | undefined {
@@ -216,7 +224,7 @@ export function chartTone(block: ChartBlock, value: number | undefined, target: 
 }
 
 export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary): string {
-  if (block.binding && categorySummary?.difference == null) return '';
+  if (block.binding && categorySummary?.difference == null) return categorySummary?.actual.partial || categorySummary?.comparison?.partial ? 'Partial total' : '';
   if (block.expectation && (point?.difference == null || point.meets_expectation == null)) return '';
   if (value === undefined || target === undefined) return '';
   const signedDifference = block.binding ? categorySummary!.difference! : block.expectation ? point!.difference! : value - target;
@@ -256,7 +264,7 @@ export function categoryDetails(summary?: CategoryChartSummary, projection?: Cha
   if (!summary) return [];
   const values = [summary.actual, ...(summary.comparison ? [summary.comparison] : [])];
   const missing = [...new Set(values.flatMap(item => item.missing_dates))];
-  const details = [...(values.some(item => item.partial) ? ['Partial observation.'] : []), ...values.flatMap(item => item.reasons)];
+  const details = values.flatMap(item => item.reasons);
   if (missing.length) details.push(`${missing.length} missing ${missing.length === 1 ? 'date' : 'dates'}: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}.`);
   if (projection?.kind === 'category' && (values.some(item => item.partial) || summary.date !== null)) {
     const selected = categoryRange(projection, range);

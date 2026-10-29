@@ -9,7 +9,7 @@ import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
 import { Bars } from './components/bar-chart';
 import { motionTokens } from './lib/motion-tokens';
-import { chartData, chartHeadline, chartTone, comparisonText, formatReading, formatTrimmedReading, formatAxisTick, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, categoryDetails, seriesKey, allocationData } from './presentation';
+import { chartData, chartHeadline, chartTone, comparisonText, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, categoryDetails, seriesKey, allocationData } from './presentation';
 import './theme.css';
 
 const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--text-muted)' };
@@ -36,7 +36,7 @@ function Comparison({ block, data, headline, supporting = false }: { block: Char
 
 function CategoryNotes({ headline, projection, range }: { headline: ReturnType<typeof chartHeadline>; projection?: ChartProjection; range: string }) {
   const details = categoryDetails(headline.categorySummary, projection, range);
-  return details.length ? <div className="caption partial-reading">{details.join(' ')}</div> : null;
+  return details.length ? <details className="observation-details caption"><summary>Observation details</summary><ul>{details.map(detail => <li key={detail}>{detail}</li>)}</ul></details> : null;
 }
 
 export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false }: GoalChartProps) {
@@ -103,7 +103,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     ]} />;
   else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
   else if (block.kind === 'number') chart = null;
-  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
+  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
   const plot = <>{chart}{compact && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
   if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? 'Completed' : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : 'Not done'} /></article>;
@@ -111,15 +111,15 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     const visible = preferences.expanded ? headline : summary;
     const allocation = allocationData(data, authoredSeries, block.binding ? selectedRange : undefined, preferences.expanded ? activeKey : null);
     return <section ref={root} {...trackFocus}><SupportingMetric title={title} reading={block.kind === 'allocation' && visible.value !== undefined ? formatReading(block, visible.value) : counter(visible.value)}
-      status={<>{block.kind === 'allocation' && visible.value !== undefined ? <span style={{ color: C.blue }}>{allocationSummary(allocation.series, allocation.reading, allocation.summary)}</span> : <Comparison block={block} data={data} headline={visible} supporting />}<CategoryNotes headline={visible} projection={projection} range={preferences.range} /></>}
-      open={preferences.expanded} onToggle={() => preference({ expanded: !preferences.expanded })}>{plot}</SupportingMetric></section>;
+      status={<>{block.kind === 'allocation' && visible.value !== undefined ? <><span style={{ color: C.blue }}>{allocationSummary(allocation.series, allocation.reading, allocation.summary)}</span>{(visible.categorySummary?.actual.partial || visible.categorySummary?.comparison?.partial) && <Comparison block={block} data={data} headline={visible} supporting />}</> : <Comparison block={block} data={data} headline={visible} supporting />}</>}
+      open={preferences.expanded} onToggle={() => preference({ expanded: !preferences.expanded })}>{plot}<CategoryNotes headline={visible} projection={projection} range={preferences.range} /></SupportingMetric></section>;
   }
   return <article ref={root} {...trackFocus} className={`metric-card ${integrated ? 'integrated-card ' : ''}${compact ? 'compact ' : ''}${block.emphasis === 'hero' ? 'hero-card ' : ''}${block.kind === 'gauge' ? 'gauge-card ' : ''}${indicator || block.kind === 'progress' ? `indicator-card ${block.kind}-card` : ''}`}>
     <div className="metric-top"><h2>{title}</h2>{!compact && hasRange && range}</div>
     {block.kind !== 'gauge' && !indicator && <div className="headline">
       {block.kind === 'progress' && <div className="caption">Completed</div>}
       <div className={block.kind === 'progress' ? 'meter-value' : 'metric-value'} data-current={value ?? 'missing'}>{counter(value)}{block.kind === 'progress' && displayBlock.target !== undefined && displayBlock.target > 0 && <span className="meter-denominator">of {formatReading(block, displayBlock.target)}</span>}</div>
-      {block.stacked ? <div className="comparison composition-summary">{authoredSeries.length} {block.total_label ?? 'categories'}</div> : <Comparison block={block} data={data} headline={headline} />}
+      {block.stacked && !headline.categorySummary?.actual.partial && !headline.categorySummary?.comparison?.partial ? <div className="comparison composition-summary">{authoredSeries.length} {block.total_label ?? 'categories'}</div> : <Comparison block={block} data={data} headline={headline} />}
       <CategoryNotes headline={headline} projection={projection} range={preferences.range} />
     </div>}
     {plot}

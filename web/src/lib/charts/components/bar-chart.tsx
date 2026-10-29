@@ -4,7 +4,7 @@ import { useReducedMotion } from 'motion/react';
 import { Chart, registerables, type ChartDataset } from 'chart.js';
 import type { ChartBlock, ChartSeries, ChartProjection } from '../../goals/contracts';
 import type { LineChartDatum } from './line-chart-integrated';
-import { chartHeadline, chartTone, formatReading, formatAxisTick, categoryRange, seriesKey } from '../presentation';
+import { chartHeadline, chartTone, formatReading, formatAxisTick, hasCountAxis, categoryRange, seriesKey } from '../presentation';
 import { motionTokens } from '../lib/chart-motion';
 import { seriesColor } from './goal-indicators';
 
@@ -62,7 +62,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
         },
         scales: {
           x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxRotation: 0, maxTicksLimit: 4 } },
-          y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxTicksLimit: 5, callback: v => formatAxisTick(block, Number(v)) } },
+          y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
         },
         onHover: (_, elements) => { const i = elements[0]?.index ?? null; callback.current(i === null ? null : data[i]); },
       },

@@ -59,6 +59,11 @@
   .bar-plot { position:relative; }
   .chart-empty-value { color:var(--chart-muted); text-align:center; padding:32px 0; }
   .partial-reading { color:var(--chart-muted); }
+  .observation-details { margin-top:12px; overflow-wrap:anywhere; }
+  .observation-details summary { cursor:pointer; width:fit-content; }
+  .observation-details summary:focus-visible { outline:2px solid var(--accent-bright); outline-offset:4px; }
+  .observation-details ul { margin:8px 0 0; padding-left:20px; }
+  .observation-details li + li { margin-top:4px; }
   .gauge-card { min-height:300px; }
   .gauge-card h2 { margin-bottom:28px; }
   .gauge-card figure { margin:0 auto; }
