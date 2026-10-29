@@ -71,4 +71,8 @@ class MemoryCredentials:
 
     def resolve(self, reference: CredentialReference) -> ResolvedCredential:
         self.calls.append(reference)
-        return next(item for item in self.credentials if item.metadata.reference == reference)
+        return next(
+            item
+            for item in self.credentials
+            if item.metadata.reference == reference
+        )

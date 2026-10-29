@@ -27,6 +27,8 @@ from planner.core.errors import ErrorCode, PlannerError
 
 X_PLAN_GOAL_ID: Final = "X-Plan-Goal-ID"
 PLAN_GOAL_ID_SCOPE_KEY: Final = "planner.request_goal_id"
+X_PLAN_CONVERSATION_ID: Final = "X-Plan-Conversation-ID"
+PLAN_CONVERSATION_ID_SCOPE_KEY: Final = "planner.request_conversation_id"
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
 X_PLAN_TICKET_ID: Final = "X-Plan-Ticket-ID"
 X_PLAN_MANAGER_ID: Final = "X-Plan-Manager-ID"
@@ -40,6 +42,7 @@ PLAN_MANAGER_ID_SCOPE_KEY: Final = "planner.request_manager_id"
 @dataclass(frozen=True)
 class RequestContext:
     principal: Principal
+    conversation_id: str | None = None
 
 
 def _normalize(raw: str | None) -> str | None:
@@ -107,7 +110,13 @@ def request_context(request: Request) -> RequestContext:
     )
     manager_id = normalize_manager_identity(manager_id, legacy_manager_id)
     goal_id = request.scope.get(PLAN_GOAL_ID_SCOPE_KEY, request.headers.get(X_PLAN_GOAL_ID))
-    return _classify(_normalize(actor), _normalize(ticket_id), manager_id, _normalize(goal_id))
+    classified = _classify(
+        _normalize(actor), _normalize(ticket_id), manager_id, _normalize(goal_id)
+    )
+    origin = request.scope.get(
+        PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)
+    )
+    return RequestContext(classified.principal, _normalize(origin))
 
 
 def require_owner_or_chief(ctx: RequestContext) -> None:

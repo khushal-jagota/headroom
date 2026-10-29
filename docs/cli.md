@@ -275,6 +275,28 @@ or prevent an existing Worker from continuing.
 Chief cannot settle. Day and date-range Sprint commands are removed.
 Legacy command aliases continue to address the same Managers.
 
+## API key requests
+
+`panels credential list` returns reusable descriptive names and metadata without secret values. Credential lookup does not require source Project/account. A unique saved name can serve another source directly.
+
+An employee requests a bearer or named-header key beside its work:
+
+```sh
+panels credential request --request-id REQUEST_UUID \
+  --name Panels_posthog_production --provider PostHog \
+  --use 'Read production usage' --auth-kind bearer \
+  --help-text 'Use a personal API key with access to this project.' \
+  --help-url https://posthog.com/docs/api --json
+```
+
+Reuse the same UUID and metadata after a lost command response. A conflicting replay fails. For header authentication, use `--auth-kind header --header-name X-Api-Key`. For replacement, add both `--replace-id CREDENTIAL_ID` and `--expected-revision REVISION`, with the existing name. `--help` shows command usage.
+
+The server derives the exact destination from the employee principal and its reserved conversation identity. There is no destination option. A retired conversation cannot redirect a request into its replacement. An older live child without the identity needs its ordinary restart or resume.
+
+The command carries no secret. The owner enters the value in the inline card. Save or Reject resolves the request separately from result delivery. A queued result remains held. Only proven refusal offers a metadata-only delivery retry. Unknown backend writes and lost queues remain uncertain.
+
+Multiple legacy matches report ambiguity with metadata candidates. The owner can correct a selected name through `panels credential rename CREDENTIAL_ID --name UNIQUE_NAME --expected-revision REVISION`. This preserves its saved value and increments its revision. Update affected source references before the next run.
+
 ## Compatibility and errors
 
 Hidden aliases retain Worker, Ticket edit, proposal, and Item
