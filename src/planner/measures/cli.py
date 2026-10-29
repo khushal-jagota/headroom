@@ -83,3 +83,37 @@ def delete_measure(measure_id: str, as_json: bool) -> None:
     emit(
         http.send("DELETE", f"/api/measures/{quote(measure_id, safe='')}", as_json=as_json), as_json
     )
+
+
+@measure.command("manual-state")
+@click.argument("measure_id")
+@click.option("--date", "selected_date")
+@json_option
+def manual_state(measure_id: str, selected_date: str | None, as_json: bool) -> None:
+    """Read a manual measure's current or selected date state."""
+    params = {"date": selected_date} if selected_date is not None else {}
+    emit(
+        http.send(
+            "GET",
+            f"/api/measures/{quote(measure_id, safe='')}/manual-state",
+            params=params,
+            as_json=as_json,
+        ),
+        as_json,
+    )
+
+
+@measure.command("manual-write")
+@click.argument("measure_id")
+@json_option
+def manual_write(measure_id: str, as_json: bool) -> None:
+    """Read a manual replace or increment request as JSON from stdin."""
+    emit(
+        http.send(
+            "POST",
+            f"/api/measures/{quote(measure_id, safe='')}/manual-writes",
+            json_body=stdin_object(as_json),
+            as_json=as_json,
+        ),
+        as_json,
+    )

@@ -62,6 +62,23 @@ def _receipt(row: sqlite3.Row) -> ManualWriteReceipt:
     )
 
 
+def _require_manual_author(conn: sqlite3.Connection, principal: Principal, measure_id: str) -> None:
+    if principal.kind is not PrincipalKind.goal:
+        _require_author(conn, principal, None)
+        return
+    from planner.goals import data as goals
+    from planner.goals.logic.documents import measure_ids
+
+    goal = goals.read_goal(conn, principal.id)
+    measure = data.read_measure(conn, measure_id)
+    if measure.origin is not MeasureOrigin.manual or measure_id not in measure_ids(
+        goal.primary_chart, goal.page
+    ):
+        raise PlannerError(
+            ErrorCode.agent_forbidden, "goal can write only its bound manual measures"
+        )
+
+
 def write_value(
     conn: sqlite3.Connection,
     measure_id: str,
@@ -73,8 +90,8 @@ def write_value(
     request = parse_write(body)
     payload_fingerprint = fingerprint(measure_id, request)
     with data.transaction(conn):
-        # Source authorship cannot grant a new manual-write capability.
-        _require_author(conn, principal, None)
+        # Current capability applies even when a previous request receipt exists.
+        _require_manual_author(conn, principal, measure_id)
         accepted = conn.execute(
             "SELECT * FROM manual_measure_writes WHERE request_id=?", (request["request_id"],)
         ).fetchone()
