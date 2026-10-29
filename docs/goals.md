@@ -33,3 +33,37 @@ A chart can bind approved manual controls to a shared manual measure. Daily quot
 The value is a native input over the shared animated counter. Enter or focus loss commits a changed valid draft. Escape restores the accepted value. A failed or invalid draft blocks date changes and increments. A pending commit finishes before the next explicit chart action. Writes use the accepted measure revision and an explicit date. Failed requests require an explicit retry. The browser does not retry writes automatically.
 
 The application development page includes all three models beside the approved chart examples. These manual samples use local adapters and explicit sample labels. Sample edits do not call measurement APIs or persist outside that page. Real goal charts use the same production controls with the shared authenticated measurement API.
+
+## Formula expectations
+
+A read-only scalar line chart or number readout can store an expected-value formula for each date. It can bind a retained manual measure. Editable manual widgets retain their fixed-target controls. Stacked charts, aggregate sums, and other geometries reject formula expectations explicitly.
+
+The formula takes precedence over saved references and targets. An unavailable formula never falls back to another target. Removing it restores the chart's existing reference and target behavior, including range-specific targets.
+
+Agents save the formula through the existing revision-checked goal edit. For example, this chart field expresses a baseline of 100 plus two per elapsed day:
+
+```json
+{
+  "expectation": {
+    "op": "add",
+    "left": {"op": "constant", "value": 100},
+    "right": {
+      "op": "multiply",
+      "left": {"op": "constant", "value": 2},
+      "right": {"op": "elapsed_days", "start": "2026-10-01"}
+    }
+  }
+}
+```
+
+Expressions compose ordinary arithmetic, powers, minimums, maximums, fixed-date references, and date branches through the shared [measurement evaluator](measures.md). A branch selects its new phase on the named date. Only the selected phase evaluates. Unsupported meanings require explicit explanation; calendar-month growth and repeating completed-period rules remain outside this language.
+
+Goal reads retain the existing values and source health. They also return chart-keyed scalar projections for formula charts. Each point contains actual and expected results, provenance, missing inputs, an exact difference, and a same-date comparison. Only display formatting rounds numbers. A missing or invalid value produces no comparison. Formula results never change goal completion or active state.
+
+Week and Month show the current seven-day and thirty-day windows. All time extends through the deadline even when actual observations stop earlier. Future expected values remain separate from observations and cannot replace the current headline. Missing today remains missing. A request for future dates alone has no current headline. Date inspection uses the formula on that exact date. Phase boundaries and missing expected values break the plotted line.
+
+Explicit date requests override the display interval and can extend beyond the deadline. Defaults start at the earlier of retained history and the current thirty-day window. Formula projections allow at most 3,660 dates per chart, 50,000 chart-date points per response, and 50,000 distinct demanded measurement/date pairs. Larger requests fail with an explicit limit instead of returning partial coverage. Ordinary measure reads keep their existing limits.
+
+Code paths: `src/planner/goals/`, `src/planner/measures/logic/`, and `web/src/lib/charts/`.
+
+_Last verified: October 29, 2026._
