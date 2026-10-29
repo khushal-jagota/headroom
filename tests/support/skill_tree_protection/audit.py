@@ -7,6 +7,7 @@ descriptors, native code, child processes and path races remain outside its reac
 from __future__ import annotations
 
 import os
+import stat
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -84,6 +85,33 @@ class AuditGuard:
             self._refuse(event, f"fd:{descriptor}", "descriptor has no stable filesystem path")
         return Path(name)
 
+    def _is_absent_leaf_in_deleted_directory(
+        self, operand: object, descriptor: object,
+    ) -> bool:
+        if not isinstance(operand, (str, bytes, os.PathLike)):
+            return False
+        raw = os.fsdecode(operand)
+        if (
+            not raw or raw in (".", "..") or os.sep in raw
+            or (os.altsep is not None and os.altsep in raw)
+        ):
+            return False
+        if not isinstance(descriptor, int) or descriptor in (
+            -1, getattr(os, "AT_FDCWD", -100),
+        ):
+            return False
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISDIR(info.st_mode) or info.st_nlink != 0:
+                return False
+            name = os.readlink(f"/proc/self/fd/{descriptor}")
+        except (OSError, OverflowError):
+            return False
+        # An unlinked directory is empty and cannot acquire child entries. The
+        # native removal must fail without mutation. A '..' operand can still
+        # reach its live parent, and a live name can literally end in this marker.
+        return name.startswith("/") and name.endswith(" (deleted)")
+
     def _check(self, event: str, path: Path, *, entry: bool, destructive: bool = False) -> None:
         try:
             resolved = (
@@ -129,6 +157,10 @@ class AuditGuard:
                 )
             self._check(event, self._path(operand, None, event), entry=False)
         elif event in ("os.remove", "os.rmdir", "os.mkdir"):
+            if event != "os.mkdir" and self._is_absent_leaf_in_deleted_directory(
+                args[0], args[-1],
+            ):
+                return
             self._check(event, self._path(args[0], args[-1], event), entry=True,
                         destructive=event != "os.mkdir")
         elif event in ("os.rename", "os.link"):

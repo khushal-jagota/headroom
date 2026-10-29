@@ -1,4 +1,4 @@
-import type { Fence, SnapshotResponse, CurrentAuthority, DegradedAuthority } from './contracts';
+import type { Fence, SnapshotResponse, CurrentAuthority, DegradedAuthority, NoncurrentAvailability } from './contracts';
 import type { NavigationCollectionAdapter, NavigationPublication } from './collection';
 import { compareRevision, assertCursorMatches, parseBatchEnvelope, parseSnapshotResponse, sameAuthority } from './validation';
 import { navigationConfiguration } from './configuration';
@@ -13,6 +13,9 @@ export type NavigationOwnerState = {
   publication: NavigationPublication | undefined;
   effective: EffectiveNavigationView | undefined;
 };
+
+export type NavigationHealth = null | { state: 'reconnecting' } | { state: 'degraded'; availability: NoncurrentAvailability };
+export type ScopedNavigationOwnerState = NavigationOwnerState & { health: NavigationHealth };
 
 /** Create once above routes. Only this owner admits canonical collection transactions. */
 export function createNavigationOwner(options: {

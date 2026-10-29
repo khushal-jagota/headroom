@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
+  import type { NavigationHealth } from "../lib/navigation/owner";
   import type { ConnectionStatus } from "../lib/changeStream";
   import { deploymentStatusExpiryDelay, resolveDeploymentStatus, resolveStatusCard, type StatusCardKey } from "../lib/deploymentStatus";
   import { queries } from "../lib/queryCatalogue";
@@ -9,8 +10,8 @@
   import { activeUpdateRequest, usableUpdate } from "../lib/updates/logic/actions";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
-  // The deploy this card narrates is what produces the release the monitor finds, so
-  // both ends of that one event share this slot. One card occupies it at a time.
+  // Deployment, release, and navigation share one card. Navigation stays readable
+  // beside the existing status and its controls.
   type Card = { word: string; state: "changing" | "settled" | "wrong"; action: string | null; sentence?: true };
   const CARDS: Record<StatusCardKey, Card> = {
     "owner-update": { word: "Software update", state: "settled", action: null },
@@ -24,7 +25,7 @@
     "update-held": { word: "Page refresh waits until this message is safe", state: "changing", action: null, sentence: true }
   };
 
-  let { connectionState }: { connectionState: ConnectionStatus } = $props();
+  let { connectionState, navigationHealth = null }: { connectionState: ConnectionStatus; navigationHealth?: NavigationHealth } = $props();
   let clock = $state(Date.now());
   const updates = createQuery(() => queries.updates());
   const deployment = createQuery(() => queries.deploymentStatus());
@@ -33,8 +34,10 @@
   const hasOwnerUpdate = $derived(activeUpdateRequest(updates.data?.request) ||
     (updates.data?.configured && usableUpdate(updates.data.available, clock)) || updates.data?.request?.state === "failed");
   const statusWord = $derived(baseStatusWord ?? (hasOwnerUpdate ? "owner-update" : null));
-  let displayedWord = $state<StatusCardKey | null>(null);
-  const card = $derived(displayedWord === null ? null : CARDS[displayedWord]);
+  const statusKey = $derived(statusWord ?? (navigationHealth ? "navigation" : null));
+  let displayedWord = $state<StatusCardKey | "navigation" | null>(null);
+  let displayedHealth = $state.raw<NavigationHealth>(null);
+  const card = $derived(displayedWord === null || displayedWord === "navigation" ? null : CARDS[displayedWord]);
   let open = $state(false);
   let closing = $state(false);
   let slot = $state<HTMLDivElement | null>(null);
@@ -120,19 +123,21 @@
   });
 
   $effect(() => {
-    const word = statusWord;
+    const word = statusKey;
+    const health = navigationHealth;
     let obsolete = false;
     let frame: number | undefined;
     let timer: number | undefined;
     if (word !== null) {
       // A swap between two open occupants owns its own distance. An entrance does not:
       // the row glide already carries it.
-      const replacing = untrack(() => open && displayedWord !== null && displayedWord !== word);
+      const replacing = untrack(() => open && displayedWord !== null && (displayedWord !== word || displayedHealth !== health));
       const previousHeight = replacing && slot ? slot.getBoundingClientRect().height : null;
       // A return during the collapse keeps the size the collapse had reached.
       const returningHeight = untrack(() =>
         !replacing && !open && resize !== null && slot ? slot.getBoundingClientRect().height : null);
       displayedWord = word;
+      displayedHealth = health;
       closing = false;
       // Establish collapsed layout before entrance. Updates retain the card,
       // including a reversal during exit.
@@ -154,6 +159,7 @@
       closing = true;
       timer = window.setTimeout(() => {
         displayedWord = null;
+        displayedHealth = null;
         closing = false;
       }, RAIL_MOTION.exit + RAIL_MOTION.space);
     }
@@ -176,27 +182,35 @@
 
 <div bind:this={slot} class="status-slot" data-shell-status
   data-open={open ? "" : undefined} data-closing={closing ? "" : undefined}
-  aria-hidden={statusWord === null ? "true" : undefined} style={motionStyle}>
+  aria-hidden={statusKey === null ? "true" : undefined} style={motionStyle}>
   <div role="status" aria-live="polite" inert={closing ? true : undefined}>
-    {#if card}
-      {#if card.action}
-        <button type="button" class="status-card" data-state={card.state}
-          data-connection-status data-connection-state={connectionState} data-status-state={statusState}
-          onclick={requestReleaseReload}>
-          {@render cardBody(card)}
-        </button>
-      {:else}
-        <div class="status-card" data-state={card.state}
-          class:with-update-actions={displayedWord === "owner-update" || displayedWord === "Problem"}
-          data-connection-status data-connection-state={connectionState} data-status-state={statusState}>
-          {#if displayedWord !== "owner-update"}
-            {@render cardBody(card)}
+    {#if displayedWord}
+      <div class="status-card" data-state={card?.state ?? (displayedHealth?.state === "degraded" ? "wrong" : "changing")}
+        data-connection-status data-connection-state={connectionState} data-status-state={statusState}>
+        {#if card && displayedWord !== "owner-update"}
+          {#if card.action}
+            <button type="button" class="status-base status-refresh" data-shell-refresh onclick={requestReleaseReload}>
+              {@render cardBody(card)}
+            </button>
+          {:else}
+            <div class="status-base">{@render cardBody(card)}</div>
           {/if}
-          {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
-            <UpdateActions status={updates.data} now={clock} />
-          {/if}
-        </div>
-      {/if}
+        {/if}
+        {#if (displayedWord === "owner-update" || displayedWord === "Problem") && updates.data}
+          <UpdateActions status={updates.data} now={clock} />
+        {/if}
+        {#if displayedHealth}
+          <div class="navigation-health" data-navigation-health={displayedHealth.state} data-state={displayedHealth.state === "degraded" ? "wrong" : "changing"}>
+            <span class="status-mark" aria-hidden="true"></span>
+            <span class="navigation-health-text">
+              <span>Navigation {displayedHealth.state}</span>
+              {#if displayedHealth.state === "degraded" && displayedHealth.availability.reason !== null}
+                <span class="navigation-reason">{displayedHealth.availability.reason}</span>
+              {/if}
+            </span>
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
 </div>
@@ -208,7 +222,7 @@
   .status-slot[data-open] { grid-template-rows: 1fr; }
   .status-slot[data-closing] { grid-template-rows: 0fr; transition-delay: var(--glide-exit); }
   .status-card {
-    display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); margin-bottom: var(--space-2);
+    display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); padding: var(--space-2); margin-bottom: var(--space-2);
     border-radius: var(--radius-sm); background: var(--accent-surface); color: var(--accent-text); font-size: var(--type-xs);
     opacity: 0; transform: translateY(var(--space-1));
     transition: opacity var(--glide-fade) var(--glide-enter) var(--glide-delay), transform var(--glide-fade) var(--glide-enter) var(--glide-delay);
@@ -220,19 +234,27 @@
   }
   .status-card[data-state="wrong"] { background: var(--error-surface); color: var(--text-strong); }
   .status-detail { flex-basis: 100%; }
-  .status-card:has(.status-detail), .status-card.with-update-actions { flex-wrap: wrap; }
+  .status-base { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .status-base:has(.status-detail) { flex-wrap: wrap; }
+  .navigation-health { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+  .navigation-health .status-mark { align-self: start; margin-top: .4em; }
+  .navigation-health-text { min-width: 0; overflow-wrap: anywhere; }
+  .navigation-reason { display: block; white-space: pre-wrap; }
+  .navigation-health[data-state="wrong"] .status-mark { background: var(--accent-error); }
   .status-mark { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent-bright); }
   .status-card[data-state="wrong"] .status-mark { background: var(--accent-error); }
   .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }
+  .navigation-health[data-state="changing"] .status-mark { background: var(--accent-bright); animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .status-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status-sentence { min-width: 0; }
   .status-action { flex: none; margin-left: auto; font-weight: 600; }
-  button.status-card { width: 100%; border: 0; font: inherit; font-size: var(--type-xs); text-align: left; cursor: pointer; }
-  button.status-card:hover { background-image: var(--interaction-hover); }
+  .status-refresh { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .status-refresh:hover { background-image: var(--interaction-hover); }
+  .status-refresh:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: var(--space-1); }
   @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   @media (max-width: 720px) { .status-card { margin: 0; border-radius: 0; } }
   @media (prefers-reduced-motion: reduce) {
     .status-slot, .status-card { transition-duration: 1ms; transition-delay: 0ms; }
-    .status-card[data-state="changing"] .status-mark { animation: none; }
+    .status-card[data-state="changing"] .status-mark, .navigation-health[data-state="changing"] .status-mark { animation: none; }
   }
 </style>
