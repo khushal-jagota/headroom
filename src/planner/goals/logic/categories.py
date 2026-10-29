@@ -29,7 +29,14 @@ from planner.goals.contracts import (
     DatasetFieldMetric,
     ScalarInputsChartBinding,
 )
-from planner.measures.contracts import Measure, MeasureOrigin, MeasureReadStatus, MeasureValue
+from planner.measures.contracts import (
+    Measure,
+    MeasureOrigin,
+    MeasureReadStatus,
+    MeasureValue,
+    ScalarCoverageStatus,
+)
+from planner.measures.logic.coverage import combine_coverage
 from planner.measures.logic.dates import calendar_date, date_range, invalid, local_date, timezone
 
 
@@ -171,11 +178,12 @@ def _value(
     partial: bool = False,
     missing_dates: Sequence[str] = (),
     reasons: Sequence[str] = (),
+    coverage_status: ScalarCoverageStatus | None = None,
 ) -> CategoryChartValue:
     if value is not None and not math.isfinite(value):
         value, status = None, MeasureReadStatus.arithmetic_limit
         reasons = [*reasons, "The calculated value exceeds the numeric limit."]
-    return {
+    result: CategoryChartValue = {
         "status": status,
         "value": value,
         "numerator": numerator,
@@ -184,6 +192,9 @@ def _value(
         "missing_dates": sorted(set(missing_dates)),
         "reasons": list(dict.fromkeys(reasons)),
     }
+    if coverage_status is not None:
+        result["coverage_status"] = coverage_status
+    return result
 
 
 def _missing(reason: str, *, day: str | None = None) -> CategoryChartValue:
@@ -227,6 +238,14 @@ def _combine(
         if reason != "The denominator is zero."
     ]
     partial = any(item["partial"] for item in values) or len(usable) != len(values)
+    coverage_status = (
+        combine_coverage(
+            (item.get("coverage_status", ScalarCoverageStatus.not_applicable), ())
+            for item in values
+        )[0]
+        if any("coverage_status" in item for item in values)
+        else None
+    )
     if not usable or (require_all and len(usable) != len(values)):
         failed = next(
             (item["status"] for item in values if item["status"] != MeasureReadStatus.value),
@@ -238,6 +257,7 @@ def _combine(
             partial=partial and bool(usable),
             missing_dates=missing,
             reasons=reasons or ["No usable inputs exist in this range."],
+            coverage_status=coverage_status,
         )
     numerator = denominator = None
     if ratio:
@@ -254,6 +274,7 @@ def _combine(
                 partial=partial,
                 missing_dates=missing,
                 reasons=[*reasons, "The denominator is zero."],
+                coverage_status=coverage_status,
             )
         value = (
             numerator / denominator * scale
@@ -270,6 +291,7 @@ def _combine(
         partial=partial,
         missing_dates=missing,
         reasons=reasons if value is not None else [*reasons, "The sum exceeds the numeric limit."],
+        coverage_status=coverage_status,
     )
 
 
@@ -337,7 +359,12 @@ def _summary(
     ):
         delta = actual["value"] - comparison["value"]
         difference = delta if math.isfinite(delta) else None
-        if difference is not None and not actual["partial"] and not comparison["partial"]:
+        if difference is not None and all(
+            not item["partial"]
+            and item.get("coverage_status")
+            not in (ScalarCoverageStatus.partial, ScalarCoverageStatus.unknown)
+            for item in (actual, comparison)
+        ):
             direction = chart.get(
                 "direction", "atmost" if chart["kind"] == "time-budget" else "atleast"
             )
@@ -648,8 +675,10 @@ def _scalar_value(
     actual = _value(
         value.value,
         status=value.status,
+        partial=value.coverage_status == ScalarCoverageStatus.partial,
         missing_dates=[day] if value.value is None and not submitted else [],
-        reasons=reasons,
+        reasons=[*reasons, *value.coverage_reasons],
+        coverage_status=value.coverage_status,
     )
     return _quantity(chart, actual)
 

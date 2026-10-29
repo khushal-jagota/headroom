@@ -12,13 +12,16 @@ from planner.measures.contracts import (
     InputObservation,
     Measure,
     MeasureDate,
+    MeasureKind,
     MeasureOrigin,
     MeasureValue,
     Observation,
+    ScalarCoverageStatus,
 )
 from planner.measures.contracts import (
     MeasureReadStatus as Status,
 )
+from planner.measures.logic.coverage import combine_coverage
 from planner.measures.logic.dates import (
     calendar_date,
     date_range,
@@ -187,6 +190,11 @@ class Evaluation:
             None,
             (),
             (pair,) if status is Status.missing_input else (),
+            coverage_status=(
+                ScalarCoverageStatus.unknown
+                if definition is not None and definition.kind is MeasureKind.period_count
+                else ScalarCoverageStatus.not_applicable
+            ),
         )
 
     def measure(self, pair: MeasureDate) -> MeasureValue:
@@ -214,12 +222,37 @@ class Evaluation:
                     observed.value,
                     (),
                     (),
+                    observed.query_start_at,
+                    observed.query_end_at,
+                    observed.limitation,
+                    (
+                        ScalarCoverageStatus.unknown
+                        if measure.kind is MeasureKind.period_count
+                        and observed.coverage_status is ScalarCoverageStatus.not_applicable
+                        else observed.coverage_status
+                    ),
+                    (
+                        ("Period coverage is unavailable for this observation.",)
+                        if measure.kind is MeasureKind.period_count
+                        and observed.coverage_status is ScalarCoverageStatus.not_applicable
+                        else observed.coverage_reasons
+                    ),
                 )
             )
         else:
             evaluated = self._expression(
                 cast(FormulaExpression, measure.formula), pair.date, measure.timezone
             )
+            coverage_status, coverage_reasons = (
+                evaluated.coverage_status,
+                evaluated.coverage_reasons,
+            )
+            if (
+                measure.kind is MeasureKind.period_count
+                and coverage_status is ScalarCoverageStatus.not_applicable
+            ):
+                coverage_status = ScalarCoverageStatus.unknown
+                coverage_reasons = ("The expression supplies no period coverage evidence.",)
             answer = MeasureValue(
                 pair.measure_id,
                 pair.date,
@@ -228,6 +261,8 @@ class Evaluation:
                 evaluated.value,
                 evaluated.inputs,
                 evaluated.missing_inputs,
+                coverage_status=coverage_status,
+                coverage_reasons=coverage_reasons,
             )
         self.cache[pair] = answer
         return answer
@@ -242,10 +277,12 @@ class Evaluation:
         status = Status.value
         inputs: dict[MeasureDate, InputObservation] = {}
         missing: set[MeasureDate] = set()
+        coverage: list[tuple[ScalarCoverageStatus, tuple[str, ...]]] = []
 
         def reference(child: MeasureDate) -> float | None:
             nonlocal status
             resolved = self._measure(child)
+            coverage.append((resolved.coverage_status, resolved.coverage_reasons))
             stored = self.observations.get(child)
             if child.measure_id in self.definitions:
                 inputs[child] = InputObservation(
@@ -255,7 +292,16 @@ class Evaluation:
                     resolved.value,
                     stored.run_id if stored else None,
                     stored.manual_write_id if stored else None,
+                    resolved.query_start_at,
+                    resolved.query_end_at,
+                    resolved.limitation,
+                    resolved.coverage_status,
+                    resolved.coverage_reasons,
                 )
+                for source_input in resolved.inputs:
+                    inputs.setdefault(
+                        MeasureDate(source_input.measure_id, source_input.date), source_input
+                    )
             missing.update(resolved.missing_inputs)
             if resolved.status is not Status.value and status is Status.value:
                 status = resolved.status
@@ -317,11 +363,14 @@ class Evaluation:
             result = None
         except (OverflowError, ValueError, ZeroDivisionError):
             status, result = Status.invalid_value, None
+        coverage_status, coverage_reasons = combine_coverage(coverage)
         return ExpressionValue(
             status,
             result if status is Status.value else None,
             tuple(inputs.values()),
             tuple(sorted(missing, key=lambda item: (item.measure_id, item.date))),
+            coverage_status,
+            coverage_reasons,
         )
 
 

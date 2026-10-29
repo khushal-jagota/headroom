@@ -3,7 +3,7 @@ import {chartData,chartHeadline,chartTone,comparisonText,missingReadingText,form
 import {updatePageBlock} from '../src/lib/goals/presentation';
 import type {ChartBlock,MeasureValue,Block} from '../src/lib/goals/contracts';
 const chart:ChartBlock={type:'chart',id:'balance',kind:'line',placement:'primary',measure_id:'balance',target:0,direction:'atleast',format:{prefix:'€',decimals:2}};
-const value=(date:string,quantity:number|null):MeasureValue=>({date,measure_id:'balance',value:quantity,definition_revision:1,status:quantity===null?'missing_input':'value',inputs:[],missing_inputs:[]});
+const value=(date:string,quantity:number|null):MeasureValue=>({date,measure_id:'balance',value:quantity,definition_revision:1,status:quantity===null?'missing_input':'value',inputs:[],missing_inputs:[],query_start_at:null,query_end_at:null,limitation:null,coverage_status:'not_applicable',coverage_reasons:[]});
 describe('goal charts',()=>{
  it('keeps signed fractional corrections, final gaps and dated reference paths',()=>{
   const data=chartData({...chart,reference:[{date:'2026-10-01',value:-10},{date:'2026-10-03',value:10}]},[value('2026-10-01',-4.25),value('2026-10-02',-8.5),value('2026-10-03',null)],'all');
@@ -101,7 +101,7 @@ it('reports approved threshold, progress, budget, and missing-reading states wit
 import type {ScalarChartProjection,ScalarChartPoint} from '../src/lib/goals/contracts';
 const formula:ChartBlock={...chart,expectation:{op:'constant',value:5},reference:[{date:'2026-10-29',value:999}]};
 const point=(date:string,actual:number|null,expected:number|null,break_before=false):ScalarChartPoint=>({
- date,actual:value(date,actual),expected:{status:expected===null?'missing_input':'value',value:expected,inputs:[],missing_inputs:[]},
+ date,actual:value(date,actual),expected:{status:expected===null?'missing_input':'value',value:expected,inputs:[],missing_inputs:[],coverage_status:'not_applicable',coverage_reasons:[]},
  difference:actual===null||expected===null?null:actual-expected,meets_expectation:actual===null||expected===null?null:actual>=expected,break_before,
 });
 const projected=(points:ScalarChartPoint[],summary_date:string|null='2026-10-29'):ScalarChartProjection=>({kind:'scalar',expected_source:'expectation',today:'2026-10-29',first_date:points[0].date,last_date:points.at(-1)!.date,summary_date,points});
@@ -143,4 +143,64 @@ it('never substitutes legacy targets for pending, invalid, or future-only formul
  const future=projected([point('2026-10-30',null,20)],null);
  expect(chartHeadline(formula,chartData(formula,[],'all',future),null,future)).toMatchObject({value:undefined,target:undefined,label:undefined});
  expect(chartHeadline(formula,chartData(formula,[],'all',future),'2026-10-30',future)).toMatchObject({value:undefined,target:20,label:'2026-10-30'});
+});
+
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {GoalChart} from '../src/lib/charts/GoalChart';
+import {observationDetails} from '../src/lib/charts/presentation';
+
+it('retains scalar subtotals through reference paths, sums, ranges and corrected inspection without a verdict',()=>{
+ const partial:MeasureValue={...value('2026-10-28',0),coverage_status:'partial',coverage_reasons:['The query covers part of the date.'],query_start_at:Date.parse('2026-10-28T06:11:26Z')/1000,query_end_at:Date.parse('2026-10-29T00:00:00Z')/1000};
+ const unknown:MeasureValue={...value('2026-10-29',8),coverage_status:'unknown',coverage_reasons:['No query bounds are supplied.']};
+ const complete:MeasureValue={...value('2026-10-27',6),coverage_status:'complete'};
+ const target:ChartBlock={...chart,target:5,reference:[{date:'2026-10-27',value:5},{date:'2026-10-29',value:5}]};
+ const data=chartData(target,[complete,partial,unknown],'week');
+ expect(data.map(item=>item.values.actual)).toEqual([6,0,8]);
+ expect(data.map(item=>item.values.target)).toEqual([5,5,5]);
+ expect(data.map(item=>item.comparisons?.actual)).toEqual([true,null,null]);
+ const selected=chartHeadline(target,data,'2026-10-28');
+ expect(selected).toMatchObject({value:0,target:5,coverage_status:'partial'});
+ expect(observationDetails(selected).join(' ')).toContain('2026-10-28T06:11:26.000Z');
+ for(const direction of ['atleast','atmost'] as const){
+  expect(chartTone({...target,direction},selected.value,selected.target,undefined,undefined,selected.coverage_status)).toBe('neutral');
+ }
+ expect(comparisonText(target,0,5,undefined,undefined,selected.coverage_status)).toBe('Partial difference: €-5.00');
+ const total=chartHeadline({...target,aggregate:'sum'},data);
+ expect(total).toMatchObject({value:14,target:15,coverage_status:'partial'});
+ const missing=chartHeadline({...target,aggregate:'sum'},chartData(target,[complete,{...value('2026-10-28',null),coverage_status:'complete'}],'all'));
+ expect(missing).toMatchObject({value:6,target:10,coverage_status:'unknown'});
+ const corrected=chartData(target,[complete,{...partial,coverage_status:'complete'},unknown],'all');
+ expect(chartHeadline(target,corrected,'2026-10-28').coverage_status).toBe('complete');
+ expect(comparisonText(target,8,5,undefined,undefined,'unknown')).toBe('Difference (coverage unavailable): €3.00');
+ expect(chartTone(target,8,5,undefined,undefined,'not_applicable')).toBe('good');
+});
+
+it('keeps unknown actual or expected coverage neutral in formula points and qualified differences',()=>{
+ const sample=point('2026-10-29',8,5);
+ sample.expected={...sample.expected,coverage_status:'unknown',coverage_reasons:['The comparison period lacks coverage.']};
+ sample.meets_expectation=null;
+ const projection=projected([sample]);
+ const data=chartData(formula,[],'all',projection),current=chartHeadline(formula,data,null,projection);
+ expect(data[0].comparisons).toEqual({actual:null});
+ expect(current.coverage_status).toBe('unknown');
+ expect(chartTone(formula,8,5,current.point)).toBe('neutral');
+ expect(comparisonText(formula,8,5,current.point)).toBe('Difference (coverage unavailable): €3.00');
+});
+
+it('renders coverage qualifications and raw details across supporting, progress, budget and gauge readings',()=>{
+ const partial:MeasureValue={...value('2026-10-29',8),coverage_status:'partial',coverage_reasons:['Only part of this date was queried.'],query_start_at:Date.parse('2026-10-29T06:00:00Z')/1000,query_end_at:Date.parse('2026-10-29T21:04:10Z')/1000};
+ for(const kind of ['number','progress','time-budget','gauge'] as const){
+  const markup=renderToStaticMarkup(createElement(GoalChart,{block:{...chart,kind,target:5},values:[partial],narrow:false,preferenceKey:`scalar-${kind}`}));
+  expect(markup).toContain('Partial reading');
+  expect(markup).toContain('Partial difference:');
+  expect(markup).toContain('2026-10-29T21:04:10.000Z');
+  expect(markup).not.toContain('var(--accent-done)');
+  expect(markup).not.toContain('Target reached');
+  expect(markup).not.toContain('Over budget');
+ }
+ const supporting=renderToStaticMarkup(createElement(GoalChart,{block:{...chart,kind:'number',placement:'supporting',target:5},values:[{...partial,coverage_status:'unknown'}],narrow:true,preferenceKey:'unknown-support'}));
+ expect(supporting).toContain('Coverage unavailable');
+ expect(supporting).toContain('Difference (coverage unavailable):');
+ expect(supporting).toContain('<summary>Observation details</summary>');
 });

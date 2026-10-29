@@ -88,7 +88,14 @@ def test_assigned_worker_saves_tests_and_collects_without_daily_schedule(
             principal=Principal(PrincipalKind.manager, other_manager),
             now=NOW,
         )
-    candidate = CandidateObservation(measure.id, "2026-10-27", 120)
+    candidate = CandidateObservation(
+        measure.id,
+        "2026-10-27",
+        120,
+        query_start_at=float(NOW - 3600),
+        query_end_at=float(NOW),
+        limitation="Provider sample",
+    )
     for mode in (RunMode.test, RunMode.collection):
         run = run_actions.request_run(
             tmp_db,
@@ -110,6 +117,12 @@ def test_assigned_worker_saves_tests_and_collects_without_daily_schedule(
             assert views.status(tmp_db, source.id, now=NOW).health is SourceHealth.disabled
         else:
             assert measure_data.latest_observations(tmp_db, (measure.id,))[0].value == 120
+            retained = measure_data.latest_observations(tmp_db, (measure.id,))[0]
+            assert (retained.query_start_at, retained.query_end_at, retained.limitation) == (
+                candidate.query_start_at,
+                candidate.query_end_at,
+                candidate.limitation,
+            )
             assert views.status(tmp_db, source.id, now=NOW).health is SourceHealth.healthy
     with pytest.raises(PlannerError, match="retained"):
         actions.delete_source(tmp_db, source.id, principal=worker)

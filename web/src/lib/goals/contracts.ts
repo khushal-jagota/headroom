@@ -283,6 +283,47 @@ export interface PageDocument {
   blocks: Array<Block>;
 }
 
+export interface GoalWriteFields {
+  project_id?: string;
+  title?: string;
+  why?: string;
+  kind?: "binary" | "quantitative";
+  active?: boolean;
+  completed?: boolean;
+  primary_checklist_block_id?: string | null;
+  deadline?: string | null;
+  primary_chart?: ChartBlock | null;
+  page?: PageDocument;
+}
+
+export interface GoalCreateBody {
+  project_id?: string;
+  title?: string;
+  why?: string;
+  kind?: "binary" | "quantitative";
+  active?: boolean;
+  completed?: boolean;
+  primary_checklist_block_id?: string | null;
+  deadline?: string | null;
+  primary_chart?: ChartBlock | null;
+  page?: PageDocument;
+  expected_revision?: unknown;
+}
+
+export interface GoalEditBody {
+  project_id?: string;
+  title?: string;
+  why?: string;
+  kind?: "binary" | "quantitative";
+  active?: boolean;
+  completed?: boolean;
+  primary_checklist_block_id?: string | null;
+  deadline?: string | null;
+  primary_chart?: ChartBlock | null;
+  page?: PageDocument;
+  expected_revision: number;
+}
+
 export interface GoalResponse {
   id: string;
   project_id: string;
@@ -330,6 +371,11 @@ export interface MeasureValue {
   value: number | null;
   inputs: Array<InputObservation>;
   missing_inputs: Array<MeasureDate>;
+  query_start_at: number | null;
+  query_end_at: number | null;
+  limitation: string | null;
+  coverage_status: "complete" | "partial" | "unknown" | "not_applicable";
+  coverage_reasons: Array<string>;
 }
 
 export interface InputObservation {
@@ -339,6 +385,11 @@ export interface InputObservation {
   value: number | null;
   run_id: string | null;
   manual_write_id: string | null;
+  query_start_at: number | null;
+  query_end_at: number | null;
+  limitation: string | null;
+  coverage_status: "complete" | "partial" | "unknown" | "not_applicable";
+  coverage_reasons: Array<string>;
 }
 
 export interface MeasureDate {
@@ -351,6 +402,8 @@ export interface ExpressionValue {
   value: number | null;
   inputs: Array<InputObservation>;
   missing_inputs: Array<MeasureDate>;
+  coverage_status: "complete" | "partial" | "unknown" | "not_applicable";
+  coverage_reasons: Array<string>;
 }
 
 export interface ScalarChartProjection {
@@ -371,6 +424,7 @@ export interface CategoryChartValue {
   partial: boolean;
   missing_dates: Array<string>;
   reasons: Array<string>;
+  coverage_status?: "complete" | "partial" | "unknown" | "not_applicable";
 }
 
 export interface CategoryChartSummary {
@@ -509,6 +563,11 @@ export interface Observation {
   definition_revision: number;
   period_interval: PeriodInterval | null;
   manual_write_id: string | null;
+  query_start_at: number | null;
+  query_end_at: number | null;
+  limitation: string | null;
+  coverage_status: "complete" | "partial" | "unknown" | "not_applicable";
+  coverage_reasons: Array<string>;
 }
 
 export interface PeriodInterval {

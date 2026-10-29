@@ -19,9 +19,18 @@ from planner.measures.contracts import (
     MeasureOrigin,
     MeasureReadStatus,
     Observation,
+    OutputMeasure,
     ReferenceAtExpression,
     ReferenceExpression,
     SumDailyExpression,
+)
+from planner.measures.contracts import (
+    ScalarCoverageStatus as Coverage,
+)
+from planner.measures.logic.coverage import (
+    combine_coverage,
+    observation_coverage,
+    validate_coverage,
 )
 from planner.measures.logic.evaluation import (
     Evaluation,
@@ -33,6 +42,148 @@ from planner.measures.logic.evaluation import (
 from planner.measures.logic.formulas import dependencies, parse_formula, validate_graph
 
 NOW = int(datetime(2026, 10, 27, 12, tzinfo=UTC).timestamp())
+
+
+@pytest.mark.parametrize(
+    ("day", "period", "zone", "first", "last"),
+    (
+        (
+            "2026-10-25",
+            CountPeriod.day,
+            "Europe/Berlin",
+            "2026-10-24T22:00:00",
+            "2026-10-25T23:00:00",
+        ),
+        ("2026-10-28", CountPeriod.week, "UTC", "2026-10-26T00:00:00", "2026-11-02T00:00:00"),
+        ("2026-10-28", CountPeriod.month, "UTC", "2026-10-01T00:00:00", "2026-11-01T00:00:00"),
+    ),
+)
+def test_scalar_coverage_uses_captured_local_calendar_and_exact_bounds(
+    day: str, period: CountPeriod, zone: str, first: str, last: str
+) -> None:
+    measure = replace(
+        definition("count", kind=MeasureKind.period_count, period=period), timezone=zone
+    )
+    captured = OutputMeasure(measure.id, 1, measure.kind, zone, period, "2026-10-29", None)
+    start, end = (
+        datetime.fromisoformat(value).replace(tzinfo=UTC).timestamp() for value in (first, last)
+    )
+    assert observation_coverage(measure, captured, day, start, end, None)[0] is Coverage.complete
+    for left, right in ((start + 1, end), (start, end - 1), (start - 1, end), (start, end + 1)):
+        assert (
+            observation_coverage(measure, captured, day, left, right, None)[0] is Coverage.partial
+        )
+    assert observation_coverage(measure, captured, day, None, end, None)[0] is Coverage.unknown
+    assert observation_coverage(measure, None, day, start, end, None)[0] is Coverage.unknown
+    assert observation_coverage(measure, captured, day, start, end, "Sample")[0] is Coverage.partial
+    edited = replace(measure, timezone="Pacific/Auckland")
+    assert observation_coverage(edited, captured, day, start, end, None)[0] is Coverage.unknown
+    assert observation_coverage(edited, captured, day, start + 1, end, None)[0] is Coverage.partial
+    assert (
+        observation_coverage(
+            replace(measure, definition_revision=2), captured, day, start, end, None
+        )[0]
+        is Coverage.complete
+    )
+    assert (
+        observation_coverage(measure, captured, "9999-12-31", start, end, None)[0]
+        is Coverage.unknown
+    )
+
+
+def test_scalar_coverage_propagates_without_numeric_or_branch_simplification() -> None:
+    day = "2026-10-27"
+    count = definition("count", kind=MeasureKind.period_count, period=CountPeriod.day)
+    reference = ReferenceExpression(op="reference", measure_id=count.id, day_offset=0)
+    nested = replace(
+        definition("nested"), origin=MeasureOrigin.assembled, source_id=None, formula=reference
+    )
+    outer = ReferenceAtExpression(op="reference_at", measure_id=nested.id, date=day)
+    observed = Observation(
+        count.id,
+        day,
+        0,
+        "run",
+        NOW,
+        1,
+        None,
+        query_start_at=1,
+        query_end_at=2,
+        limitation="Clipped",
+        coverage_status=Coverage.partial,
+        coverage_reasons=("Clipped",),
+    )
+    context = Evaluation(
+        {count.id: count, nested.id: nested}, {MeasureDate(count.id, day): observed}, now=NOW
+    )
+    direct = context.measure(MeasureDate(count.id, day))
+    assert direct.value == 0 and direct.query_start_at == 1 and direct.limitation == "Clipped"
+    result = context.expression(
+        BinaryExpression(
+            op="multiply", left=outer, right=ConstantExpression(op="constant", value=0)
+        ),
+        day,
+        "UTC",
+    )
+    assert result.value == 0 and result.status is MeasureReadStatus.value
+    assert result.coverage_status is Coverage.partial and result.coverage_reasons == ("Clipped",)
+    assert result.inputs[0].coverage_status is Coverage.partial
+    leaf = next(item for item in result.inputs if item.measure_id == count.id)
+    assert (leaf.query_start_at, leaf.query_end_at, leaf.limitation) == (1, 2, "Clipped")
+    direct_reference = context.expression(reference, day, "UTC").inputs[0]
+    assert (
+        direct_reference.query_start_at,
+        direct_reference.query_end_at,
+        direct_reference.limitation,
+    ) == (1, 2, "Clipped")
+    branch = IfBeforeExpression(
+        op="if_before",
+        date="2026-10-28",
+        before=ConstantExpression(op="constant", value=5),
+        otherwise=outer,
+    )
+    assert context.expression(branch, day, "UTC").coverage_status is Coverage.not_applicable
+    assert context.expression(branch, "2026-10-29", "UTC").coverage_status is Coverage.partial
+    daily = SumDailyExpression(op="sum_daily", measure_id=count.id, period=CountPeriod.day)
+    assert context.expression(daily, day, "UTC").coverage_status is Coverage.partial
+    assert combine_coverage(((Coverage.not_applicable, ()), (Coverage.complete, ()))) == (
+        Coverage.complete,
+        (),
+    )
+    assert combine_coverage(((Coverage.complete, ()), (Coverage.unknown, ("Absent",)))) == (
+        Coverage.unknown,
+        ("Absent",),
+    )
+    assert combine_coverage(
+        ((Coverage.unknown, ("Absent",)), (Coverage.partial, ("Clipped",)))
+    ) == (Coverage.partial, ("Absent", "Clipped"))
+    for formula in (
+        ConstantExpression(op="constant", value=5),
+        ReferenceExpression(op="reference", measure_id="snapshot", day_offset=0),
+    ):
+        assembled = replace(
+            count, id="assembled", origin=MeasureOrigin.assembled, source_id=None, formula=formula
+        )
+        snapshot = definition("snapshot", kind=MeasureKind.running_total)
+        readings = {
+            MeasureDate(snapshot.id, day): Observation(snapshot.id, day, -2.5, "run", NOW, 1, None)
+        }
+        evaluation = Evaluation({assembled.id: assembled, snapshot.id: snapshot}, readings, now=NOW)
+        assert (
+            evaluation.measure(MeasureDate(assembled.id, day)).coverage_status is Coverage.unknown
+        )
+        assert evaluation.expression(formula, day, "UTC").coverage_status is Coverage.not_applicable
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "limitation"),
+    ((True, None, None), (None, float("inf"), None), (2, 2, None), (3, 2, None), (None, None, " ")),
+)
+def test_scalar_coverage_rejects_only_malformed_fact_representation(
+    start: object, end: object, limitation: object
+) -> None:
+    with pytest.raises(PlannerError):
+        validate_coverage(start, end, limitation)
 
 
 def definition(

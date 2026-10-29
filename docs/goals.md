@@ -90,6 +90,12 @@ A live chart can bind a retained dataset or named scalar inputs. Dataset binding
 
 A dataset projection keeps the retained query interval, missing dates, provider limits, and reasons for unavailable values. Partial values can appear as subtotals, but they have no complete comparison verdict. A latest snapshot excludes categories absent from that snapshot. Inspection follows stable keys through corrections and label changes. If a bound chart has no projection, it shows no current value. The overview and goals table use the supplied All summary, including the planned value for a named scalar budget.
 
+Scalar charts also retain source-authored coverage facts. Partial period counts stay visible as valid subtotals. Unknown coverage stays distinct from proven partial coverage. Both states withhold complete-period verdicts and use neutral colors, even when a zero lies below a daily limit.
+
+This rule applies to targets, reference paths, expectations, named scalar inputs, and range summaries. Numeric differences remain available with a coverage qualifier. Inspection and overview readouts use the same eligibility rule. Observation details show supplied bounds and reasons. A missing contributing point cannot make a range subtotal complete.
+
+Older period counts keep their numeric values with unknown coverage and neutral complete-period verdicts. A date that becomes historical does not supply missing coverage. Complete-period observations, static series, and ordinary snapshot comparisons retain their meaning. Source coverage authoring is described in [Project measures](measures.md#scalar-coverage-facts).
+
 Page tables retain editable string cells and the existing sort and selection components. An optional matrix of cell tones adds the approved outcome colors without replacing the table or changing its stored cell text.
 
 The unlisted application page `#/dev/goal-components` shows all 22 approved chart-sheet examples through the production page, chart, and table components. It uses explicit sample data from October 28, 2026. Local sample controls switch among the approved states without API writes. The chart controls, table sorting, and mobile disclosure use the same components as goal pages. The examples follow the approved responsive grid. The six mobile studies use the production disclosure at their available grid width. An optional 390 px preview shows mobile goal-host behavior for all examples. The page does not add measurement entry or increment controls.

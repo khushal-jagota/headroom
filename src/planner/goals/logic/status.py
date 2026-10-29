@@ -1,8 +1,10 @@
 """Pure status and calendar projections; completion never changes membership."""
 
+from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 
 from planner.goals.contracts import ChartBlock, Tone
+from planner.measures.contracts import MeasureValue, ScalarCoverageStatus
 
 
 def goal_status(completed: bool, deadline: str | None, today: str) -> Tone:
@@ -48,7 +50,7 @@ def chart_target(chart: ChartBlock, reading_date: str) -> float | None:
 
 
 def chart_summary(
-    chart: ChartBlock, observations: list[tuple[str, float | None]]
+    chart: ChartBlock, observations: Sequence[MeasureValue | tuple[str, float | None]]
 ) -> tuple[float | None, float | None]:
     """The overview's all-time reading, independent of local chart range/inspection."""
     selected_range = next(
@@ -61,7 +63,13 @@ def chart_summary(
     points: dict[str, dict[str, float | None]] = {}
     categories = ["actual"]
     if chart.get("measure_id"):
-        points = {label: {"actual": value} for label, value in sorted(observations)}
+        points = {
+            label: {"actual": value}
+            for label, value in sorted(
+                (item.date, item.value) if isinstance(item, MeasureValue) else item
+                for item in observations
+            )
+        }
     else:
         categories = ["actual" if index == 0 else item["name"] for index, item in enumerate(series)]
         for index, item in enumerate(series):
@@ -92,9 +100,23 @@ def chart_summary(
     return value, latest.get("target")
 
 
-def chart_status(chart: ChartBlock | None, observations: list[tuple[str, float | None]]) -> Tone:
+def chart_status(
+    chart: ChartBlock | None, observations: Sequence[MeasureValue | tuple[str, float | None]]
+) -> Tone:
     if chart is None:
         return "neutral"
+    if chart.get("measure_id"):
+        readings = sorted(
+            (item for item in observations if isinstance(item, MeasureValue)),
+            key=lambda item: item.date,
+        )
+        contributors = readings if chart.get("aggregate") == "sum" else readings[-1:]
+        if any(
+            item.value is None
+            or item.coverage_status in (ScalarCoverageStatus.partial, ScalarCoverageStatus.unknown)
+            for item in contributors
+        ):
+            return "neutral"
     value, target = chart_summary(chart, observations)
     tone = quantitative_status(
         value,

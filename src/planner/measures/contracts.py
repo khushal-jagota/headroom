@@ -31,6 +31,13 @@ class CountPeriod(StrEnum):
     month = "month"
 
 
+class ScalarCoverageStatus(StrEnum):
+    complete = "complete"
+    partial = "partial"
+    unknown = "unknown"
+    not_applicable = "not_applicable"
+
+
 class ConstantExpression(TypedDict):
     op: Literal["constant"]
     value: float
@@ -160,6 +167,11 @@ class Observation:
     definition_revision: int
     period_interval: PeriodInterval | None
     manual_write_id: str | None = None
+    query_start_at: float | None = None
+    query_end_at: float | None = None
+    limitation: str | None = None
+    coverage_status: ScalarCoverageStatus = ScalarCoverageStatus.not_applicable
+    coverage_reasons: tuple[str, ...] = ()
 
 
 class HistoricalUnavailableReason(StrEnum):
@@ -175,6 +187,9 @@ class CandidateObservation:
     date: str
     value: float | None
     unavailable_reason: HistoricalUnavailableReason | None = None
+    query_start_at: float | None = None
+    query_end_at: float | None = None
+    limitation: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +255,11 @@ class InputObservation:
     value: float | None
     run_id: str | None
     manual_write_id: str | None = None
+    query_start_at: float | None = None
+    query_end_at: float | None = None
+    limitation: str | None = None
+    coverage_status: ScalarCoverageStatus = ScalarCoverageStatus.not_applicable
+    coverage_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +271,11 @@ class MeasureValue:
     value: float | None
     inputs: tuple[InputObservation, ...]
     missing_inputs: tuple[MeasureDate, ...]
+    query_start_at: float | None = None
+    query_end_at: float | None = None
+    limitation: str | None = None
+    coverage_status: ScalarCoverageStatus = ScalarCoverageStatus.not_applicable
+    coverage_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +286,8 @@ class ExpressionValue:
     value: float | None
     inputs: tuple[InputObservation, ...]
     missing_inputs: tuple[MeasureDate, ...]
+    coverage_status: ScalarCoverageStatus = ScalarCoverageStatus.not_applicable
+    coverage_reasons: tuple[str, ...] = ()
 
 
 class ReadMeasuresBody(TypedDict):

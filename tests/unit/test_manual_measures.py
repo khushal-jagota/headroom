@@ -1,5 +1,6 @@
 """Manual writes add concurrency and replay risks absent from provider collection."""
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from planner.core.contracts import (
 )
 from planner.measures import actions, data, manual
 from planner.measures.contracts import (
+    CountPeriod,
     CreateMeasureBody,
     ManualIncrementBody,
     ManualReplaceBody,
@@ -30,6 +32,7 @@ from planner.measures.contracts import (
     MeasureOrigin,
     ReadMeasuresBody,
     ReferenceExpression,
+    ScalarCoverageStatus,
     UpdateMeasureBody,
 )
 
@@ -130,6 +133,44 @@ def test_manual_replay_stale_edits_and_shared_formula_provenance(tmp_db: Connect
     assert result.values[0].inputs[0].manual_write_id == "first"
     assert result.values[0].inputs[0].run_id is None and result.sources == ()
     assert tmp_db.execute("SELECT COUNT(*) FROM manual_measure_writes").fetchone()[0] == 2
+
+
+def test_manual_period_count_keeps_value_unknown_and_clears_prior_coverage(
+    tmp_db: Connection,
+) -> None:
+    measure = manual_measure(tmp_db)
+    measure = actions.update_measure(
+        tmp_db,
+        measure.id,
+        UpdateMeasureBody(
+            expected_revision=1, kind=MeasureKind.period_count, period=CountPeriod.day
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    first = replacement("count-first", "2026-10-27", 0, 0)
+    first["expected_definition_revision"] = measure.definition_revision
+    accepted = manual.write_value(tmp_db, measure.id, first, principal=OWNER_PRINCIPAL, now=NOW)
+    observed = accepted.state.observation
+    assert observed is not None and observed.value == 0
+    assert observed.coverage_status is ScalarCoverageStatus.unknown
+    # An old populated row must not lend source facts to a new manual replacement.
+    tmp_db.execute(
+        "UPDATE measure_observations SET query_start_at=1,query_end_at=2,limitation='Old' "
+        "WHERE measure_id=?",
+        (measure.id,),
+    )
+    tmp_db.commit()
+    second = replacement("count-second", "2026-10-27", -2.5, 1)
+    second["expected_definition_revision"] = measure.definition_revision
+    result = manual.write_value(tmp_db, measure.id, second, principal=OWNER_PRINCIPAL, now=NOW)
+    observed = result.state.observation
+    assert observed is not None and observed.value == -2.5
+    assert observed.query_start_at is None and observed.query_end_at is None
+    assert observed.limitation is None
+    assert observed.coverage_status is ScalarCoverageStatus.unknown
+    replay = manual.write_value(tmp_db, measure.id, second, principal=OWNER_PRINCIPAL, now=NOW)
+    assert replay.replayed and replay.receipt == result.receipt
 
 
 def test_manual_atomic_increments_latest_snapshots_and_date_isolation(tmp_db: Connection) -> None:
@@ -261,7 +302,9 @@ def test_manual_authority_validation_and_http_state_contract(tmp_db: Connection)
         assert stale.json()["error"]["detail"]["state"]["observation"]["value"] == 0
         after = client.get("/api/resource-body", params={"key": key}).json()
         assert after["revision"] != cached["revision"]
-        assert after["body"] == asdict(manual.read_state(tmp_db, measure.id, "2026-10-27", now=now))
+        assert after["body"] == json.loads(
+            json.dumps(asdict(manual.read_state(tmp_db, measure.id, "2026-10-27", now=now)))
+        )
         app.state.clock.set(datetime(2026, 10, 28, 8, tzinfo=UTC))
         tomorrow = client.get("/api/resource-body", params={"key": key}).json()
         assert tomorrow["revision"] != after["revision"]

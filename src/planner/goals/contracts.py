@@ -11,6 +11,7 @@ from planner.measures.contracts import (
     FormulaExpression,
     MeasureReadStatus,
     MeasureValue,
+    ScalarCoverageStatus,
     SourceHealthSummary,
 )
 
@@ -383,6 +384,7 @@ class CategoryChartValue(TypedDict):
     partial: bool
     missing_dates: list[str]
     reasons: list[str]
+    coverage_status: NotRequired[ScalarCoverageStatus]
 
 
 class CategoryChartSummary(TypedDict):

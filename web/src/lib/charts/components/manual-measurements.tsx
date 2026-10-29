@@ -8,7 +8,7 @@ import { LineChart } from './line-chart-integrated';
 import { motionTokens } from '../lib/motion-tokens';
 import { SupportingMetric } from './supporting-metric';
 import { Range } from '../GoalChart';
-import { chartData, readChartPreference, selectedTarget } from '../presentation';
+import { chartData, readChartPreference, selectedTarget, coverageLabel } from '../presentation';
 import './manual-measurements.css';
 
 const blue = 'var(--accent-bright)', green = 'var(--accent-done)', red = 'var(--accent-error)';
@@ -114,7 +114,10 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     const observation = next.observation;
     const updated = new Map(acceptedHistoryRef.current);
     updated.set(next.date, { measure_id: next.measure_id, date: next.date, definition_revision: next.definition_revision,
-      status: observation ? 'value' : 'missing_input', value: observation?.value ?? null, inputs: [], missing_inputs: [] });
+      status: observation ? 'value' : 'missing_input', value: observation?.value ?? null, inputs: [], missing_inputs: [],
+      query_start_at: observation?.query_start_at ?? null, query_end_at: observation?.query_end_at ?? null, limitation: observation?.limitation ?? null,
+      coverage_status: block.manual!.model === 'daily_quota' ? 'unknown' : observation?.coverage_status ?? 'not_applicable',
+      coverage_reasons: observation?.coverage_reasons ?? (block.manual!.model === 'daily_quota' ? ['No query coverage is supplied for this manual period count.'] : []) });
     acceptedHistoryRef.current = updated; setAcceptedHistory(updated);
   };
   const accept = (next: ManualMeasureState, date?: string) => {
@@ -213,7 +216,8 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
   }} pending={pending} blocked={!!retryRequest.current && retryRequest.current.operation === 'increment'}
     label={cumulative ? title : `${title} for ${selected ? dateLabel(selected) : 'selected date'}`} unit={reading ? unit : ''} decimals={block.format?.decimals ?? 0} center={cumulative} focusToken={focusToken} />;
   const adds = <div className="add-buttons">{block.manual!.increments?.map((amount, index) => <button type="button" key={`${index}:${amount}`} disabled={!state} aria-busy={pending || undefined} onClick={() => void increment(amount)}>{amount > 0 ? '+' : ''}{amount}</button>)}</div>;
-  const comparison = current === undefined ? 'No reading' : target === undefined ? '' : reading
+  const coverage = coverageLabel(state?.block.manual!.model === 'daily_quota' ? 'unknown' : observation?.coverage_status ?? 'not_applicable');
+  const comparison = current !== undefined && coverage ? `${coverage}${target === undefined ? '' : ` · ${coverage === 'Partial reading' ? 'Partial difference' : 'Difference (coverage unavailable)'}: ${numberText(current - target)}${unit}`}` : current === undefined ? 'No reading' : target === undefined ? '' : reading
     ? current >= target ? `${numberText(target)}${unit ? ` ${unit}` : ''} target reached` : `${(target - current).toFixed(block.format?.decimals ?? 0)}${unit ? ` ${unit}` : ''} to a ${numberText(target)}${unit ? ` ${unit}` : ''} ${(block.series?.[0]?.name ?? 'Reading').toLowerCase()}`
     : current < target ? `${numberText(target - current)} to daily target` : current === target ? 'Daily target reached' : `${numberText(current - target)} above daily target`;
   const range = block.ranges?.length ? <div className="chart-range-footer"><Range block={block} value={preferences.range} id={preferenceKey} onChange={range => { void runAction(async () => {
@@ -233,7 +237,7 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
     {cumulative ? <><div className="radial"><svg viewBox="0 0 100 90" role="meter" aria-label={title} aria-valuemin={Math.min(0, current ?? 0)} aria-valuemax={target} aria-valuenow={Math.min(current ?? 0, target)} aria-valuetext={current === undefined ? 'No reading' : `${current} of ${target}${current >= target ? ', target reached' : ''}`}>
       <path className="radial-track" d={arcFor(1)} /><motion.path className="radial-fill" d={arcFor(1)} pathLength="1" initial={false} animate={{ strokeDasharray: `${Math.max(0, Math.min(1, (current ?? 0) / target))} 1`, stroke: current !== undefined && current >= target ? green : blue, opacity: current === undefined || current <= 0 ? 0 : 1 }} transition={reduce ? { duration: 0 } : motionTokens.spring.smooth} />
     </svg><div className="radial-center">{inline}<span className="denominator">of {numberText(target)}</span></div></div><div className="radial-footer"><span className="completion" style={{ color: green }} role="status">{current === target ? 'Target reached' : current !== undefined && current > target ? `${numberText(current - target)} beyond target` : ''}</span>{adds}</div></> : <>
-      <div className="reading-row">{inline}{!reading && adds}</div><p className="comparison" style={{ color: current === undefined ? 'var(--text-faintest)' : current >= target ? green : reading ? 'var(--text-faint)' : red }}>{comparison}</p>
+      <div className="reading-row">{inline}{!reading && adds}</div><p className="comparison" style={{ color: current === undefined ? 'var(--text-faintest)' : coverage ? 'var(--text-muted)' : current >= target ? green : reading ? 'var(--text-faint)' : red }}>{comparison}</p>
       {reading ? <div className="reading-chart"><LineChart data={dates.map((date, index) => ({ key: date, label: dateLabel(date), axisLabel: dateLabel(date), values: { actual: readings[index], target } }))}
         series={[{ key: 'actual', label: block.series?.[0]?.name ?? 'Reading', color: blue, area: true }, ...(target === undefined ? [] : [{ key: 'target', label: `${numberText(target)}${unit ? ` ${unit}` : ''} target`, color: 'var(--text-faintest)', dashed: true, area: false }])]}
         label={title} height={196} domain={[minimum, maximum]} formatValue={value => `${value.toFixed(block.format?.decimals ?? 0)}${unit ? ` ${unit}` : ''}`} onSelect={index => void select(dates[index], true)} /></div>
@@ -245,7 +249,7 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
           {readings.map((value, index) => <button type="button" key={dates[index]} className="bar-pick" aria-pressed={selected === dates[index]} aria-label={`${dateLabel(dates[index])}, ${value == null ? 'no reading' : `${value} ${title.toLowerCase()}`}`} onClick={() => void select(dates[index])}>
             <span className="bar-space"><motion.span className={'bar ' + (value == null ? 'missing' : '')} initial={false}
               style={minimum < 0 ? { position: 'absolute', bottom: (Math.min(0, value ?? 0) - minimum) / span * 100 + '%' } : undefined}
-              animate={{ height: value == null || value === 0 ? 2 : Math.abs(value) / span * 100 + '%', backgroundColor: value == null ? 'var(--text-faintest)' : value >= target ? green : red }} transition={{ duration: reduce ? 0 : motionTokens.duration.standard }} /></span>
+              animate={{ height: value == null || value === 0 ? 2 : Math.abs(value) / span * 100 + '%', backgroundColor: value == null ? 'var(--text-faintest)' : coverageLabel(history.find(item => item.measure_id === block.measure_id && item.date === dates[index])?.coverage_status ?? 'unknown') ? 'var(--text-muted)' : value >= target ? green : red }} transition={{ duration: reduce ? 0 : motionTokens.duration.standard }} /></span>
             <span className="bar-date">{dates[index] === today ? 'Today' : dateLabel(dates[index]).split(' ')[0]}</span>
           </button>)}
         </div></div>}

@@ -155,6 +155,7 @@ def test_dataset_helper_exposes_captured_declarations_and_keeps_scalar_helpers()
         DatasetFieldKind,
         OutputDataset,
     )
+    from planner.measures.contracts import Observation, ScalarCoverageStatus
 
     output = OutputDataset(
         "d",
@@ -167,15 +168,46 @@ def test_dataset_helper_exposes_captured_declarations_and_keeps_scalar_helpers()
     script = """
 output = context['dataset_outputs'][0]
 assert output['definition_revision'] == 3 and output['dimensions'][0]['name'] == 'region'
-assert latest('m') is None
+previous = latest('m')
+assert previous['value'] == 0 and previous['query_start_at'] == 1
+assert previous['query_end_at'] == 2 and previous['limitation'] == 'Clipped'
+assert previous['coverage_status'] == 'partial'
 record('m', '2026-10-27', 4)
+record('m', '2026-10-28', 0, query_start_at=1, query_end_at=2, limitation='Clipped')
+record('m', '2026-10-29', 5, query_start_at=2, query_end_at=3)
+record('m', '2026-10-26', None, 'provider_has_no_value')
 record_dataset(output['dataset_id'], '2026-10-20',
                [{'dimensions': {'region': 'de'}, 'values': {'events': 7}}],
                query_end_at=context['frozen_at'], query_start_at=context['frozen_at'] - 3600,
                labels={'region': {'de': 'Germany'}}, limitation='Provider sample')
 """
-    result = Runtime().execute(admission(script, dataset_outputs=(output,)), MemoryCredentials())
+    previous = Observation(
+        "m",
+        "2026-10-26",
+        0,
+        "previous-run",
+        1,
+        1,
+        None,
+        query_start_at=1,
+        query_end_at=2,
+        limitation="Clipped",
+        coverage_status=ScalarCoverageStatus.partial,
+        coverage_reasons=("Clipped",),
+    )
+    result = Runtime().execute(
+        replace(admission(script, dataset_outputs=(output,)), previous=(previous,)),
+        MemoryCredentials(),
+    )
     assert result.failure is None and result.observations[0].value == 4
+    assert result.observations[0].query_start_at is None
+    assert (
+        result.observations[1].query_start_at,
+        result.observations[1].query_end_at,
+        result.observations[1].limitation,
+    ) == (1, 2, "Clipped")
+    assert result.observations[2].value == 5 and result.observations[2].limitation is None
+    assert result.observations[3].unavailable_reason == "provider_has_no_value"
     assert result.dataset_results[0].dataset_id == "d"
     assert result.dataset_results[0].date == "2026-10-20"
     assert result.dataset_results[0].rows[0].values == {"events": 7}
@@ -184,6 +216,9 @@ record_dataset(output['dataset_id'], '2026-10-20',
     for statement in (
         "record_dataset('foreign', '2026-10-27', [], query_end_at=0)",
         "record_dataset('d', '2026-10-27', [], query_end_at=float('nan'))",
+        "record('m', '2026-10-27', 0, query_start_at=True)",
+        "record('m', '2026-10-27', 0, query_start_at=2, query_end_at=1)",
+        "record('m', '2026-10-27', 0, limitation='')",
     ):
         failed = Runtime().execute(
             admission(statement, dataset_outputs=(output,)), MemoryCredentials()

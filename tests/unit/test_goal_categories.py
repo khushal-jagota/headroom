@@ -42,6 +42,7 @@ from planner.measures.contracts import (
     MeasureOrigin,
     MeasureReadStatus,
     MeasureValue,
+    ScalarCoverageStatus,
 )
 
 NOW = int(datetime(2026, 10, 29, 12, tzinfo=UTC).timestamp())
@@ -511,3 +512,42 @@ def test_binding_validation_rejects_ambiguous_geometry_without_kind_algebra() ->
     validate_category_chart(
         dataset_chart(filters=[{"dimension": "surface", "codes": ["", "actual", "target"]}])
     )
+
+
+@pytest.mark.parametrize("coverage", [ScalarCoverageStatus.partial, ScalarCoverageStatus.unknown])
+def test_named_scalar_coverage_survives_points_comparisons_and_totals(
+    coverage: ScalarCoverageStatus,
+) -> None:
+    """Named inputs must retain uncertainty in both comparison roles and additive headlines."""
+    submitted = {key: frozenset(("2026-10-28", "2026-10-29")) for key in ("spent", "planned")}
+    complete = (
+        replace(scalar("spent", "2026-10-28", 2), coverage_status=ScalarCoverageStatus.complete),
+        replace(scalar("planned", "2026-10-28", 8), coverage_status=ScalarCoverageStatus.complete),
+        replace(scalar("spent", "2026-10-29", 3), coverage_status=ScalarCoverageStatus.complete),
+        replace(scalar("planned", "2026-10-29", 8), coverage_status=ScalarCoverageStatus.complete),
+    )
+    for index in (2, 3):
+        values = list(complete)
+        values[index] = replace(
+            values[index], coverage_status=coverage, coverage_reasons=("Limited input",)
+        )
+        for aggregation in ("latest", "sum"):
+            chart = scalar_chart(kind="time-budget", aggregation=aggregation)
+            view = selected(scalar_project(chart, tuple(values), submitted))
+            summary = view["summary"]
+            assert summary["actual"]["value"] == (3 if aggregation == "latest" else 5)
+            assert summary["difference"] == (-5 if aggregation == "latest" else -11)
+            assert summary["meets_expectation"] is None
+            affected = summary["actual"] if index == 2 else summary["comparison"]
+            assert affected is not None
+            assert affected["coverage_status"] == coverage
+            assert affected["partial"] == (coverage == ScalarCoverageStatus.partial)
+            assert "Limited input" in affected["reasons"]
+            assert view["point_summaries"][-1]["summary"]["meets_expectation"] is None
+        allocation = selected(
+            scalar_project(scalar_chart(aggregation="sum"), tuple(values), submitted)
+        )
+        assert allocation["summary"]["actual"]["coverage_status"] == coverage
+        assert allocation["summary"]["actual"]["value"] == 21
+    full = selected(scalar_project(scalar_chart(kind="time-budget"), complete, submitted))
+    assert full["summary"]["meets_expectation"] is True

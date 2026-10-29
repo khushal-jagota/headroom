@@ -27,7 +27,7 @@ def _snapshot(conn: sqlite3.Connection, measure: Measure, day: str, now: int) ->
         "ORDER BY date DESC LIMIT 1",
         (measure.id, day),
     ).fetchone()
-    latest = data._observation(row) if row is not None else None
+    latest = data._observation(row, measure) if row is not None else None
     return ManualMeasureState(
         measure.id,
         measure.definition_revision,
@@ -146,7 +146,8 @@ def write_value(
             "definition_revision,manual_write_id) VALUES(?,?,?,NULL,?,?,?) "
             "ON CONFLICT(measure_id,date) DO UPDATE SET value=excluded.value,run_id=NULL,"
             "observed_at=excluded.observed_at,definition_revision=excluded.definition_revision,"
-            "manual_write_id=excluded.manual_write_id,period_start_date=NULL,period_end_date_exclusive=NULL",
+            "manual_write_id=excluded.manual_write_id,period_start_date=NULL,"
+            "period_end_date_exclusive=NULL,query_start_at=NULL,query_end_at=NULL,limitation=NULL",
             (measure_id, receipt.date, value, now, measure.definition_revision, receipt.request_id),
         )
         conn.execute(

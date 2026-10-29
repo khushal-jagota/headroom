@@ -93,6 +93,24 @@ The context includes the run ID, frozen time, configured outputs, and optional r
 
 A script can declare unavailable history with a null value and `provider_has_no_history` or `provider_has_no_value`. Missing values remain explicit. The system does not fabricate zeroes. Successful collection atomically overwrites each supplied measure/date, including past corrections. It retains other dates. Test runs return candidates without changing retained observations or collection health.
 
+## Scalar coverage facts
+
+A source can add optional `query_start_at`, `query_end_at`, and `limitation` keywords to `record`. Bounds use Unix seconds. The existing positional arguments keep their meaning. These facts describe the returned number, not the time that the run executes.
+
+For each dated subtotal, supply the interval that contributes to that date. Do not repeat a multi-day query's global bounds for every daily result. A provider limitation remains explicit through test receipts, collection, corrections, and reads.
+
+Coverage affects comparison eligibility, not intake acceptance. Partial periods and changed definition revisions remain valid inputs. The system checks finite timestamp representation, interval order, and limitation text. It adds no numeric restrictions.
+
+A period count is complete only when both supplied bounds match its captured local calendar period and no limitation exists. A mismatched interval or explicit limitation means partial coverage. Missing evidence means unknown coverage. The captured timezone defines local day, ISO week, or calendar month boundaries, including daylight-saving changes.
+
+Older period counts keep their numeric values. Their coverage is unknown, and their complete-period verdicts are neutral. Collection time, zero, and a historical date do not establish completeness. A later correction replaces the value and coverage together. Omitted coverage clears prior facts for that corrected date.
+
+Names, units, and revision-only edits do not change coverage. A changed kind, timezone, or period cannot turn an old observation into a newly complete period. Ordinary readings and running totals keep their snapshot comparisons unless an explicit limitation applies. Manual period counts without coverage stay numeric and unknown. Manual controls gain no coverage inputs.
+
+Scalar reads expose `coverage_status` and `coverage_reasons` separately from numeric status. The states are `complete`, `partial`, `unknown`, and `not_applicable`. A partial zero still has numeric status `value`. Direct values and input provenance retain the supplied query facts.
+
+Expressions preserve coverage through evaluated references, arithmetic, fixed dates, selected branches, and explicit daily sums. Partial or unknown inputs do not become complete through arithmetic. Bare constants and elapsed-day expectations need no period evidence. An assembled period count without period evidence remains unknown.
+
 ## Read and assemble numbers
 
 Kinds (`reading`, `running_total`, `period_count`), units, timezone, and period are descriptive metadata. They do not constrain compatible arithmetic or whether values can rise or fall. Definitions can change after collection.

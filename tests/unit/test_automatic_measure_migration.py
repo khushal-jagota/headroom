@@ -11,6 +11,44 @@ from planner.core import db
 from planner.measure_sources.resource_versions import SOURCE_TRIGGERS
 
 
+def test_scalar_coverage_upgrade_adds_no_invented_facts_to_legacy_observations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.measures.contracts import ScalarCoverageStatus
+    from planner.measures.data import read_observations
+
+    shipped = db.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "goal_source_responsibility")
+    with closing(db.connect(str(tmp_path / "before-scalar-coverage.db"))) as conn:
+        db.create_schema(conn)
+        conn.execute("""INSERT INTO measure_sources(id,name,project_id,account,responsible_kind,
+            responsibility_revision,source_revision,created_at,updated_at)
+            VALUES('source','Retained','project_vylo','fixture','chief',1,1,1,1)""")
+        conn.execute("""INSERT INTO measures(id,project_id,name,unit,origin,kind,timezone,period,
+            source_id,definition_revision,created_at,updated_at)
+            VALUES('count','project_vylo','Retained','items','taken','period_count','UTC','day','source',1,1,1)""")
+        conn.execute("""INSERT INTO measure_source_runs(id,source_id,mode,trigger,status,
+            source_revision,script_revision,script_sha256,frozen_at,required_outputs,created_at)
+            VALUES('legacy','source','collection','manual','succeeded',1,1,'script',1,'[]',1)""")
+        conn.execute("""INSERT INTO measure_observations(measure_id,date,value,run_id,observed_at,
+            definition_revision) VALUES('count','2026-10-27',-2.5,'legacy',1,1)""")
+        before = dict(conn.execute("SELECT * FROM measure_observations").fetchone())
+        receipt = dict(conn.execute("SELECT * FROM measure_source_runs").fetchone())
+        conn.commit()
+        shutil.copy(
+            shipped / "versions/scalar_observation_coverage.py",
+            tree / "versions/scalar_observation_coverage.py",
+        )
+        db.create_schema(conn)
+        after = dict(conn.execute("SELECT * FROM measure_observations").fetchone())
+        assert after == {**before, "query_start_at": None, "query_end_at": None, "limitation": None}
+        assert dict(conn.execute("SELECT * FROM measure_source_runs").fetchone()) == receipt
+        observed = read_observations(conn, "count", "2026-10-27", "2026-10-27")[0]
+        assert observed.value == -2.5 and observed.coverage_status is ScalarCoverageStatus.unknown
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 @pytest.mark.parametrize("retain_notice", [True, False])
 def test_automatic_measures_upgrade_preserves_existing_notice_rows(
     tmp_path: Path,

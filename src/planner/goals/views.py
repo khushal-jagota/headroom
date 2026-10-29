@@ -390,7 +390,7 @@ def readings_json(
         projections: dict[str, ChartProjection] = dict(formula_projections)
         projections.update(categories)
         values: list[JsonDict] = []
-        primary_observations: list[tuple[str, float | None]] = []
+        primary_observations: list[MeasureValue] = []
         for identifier, first, last in retained_ranges:
             reading = read_values(
                 conn,
@@ -404,7 +404,7 @@ def readings_json(
             values.extend(asdict(value) for value in reading.values)
             sources.update({source.source_id: asdict(source) for source in reading.sources})
             if goal.primary_chart and goal.primary_chart.get("measure_id") == identifier:
-                primary_observations = [(value.date, value.value) for value in reading.values]
+                primary_observations = list(reading.values)
         known_values = {(value["measure_id"], value["date"]) for value in values}
         for category_projection in categories.values():
             for value in category_projection["measure_values"]:

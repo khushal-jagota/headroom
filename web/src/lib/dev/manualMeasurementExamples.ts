@@ -16,12 +16,14 @@ export function createManualMeasurementExamples() {
   const values: MeasureValue[] = [];
   for (const { block, numbers } of definitions) {
     const measureId = block.measure_id!;
+    const coverage_status = block.manual!.model === 'daily_quota' ? 'unknown' as const : 'not_applicable' as const;
+    const coverage = { query_start_at: null, query_end_at: null, limitation: null, coverage_status, coverage_reasons: coverage_status === 'unknown' ? ['No query coverage is supplied for this manual period count.'] : [] };
     let revision = 0;
     const records = new Map<string, Observation>();
     const receipts = new Map<string, { fingerprint: string; result: ManualWriteResult }>();
     numbers.forEach((value, index) => {
-      values.push({ measure_id: measureId, date: dates[index], definition_revision: 1, status: value === undefined ? 'missing_input' : 'value', value: value ?? null, inputs: [], missing_inputs: [] });
-      if (value !== undefined) records.set(dates[index], { measure_id: measureId, date: dates[index], value, run_id: null, manual_write_id: `sample-${measureId}-${index}`, observed_at: 0, definition_revision: 1, period_interval: null });
+      values.push({ measure_id: measureId, date: dates[index], definition_revision: 1, status: value === undefined ? 'missing_input' : 'value', value: value ?? null, inputs: [], missing_inputs: [], ...coverage });
+      if (value !== undefined) records.set(dates[index], { measure_id: measureId, date: dates[index], value, run_id: null, manual_write_id: `sample-${measureId}-${index}`, observed_at: 0, definition_revision: 1, period_interval: null, ...coverage });
     });
     const state = (date = manualSampleDate): ManualMeasureState => ({ measure_id: measureId, definition_revision: 1, write_revision: revision, timezone: 'Europe/Berlin', current_date: manualSampleDate, date,
       observation: records.get(date) ?? null, latest_observation: [...records.values()].filter(value => value.date <= date).sort((a, b) => b.date.localeCompare(a.date))[0] ?? null });
@@ -38,7 +40,7 @@ export function createManualMeasurementExamples() {
         const value = body.operation === 'replace' ? body.value : base + body.delta;
         if (!Number.isFinite(value)) throw new PlannerFetchError('Enter a finite number.', 'invalid_value');
         revision++;
-        records.set(body.date, { measure_id: measureId, date: body.date, value, run_id: null, manual_write_id: body.request_id, observed_at: Date.now() / 1000, definition_revision: 1, period_interval: null });
+        records.set(body.date, { measure_id: measureId, date: body.date, value, run_id: null, manual_write_id: body.request_id, observed_at: Date.now() / 1000, definition_revision: 1, period_interval: null, ...coverage });
         const result: ManualWriteResult = { receipt: { request_id: body.request_id, measure_id: measureId, actor: { kind: 'owner', id: 'sample-owner' }, payload_fingerprint: fingerprint, date: body.date, value, write_revision: revision, accepted_at: Date.now() / 1000 }, state: state(body.date), replayed: false };
         receipts.set(body.request_id, { fingerprint, result });
         return result;
