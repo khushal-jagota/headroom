@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import type { ChartBlock, MeasureValue, GoalResponse } from '../goals/contracts';
+import type { ChartBlock, MeasureValue, ScalarChartProjection, GoalResponse } from '../goals/contracts';
 import { LineChart, type LineChartDatum, type LineChartSeries } from './components/line-chart-integrated';
 import { AnimatedCounter } from './components/animated-counter';
 import { CompletionReading } from './components/completion-reading';
@@ -14,7 +14,7 @@ import './theme.css';
 
 const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--text-muted)' };
 const C = { green: colors.good, blue: 'var(--accent-bright)', reference: 'var(--chart-reference)' };
-export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean };
+export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ScalarChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean };
 
 export function Range({ value, onChange, id, block }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock }) {
   const reduce = useReducedMotion();
@@ -27,14 +27,14 @@ export function Range({ value, onChange, id, block }: { value: string; onChange:
 
 function Comparison({ block, data, headline, supporting = false }: { block: ChartBlock; data: LineChartDatum[]; headline: ReturnType<typeof chartHeadline>; supporting?: boolean }) {
   const { value, target, label, missingCount } = headline;
-  const text = value === undefined ? supporting ? 'Current reading unavailable' : missingReadingText(data, label) : comparisonText(block, value, target);
-  const tone = block.kind === 'progress' && value !== undefined && target !== undefined && value < target ? C.blue : colors[chartTone(block, value, target)];
+  const text = value === undefined ? supporting ? 'Current reading unavailable' : missingReadingText(data, label) : block.expectation && target === undefined ? 'Expected reading unavailable' : comparisonText(block, value, target, headline.point);
+  const tone = block.kind === 'progress' && value !== undefined && target !== undefined && value < target ? C.blue : colors[chartTone(block, value, target, headline.point)];
   return <div className="comparison" style={{ color: tone }}>{text}
     {block.aggregate === 'sum' && !label && value !== undefined && missingCount > 0 && <span className="partial-reading"> · {missingCount} missing {missingCount === 1 ? 'reading' : 'readings'}</span>}
   </div>;
 }
 
-export function GoalChart({ block, values, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false }: GoalChartProps) {
+export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false }: GoalChartProps) {
   const [preferences, setPreferences] = useState(() => {
     const saved = readChartPreference(preferenceKey);
     return block.ranges?.length && !block.ranges.some(r => r.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved;
@@ -43,9 +43,9 @@ export function GoalChart({ block, values, narrow, preferenceKey, completed = fa
   const setActive = (datum: LineChartDatum | null) => setActiveKey(datum?.key ?? null);
   const root = useRef<HTMLElement>(null), focusInside = useRef(false);
   const compact = small || block.placement === 'supporting', foldable = block.placement === 'supporting' && narrow;
-  const data = useMemo(() => chartData(block, values, preferences.range), [block, values, preferences.range]);
+  const data = useMemo(() => chartData(block, values, preferences.range, projection), [block, values, preferences.range, projection]);
   const authoredSeries = useMemo(() => selectedSeries(block, preferences.range), [block, preferences.range]);
-  const headline = chartHeadline(block, data, activeKey), summary = chartHeadline(block, data);
+  const headline = chartHeadline(block, data, activeKey, projection), summary = chartHeadline(block, data, null, projection);
   const { value, target } = headline;
   const displayBlock = useMemo(() => ({ ...block, target: selectedTarget(block, preferences.range), domain: selectedDomain(block, preferences.range) }), [block, preferences.range]);
   const title = block.title ?? 'Reading';
@@ -71,12 +71,12 @@ export function GoalChart({ block, values, narrow, preferenceKey, completed = fa
   }, [foldable, preferences.expanded]);
 
   const badColor = colors[block.below_target_tone ?? 'bad'];
-  const latestReading = data.at(-1)?.values;
+  const latestReading = block.expectation ? undefined : data.at(-1)?.values;
   const series: LineChartSeries[] = [
-    { key: 'actual', label: authoredSeries[0]?.name ?? 'Current', color: latestReading?.target === undefined ? C.blue : latestReading.actual === undefined ? badColor : colors[chartTone(block, latestReading.actual, latestReading.target)], area: true,
-      compareTo: data.some(d => d.values.target !== undefined) ? 'target' : undefined, higherIsBetter: block.direction !== 'atmost', goodColor: C.green, badColor },
+    { key: 'actual', label: authoredSeries[0]?.name ?? 'Current', color: block.expectation ? colors[chartTone(block, summary.value, summary.target, summary.point)] : latestReading?.target === undefined ? C.blue : latestReading.actual === undefined ? badColor : colors[chartTone(block, latestReading.actual, latestReading.target)], area: true,
+      datedComparisons: !!block.expectation, neutralColor: colors.neutral, compareTo: !block.expectation && data.some(d => d.values.target !== undefined) ? 'target' : undefined, higherIsBetter: block.direction !== 'atmost', goodColor: C.green, badColor },
     ...authoredSeries.slice(1).map((item, index) => ({ key: item.name, label: item.name, area: false, color: seriesColor(item, index + 1) })),
-    ...(data.some(d => d.values.target !== undefined) ? [{ key: 'target', label: block.reference?.length || block.aggregate === 'sum' ? 'Target' : `${formatTrimmedReading(block, displayBlock.target!)} ${block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target')}`, color: C.reference, dashed: true, area: false }] : []),
+    ...(data.some(d => d.values.target !== undefined) ? [{ key: 'target', label: block.expectation ? 'Expected' : block.reference?.length || block.aggregate === 'sum' ? 'Target' : `${formatTrimmedReading(block, displayBlock.target!)} ${block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target')}`, color: C.reference, dashed: true, area: false, curve: block.expectation ? 'linear' as const : undefined }] : []),
   ];
   const counter = (number: number | undefined) => number === undefined ? <span className="missing-value">—</span> : <AnimatedCounter value={number} prefix={block.format?.prefix} suffix={block.format?.suffix ?? block.unit} decimals={block.format?.decimals ?? 0} />;
   const range = <Range value={preferences.range} onChange={range => preference({ range })} id={preferenceKey} block={block} />;
