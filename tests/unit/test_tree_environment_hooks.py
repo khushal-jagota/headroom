@@ -27,6 +27,7 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
         source_tree / "scripts/tree_environment.py", tree / "scripts/tree_environment.py"
     )
     shutil.copyfile(source_tree / "tests/conftest.py", tree / "tests/conftest.py")
+    shutil.copytree(source_tree / "scripts/development_safety", tree / "scripts/development_safety")
 
     shutil.copytree(
         source_tree / "tests/support/skill_tree_protection",
@@ -46,7 +47,6 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
             sys.executable,
             "-m",
             "venv",
-            "--system-site-packages",
             "--without-pip",
             str(tree / ".venv"),
         ],
@@ -126,6 +126,36 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
     assert healthy_mypy.returncode == 1, healthy_mypy.stdout + healthy_mypy.stderr
     assert "[assignment]" in healthy_mypy.stdout
     assert not imported.exists()
+
+    # Safe storage remains intact while the recorded creation identity becomes foreign.
+    config = tree / ".venv/pyvenv.cfg"
+    original_config = config.read_text()
+    foreign = tmp_path / "foreign tree/.venv"
+    config.write_text(
+        "\n".join(
+            f"command = /usr/bin/python3 -m venv {foreign}"
+            if line.startswith("command =")
+            else line
+            for line in original_config.splitlines()
+        )
+        + "\n"
+    )
+    try:
+        for tool in ("pytest", "mypy"):
+            refused = run_tool(tool)
+            output = refused.stdout + refused.stderr
+            assert refused.returncode == (4 if tool == "pytest" else 2), output
+            assert "this environment does not belong to" in output
+            assert "records creation at" in output
+            assert str(foreign) in output
+            assert "dependency drift" not in output
+            assert "shared deployment storage detected" not in output
+            assert "cannot establish dependency safety" not in output
+            assert "[assignment]" not in output
+            assert not imported.exists(), output
+            assert not collected.exists(), output
+    finally:
+        config.write_text(original_config)
 
     # A repository pin bump deliberately makes the unchanged environment stale.
     requirements = tree / "requirements.txt"

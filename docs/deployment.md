@@ -85,10 +85,10 @@ and shell backgrounding do not leave that cgroup. Owner adoption uses a separate
 `panels-adoption-<run>-<attempt>` user unit, so stopping Panels cannot kill its installer.
 
 Development worktrees must never link dependencies into the deployed application.
+Development and verification run in independent worktrees, never in the installed tree.
 Matching lockfiles do not make a shared directory safe: test and build tools write
 caches into `node_modules`, invalidating the deployed app's integrity proof. Use a
-development-owned dependency tree. Automated refusal across npm and Python entry
-points remains follow-up work.
+development-owned dependency tree. Use the guarded development commands below.
 
 The operator establishes the filesystem layout, units, runner, and private route
 before adoption. The workflow does not provision the host or change Tailscale Serve.
@@ -284,6 +284,81 @@ warning, admission rules, and visible failure records.
 Code paths: `src/planner/environments/`, `src/planner/conversation/`.
 
 ## Pull request checks and operator authority
+
+### Development dependency safety
+
+Run setup from a new worktree with Python 3.12 or newer and Node 22 available:
+
+```sh
+scripts/dev setup
+scripts/dev npm --prefix web ci
+scripts/dev npm --prefix agent_backends ci
+scripts/dev npm --prefix web run check
+scripts/dev pytest tests/unit/test_instrument.py
+scripts/dev mypy scripts/tree_environment.py
+scripts/dev python -m pytest tests/unit/test_instrument.py
+scripts/dev .venv/bin/pytest tests/unit/test_instrument.py
+```
+
+The launcher checks dependency storage before npm, pytest, or mypy starts.
+Setup requires absent `.venv` and package dependency directories. It refuses existing
+destinations without deleting them. It installs the pinned requirements, an editable
+Python package, and both Node dependency trees.
+Supported npm commands cover install, ci, and registered scripts for `web/` and
+`agent_backends/`. Python commands use the worktree's virtualenv. Console and
+`python -m` forms receive the same check. Setup creates independent dependencies
+and uses a path-only editable Python installation.
+
+The check compares resolved paths, filesystem identities, and Linux mount mappings.
+It examines nested links and Python package paths. The normal protected root comes
+from the account home and `Deployments/Panels/current`. Explicit deployment context
+adds protected roots. It never replaces that normal root.
+
+A refusal distinguishes detected sharing from unavailable safety evidence.
+It names the command, examined path, resolved path, protected path, and signal.
+Mount evidence includes the device, mount point, and backing path. Missing evidence
+includes the operation that failed and its reason. Preserve this diagnostic for repair.
+
+If storage sharing is real, create a fresh worktree and run `scripts/dev setup` there.
+Preserve the suspect dependencies until their links or mounts receive deliberate repair.
+Never delete dependencies through an unresolved link or mount.
+
+If independent dependencies receive a false refusal, fix the detector and add a
+regression check. Do not restructure valid dependencies around the detector error.
+If evidence is unavailable, restore it or fix its acquisition before retry.
+No flag, environment variable, or approval disables these checks.
+
+Every web script also checks before its dependency executable starts. Native pytest
+and mypy hooks check before existing environment identity and dependency-pin checks.
+Those hooks run after the tool starts, so they cannot replace the launcher's earlier check.
+Ruff and arbitrary direct Python or Node commands remain outside this coverage.
+
+Direct commands outside guarded entry points can still use shared dependencies and
+write into the deployed application. General prevention remains uncommissioned.
+No other Ticket closes that gap. Startup checks do not provide race-free filesystem
+containment or containment of arbitrary startup code. They do not contain a process
+that is already running and cannot prevent a write after the check.
+General cache writes, Ruff, and other direct tools remain uncommissioned gaps.
+
+The artifact digest detects damage after a write. It does not prevent the write.
+These checks do not add cache exclusions or change the digest rules.
+If a write reaches the installed tree, report it and leave it in place.
+Do not clean the installed tree to make an installation proceed. Preserve the evidence.
+
+The currently installed release contains no enforcement of these checks. Review or
+merge is not installed enforcement. No production operation forms part of this work.
+The separate installer pull request is neither a prerequisite nor acceptance evidence.
+
+The focused dependency safety workflow checks the proposed merge on an `ubuntu-24.04`
+hosted runner. It records environment evidence, admits independent dependencies, and
+checks refusal with disposable aliases, including a real bind mount. An unavailable
+mount namespace fails that proof. Host evidence and hosted evidence remain separate.
+Neither result proves installed enforcement. The check starts no browser or server.
+
+Code paths: `scripts/dev`, `scripts/development_safety/`,
+`.github/workflows/dependency-safety.yml`.
+
+### Release checks
 
 The separate pull request workflow checks the complete proposed merge tree with mypy.
 It does not replace publication checks. Focused local checks still follow each change.
