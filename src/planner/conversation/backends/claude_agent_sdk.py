@@ -67,7 +67,7 @@ import warnings
 from base64 import b64encode
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
@@ -129,6 +129,7 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
     current_emission_check,
     current_user_emission_requirement,
+    user_emission_requirement_scope,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
@@ -1163,13 +1164,34 @@ class ClaudeAgentSdkBackendChild:
             )
         client.watch_user_message(user_message_uuid)
         turn.owned_steer_uuids.add(user_message_uuid)
+        requirement = current_user_emission_requirement()
+
+        def check_running_steer(receipt: BackendUserEmissionReceipt) -> None:
+            # Metadata awaits let the reader finish or cancel the captured turn.
+            # Recheck the actual adapter under the final user-frame write lock.
+            if (self._turn is not turn or turn.cancel_requested
+                    or self._client is not client or self._wire_broken):
+                raise AdmissionRefused("model verification steer target changed")
+            assert requirement is not None
+            requirement.check(receipt)
+
         try:
-            await client.query(asked)
+            if requirement is None:
+                await client.query(asked)
+            else:
+                with user_emission_requirement_scope(
+                    replace(requirement, check=check_running_steer)
+                ):
+                    await client.query(asked)
         except AdmissionRefused:
             turn.owned_steer_uuids.discard(user_message_uuid)
             if isinstance(client, _ObservedClaudeSdkClient):
                 client.forget_user_message(user_message_uuid)
-            return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+                if self._turn is not turn or turn.cancel_requested
+                else PromptDeliveryRefusalReason.write_to_backend_failed
+            )
         except Exception:
             # The command can have crossed the process boundary before this failure. Keep
             # its ownership on the turn so Claude's later receipt for it remains captured.

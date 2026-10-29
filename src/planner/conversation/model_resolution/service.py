@@ -7,6 +7,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import replace
+from typing import cast
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import ConversationBackendKey
@@ -14,6 +15,7 @@ from planner.conversation.model_resolution.config import CATALOGUE_COLD_START_TI
 from planner.conversation.model_resolution.contracts import (
     AliasResolutionFact,
     CanonicalModelValidation,
+    CatalogContextFinalizer,
     CatalogObservation,
     CatalogUnavailable,
     CatalogWorkspaceBinding,
@@ -186,7 +188,9 @@ class ModelResolutionService:
             after = await capture()
             verify_basis = getattr(source, "verify_observation_basis", None)
             basis_valid = (
-                verify_basis(context, after, result, attempt_id=attempt_id)
+                cast(CatalogContextFinalizer, source).verify_observation_basis(
+                    context, after, result, attempt_id=attempt_id
+                )
                 if callable(verify_basis)
                 else after == context == result.evidence.context
             )

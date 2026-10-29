@@ -18,7 +18,10 @@ from tests.unit.test_current_model_resolution import (
 
 from planner.conversation.backends.contracts import (
     AdmissionRefused,
+    BackendSteerOutcome,
     BackendUserEmissionReceipt,
+    TurnToken,
+    UserEmissionRequirement,
     current_user_emission_requirement,
 )
 from planner.conversation.contracts import (
@@ -29,7 +32,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     WorkspacePathPolicy,
 )
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.model_resolution.contracts import (
     CatalogWorkspaceBinding,
     SelectionKind,
@@ -72,9 +75,16 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
     harness.system.configure_destination_validation(source)
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
     original_steer = _FakeBackendChild.steer
-    requirements = []
+    requirements: list[UserEmissionRequirement] = []
 
-    async def guarded_steer(self: _FakeBackendChild, *args: object, **kwargs: object):
+    async def guarded_steer(
+        self: _FakeBackendChild,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
+    ) -> BackendSteerOutcome:
         requirement = current_user_emission_requirement()
         assert requirement is not None
         requirements.append(requirement)
@@ -94,7 +104,9 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
         requirement.check(receipt)
         if reject_final:
             raise AdmissionRefused("known refusal before user bytes")
-        return await original_steer(self, *args, **kwargs)
+        return await original_steer(
+            self, turn_token, content, sender_content=sender_content, sender_label=sender_label
+        )
 
     monkeypatch.setattr(_FakeBackendChild, "steer", guarded_steer)
 
@@ -133,6 +145,7 @@ def test_steer_uses_running_intent_and_preserves_prewrite_refusal(
             assert state is not None and state.running_turn is not None
             basis = state.running_turn.launch_validation
             assert basis is not None and basis.selection.submitted_token == "haiku"
+            assert basis.evidence is not None
             # This later authored choice belongs to the next turn, not to the steer.
             conn.execute(
                 "UPDATE tickets SET employee_launch_model='sonnet' WHERE id=?", (ticket.id,)

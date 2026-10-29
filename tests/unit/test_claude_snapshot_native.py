@@ -1,8 +1,10 @@
 """Native command composition reaches the real SDK adapter and private scope receipt."""
 
 import asyncio
+import json
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -15,6 +17,7 @@ from tests.unit.test_executor_native_runtime import (
 )
 
 from planner.conversation.backends.claude_agent_sdk import (
+    ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
     ClaudeAgentSdkChildLaunch,
     _ClaudeProtocolTransport,
@@ -45,8 +48,9 @@ from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
 
 
+@pytest.mark.parametrize("failure", ["scope", "ended", "cancel"])
 def test_native_command_reaches_exact_child_scope_guard_without_provider(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
@@ -155,9 +159,34 @@ def test_native_command_reaches_exact_child_scope_guard_without_provider(
                 await registry.execute_command(bad_turn)
             ).disposition is CommandDisposition.refused
             assert len([f for f in actual[0].frames if f["type"] == "user"]) == 1
-            # The same child now reports a different source snapshot. The native gate
-            # must carry the requirement to its actual SDK writer and refuse no bytes.
-            actual[0].settings["effective"]["model"] = "changed-policy"
+            # Inject drift after the steer starts its asynchronous metadata read.
+            # Native command binding alone cannot see the provider turn end or cancel.
+            if failure == "scope":
+                actual[0].settings["effective"]["model"] = "changed-policy"
+            else:
+                backend = cast(
+                    ClaudeAgentSdkBackendChild, registry.children[reference.child_id].native
+                )
+                original_send = actual[0].send
+                changed = False
+
+                async def interrupt_during_sample(data: str) -> None:
+                    nonlocal changed
+                    frame = json.loads(data)
+                    if (
+                        not changed
+                        and frame.get("type") == "control_request"
+                        and frame["request"]["subtype"] == "get_settings"
+                    ):
+                        changed = True
+                        if failure == "ended":
+                            backend._turn = None
+                        else:
+                            assert backend._turn is not None
+                            backend._turn.cancel_requested = True
+                    await original_send(data)
+
+                monkeypatch.setattr(actual[0], "send", interrupt_during_sample)
             steer = ChildCommand(
                 "steer",
                 reference,

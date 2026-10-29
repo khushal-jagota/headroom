@@ -424,17 +424,6 @@ class ProviderCatalogObserver(Protocol):
         self, backend_key: ConversationBackendKey, *, workspace: CatalogWorkspaceBinding
     ) -> LaunchContext: ...
 
-    def verify_observation_basis(
-        self,
-        before: LaunchContext,
-        after: LaunchContext,
-        observation: CatalogObservation,
-        *,
-        attempt_id: str,
-    ) -> bool:
-        """Validate a destination-owned finalization against stable input captures."""
-        ...
-
     async def observe(
         self,
         backend_key: ConversationBackendKey,
@@ -443,3 +432,20 @@ class ProviderCatalogObserver(Protocol):
         attempt_id: str,
         deadline: float,
     ) -> CatalogResult: ...
+
+
+class CatalogContextFinalizer(Protocol):
+    """Optional observer extension for destination-owned context finalization.
+
+    Observers without this extension retain exact context equality. Input-only
+    Claude captures cannot become observed scopes through that fallback.
+    """
+
+    def verify_observation_basis(
+        self,
+        before: LaunchContext,
+        after: LaunchContext,
+        observation: CatalogObservation,
+        *,
+        attempt_id: str,
+    ) -> bool: ...
