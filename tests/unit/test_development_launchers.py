@@ -253,7 +253,7 @@ def test_setup_pip_cannot_inherit_install_destination_redirects(
     def run(command: list[str], *, cwd: Path, env: dict[str, str], check: bool) -> None:
         children.append((command, env))
 
-    monkeypatch.setattr(launcher.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
     assert (
         launcher.setup(
             tree,
