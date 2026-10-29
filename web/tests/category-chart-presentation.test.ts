@@ -199,3 +199,19 @@ describe('category chart projection adapters', () => {
     expect(chartTone(budget, 7, 10, undefined, partial)).toBe('neutral');
   });
 });
+
+it('keeps unknown scalar category comparisons distinct from partial totals in all indicator readouts', () => {
+  const unknown: CategoryChartValue = { ...reading(7), coverage_status: 'unknown', reasons: ['The scalar period lacks query bounds.'] };
+  const uncertain = summary(unknown, reading(5), 2, null, '2026-10-29');
+  const source = projection({ ...dateRange, summary: uncertain, point_summaries: [{ key: '2026-10-29', summary: uncertain }] });
+  expect(chartTone(chart, 7, 5, undefined, uncertain)).toBe('neutral');
+  expect(comparisonText(chart, 7, 5, undefined, uncertain)).toBe('Difference (coverage unavailable): 2.00');
+  const headline = chartHeadline(chart, chartData(chart, [], 'all', source), null, source);
+  expect(headline).toMatchObject({ value: 7, target: 5, coverage_status: 'unknown' });
+  for (const kind of ['progress', 'time-budget', 'gauge'] as const) {
+    const markup = renderToStaticMarkup(createElement(GoalChart, { block: { ...chart, kind }, values: [], projection: source, narrow: false, preferenceKey: `unknown-${kind}` }));
+    expect(markup).toContain('Coverage unavailable');
+    expect(markup).not.toContain('var(--accent-done)');
+    expect(markup).not.toContain('On target');
+  }
+});

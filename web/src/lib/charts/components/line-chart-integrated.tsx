@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, us
 import { AnimatePresence, animate, motion, useInView, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring, useTransform, type MotionValue } from "motion/react";
 import { motionTokens } from "../lib/chart-motion";
 import { segmentedCurve, valueAt, morphShape, comparisonAt, type Point } from "../lib/line-geometry";
+import type { MeasureValue } from "../../goals/contracts";
 import styles from "./line-chart.module.css";
 
 export interface LineChartSeries {
@@ -39,6 +40,9 @@ export interface LineChartDatum {
   values: Record<string, number | undefined>;
   breakBefore?: Record<string, boolean>;
   comparisons?: Record<string, boolean | null>;
+  observation?: MeasureValue;
+  coverage_status?: MeasureValue["coverage_status"];
+  coverage_reasons?: MeasureValue["coverage_reasons"];
 }
 
 /** Use a line chart for one or more measures over time, when the shape of the trend matters more than any single value. */

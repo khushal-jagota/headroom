@@ -11,6 +11,7 @@ from planner.measures.contracts import (
     FormulaExpression,
     MeasureReadStatus,
     MeasureValue,
+    ScalarCoverageStatus,
     SourceHealthSummary,
 )
 
@@ -277,6 +278,33 @@ class PageDocument(TypedDict):
     blocks: list[Block]
 
 
+# Creation supplies defaults for every other field. The writer checks these
+# required strings in this order; schemas reuse the same operation metadata.
+GOAL_CREATE_REQUIRED = ("title", "project_id")
+
+
+class GoalWriteFields(TypedDict, total=False):
+    project_id: str
+    title: str
+    why: str
+    kind: GoalKind
+    active: bool
+    completed: bool
+    primary_checklist_block_id: str | None
+    deadline: str | None
+    primary_chart: ChartBlock | None
+    page: PageDocument
+
+
+class GoalCreateBody(GoalWriteFields, total=False):
+    # The existing create writer accepts and ignores this compatibility field.
+    expected_revision: object
+
+
+class GoalEditBody(GoalWriteFields):
+    expected_revision: int
+
+
 @dataclass(frozen=True, slots=True)
 class Goal:
     id: str
@@ -356,6 +384,7 @@ class CategoryChartValue(TypedDict):
     partial: bool
     missing_dates: list[str]
     reasons: list[str]
+    coverage_status: NotRequired[ScalarCoverageStatus]
 
 
 class CategoryChartSummary(TypedDict):

@@ -5,7 +5,7 @@ import { manualAcceptedValue, manualConflictState, manualStateCanReplace, parseM
 
 const observation = (date: string, value: number): Observation => ({
   measure_id: 'manual', date, value, run_id: null, manual_write_id: 'accepted-request',
-  observed_at: 0, definition_revision: 1, period_interval: null,
+  observed_at: 0, definition_revision: 1, period_interval: null, query_start_at: null, query_end_at: null, limitation: null, coverage_status: 'not_applicable', coverage_reasons: [],
 });
 const state: ManualMeasureState = {
   measure_id: 'manual', definition_revision: 1, write_revision: 4, timezone: 'Europe/Berlin',
@@ -40,4 +40,16 @@ describe('manual measurement editing boundary', () => {
     expect(manualConflictState({ status: 409, detail: { state } })).toBeUndefined();
     expect(manualConflictState(new PlannerFetchError('Changed', 'manual_conflict', { status: 409, detail: null }))).toBeUndefined();
   });
+});
+
+import {createManualMeasurementExamples} from '../src/lib/dev/manualMeasurementExamples';
+import {chartData} from '../src/lib/charts/presentation';
+it('keeps accepted manual daily samples unknown while ordinary snapshots retain comparisons',async()=>{
+ const examples=createManualMeasurementExamples();
+ const daily=examples.definitions[0].block,reading=examples.definitions[2].block;
+ const adapter=examples.adapters.get(daily.measure_id!)!;
+ const next=await adapter.write({request_id:'manual-coverage',date:'2026-10-28',expected_definition_revision:1,expected_write_revision:0,basis:'date',operation:'replace',value:30});
+ expect(next.state.observation).toMatchObject({value:30,query_start_at:null,query_end_at:null,limitation:null,coverage_status:'unknown'});
+ expect(chartData(daily,examples.values,'all').at(-1)?.comparisons?.actual).toBeNull();
+ expect(chartData(reading,examples.values,'all').at(-1)?.coverage_status).toBe('not_applicable');
 });

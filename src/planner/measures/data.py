@@ -22,6 +22,7 @@ from planner.measures.contracts import (
     OutputMeasure,
     PeriodInterval,
 )
+from planner.measures.logic.coverage import observation_coverage, validate_coverage
 from planner.measures.logic.dates import (
     calendar_date,
     invalid,
@@ -130,11 +131,21 @@ def read_source_outputs(conn: sqlite3.Connection, source_id: str) -> tuple[Measu
     return rows
 
 
-def _observation(row: sqlite3.Row) -> Observation:
+def _observation(
+    row: sqlite3.Row, measure: Measure, captured: OutputMeasure | None = None
+) -> Observation:
     interval = (
         None
         if row["period_start_date"] is None
         else PeriodInterval(row["period_start_date"], row["period_end_date_exclusive"])
+    )
+    coverage_status, coverage_reasons = observation_coverage(
+        measure,
+        captured,
+        row["date"],
+        row["query_start_at"],
+        row["query_end_at"],
+        row["limitation"],
     )
     return Observation(
         row["measure_id"],
@@ -145,6 +156,40 @@ def _observation(row: sqlite3.Row) -> Observation:
         int(row["definition_revision"]),
         interval,
         row["manual_write_id"],
+        row["query_start_at"],
+        row["query_end_at"],
+        row["limitation"],
+        coverage_status,
+        coverage_reasons,
+    )
+
+
+def _hydrate_observations(
+    conn: sqlite3.Connection,
+    rows: tuple[sqlite3.Row, ...],
+    definitions: dict[str, Measure] | None = None,
+) -> tuple[Observation, ...]:
+    # The receipt is the captured definition. Load it once per batch, not per date.
+    from planner.measure_sources.records import decode_outputs
+
+    current = dict(definitions or {})
+    for identifier in {str(row["measure_id"]) for row in rows} - current.keys():
+        current[identifier] = read_measure(conn, identifier)
+    run_ids = sorted({str(row["run_id"]) for row in rows if row["run_id"] is not None})
+    captured: dict[tuple[str, str], OutputMeasure] = {}
+    for start in range(0, len(run_ids), limits.SQL_IN_CHUNK):
+        chunk = run_ids[start : start + limits.SQL_IN_CHUNK]
+        marks = ",".join("?" for _ in chunk)
+        for run in conn.execute(
+            f"SELECT id,required_outputs FROM measure_source_runs WHERE id IN ({marks})", chunk
+        ):
+            for output in decode_outputs(run["required_outputs"]):
+                captured[(run["id"], output.measure_id)] = output
+    return tuple(
+        _observation(
+            row, current[row["measure_id"]], captured.get((row["run_id"], row["measure_id"]))
+        )
+        for row in rows
     )
 
 
@@ -158,8 +203,8 @@ def latest_observations(
             (identifier,),
         ).fetchone()
         if row is not None:
-            result.append(_observation(row))
-    return tuple(result)
+            result.append(row)
+    return _hydrate_observations(conn, tuple(result))
 
 
 def read_observations(
@@ -172,13 +217,13 @@ def read_observations(
         "date<=? ORDER BY date",
         (measure_id, first_date, last_date),
     )
-    return tuple(_observation(row) for row in rows)
+    return _hydrate_observations(conn, tuple(rows))
 
 
 def read_demanded(
     conn: sqlite3.Connection, pairs: set[MeasureDate], definitions: dict[str, Measure]
 ) -> dict[MeasureDate, Observation]:
-    result: dict[MeasureDate, Observation] = {}
+    selected: list[sqlite3.Row] = []
     for identifier, measure in definitions.items():
         if measure.origin is MeasureOrigin.assembled:
             continue
@@ -190,10 +235,11 @@ def read_demanded(
                 f"SELECT * FROM measure_observations WHERE measure_id=? AND date IN ({marks})",
                 (identifier, *chunk),
             )
-            for row in rows:
-                observation = _observation(row)
-                result[MeasureDate(identifier, observation.date)] = observation
-    return result
+            selected.extend(rows)
+    return {
+        MeasureDate(item.measure_id, item.date): item
+        for item in _hydrate_observations(conn, tuple(selected), definitions)
+    }
 
 
 def read_definitions(
@@ -270,6 +316,7 @@ def validate_batch(
             raise invalid("duplicate or foreign source output")
         seen.add(pair)
         calendar_date(candidate.date)
+        validate_coverage(candidate.query_start_at, candidate.query_end_at, candidate.limitation)
         if candidate.value is None:
             if not isinstance(candidate.unavailable_reason, HistoricalUnavailableReason):
                 raise invalid("missing output requires a reason")
@@ -322,12 +369,15 @@ def commit_observations(
         output = by_id[candidate.measure_id]
         conn.execute(
             "INSERT INTO measure_observations(measure_id,date,value,run_id,observed_at,"
-            "definition_revision,period_start_date,period_end_date_exclusive) VALUES(?,?,"
-            "?,?,?,?,?,?) ON CONFLICT(measure_id,date) DO UPDATE SET value=excluded.value,"
+            "definition_revision,period_start_date,period_end_date_exclusive,query_start_at,"
+            "query_end_at,limitation) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(measure_id,date) DO UPDATE SET value=excluded.value,"
             "run_id=excluded.run_id,manual_write_id=NULL,observed_at=excluded.observed_at,"
             "definition_revision=excluded.definition_revision,"
             "period_start_date=excluded.period_start_date,"
-            "period_end_date_exclusive=excluded.period_end_date_exclusive",
+            "period_end_date_exclusive=excluded.period_end_date_exclusive,"
+            "query_start_at=excluded.query_start_at,query_end_at=excluded.query_end_at,"
+            "limitation=excluded.limitation",
             (
                 candidate.measure_id,
                 candidate.date,
@@ -337,6 +387,9 @@ def commit_observations(
                 output.definition_revision,
                 None,
                 None,
+                candidate.query_start_at,
+                candidate.query_end_at,
+                candidate.limitation,
             ),
         )
         conn.execute(

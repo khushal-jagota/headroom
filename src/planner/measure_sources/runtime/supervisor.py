@@ -39,6 +39,8 @@ from planner.measure_sources.logic.protocol import (
     string,
 )
 from planner.measures.contracts import CandidateObservation, HistoricalUnavailableReason
+from planner.measures.logic.coverage import validate_coverage
+from planner.measures.logic.formulas import number
 
 
 class Runtime:
@@ -252,7 +254,7 @@ class _Execution:
         elif op == "record":
             try:
                 self.observations.append(_candidate(data))
-            except (ValueError, OverflowError, Refusal):
+            except (ValueError, OverflowError, Refusal, PlannerError):
                 self.pending.extend(encode({"failure": "invalid_output"}))
             else:
                 self.pending.extend(encode({"value": None}))
@@ -276,7 +278,21 @@ def _candidate(data: Mapping[str, object]) -> CandidateObservation:
     reason = HistoricalUnavailableReason(string(raw_reason)) if raw_reason is not None else None
     if (value is None) != (reason is not None):
         raise ValueError
-    return CandidateObservation(string(data.get("measure_id")), date_value, value, reason)
+    start, end, limitation = (
+        data.get("query_start_at"),
+        data.get("query_end_at"),
+        data.get("limitation"),
+    )
+    validate_coverage(start, end, limitation)
+    return CandidateObservation(
+        string(data.get("measure_id")),
+        date_value,
+        value,
+        reason,
+        number(start) if start is not None else None,
+        number(end) if end is not None else None,
+        string(limitation) if limitation is not None else None,
+    )
 
 
 def _cleanup(process: subprocess.Popen[bytes]) -> None:

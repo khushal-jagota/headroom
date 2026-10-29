@@ -16,6 +16,7 @@ from planner.core.contracts import (
 )
 from planner.measure_sources.actions import create_source
 from planner.measure_sources.contracts import SourceCreate, SourceScope
+from planner.measure_sources.records import decode_candidates, encode_outputs
 from planner.measures import actions, data
 from planner.measures.contracts import (
     BinaryExpression,
@@ -32,6 +33,9 @@ from planner.measures.contracts import (
     ReadMeasuresBody,
     ReferenceExpression,
     UpdateMeasureBody,
+)
+from planner.measures.contracts import (
+    ScalarCoverageStatus as Coverage,
 )
 
 NOW = int(datetime(2026, 10, 27, 12, tzinfo=UTC).timestamp())
@@ -322,6 +326,95 @@ def test_metadata_edits_and_large_history_reads_do_not_police_numbers(tmp_db: Co
     assert result.sources[0].source_id == identifier
     with pytest.raises(PlannerError, match="retained"):
         actions.delete_measure(tmp_db, measure.id, principal=OWNER_PRINCIPAL, now=NOW)
+
+
+def test_scalar_coverage_round_trip_correction_and_captured_definition(tmp_db: Connection) -> None:
+    identifier = source(tmp_db)
+    measure = taken(tmp_db, identifier, kind=MeasureKind.period_count, period=CountPeriod.day)
+    run(tmp_db, identifier)
+    tmp_db.execute(
+        "UPDATE measure_source_runs SET required_outputs=? WHERE id='run'",
+        (encode_outputs(data.prepare_outputs(tmp_db, identifier, frozen_at=NOW)),),
+    )
+    tmp_db.commit()
+    # The captured Berlin day begins at 23:00 UTC. The second observation is clipped.
+    start = datetime(2026, 10, 26, 23, tzinfo=UTC).timestamp()
+    collect(
+        tmp_db,
+        identifier,
+        (
+            CandidateObservation(
+                measure.id, "2026-10-27", 0, query_start_at=start, query_end_at=start + 86400
+            ),
+            CandidateObservation(
+                measure.id,
+                "2026-10-28",
+                -2.5,
+                query_start_at=start + 86401,
+                query_end_at=start + 172800,
+                limitation="First second omitted",
+            ),
+        ),
+    )
+    queries: list[str] = []
+    tmp_db.set_trace_callback(queries.append)
+    observations = data.read_observations(tmp_db, measure.id, "2026-10-27", "2026-10-28")
+    tmp_db.set_trace_callback(None)
+    assert (
+        len(
+            [
+                query
+                for query in queries
+                if "SELECT id,required_outputs FROM measure_source_runs" in query
+            ]
+        )
+        == 1
+    )
+    assert observations[0].value == 0 and observations[0].coverage_status is Coverage.complete
+    assert observations[1].value == -2.5 and observations[1].coverage_status is Coverage.partial
+    assert observations[1].limitation == "First second omitted"
+    request = ReadMeasuresBody(
+        measure_ids=[measure.id], first_date="2026-10-27", last_date="2026-10-27"
+    )
+    value = actions.read_values(tmp_db, request, now=NOW).values[0]
+    assert (value.query_start_at, value.query_end_at, value.coverage_status) == (
+        start,
+        start + 86400,
+        Coverage.complete,
+    )
+    actions.update_measure(
+        tmp_db,
+        measure.id,
+        UpdateMeasureBody(expected_revision=1, name="Renamed"),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    assert (
+        actions.read_values(tmp_db, request, now=NOW).values[0].coverage_status is Coverage.complete
+    )
+    actions.update_measure(
+        tmp_db,
+        measure.id,
+        UpdateMeasureBody(expected_revision=2, period=CountPeriod.week),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    assert (
+        actions.read_values(tmp_db, request, now=NOW).values[0].coverage_status is Coverage.unknown
+    )
+    assert data.latest_observations(tmp_db, (measure.id,))[0].coverage_status is Coverage.partial
+    # Corrections without facts cannot inherit facts from the old number.
+    collect(tmp_db, identifier, (CandidateObservation(measure.id, "2026-10-27", 3.5),))
+    corrected = actions.read_values(tmp_db, request, now=NOW).values[0]
+    assert corrected.value == 3.5
+    assert corrected.query_start_at is None and corrected.query_end_at is None
+    assert corrected.limitation is None
+    assert corrected.coverage_status is Coverage.unknown
+    assert data.latest_observations(tmp_db, (measure.id,))[0].value == -2.5
+    legacy = decode_candidates(
+        '[{"measure_id":"legacy","date":"2026-10-27","value":0,"unavailable_reason":null}]'
+    )
+    assert legacy == (CandidateObservation("legacy", "2026-10-27", 0),)
 
 
 def test_assigned_worker_can_manage_taken_definitions(

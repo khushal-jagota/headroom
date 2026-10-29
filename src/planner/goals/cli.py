@@ -9,7 +9,8 @@ import click
 
 from planner.cli import http
 from planner.cli.artifact_io import read_artifact_source
-from planner.cli.measure_io import json_option, stdin_object
+from planner.cli.measure_io import emit, json_option, stdin_object
+from planner.goals.guidance import CREATE, EDIT, PRIMARY_CHART
 
 
 def _emit_goal_response(data: Any, as_json: bool) -> NoReturn:
@@ -19,7 +20,16 @@ def _emit_goal_response(data: Any, as_json: bool) -> NoReturn:
 
 @click.group("goal")
 def goal() -> None:
-    """Read and edit goals, their pages, and their existing measure results."""
+    """Read and edit goals. See goal schema create|edit|primary-chart for request contracts."""
+
+
+@goal.command("schema")
+@click.argument("operation", type=click.Choice(["create", "edit", "primary-chart"]))
+@json_option
+def request_schema(operation: str, as_json: bool) -> None:
+    """Show request schema, named examples and notes; no stdin or server needed."""
+    guidance = {"create": CREATE, "edit": EDIT, "primary-chart": PRIMARY_CHART}[operation]
+    emit(guidance.reference(), as_json)
 
 
 @goal.command("list")
@@ -47,7 +57,7 @@ def show_goal(goal_id: str, as_json: bool) -> None:
 @goal.command("create")
 @json_option
 def create_goal(as_json: bool) -> None:
-    """Read the goal JSON from stdin."""
+    """Read JSON from stdin. See goal schema create --json for fields and defaults."""
     _emit_goal_response(
         http.send("POST", "/api/goals", json_body=stdin_object(as_json), as_json=as_json), as_json
     )
@@ -57,7 +67,7 @@ def create_goal(as_json: bool) -> None:
 @click.argument("goal_id")
 @json_option
 def edit_goal(goal_id: str, as_json: bool) -> None:
-    """Read changed facts/page and expected_revision from stdin."""
+    """Read changes and expected_revision from stdin. See goal schema edit --json."""
     _emit_goal_response(
         http.send(
             "PATCH",

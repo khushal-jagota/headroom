@@ -16,6 +16,18 @@ The goal agent uses the same conversation system as Tickets. The first message s
 
 `panels goal list` and `show` read saved goals. `create` and `edit` accept JSON on stdin. `edit` needs `expected_revision`. `read` returns the existing bound measure values, with optional `--first-date` and `--last-date`. The HTTP routes are `/api/goals`, `/api/goals/{id}`, and `/api/goals/{id}/readings`.
 
+Before a write, inspect the accepted request through these read-only commands:
+
+```sh
+panels goal schema create --json
+panels goal schema edit --json
+panels goal schema primary-chart --json
+```
+
+Each command returns `schema`, `examples`, and `notes` without stdin or a server request. Replace example identifiers with saved record IDs. CLI help and goal agent startup guidance point to these commands. OpenAPI describes the same create and edit requests from the shared contract reference. [Project measures](measures.md) describes the source and measure discovery route.
+
+_Code paths:_ `src/planner/goals/`, `src/planner/core/request_guidance.py`, and `src/planner/runtime/logic/conversation_start_resolution.py`.
+
 ## Completion displays
 
 Effective completion comes from the selected display's saved input. Panels derives it when it reads a goal. It does not save another completion flag. A binary display uses its saved checked input. A quantitative goal keeps its chart and uses that binary input for completion.
@@ -77,6 +89,12 @@ Authored charts can sum the known readings and targets across a selected range. 
 A live chart can bind a retained dataset or named scalar inputs. Dataset bindings choose a category dimension, optional code filters, a field or ratio, and sum or latest aggregation. Named scalar inputs use stable keys. A time budget identifies its spent and planned inputs. The server returns Week, Month, and All projections with range and point summaries. Weighted ratios, totals, differences, and comparison verdicts come from those summaries. The browser formats and plots them without recalculation.
 
 A dataset projection keeps the retained query interval, missing dates, provider limits, and reasons for unavailable values. Partial values can appear as subtotals, but they have no complete comparison verdict. A latest snapshot excludes categories absent from that snapshot. Inspection follows stable keys through corrections and label changes. If a bound chart has no projection, it shows no current value. The overview and goals table use the supplied All summary, including the planned value for a named scalar budget.
+
+Scalar charts also retain source-authored coverage facts. Partial period counts stay visible as valid subtotals. Unknown coverage stays distinct from proven partial coverage. Both states withhold complete-period verdicts and use neutral colors, even when a zero lies below a daily limit.
+
+This rule applies to targets, reference paths, expectations, named scalar inputs, and range summaries. Numeric differences remain available with a coverage qualifier. Inspection and overview readouts use the same eligibility rule. Observation details show supplied bounds and reasons. A missing contributing point cannot make a range subtotal complete.
+
+Older period counts keep their numeric values with unknown coverage and neutral complete-period verdicts. A date that becomes historical does not supply missing coverage. Complete-period observations, static series, and ordinary snapshot comparisons retain their meaning. Source coverage authoring is described in [Project measures](measures.md#scalar-coverage-facts).
 
 Page tables retain editable string cells and the existing sort and selection components. An optional matrix of cell tones adds the approved outcome colors without replacing the table or changing its stored cell text.
 

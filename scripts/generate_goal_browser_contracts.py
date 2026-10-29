@@ -64,9 +64,14 @@ def generate() -> str:
                 ]
                 declarations[name] = f"export interface {name} {{\n" + "\n".join(fields) + "\n}"
             return name
-        return {str: "string", int: "number", float: "number", bool: "boolean", type(None): "null"}[
-            cast(type, value)
-        ]
+        return {
+            str: "string",
+            int: "number",
+            float: "number",
+            bool: "boolean",
+            object: "unknown",
+            type(None): "null",
+        }[cast(type, value)]
 
     for value in vars(contracts).values():
         if (

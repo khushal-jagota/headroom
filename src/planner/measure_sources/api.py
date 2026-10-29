@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import Annotated, Any, get_args, get_type_hints
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.request_guidance import unknown_field_path
 from planner.measure_sources import actions, data, run_actions, views
 from planner.measure_sources.contracts import (
     RunMode,
     SourceCreate,
+    SourceCreateBody,
+    SourceResponsibleBody,
     SourceScheduleBody,
     SourceScope,
     SourceScriptBody,
 )
+from planner.measure_sources.guidance import CREATE, RUN, SCRIPT
 from planner.measure_sources.settings import DEFAULT_PAGE_LIMIT
 from planner.measures.contracts import HistoryWindow
 from planner.measures.data import transaction as read_transaction
@@ -25,14 +29,15 @@ from planner.tickets.api import Clk, Ctx, DbConn
 router = APIRouter()
 
 
-def invalid() -> PlannerError:
-    return PlannerError(ErrorCode.validation, "invalid measure source request")
+def invalid(detail: str = "invalid measure source request") -> PlannerError:
+    return PlannerError(ErrorCode.validation, detail)
 
 
-def text(body: dict[str, Any], key: str) -> str:
+def text(body: dict[str, Any], key: str, path: str = "$") -> str:
     value = body.get(key)
     if not isinstance(value, str):
-        raise invalid()
+        problem = "required" if key not in body else "expected text"
+        raise invalid(f"{path}.{key}: {problem}")
     return value
 
 
@@ -43,22 +48,26 @@ def integer(body: dict[str, Any], key: str) -> int:
     return value
 
 
-def keys(body: dict[str, Any], allowed: set[str]) -> None:
-    if set(body) - allowed:
-        raise invalid()
+def keys(body: dict[str, Any], allowed: set[str], path: str = "$") -> None:
+    unknown = set(body) - allowed
+    if unknown:
+        name = min(unknown)
+        raise invalid(f"{unknown_field_path(path, name)}: unknown field")
 
 
 def principal(value: object) -> Principal:
-    if not isinstance(value, dict) or set(value) != {"kind", "id"}:
-        raise invalid()
-    try:
-        result = Principal(PrincipalKind(value["kind"]), text(value, "id"))
-    except ValueError:
-        raise invalid() from None
-    if result.kind not in (PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.goal):
-        raise invalid()
+    path = "$.responsible"
+    if not isinstance(value, dict):
+        raise invalid(f"{path}: expected an object with kind and id")
+    fields = get_type_hints(SourceResponsibleBody, include_extras=True)
+    keys(value, set(fields), path)
+    supported = get_args(fields["kind"])
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in supported:
+        raise invalid(f"{path}.kind: supported values: {', '.join(supported)}")
+    result = Principal(PrincipalKind(kind), text(value, "id", path))
     if result.kind is PrincipalKind.chief and result.id != "chief":
-        raise invalid()
+        raise invalid(f"{path}.id: chief responsibility requires chief")
     return result
 
 
@@ -77,8 +86,17 @@ async def list_sources(
 
 
 @router.post("/measure-sources")
-async def create_source(body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    keys(body, {"name", "project_id", "account", "responsible"})
+async def create_source(
+    body: Annotated[
+        dict[str, Any],
+        CREATE,
+        Body(description=CREATE.description, openapi_examples=CREATE.openapi_examples()),
+    ],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    keys(body, set(get_type_hints(SourceCreateBody, include_extras=True)))
     request = SourceCreate(
         text(body, "name"),
         SourceScope(text(body, "project_id"), text(body, "account")),
@@ -152,7 +170,11 @@ async def set_responsible(
 @router.put("/measure-sources/{source_id}/script")
 async def submit_script(
     source_id: str,
-    body: dict[str, Any],
+    body: Annotated[
+        dict[str, Any],
+        SCRIPT,
+        Body(description=SCRIPT.description, openapi_examples=SCRIPT.openapi_examples()),
+    ],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
@@ -181,7 +203,11 @@ async def list_runs(
 @router.post("/measure-sources/{source_id}/runs")
 async def request_run(
     source_id: str,
-    body: dict[str, Any],
+    body: Annotated[
+        dict[str, Any],
+        RUN,
+        Body(description=RUN.description, openapi_examples=RUN.openapi_examples()),
+    ],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,

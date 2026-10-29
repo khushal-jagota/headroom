@@ -45,6 +45,19 @@ export function categoryNumber(value: CategoryChartValue | null | undefined): nu
   return value?.status === 'value' && value.value !== null && Number.isFinite(value.value) ? value.value : undefined;
 }
 
+/** Coverage qualifies comparisons without changing retained quantities. */
+export function combinedCoverage(statuses: Array<MeasureValue['coverage_status'] | undefined>): MeasureValue['coverage_status'] {
+  return statuses.includes('partial') ? 'partial' : statuses.includes('unknown') ? 'unknown' : statuses.includes('complete') ? 'complete' : 'not_applicable';
+}
+
+export function categoryCoverage(summary?: CategoryChartSummary): MeasureValue['coverage_status'] {
+  return combinedCoverage([summary?.actual.partial ? 'partial' : summary?.actual.coverage_status, summary?.comparison?.partial ? 'partial' : summary?.comparison?.coverage_status]);
+}
+
+export function coverageLabel(status?: MeasureValue['coverage_status']): string {
+  return status === 'partial' ? 'Partial reading' : status === 'unknown' ? 'Coverage unavailable' : '';
+}
+
 export function seriesKey(series: ChartSeries, index: number): string {
   return series.key ?? (index === 0 ? 'actual' : series.name);
 }
@@ -105,7 +118,9 @@ export function chartData(block: ChartBlock, values: MeasureValue[], range: Char
       ...(last > first ? { position: (Date.parse(point.date) - first) / (last - first) } : {}),
       values: { actual: point.actual.status === 'value' ? point.actual.value ?? undefined : undefined, target: point.expected.status === 'value' ? point.expected.value ?? undefined : undefined },
       breakBefore: { target: point.break_before },
-      comparisons: { actual: point.meets_expectation },
+      comparisons: { actual: coverageLabel(combinedCoverage([point.actual.coverage_status, point.expected.coverage_status])) ? null : point.meets_expectation },
+      observation: point.actual, coverage_status: combinedCoverage([point.actual.coverage_status, point.expected.coverage_status]),
+      coverage_reasons: [...point.actual.coverage_reasons, ...point.expected.coverage_reasons],
     }));
   }
   const selected = selectedSeries(block, range);
@@ -119,7 +134,7 @@ export function chartData(block: ChartBlock, values: MeasureValue[], range: Char
     data = actual.filter(v => Date.parse(v.date) >= cutoff).map(v => ({
       key: v.date, label: v.date,
       axisLabel: new Date(v.date + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
-      values: { actual: v.value ?? undefined },
+      values: { actual: v.value ?? undefined }, observation: v, coverage_status: v.coverage_status, coverage_reasons: v.coverage_reasons,
     }));
   } else {
     const points = new Map<string, LineChartDatum>();
@@ -131,11 +146,18 @@ export function chartData(block: ChartBlock, values: MeasureValue[], range: Char
     data = [...points.values()];
   }
   const first = Date.parse(data[0]?.key ?? ''), last = Date.parse(data.at(-1)?.key ?? '');
-  return data.map(d => ({
-    ...d,
-    ...(Number.isFinite(first) && last > first ? { position: (Date.parse(d.key) - first) / (last - first) } : {}),
-    values: { ...missingCategories, ...d.values, ...(block.reference?.length ? { target: referenceAt(block, d.key) } : target !== undefined ? { target } : {}) },
-  }));
+  return data.map(d => {
+    const comparison = block.reference?.length ? referenceAt(block, d.key) : target;
+    const actual = d.values.actual;
+    const direction = block.direction ?? (block.kind === 'time-budget' ? 'atmost' : 'atleast');
+    return {
+      ...d,
+      ...(Number.isFinite(first) && last > first ? { position: (Date.parse(d.key) - first) / (last - first) } : {}),
+      values: { ...missingCategories, ...d.values, ...(comparison === undefined ? {} : { target: comparison }) },
+      ...(block.measure_id ? { comparisons: { actual: coverageLabel(d.coverage_status) || actual === undefined || comparison === undefined
+        ? null : direction === 'atmost' ? actual <= comparison : actual >= comparison } } : {}),
+    };
+  });
 }
 
 function referenceAt(block: ChartBlock, date: string): number | undefined {
@@ -180,7 +202,7 @@ export function allocationSummary(series: ChartSeries[], reading: LineChartDatum
   return shares.sort((a, b) => b.exact - a.exact || a.index - b.index).map(item => `${item.percent}% ${item.name.toLowerCase()}`).join(' · ');
 }
 
-export interface ChartHeadline { value: number | undefined; target: number | undefined; label: string | undefined; missingCount: number; point?: ScalarChartPoint; categorySummary?: CategoryChartSummary }
+export interface ChartHeadline { value: number | undefined; target: number | undefined; label: string | undefined; missingCount: number; point?: ScalarChartPoint; categorySummary?: CategoryChartSummary; coverage_status?: MeasureValue['coverage_status']; coverage_reasons?: MeasureValue['coverage_reasons']; observations?: MeasureValue[] }
 
 export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeKey: string | null = null, projection?: ChartProjection, range = 'all'): ChartHeadline {
   if (block.binding) {
@@ -190,32 +212,33 @@ export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeK
     return {
       value: categoryNumber(summary?.actual), target: categoryNumber(summary?.comparison),
       label: inspected ? data.find(item => item.key === inspected.key)?.label : summary?.date ?? undefined,
-      missingCount: summary?.actual.missing_dates.length ?? 0, categorySummary: summary,
+      missingCount: summary?.actual.missing_dates.length ?? 0, categorySummary: summary, coverage_status: categoryCoverage(summary),
     };
   }
   if (block.expectation) {
     const scalar = projection?.kind === 'scalar' ? projection : undefined;
     const reading = data.find(item => item.key === (activeKey ?? scalar?.summary_date));
-    return { value: reading?.values.actual, target: reading?.values.target, label: reading?.label, missingCount: data.filter(item => item.values.actual === undefined).length, point: scalar?.points.find(point => point.date === reading?.key) };
+    return { value: reading?.values.actual, target: reading?.values.target, label: reading?.label, missingCount: data.filter(item => item.values.actual === undefined).length, point: scalar?.points.find(point => point.date === reading?.key), coverage_status: reading?.coverage_status, coverage_reasons: reading?.coverage_reasons, observations: reading?.observation ? [reading.observation] : [] };
   }
   const reading = inspectedReading(data, activeKey);
   const primary = block.measure_id ? 'actual' : selectedSeries(block, range)[0] ? seriesKey(selectedSeries(block, range)[0], 0) : 'actual';
   const missingCount = data.filter(d => d.values[primary] === undefined).length;
   if (block.stacked || block.kind === 'allocation') {
-    return { value: compositionTotal(data, reading), target: reading?.values.target, label: reading?.label, missingCount };
+    return { value: compositionTotal(data, reading), target: reading?.values.target, label: reading?.label, missingCount, coverage_status: reading?.coverage_status, coverage_reasons: reading?.coverage_reasons, observations: reading?.observation ? [reading.observation] : [] };
   }
   if (block.aggregate === 'sum' && !activeKey) {
     const sum = (key: string) => {
       const known = data.flatMap(d => d.values[key] === undefined ? [] : [d.values[key]!]);
       return known.length ? known.reduce((a, b) => a + b, 0) : undefined;
     };
-    return { value: sum(primary), target: sum('target'), label: undefined, missingCount };
+    return { value: sum(primary), target: sum('target'), label: undefined, missingCount, coverage_status: combinedCoverage([...data.map(item => item.coverage_status), ...(block.measure_id && missingCount ? ['unknown' as const] : [])]), coverage_reasons: [...new Set(data.flatMap(item => item.coverage_reasons ?? []))], observations: data.flatMap(item => item.observation ? [item.observation] : []) };
   }
   const value = reading?.values[primary];
-  return { value: (block.kind === 'progress' || block.kind === 'time-budget') && value !== undefined && value < 0 ? undefined : value, target: reading?.values.target, label: reading?.label, missingCount };
+  return { value: (block.kind === 'progress' || block.kind === 'time-budget') && value !== undefined && value < 0 ? undefined : value, target: reading?.values.target, label: reading?.label, missingCount, coverage_status: reading?.coverage_status, coverage_reasons: reading?.coverage_reasons, observations: reading?.observation ? [reading.observation] : [] };
 }
 
-export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary): GoalResponse['status'] {
+export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary, coverage_status?: MeasureValue['coverage_status']): GoalResponse['status'] {
+  if (coverageLabel(combinedCoverage([coverage_status, point?.actual.coverage_status, point?.expected.coverage_status, categoryCoverage(categorySummary)]))) return 'neutral';
   if (block.binding) return categorySummary?.meets_expectation == null || categorySummary.actual.partial || categorySummary.comparison?.partial ? 'neutral' : categorySummary.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
   if (block.expectation) return point?.meets_expectation == null ? 'neutral' : point.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
   if (value === undefined || target === undefined) return 'neutral';
@@ -223,9 +246,10 @@ export function chartTone(block: ChartBlock, value: number | undefined, target: 
   return good ? 'good' : block.below_target_tone ?? 'bad';
 }
 
-export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary): string {
-  if (block.binding && categorySummary?.difference == null) return categorySummary?.actual.partial || categorySummary?.comparison?.partial ? 'Partial total' : '';
-  if (block.expectation && (point?.difference == null || point.meets_expectation == null)) return '';
+export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary, coverage_status?: MeasureValue['coverage_status']): string {
+  const coverage = combinedCoverage([coverage_status, point?.actual.coverage_status, point?.expected.coverage_status, categoryCoverage(categorySummary)]);
+  if (block.binding && categorySummary?.difference == null) return coverage === 'unknown' ? 'Coverage unavailable' : categorySummary?.actual.partial || categorySummary?.comparison?.partial ? 'Partial total' : coverageLabel(coverage);
+  if (block.expectation && point?.difference == null) return '';
   if (value === undefined || target === undefined) return '';
   const signedDifference = block.binding ? categorySummary!.difference! : block.expectation ? point!.difference! : value - target;
   const difference = Math.abs(signedDifference);
@@ -233,7 +257,8 @@ export function comparisonText(block: ChartBlock, value: number | undefined, tar
   const formatDifference = (quantity: number) => block.difference_unit === 'pp'
     ? `${quantity.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} pp`
     : formatReading({ ...block, format: { ...block.format, decimals } }, quantity);
-  if (block.binding && categorySummary!.meets_expectation == null) return `Partial difference: ${formatDifference(signedDifference)}`;
+  if (coverageLabel(coverage) || block.binding && categorySummary!.meets_expectation == null) return `${coverage === 'unknown' ? 'Difference (coverage unavailable)' : 'Partial difference'}: ${formatDifference(signedDifference)}`;
+  if (block.expectation && point?.meets_expectation == null) return '';
   const amount = formatDifference(difference);
   if (block.kind === 'progress') return signedDifference === 0 ? 'Target reached' : amount + (signedDifference < 0 ? ' remaining' : ' beyond target');
   if (block.kind === 'time-budget') return signedDifference === 0 ? 'Budget used' : amount + (signedDifference < 0 ? ' remaining' : ' over budget');
@@ -272,6 +297,20 @@ export function categoryDetails(summary?: CategoryChartSummary, projection?: Cha
       ? selected && item.date >= selected.first_date && item.date <= selected.last_date
       : item.date === summary.date).at(-1);
     if (evidence) details.push(`${summary.date === null ? 'Latest retained query' : 'Retained query'} for ${evidence.date} has ${evidence.query_start_at === null ? 'no supplied start restriction' : `a start at ${new Date(evidence.query_start_at * 1000).toISOString()}`} and ends at ${new Date(evidence.query_end_at * 1000).toISOString()}.`);
+  }
+  return [...new Set(details)];
+}
+
+export function observationDetails(headline: ChartHeadline, projection?: ChartProjection, range = 'all'): string[] {
+  const details = [...categoryDetails(headline.categorySummary, projection, range), ...(headline.coverage_reasons ?? [])];
+  const selected = categoryRange(projection, range);
+  const observations = headline.observations ?? (projection?.kind === 'category' ? projection.measure_values.filter(item => headline.categorySummary?.date != null
+    ? item.date === headline.categorySummary.date : !selected || item.date >= selected.first_date && item.date <= selected.last_date) : []);
+  const inputs = [...observations.flatMap(observation => [observation, ...observation.inputs]), ...(headline.point?.expected.inputs ?? [])];
+  for (const input of inputs) {
+    details.push(...(input.coverage_reasons ?? []));
+    if (input.limitation) details.push(input.limitation);
+    if (input.query_start_at != null || input.query_end_at != null) details.push(`Retained query for ${input.date} starts at ${input.query_start_at == null ? 'an unavailable bound' : new Date(input.query_start_at * 1000).toISOString()} and ends at ${input.query_end_at == null ? 'an unavailable bound' : new Date(input.query_end_at * 1000).toISOString()}.`);
   }
   return [...new Set(details)];
 }

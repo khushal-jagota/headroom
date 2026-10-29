@@ -4,7 +4,7 @@ import json
 import sys
 from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from sqlite3 import Connection
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,7 +18,7 @@ from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
 from planner.goals import actions, data, views
-from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse
+from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse, SegmentedBlock
 from planner.goals.logic.status import (
     calendar_projection,
     chart_target,
@@ -30,9 +30,13 @@ from planner.measures import actions as measure_actions
 from planner.measures.contracts import (
     CandidateObservation,
     ConstantExpression,
+    CountPeriod,
     CreateMeasureBody,
     MeasureKind,
     MeasureOrigin,
+    MeasureReadStatus,
+    MeasureValue,
+    ScalarCoverageStatus,
 )
 
 
@@ -105,11 +109,13 @@ def test_saved_page_race_and_independent_completion_activation(tmp_db: Connectio
         )
 
 
+@pytest.mark.parametrize("kind", [MeasureKind.reading, MeasureKind.running_total])
 def test_projection_keeps_signed_gaps_and_refresh_does_not_change_document(
     tmp_db: Connection,
+    kind: MeasureKind,
 ) -> None:
     source_id = source(tmp_db)
-    measure = taken(tmp_db, source_id)
+    measure = taken(tmp_db, source_id, kind=kind)
     run(tmp_db, source_id)
     collect(
         tmp_db,
@@ -201,7 +207,12 @@ def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Con
             ],
         }
     )
-    goal = create(tmp_db, page=document)
+    goal = create(tmp_db, page=document, primary_chart={"type": "chart", "kind": "line"})
+    assert goal.primary_chart is not None
+    assert goal.primary_chart["id"] and goal.primary_chart["placement"] == "primary"
+    assert all(block["id"] for block in goal.page["blocks"])
+    assert cast(ChecklistBlock, goal.page["blocks"][1])["items"][0]["id"]
+    assert cast(ChartBlock, goal.page["blocks"][-1])["placement"] == "supporting"
     accepted = deepcopy(goal.page)
     accepted["blocks"][1]["id"] = accepted["blocks"][0]["id"]
     with pytest.raises(PlannerError, match="unique"):
@@ -213,6 +224,16 @@ def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Con
             now=NOW + 1,
         )
     assert data.read_goal(tmp_db, goal.id).revision == 1
+    segmented = deepcopy(document)
+    segmented["blocks"].append(
+        {"type": "segmented", "views": [{"label": "Overview", "blocks": []}]}
+    )
+    with pytest.raises(PlannerError, match=r"\$\.blocks\[3\]\.views\[0\]\.id: required"):
+        create(tmp_db, page=segmented)
+    segmented["blocks"][-1]["views"][0]["id"] = "overview"
+    accepted_segmented = create(tmp_db, page=segmented)
+    saved_segmented = cast(SegmentedBlock, accepted_segmented.page["blocks"][-1])
+    assert saved_segmented["views"][0]["id"] == "overview"
 
 
 def test_goal_list_revision_tracks_conversation_links_without_document_edits(
@@ -1011,3 +1032,156 @@ def test_projection_explicit_minimum_date_does_not_underflow_default_window() ->
         "0001-01-02",
         2,
     )
+
+
+def test_period_coverage_survives_legacy_targets_references_and_formula_expectations(
+    tmp_db: Connection,
+) -> None:
+    """Retained subtotals and legacy counts stay numeric without full-period verdicts."""
+    from planner.measure_sources.records import encode_outputs
+    from planner.measures.data import prepare_outputs
+
+    identifier = source(tmp_db)
+    actual = taken(tmp_db, identifier, kind=MeasureKind.period_count, period=CountPeriod.day)
+    actual = measure_actions.update_measure(
+        tmp_db,
+        actual.id,
+        {"expected_revision": actual.definition_revision, "timezone": "UTC"},
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    run(tmp_db, identifier)
+    tmp_db.execute(
+        "UPDATE measure_source_runs SET required_outputs=? WHERE id='run'",
+        (encode_outputs(prepare_outputs(tmp_db, identifier, frozen_at=NOW)),),
+    )
+    tmp_db.commit()
+    zone = ZoneInfo("UTC")
+    partial_times = {
+        "2026-09-29": (6, 11, 26),
+        "2026-10-29": (21, 4, 10),
+    }
+    candidates = [CandidateObservation(actual.id, "2026-10-27", 0)]
+    for day, clock in partial_times.items():
+        start = datetime.fromisoformat(day).replace(tzinfo=zone)
+        end = start.replace(hour=clock[0], minute=clock[1], second=clock[2])
+        if day == "2026-09-29":
+            start, end = end, start + timedelta(days=1)
+        candidates.append(
+            CandidateObservation(
+                actual.id, day, 0, query_start_at=start.timestamp(), query_end_at=end.timestamp()
+            )
+        )
+    full_start = datetime(2026, 10, 28, tzinfo=zone).timestamp()
+    full_end = datetime(2026, 10, 29, tzinfo=zone).timestamp()
+    candidates.append(
+        CandidateObservation(
+            actual.id, "2026-10-28", 0, query_start_at=full_start, query_end_at=full_end
+        )
+    )
+    collect(tmp_db, identifier, tuple(candidates))
+    document = page()
+    document["blocks"].extend(
+        {
+            "type": "chart",
+            "id": direction,
+            "kind": "line",
+            "measure_id": actual.id,
+            "direction": direction,
+            "expectation": {"op": "constant", "value": 5},
+        }
+        for direction in ("atmost", "atleast")
+    )
+    document["blocks"].extend(
+        {
+            "type": "chart",
+            "id": f"{coverage}-comparison",
+            "kind": "number",
+            "measure_id": actual.id,
+            "direction": "atmost",
+            "expectation": {"op": "reference_at", "measure_id": actual.id, "date": comparison_day},
+        }
+        for coverage, comparison_day in (("partial", "2026-09-29"), ("unknown", "2026-10-27"))
+    )
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        page=document,
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": actual.id,
+            "direction": "atmost",
+            "reference": [
+                {"date": "2026-09-29", "value": 5},
+                {"date": "2026-10-29", "value": 5},
+            ],
+            "target": 5,
+        },
+    )
+    now = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    for day, coverage in (
+        ("2026-09-29", "partial"),
+        ("2026-10-27", "unknown"),
+        ("2026-10-28", "complete"),
+        ("2026-10-29", "partial"),
+    ):
+        reading = views.readings_json(tmp_db, goal.id, now, first_date=day, last_date=day)
+        observed = reading["values"][0]
+        assert observed["value"] == 0
+        assert observed["coverage_status"] == coverage
+        assert reading["status"] == ("good" if coverage == "complete" else "neutral")
+        if day in partial_times:
+            boundary = "query_start_at" if day == "2026-09-29" else "query_end_at"
+            assert datetime.fromtimestamp(observed[boundary], zone).time().isoformat() == (
+                ":".join(f"{part:02d}" for part in partial_times[day])
+            )
+            assert observed["coverage_reasons"]
+        for direction in ("atmost", "atleast"):
+            point = reading["charts"][direction]["points"][0]
+            assert point["difference"] == -5
+            assert point["meets_expectation"] == (
+                direction == "atmost" if coverage == "complete" else None
+            )
+        for comparison_coverage in ("partial", "unknown"):
+            comparison = reading["charts"][f"{comparison_coverage}-comparison"]["points"][0]
+            assert comparison["expected"]["coverage_status"] == comparison_coverage
+            assert comparison["difference"] == 0
+            assert comparison["meets_expectation"] is None
+
+
+def test_legacy_sum_keeps_coverage_and_missing_contributors() -> None:
+    """A sum must consider every dated input even when the latest point is complete."""
+    from planner.goals.logic.status import chart_status, chart_summary
+
+    chart: ChartBlock = {
+        "type": "chart",
+        "id": "sum",
+        "kind": "bar",
+        "placement": "primary",
+        "measure_id": "count",
+        "aggregate": "sum",
+        "direction": "atmost",
+        "target": 5,
+    }
+    complete = MeasureValue(
+        "count",
+        "2026-10-29",
+        1,
+        MeasureReadStatus.value,
+        0,
+        (),
+        (),
+        coverage_status=ScalarCoverageStatus.complete,
+    )
+    assert chart_status(chart, [complete]) == "good"
+    for earlier in (
+        replace(complete, date="2026-10-28", coverage_status=ScalarCoverageStatus.partial),
+        replace(complete, date="2026-10-28", coverage_status=ScalarCoverageStatus.unknown),
+        replace(complete, date="2026-10-28", value=None, status=MeasureReadStatus.missing_input),
+    ):
+        assert chart_summary(chart, [earlier, complete]) == (0, 10)
+        assert chart_status(chart, [earlier, complete]) == "neutral"
+        latest_chart = chart.copy()
+        del latest_chart["aggregate"]
+        assert chart_status(latest_chart, [earlier, complete]) == "good"

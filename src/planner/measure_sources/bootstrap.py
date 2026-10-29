@@ -98,6 +98,10 @@ def main() -> None:
         date: str,
         value: float | None,
         unavailable_reason: str | None = None,
+        *,
+        query_start_at: float | None = None,
+        query_end_at: float | None = None,
+        limitation: str | None = None,
     ) -> None:
         call(
             "record",
@@ -105,6 +109,9 @@ def main() -> None:
             date=date,
             value=value,
             unavailable_reason=unavailable_reason,
+            query_start_at=query_start_at,
+            query_end_at=query_end_at,
+            limitation=limitation,
         )
 
     def record_dataset(

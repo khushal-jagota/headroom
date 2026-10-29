@@ -5,7 +5,7 @@ from datetime import date
 
 from planner.goals import configuration as limits
 from planner.goals.contracts import ChartBlock, ScalarChartPoint, ScalarChartProjection, Tone
-from planner.measures.contracts import ExpressionValue, MeasureValue
+from planner.measures.contracts import ExpressionValue, MeasureValue, ScalarCoverageStatus
 from planner.measures.logic.dates import calendar_date, invalid
 
 
@@ -48,7 +48,12 @@ def projection_point(
     if left is not None and right is not None and math.isfinite(left) and math.isfinite(right):
         delta = left - right
         difference = delta if math.isfinite(delta) else None
-        meets = left <= right if direction == "atmost" else left >= right
+        if all(
+            value.coverage_status
+            not in (ScalarCoverageStatus.partial, ScalarCoverageStatus.unknown)
+            for value in (actual, expected)
+        ):
+            meets = left <= right if direction == "atmost" else left >= right
     return {
         "date": day,
         "actual": actual,

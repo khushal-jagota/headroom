@@ -22,19 +22,22 @@ The migration preserves existing ciphertext, identities, names, and revisions wi
 
 Saved, Replaced, and Rejected describe request resolution. Delivery has a separate result. A queued result waits in the conversation. Confirmed refusal permits metadata-only delivery retry. Unknown backend writes and lost queues remain uncertain and receive no automatic retry. A saved value does not prove that the provider accepts the key.
 
-Create a source through `panels measure-source create`, with JSON on stdin:
+Before a source or measure write, inspect the accepted request through these read-only commands:
 
-```json
-{"name":"Daily subscriptions","project_id":"PROJECT_ID","account":"Production","responsible":{"kind":"chief","id":"chief"}}
+```sh
+panels measure-source schema --json
+panels measure schema --json
 ```
 
-Create its measure through `panels measure create`:
+Each command returns `schema`, `examples`, and `notes` without stdin or a server request. Examples include goal responsibility and a taken daily count measure. Replace example identifiers with saved record IDs. CLI help and goal agent startup guidance point to these commands. OpenAPI describes the same create requests from the shared contract reference. [Goals](goals.md) describes chart discovery.
 
-```json
-{"project_id":"PROJECT_ID","name":"Active subscriptions","unit":"subscriptions","origin":"taken","kind":"reading","timezone":"Europe/Berlin","source_id":"SOURCE_ID"}
-```
+Without a selector, the source schema describes creation. `panels measure-source schema create --json` selects that same reference explicitly.
 
-Save the script through `panels measure-source submit-script SOURCE_ID`. Its body contains `expected_revision` and `text`. The save immediately replaces the current script. Revision checks prevent an older editor from overwriting a newer change.
+Create the source through `panels measure-source create` and its measure through `panels measure create`. Both commands accept JSON on stdin.
+
+_Code paths:_ `src/planner/measure_sources/`, `src/planner/measures/`, and `src/planner/core/request_guidance.py`.
+
+Save the script through `panels measure-source submit-script SOURCE_ID`. The save immediately replaces the current script and checks the source revision. Run requests check the saved script revision.
 
 A source can also own a dataset with declared dimensions and numeric fields. The responsible source author can create and update its definition. Its Project must match the source Project. A successful run replaces each supplied dataset and date with retained rows, the captured output declaration, query bounds, and provenance. It retains other dates. Goal charts read those retained results and category labels without another provider request. Missing or unavailable results remain explicit. The reader does not invent zeroes.
 
@@ -51,46 +54,49 @@ Pass this definition as JSON on stdin to `panels dataset create`. Use `name` for
 }
 ```
 
-The source script receives the captured declarations in `context["dataset_outputs"]`. This example records one date with query bounds in Unix seconds and an explicit provider limit:
+Each run receives the captured dataset declarations. Its script supplies dated rows, query bounds, labels, and any provider limitation. The query end is required. The query start and limitation are optional. The runtime guide below contains the helper reference.
 
-```python
-from datetime import datetime, timezone
-
-output = context["dataset_outputs"][0]
-day = output["required_date"]
-record_dataset(
-    output["dataset_id"], day,
-    [{"dimensions": {"team": "north"}, "values": {"events": 7}}],
-    query_start_at=datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp(),
-    query_end_at=context["frozen_at"],
-    labels={"team": {"north": "North"}},
-    limitation="Provider returned a sample.",
-)
-```
-
-Replace the sample row, interval, and limitation with the provider's result. `query_end_at` is required. `query_start_at` and `limitation` are optional. A successful result with `rows: []` replaces that date with an empty result. Omitting a date preserves its prior result, or leaves it missing when no result exists. A test run saves dataset candidates in its receipt but does not publish them. A collection run publishes accepted date results.
+A successful result with empty rows replaces that date with an empty result. An omitted date keeps its prior result, or stays missing when no result exists. A test run saves dataset candidates in its receipt but does not publish them. A collection run publishes accepted date results.
 
 ## Write a script
 
-The runtime supplies `context`, `request`, `record`, `record_dataset`, and `latest`. It resolves named credentials only when the script requests them. Ordinary runtime code can access resolved values. Key indirection avoids embedded secrets; it is not a security sandbox.
+Read the runtime reference and inspect script and run requests before submission:
 
-```python
-response = request(
-    "https://api.example.com/subscriptions/count",
-    credential_ref="product-production",
-)
-response.raise_for_status()
-output = context["required_outputs"][0]
-record(output["measure_id"], output["required_date"], response.json()["count"])
+```sh
+panels measure-source runtime --json
+panels measure-source schema script --json
+panels measure-source schema run --json
 ```
 
-`request` returns a standard `httpx.Response`. Scripts can inspect status, parse JSON, read text, and handle expected errors. Use `raise_for_status()` when an unsuccessful HTTP status must fail the run. Missing fields naturally raise a script error. The helper accepts `method`, `json_body`, and `headers`; JSON POST and script-controlled pagination need no approvals. HTTP behavior uses the ordinary library, including DNS, TLS, compression, proxies, and redirects. There are no custom response-size, request-count, MIME, address, or method policies.
+These commands need no stdin or server request. The runtime reference contains helper signatures, context fields, an executable scalar example, and the dataset helper reference. Script and run schemas describe the request bodies. The corresponding OpenAPI operations use those same schemas.
 
-The context includes the run ID, frozen time, configured outputs, and optional requested history dates. The historical field names `required_outputs` and `required_date` provide output identity and a suggested local collection date. They do not require every output or that particular date. A script can record any valid calendar date. `latest(measure_id)` returns the source's latest retained observation for that output.
+Scripts execute top-level Python and emit dated values through the runtime helpers. Printed JSON does not create observations. The runtime resolves named credentials only when the script requests them. Ordinary runtime code can access resolved values. Key indirection avoids embedded secrets. It is not a security sandbox.
 
-`record(measure_id, date, value)` collects a candidate value. The system checks finite numeric representation, date syntax, output ownership, and duplicate dates in the batch. It does not judge trends, signs, integer counts, units, or whether the period is complete. Source code owns those choices.
+Scripts use ordinary HTTP responses and can inspect status, parse JSON, read text, and handle expected errors. JSON POST and script-controlled pagination need no approvals. HTTP uses the ordinary library, including DNS, TLS, compression, proxies, and redirects. There are no custom response-size, request-count, MIME, address, or method policies.
+
+Each run supplies its identity, frozen time, output declarations, and optional requested history dates. Output declarations identify owned outputs and suggested local dates. They do not require every output or that particular date. A script can record any valid calendar date. The latest retained observation for an output remains available to the script.
+
+The runtime collects candidate values. The system checks finite numeric representation, date syntax, output ownership, and duplicate dates in the batch. Intake does not judge trends, signs, integer counts, units, or whether the period is complete. Source code owns those choices.
 
 A script can declare unavailable history with a null value and `provider_has_no_history` or `provider_has_no_value`. Missing values remain explicit. The system does not fabricate zeroes. Successful collection atomically overwrites each supplied measure/date, including past corrections. It retains other dates. Test runs return candidates without changing retained observations or collection health.
+
+## Scalar coverage facts
+
+A source can add optional `query_start_at`, `query_end_at`, and `limitation` keywords to `record`. Bounds use Unix seconds. The existing positional arguments keep their meaning. These facts describe the returned number, not the time that the run executes.
+
+For each dated subtotal, supply the interval that contributes to that date. Do not repeat a multi-day query's global bounds for every daily result. A provider limitation remains explicit through test receipts, collection, corrections, and reads.
+
+Coverage affects comparison eligibility, not intake acceptance. Partial periods and changed definition revisions remain valid inputs. The system checks finite timestamp representation, interval order, and limitation text. It adds no numeric restrictions.
+
+A period count is complete only when both supplied bounds match its captured local calendar period and no limitation exists. A mismatched interval or explicit limitation means partial coverage. Missing evidence means unknown coverage. The captured timezone defines local day, ISO week, or calendar month boundaries, including daylight-saving changes.
+
+Older period counts keep their numeric values. Their coverage is unknown, and their complete-period verdicts are neutral. Collection time, zero, and a historical date do not establish completeness. A later correction replaces the value and coverage together. Omitted coverage clears prior facts for that corrected date.
+
+Names, units, and revision-only edits do not change coverage. A changed kind, timezone, or period cannot turn an old observation into a newly complete period. Ordinary readings and running totals keep their snapshot comparisons unless an explicit limitation applies. Manual period counts without coverage stay numeric and unknown. Manual controls gain no coverage inputs.
+
+Scalar reads expose `coverage_status` and `coverage_reasons` separately from numeric status. The states are `complete`, `partial`, `unknown`, and `not_applicable`. A partial zero still has numeric status `value`. Direct values and input provenance retain the supplied query facts.
+
+Expressions preserve coverage through evaluated references, arithmetic, fixed dates, selected branches, and explicit daily sums. Partial or unknown inputs do not become complete through arithmetic. Bare constants and elapsed-day expectations need no period evidence. An assembled period count without period evidence remains unknown.
 
 ## Read and assemble numbers
 
@@ -138,3 +144,5 @@ Daily increments use the selected date. Cumulative increments use the latest sna
 Each accepted request stores its authenticated actor, payload fingerprint, accepted date/value/revision, and timestamp. The record supports attribution and safe replay after a lost response. The same request ID and payload return the original acknowledgement, even after later edits. A reused ID with another payload or actor returns a conflict. No history browser, prior-value stream, undo, or automatic retry system exists.
 
 Each numeric observation references exactly one real source run or manual receipt. Formula inputs retain that provenance. Manual writes do not fabricate source runs or change provider gaps. HTTP 409 responses for stale definition or value edits include the current snapshot in `error.detail.state`.
+
+_Last verified: October 29, 2026._

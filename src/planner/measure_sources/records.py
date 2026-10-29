@@ -101,6 +101,9 @@ def decode_candidates(raw: str | None) -> tuple[CandidateObservation, ...] | Non
             unavailable_reason=HistoricalUnavailableReason(row["unavailable_reason"])
             if row["unavailable_reason"] is not None
             else None,
+            query_start_at=row.get("query_start_at"),
+            query_end_at=row.get("query_end_at"),
+            limitation=row.get("limitation"),
         )
         for row in json.loads(raw)
     )
