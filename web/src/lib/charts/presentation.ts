@@ -1,4 +1,4 @@
-import type { ChartBlock, ChartSeries, MeasureValue, GoalResponse } from '../goals/contracts';
+import type { ChartBlock, ChartSeries, MeasureValue, GoalResponse, ScalarChartProjection, ScalarChartPoint } from '../goals/contracts';
 import type { LineChartDatum } from './components/line-chart-integrated';
 
 export type ChartRangeSelection = 'week' | 'month' | 'all' | string;
@@ -44,7 +44,21 @@ export function selectedDomain(block: ChartBlock, range: string): ChartBlock['do
   return selected?.domain ?? block.domain;
 }
 
-export function chartData(block: ChartBlock, values: MeasureValue[], range: ChartRangeSelection): LineChartDatum[] {
+export function chartData(block: ChartBlock, values: MeasureValue[], range: ChartRangeSelection, projection?: ScalarChartProjection): LineChartDatum[] {
+  if (block.expectation) {
+    if (!projection) return [];
+    const cutoff = Date.parse(projection.today) - (range === 'week' ? 6 : 29) * 86400000;
+    const points = projection.points.filter(point => range !== 'week' && range !== 'month' || point.date <= projection.today && Date.parse(point.date) >= cutoff);
+    const first = Date.parse(points[0]?.date ?? ''), last = Date.parse(points.at(-1)?.date ?? '');
+    return points.map(point => ({
+      key: point.date, label: point.date,
+      axisLabel: new Date(point.date + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+      ...(last > first ? { position: (Date.parse(point.date) - first) / (last - first) } : {}),
+      values: { actual: point.actual.status === 'value' ? point.actual.value ?? undefined : undefined, target: point.expected.status === 'value' ? point.expected.value ?? undefined : undefined },
+      breakBefore: { target: point.break_before },
+      comparisons: { actual: point.meets_expectation },
+    }));
+  }
   const selected = selectedSeries(block, range);
   const target = selectedTarget(block, range);
   const missingCategories = Object.fromEntries((block.measure_id ? [] : selected).map((series, index) => [index === 0 ? 'actual' : series.name, undefined]));
@@ -115,7 +129,13 @@ export function allocationSummary(series: ChartSeries[], reading: LineChartDatum
   return shares.sort((a, b) => b.exact - a.exact || a.index - b.index).map(item => `${item.percent}% ${item.name.toLowerCase()}`).join(' · ');
 }
 
-export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeKey: string | null = null) {
+export interface ChartHeadline { value: number | undefined; target: number | undefined; label: string | undefined; missingCount: number; point?: ScalarChartPoint }
+
+export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeKey: string | null = null, projection?: ScalarChartProjection): ChartHeadline {
+  if (block.expectation) {
+    const reading = data.find(item => item.key === (activeKey ?? projection?.summary_date));
+    return { value: reading?.values.actual, target: reading?.values.target, label: reading?.label, missingCount: data.filter(item => item.values.actual === undefined).length, point: projection?.points.find(point => point.date === reading?.key) };
+  }
   const reading = inspectedReading(data, activeKey);
   const missingCount = data.filter(d => d.values.actual === undefined).length;
   if (block.stacked || block.kind === 'allocation') {
@@ -132,15 +152,18 @@ export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeK
   return { value: (block.kind === 'progress' || block.kind === 'time-budget') && value !== undefined && value < 0 ? undefined : value, target: reading?.values.target, label: reading?.label, missingCount };
 }
 
-export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined): GoalResponse['status'] {
+export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint): GoalResponse['status'] {
+  if (block.expectation) return point?.meets_expectation == null ? 'neutral' : point.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
   if (value === undefined || target === undefined) return 'neutral';
   const good = (block.direction ?? (block.kind === 'time-budget' ? 'atmost' : 'atleast')) === 'atmost' ? value <= target : value >= target;
   return good ? 'good' : block.below_target_tone ?? 'bad';
 }
 
-export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined): string {
+export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint): string {
+  if (block.expectation && (point?.difference == null || point.meets_expectation == null)) return '';
   if (value === undefined || target === undefined) return '';
-  const difference = Math.abs(value - target);
+  const signedDifference = block.expectation ? point!.difference! : value - target;
+  const difference = Math.abs(signedDifference);
   const decimals = block.comparison_decimals ?? block.format?.decimals ?? 0;
   const amount = block.difference_unit === 'pp'
     ? `${difference.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} pp`
@@ -148,10 +171,10 @@ export function comparisonText(block: ChartBlock, value: number | undefined, tar
   if (block.kind === 'progress') return value === target ? 'Target reached' : amount + (value < target ? ' remaining' : ' beyond target');
   if (block.kind === 'time-budget') return value === target ? 'Budget used' : amount + (value < target ? ' remaining' : ' over budget');
   const label = block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target');
-  if (difference < .0001 && block.kind !== 'bar' && !block.aggregate) return `On ${label}`;
-  if (value < target && block.direction === 'atmost' && block.within_limit_label === 'remaining') return `${amount} remaining`;
-  if (value < target && block.direction !== 'atmost' && label === 'target' && block.shortfall_label === 'to target') return `${amount} to target`;
-  return `${amount} ${block.direction === 'atmost' ? (value <= target ? 'under' : 'over') : (value >= target ? 'above' : 'below')} ${label}`;
+  if ((block.expectation ? signedDifference === 0 : difference < .0001) && block.kind !== 'bar' && !block.aggregate) return `On ${label}`;
+  if (signedDifference < 0 && block.direction === 'atmost' && block.within_limit_label === 'remaining') return `${amount} remaining`;
+  if (signedDifference < 0 && block.direction !== 'atmost' && label === 'target' && block.shortfall_label === 'to target') return `${amount} to target`;
+  return `${amount} ${block.direction === 'atmost' ? (signedDifference <= 0 ? 'under' : 'over') : (signedDifference >= 0 ? 'above' : 'below')} ${label}`;
 }
 
 export function missingReadingText(data: LineChartDatum[], label?: string): string {

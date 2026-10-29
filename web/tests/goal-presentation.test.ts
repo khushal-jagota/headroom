@@ -84,3 +84,50 @@ it('reports approved threshold, progress, budget, and missing-reading states wit
  expect(goalMatches(goal,6,{...emptyFilters(),target:{op:'eq',value:'9'}},{target:9})).toBe(true);
  expect(goalMatches(goal,6,{...emptyFilters(),target:{op:'missing',value:''}},{target:undefined})).toBe(true);
 });
+
+import type {ScalarChartProjection,ScalarChartPoint} from '../src/lib/goals/contracts';
+const formula:ChartBlock={...chart,expectation:{op:'constant',value:5},reference:[{date:'2026-10-29',value:999}]};
+const point=(date:string,actual:number|null,expected:number|null,break_before=false):ScalarChartPoint=>({
+ date,actual:value(date,actual),expected:{status:expected===null?'missing_input':'value',value:expected,inputs:[],missing_inputs:[]},
+ difference:actual===null||expected===null?null:actual-expected,meets_expectation:actual===null||expected===null?null:actual>=expected,break_before,
+});
+const projected=(points:ScalarChartPoint[],summary_date:string|null='2026-10-29'):ScalarChartProjection=>({kind:'scalar',expected_source:'expectation',today:'2026-10-29',first_date:points[0].date,last_date:points.at(-1)!.date,summary_date,points});
+
+it('uses measure-local today for formula windows and keeps future targets out of the default headline',()=>{
+ const projection=projected(Array.from({length:43},(_,index)=>{
+  const date=new Date(Date.UTC(2026,8,20+index)).toISOString().slice(0,10);
+  return point(date,date==='2026-10-29'||date>'2026-10-29'?null:4,5,date==='2026-10-28');
+ }));
+ const week=chartData(formula,[],'week',projection),month=chartData(formula,[],'month',projection),all=chartData(formula,[],'all',projection);
+ expect(week.map(item=>item.key)).toEqual(['2026-10-23','2026-10-24','2026-10-25','2026-10-26','2026-10-27','2026-10-28','2026-10-29']);
+ expect(month).toHaveLength(30);
+ expect(all.at(-1)?.key).toBe('2026-11-01');
+ expect(all.find(item=>item.key==='2026-10-28')?.breakBefore).toEqual({target:true});
+ const current=chartHeadline(formula,all,null,projection);
+ expect(current).toMatchObject({value:undefined,target:5,label:'2026-10-29'});
+ expect(chartTone(formula,current.value,current.target,current.point)).toBe('neutral');
+ const inspected=chartHeadline(formula,all,'2026-10-28',projection);
+ expect(inspected).toMatchObject({value:4,target:5,label:'2026-10-28',point:{difference:-1,meets_expectation:false}});
+ expect(comparisonText(formula,inspected.value,inspected.target,inspected.point)).toBe('€1.00 below target');
+ expect(chartTone(formula,100,0,inspected.point)).toBe('bad'); // The server comparison owns the dated tone.
+ const precise=point('2026-10-28',4.99999,5);
+ expect(comparisonText(formula,precise.actual.value!,precise.expected.value!,precise)).toBe('€0.00 below target');
+ expect(chartTone(formula,precise.actual.value!,precise.expected.value!,precise)).toBe('bad');
+ const corrected=projected(projection.points.map(item=>item.date==='2026-10-28'?point(item.date,6,5):item));
+ expect(chartHeadline(formula,chartData(formula,[],'all',corrected),'2026-10-28',corrected)).toMatchObject({value:6,point:{difference:1,meets_expectation:true}});
+});
+
+it('never substitutes legacy targets for pending, invalid, or future-only formula projections',()=>{
+ expect(chartData(formula,[value('2026-10-29',10)],'all')).toEqual([]);
+ expect(chartHeadline(formula,[])).toMatchObject({value:undefined,target:undefined});
+ expect(chartTone(formula,10,0)).toBe('neutral');
+ expect(comparisonText(formula,10,0)).toBe('');
+ const failed=projected([point('2026-10-29',10,null)]);
+ const data=chartData(formula,[],'all',failed);
+ expect(data[0].values).toEqual({actual:10,target:undefined});
+ expect(data[0].comparisons).toEqual({actual:null});
+ expect(chartTone(formula,10,0,failed.points[0])).toBe('neutral');
+ const future=projected([point('2026-10-30',null,20)],null);
+ expect(chartHeadline(formula,chartData(formula,[],'all',future),null,future)).toMatchObject({value:undefined,target:undefined,label:undefined});
+ expect(chartHeadline(formula,chartData(formula,[],'all',future),'2026-10-30',future)).toMatchObject({value:undefined,target:20,label:'2026-10-30'});
+});
