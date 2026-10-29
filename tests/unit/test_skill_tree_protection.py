@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import pwd
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -150,6 +151,13 @@ file = skills / "SKILL.md"
 file.write_text("unchanged")
 empty = skills / "empty"
 empty.mkdir()
+literal_suffix = skills / "literal (deleted)"
+literal_suffix.mkdir()
+(literal_suffix / "SKILL.md").write_text("literal suffix")
+(literal_suffix / "empty").mkdir()
+literal_suffix_fd = os.open(literal_suffix, os.O_RDONLY)
+assert os.readlink(f"/proc/self/fd/{literal_suffix_fd}").endswith(" (deleted)")
+assert os.fstat(literal_suffix_fd).st_nlink > 0
 (root / "parent-alias").symlink_to(empty, target_is_directory=True)
 default = root / "home/.claude/skills"
 default.mkdir(parents=True)
@@ -168,8 +176,19 @@ database = root / "database"
 (database / "skills/panels/SKILL.md").write_text("managed")
 fd = os.open(skills, os.O_RDONLY)
 unknown_fd = os.open(root, os.O_RDONLY)
+detached = root / "detached"
+detached.mkdir()
+detached_fd = os.open(detached, os.O_RDONLY)
+detached.rmdir()
+assert os.fstat(detached_fd).st_nlink == 0
+# The old pathname now names a different, protected tree. Never reconstruct a
+# deleted descriptor's path by stripping the procfs marker.
+detached.mkdir()
+(detached / "SKILL.md").write_text("replacement")
+(detached / "empty").mkdir()
 inventory = ProtectionInventory(
-    (str(skills), str(default)), (str(skills), str(default), str(external))
+    (str(skills), str(default), str(detached)),
+    (str(skills), str(default), str(external), str(detached)),
 )
 baseline = snapshot(inventory)
 guard = AuditGuard(inventory)
@@ -196,7 +215,16 @@ operations = [
     lambda: os.symlink(source, skills / "new-link"),
     lambda: os.symlink(file, root / "new-alias"),
     lambda: os.remove("SKILL.md", dir_fd=fd),
+    lambda: os.rmdir("empty", dir_fd=fd),
+    # A literal suffix on a live directory cannot spoof deleted-state evidence.
+    lambda: os.remove("SKILL.md", dir_fd=literal_suffix_fd),
+    lambda: os.rmdir("empty", dir_fd=literal_suffix_fd),
     lambda: os.remove("unknown", dir_fd=999999),
+    lambda: os.remove("../configured-outside-home/skills/SKILL.md", dir_fd=detached_fd),
+    lambda: os.rmdir("../configured-outside-home", dir_fd=detached_fd),
+    lambda: os.remove(file, dir_fd=detached_fd),
+    lambda: os.rmdir(".", dir_fd=detached_fd),
+    lambda: os.rmdir("..", dir_fd=detached_fd),
     lambda: os.rename("SKILL.md", "renamed", src_dir_fd=fd, dst_dir_fd=fd),
     lambda: os.open("SKILL.md", os.O_WRONLY, dir_fd=fd),
     lambda: os.open("relative-unknown", os.O_CREAT | os.O_WRONLY, dir_fd=unknown_fd),
@@ -212,6 +240,19 @@ for number, operation in enumerate(operations):
 assert len(guard.receipts) == len(operations)
 assert all(receipt.node == "test_guard::sentinel" for receipt in guard.receipts)
 assert not compare_manifests(baseline, snapshot(inventory))
+for operation in (
+    lambda: os.remove("SKILL.md", dir_fd=detached_fd),
+    lambda: os.rmdir(b"empty", dir_fd=detached_fd),
+):
+    before = snapshot(inventory)
+    try:
+        operation()
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("deleted directory leaf removal unexpectedly succeeded")
+    assert not compare_manifests(before, snapshot(inventory))
+assert len(guard.receipts) == len(operations)
 assert file.read_text() == "unchanged"
 assert source.read_text() == "source"
 assert not (root / "moved-profile").exists()
@@ -228,6 +269,8 @@ with open("builtin-relative", "w") as stream:
     stream.write("allowed")
 os.close(fd)
 os.close(unknown_fd)
+os.close(literal_suffix_fd)
+os.close(detached_fd)
 # Registration can be silently suppressed by an earlier hook. Acknowledge installation.
 def suppress(event, args):
     if event == "sys.addaudithook":
@@ -266,7 +309,7 @@ def _pytest_probe(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProces
     )
     (suite / "test_probe.py").write_text(body.replace("SENTINEL", repr(str(sentinel))))
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--confcutdir", str(suite), str(suite)],
+        [sys.executable, "-m", "pytest", "-q", "-s", "--confcutdir", str(suite), str(suite)],
         cwd=suite, env=_child_env(home), text=True, capture_output=True, timeout=30,
     )
     return result, sentinel
@@ -345,9 +388,18 @@ def test_home_routing_precedes_all_fixture_scopes_and_preserves_teardown_paths(
     # Module/session setup can launch native processes before function fixtures exist.
     result, sentinel = _pytest_probe(
         tmp_path,
-        "import os, pytest\n"
+        "import os, pytest, shutil\n"
         "from pathlib import Path\n"
+        "from conftest import protection\n"
+        "from tests.support.skill_tree_protection.inventory import snapshot, compare_manifests\n"
         "keys = ['HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PLAN_HERMES_HOME', 'HERMES_HOME']\n"
+        "def assert_protected_unchanged(label, before):\n"
+        "    after = snapshot(protection.inventory)\n"
+        "    assert not compare_manifests(before, after)\n"
+        "    def metrics(manifest):\n"
+        "        return (manifest.metrics.entries, manifest.metrics.regular_files, "
+        "manifest.metrics.hashed_bytes)\n"
+        "    print(label, 'before=', metrics(before), 'after=', metrics(after))\n"
         "def private_homes():\n"
         "    homes = {key: Path(os.environ[key]) for key in keys}\n"
         "    assert homes['HOME'] != Path(SENTINEL).parents[2]\n"
@@ -357,8 +409,30 @@ def test_home_routing_precedes_all_fixture_scopes_and_preserves_teardown_paths(
         "@pytest.fixture(scope='session')\n"
         "def session_homes():\n"
         "    homes = private_homes()\n"
+        "    cleanup_root = homes['HOME'] / 'cleanup-original'\n"
+        "    cleanup_root.mkdir()\n"
+        "    (cleanup_root / 'live-child').mkdir()\n"
+        "    (cleanup_root / 'live-child/file').write_text('ordinary private cleanup')\n"
+        "    detached = cleanup_root / 'detached'\n"
+        "    detached.mkdir()\n"
+        "    detached_fd = os.open(detached, os.O_RDONLY)\n"
+        "    detached.rmdir()\n"
         "    yield homes\n"
-        "    assert all(path.is_dir() for path in homes.values())\n"
+        "    try:\n"
+        "        assert all(path.is_dir() for path in homes.values())\n"
+        "        before = snapshot(protection.inventory)\n"
+        "        cleanup_root.rename(cleanup_root.with_name('cleanup-renamed'))\n"
+        "        assert_protected_unchanged('ordinary temp-root rename', before)\n"
+        "        before = snapshot(protection.inventory)\n"
+        "        with pytest.raises(FileNotFoundError):\n"
+        "            os.rmdir('missing-child', dir_fd=detached_fd)\n"
+        "        assert_protected_unchanged('detached-descriptor teardown', before)\n"
+        "        before = snapshot(protection.inventory)\n"
+        "        assert shutil.rmtree.avoids_symlink_attacks\n"
+        "        shutil.rmtree(cleanup_root.with_name('cleanup-renamed'))\n"
+        "        assert_protected_unchanged('descriptor-relative tree removal', before)\n"
+        "    finally:\n"
+        "        os.close(detached_fd)\n"
         "@pytest.fixture(scope='module')\n"
         "def module_homes(session_homes):\n"
         "    homes = private_homes()\n"
@@ -374,7 +448,16 @@ def test_home_routing_precedes_all_fixture_scopes_and_preserves_teardown_paths(
         "    assert all(path.is_dir() for path in module_homes.values())\n",
     )
     output = result.stdout + result.stderr
+    print(output)
     assert result.returncode == 0, output
     assert "2 passed" in output
     assert "Skill-tree guard receipts (0): []" in output
+    manifest_metrics = re.findall(
+        r"Skill-tree (?:baseline|final): seconds=\S+ "
+        r"(entries=\d+ regular_files=\d+ hashed_bytes=\d+)",
+        output,
+    )
+    assert len(manifest_metrics) == 2, output
+    assert manifest_metrics[0] == manifest_metrics[1], output
+    assert "Skill-tree manifest differences:" not in output
     assert sentinel.read_text() == "original"
