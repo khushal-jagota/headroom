@@ -24,6 +24,11 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "manual_measures",
         # The goal checklist selector leaves diagnostic events and views unchanged.
         "primary_goal_checklist",
+        # Credentials, datasets, and source responsibility leave diagnostic rows unchanged.
+        "reusable_named_credentials",
+        "credential_conversation_requests",
+        "dimensional_datasets",
+        "goal_source_responsibility",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(
