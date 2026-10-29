@@ -265,7 +265,8 @@ def test_real_nested_claude_probe_preserves_provider_and_ordinary_evidence(
                         "changed" if change == "provider" else "equal"
                     )
                     if change != "provider":
-                        assert record["roles"]["settings"]["semantic_content"] == (
+                        roles = cast(dict[str, dict[str, str]], record["roles"])
+                        assert roles["settings"]["semantic_content"] == (
                             "changed" if change == "configuration" else "equal"
                         )
                 print("finite nested reproduction: " + json.dumps({

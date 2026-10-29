@@ -418,7 +418,7 @@ def test_provider_permit_refuses_inherited_foreign_reused_and_capture_authority(
                             await asyncio.create_task(descendant())
                         elif attack == "thread":
                             thread = threading.Thread(
-                                target=lambda: cast(contextvars.Context, copied).run(
+                                target=lambda: copied.run(
                                     d.offer_provider_comparison, True,
                                 ),
                             )
@@ -427,7 +427,8 @@ def test_provider_permit_refuses_inherited_foreign_reused_and_capture_authority(
                         elif attack in {"missing_lease", "wrong_lease"}:
                             lease = d._observation.get()
                             token = d._observation.set(
-                                None if attack == "missing_lease" else replace(lease),
+                                None if attack == "missing_lease"
+                                else replace(cast(d._ObservationLease, lease)),
                             )
                             try:
                                 d.offer_provider_comparison(True)
