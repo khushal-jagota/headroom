@@ -34,6 +34,8 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryFate,
+    PromptDeliveryRefused,
+    PromptDeliveryStarted,
     PromptDeliverySuppressed,
     ResolvedConversationStart,
     WorkspacePathPolicy,
@@ -1615,7 +1617,7 @@ def test_reused_backend_ask_id_is_scoped_to_exact_turn_and_application(
     asyncio.run(run())
 
 
-def test_input_transfer_restarts_before_pending_command_after_link_drop(
+def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile, MessageText
@@ -1642,26 +1644,37 @@ def test_input_transfer_restarts_before_pending_command_after_link_drop(
             )
             harness.native.required_input_path = native_path
             harness.native.required_input_contents = contents
+            content = (
+                MessageText("Inspect"),
+                MessageFile(
+                    kept.stored_file_id, "application/octet-stream", "input.bin", len(contents)
+                ),
+            )
             generation = harness.mac.identity.connection_generation
             harness.endpoint.cut_input = True
-            await asyncio.wait_for(
-                harness.system.send(
-                    "c_scripted",
-                    (
-                        MessageText("Inspect"),
-                        MessageFile(
-                            kept.stored_file_id,
-                            "application/octet-stream",
-                            "input.bin",
-                            len(contents),
-                        ),
-                    ),
-                    sender_label="Test",
-                ),
-                8,
+            fate = await asyncio.wait_for(
+                harness.system.send("c_scripted", content, sender_label="Test"), 8
             )
+            assert isinstance(fate, PromptDeliveryRefused), repr(fate)
+            assert fate.model_validation is not None
+            assert fate.model_validation["reason"] == "context_changed"
+            refused_evidence = fate.model_validation["evidence"]
+            assert isinstance(refused_evidence, dict)
             assert harness.endpoint.input_cut_count == 1
             assert harness.mac.identity.connection_generation > generation
+            assert harness.native.prompt_count == 1
+            # The first operation is definitively refused. This separate user send
+            # must obtain fresh admission after reconnect, without replay of its authority.
+            submitted = await asyncio.wait_for(
+                harness.system.send("c_scripted", content, sender_label="Test"), 8
+            )
+            assert isinstance(submitted, PromptDeliveryStarted), repr(submitted)
+            state = await harness.system._conversation_state("c_scripted")
+            assert state is not None and state.running_turn is not None
+            fresh = state.running_turn.launch_validation
+            assert fresh is not None and fresh.evidence is not None
+            assert fresh.evidence.context.executor_identity == harness.mac.identity
+            assert fresh.evidence.attempt_id != refused_evidence["attempt_id"]
             assert harness.native.prompt_count == 2
             assert native_path.read_bytes() == contents
         finally:
@@ -1917,14 +1930,14 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
-    import time
 
-    from planner.conversation.model_resolution.contracts import CachedModelResolution, ModelVariant
-    from planner.conversation.model_resolution.data import ModelResolutionStore
+    from tests.support.executor_catalog import ScriptedCatalogObserver
+
     from planner.core.config import load_config
     from planner.core.server import create_app
     from planner.executor import mac as mac_module
     from planner.executor.contracts import ChildOperation
+    from planner.projects.data import create_project
     from planner.tickets import data as tickets_data
     from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
@@ -1936,10 +1949,8 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
         Path(db_path).parent.mkdir()
         connection = connect(db_path)
         create_schema(connection)
-        # A fresh cached model keeps this scripted-child fixture provider-free.
-        ModelResolutionStore(db_path).keep(
-            ModelVariant(ConversationBackendKey.codex, "sol"),
-            CachedModelResolution("gpt-6-sol", (), int(time.time())),
+        project = create_project(
+            connection, name="Native lifecycle fixture", folder_path=tmp_path, now=1
         )
         ticket = tickets_data.create_ticket(
             connection,
@@ -1949,8 +1960,11 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
             locale=TicketLocale.macos,
+            project_id=project.id,
             employee_backend="codex",
             employee_launch_model="gpt-6-sol",
+            employee_launch_reasoning_effort="medium",
+            selection_kind="concrete",
         )
         connection.close()
         config = load_config(
@@ -1980,6 +1994,10 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 panels_server_url=proxy.origin,
                 session_factory=proxy.session_factory,
             )
+            observer = ScriptedCatalogObserver(lambda: mac.identity)
+            observer.model = "gpt-6-sol"
+            observer.efforts = ("medium",)
+            mac._catalog_observer = observer
             native = ScriptedNativeChild()
             stop_entered, release_stop = asyncio.Event(), asyncio.Event()
             cancel_entered, inventory_adopted = asyncio.Event(), asyncio.Event()
@@ -2014,6 +2032,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 spool=mac.spool,
                 factory=factory,
                 message_files=ConversationMessageFiles(tmp_path / "mac/unused"),
+                admission_observer=mac,
             )
             task = asyncio.create_task(mac.run())
             killing: asyncio.Task[None] | None = None
@@ -2027,6 +2046,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                     identity = mac.identity
                     first_endpoint = first_app.state.executor_endpoint
                     first_system = first_app.state.conversation_system
+                    first_system.configure_destination_validation(observer, endpoint=first_endpoint)
                     adopt = first_system.adopt_remote_child
                     adopted_proxies: list[BackendChild] = []
 
@@ -2044,14 +2064,26 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                         ConversationStartRequest(
                             conversation_id="c_scripted",
                             model="gpt-6-sol",
+                            reasoning_effort="medium",
                             workspace_folder=tmp_path,
+                            workspace_path_policy=WorkspacePathPolicy.native_absolute,
                             role_materials=ConversationRoleMaterials(
                                 "A scripted test worker.",
                                 (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket.id)),
                             ),
                         )
                     )
-                    await asyncio.wait_for(
+                    with contextlib.closing(connect(db_path)) as connection:
+                        tickets_data.write_ticket_conversation_start(
+                            connection,
+                            ticket.id,
+                            conversation_id="c_scripted",
+                            backend="codex",
+                            model="gpt-6-sol",
+                            reasoning_effort="medium",
+                            now=2,
+                        )
+                    initial_delivery = await asyncio.wait_for(
                         first_system.send(
                             "c_scripted",
                             text_message_content("Start"),
@@ -2060,6 +2092,9 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                             recipient=Principal(PrincipalKind.ticket, ticket.id),
                         ),
                         5,
+                    )
+                    assert isinstance(initial_delivery, PromptDeliveryStarted), repr(
+                        initial_delivery
                     )
                     await eventually(
                         lambda: not mac.spool.pending(), "initial receipts did not drain"
@@ -2650,9 +2685,13 @@ def test_input_receipt_must_validate_before_command_dispatch(
 
 
 @pytest.mark.parametrize("operation", ["prompt", "user_input_answer"])
-def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
+def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
+    from uuid import uuid4
+
+    from planner.conversation.admission.service import expectation_from_validation
+    from planner.conversation.model_resolution.contracts import ValidationState
     from planner.executor.codec import encode_value
     from planner.executor.contracts import ChildCommand, ChildOperation
 
@@ -2667,6 +2706,29 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
                 ),
                 "Initial registry outcomes did not settle",
             )
+            prompt_expectation = None
+            if operation == "prompt":
+                state = await harness.system._conversation_state("c_scripted")
+                assert state is not None and state.running_turn is not None
+                accepted = state.running_turn.launch_validation
+                assert accepted is not None and accepted.evidence is not None
+                attempt_id = str(uuid4())
+                validation = await harness.system.validate_launch_selection(
+                    accepted.selection,
+                    accepted.evidence.context.workspace,
+                    attempt_id=attempt_id,
+                )
+                assert validation.state is ValidationState.compatible, validation
+                prompt_expectation = expectation_from_validation(
+                    validation,
+                    attempt_id=attempt_id,
+                    conversation_id="c_scripted",
+                    disabled_models_revision=harness.system.launch_policy_revision(
+                        accepted.selection.backend_key
+                    ),
+                    child=harness.ask.child,
+                    turn=harness.native.turn,
+                )
             if operation == "user_input_answer":
                 await harness.native.raise_user_input()
                 await harness.wait_input_reachable()
@@ -2691,6 +2753,7 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
                     message.kind is WireMessageKind.command_outcome_ack
                     and identity.connection_generation == generation
                 ):
+                    dropped.add(str(message.payload["command_id"]))
                     return True
                 return await send_reconciliation(message, identity, writer)
 
@@ -2701,7 +2764,8 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
                 lose_old_generation_reconciliation_ack,
             )
             if operation == "prompt":
-                await harness.endpoint.send_command(
+                assert prompt_expectation is not None
+                outcome = await harness.endpoint.send_command(
                     ChildCommand(
                         "settled_prompt",
                         harness.ask.child,
@@ -2712,9 +2776,13 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
                             "sender_content": encode_value(text_message_content("One more prompt")),
                             "sender_label": "Test",
                             "mode": "queue",
+                            "admission_expectation": encode_value(prompt_expectation),
                         },
                     )
                 )
+                assert outcome.disposition is CommandDisposition.succeeded, outcome
+                assert harness.native.prompt_count == 2
+                assert harness.mac.identity.connection_generation == generation
             else:
                 assert await harness.endpoint.answer_user_input(
                     "c_scripted",
@@ -2722,7 +2790,7 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
                     INPUT_ANSWERS,
                     executor_ask=harness.input_ask,
                 )
-            await eventually(lambda: bool(dropped), "Direct command acknowledgment was not lost")
+            await eventually(lambda: bool(dropped), "Command acknowledgment was not lost")
             await eventually(
                 lambda: not harness.mac.spool.pending(), "Filesystem outcome spool did not drain"
             )

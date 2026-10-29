@@ -7,8 +7,16 @@ from collections.abc import Callable
 
 import httpx
 import pytest
+from pydantic import TypeAdapter
 from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
+from planner.conversation.model_resolution.contracts import (
+    CanonicalModelValidation,
+    CorrectiveAction,
+    SelectionKind,
+    ValidationReason,
+    ValidationState,
+)
 from planner.core.db import connect
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step, worker_step_blocker
 from planner.tickets import data as tickets_data
@@ -220,6 +228,19 @@ def test_creation_context_is_readonly_offline_and_write_revalidates(
     response = httpx.post(server.base + "/api/tickets/creation-context", json=draft, timeout=10)
     assert response.status_code == 200, response.text
     context = response.json()
+    validation = TypeAdapter(CanonicalModelValidation).validate_python(context["launch_validation"])
+    assert validation.selection.destination.value == "macos"
+    assert validation.selection.backend_key.value == backend
+    assert validation.selection.submitted_token == "draft-model"
+    assert validation.selection.selection_kind is SelectionKind.legacy_unclassified
+    assert validation.selection.selection_revision == "draft"
+    assert validation.state is ValidationState.unresolved
+    assert validation.reason is (
+        ValidationReason.catalog_unavailable if backend == "hermes" else ValidationReason.offline
+    )
+    assert validation.corrective_action is CorrectiveAction.refresh_catalog
+    assert validation.evidence is None and validation.unavailable is None
+    assert validation.launch_token is None and validation.resolved_model_id is None
     assert context == {
         "resolved_locale": "macos",
         "employee_backend": backend,
@@ -228,6 +249,9 @@ def test_creation_context_is_readonly_offline_and_write_revalidates(
             {"locale": "vps", "compatible": True, "reason": None},
             {"locale": "macos", "compatible": True, "reason": None},
         ],
+        "launch_validation": TypeAdapter(CanonicalModelValidation).dump_python(
+            validation, mode="json"
+        ),
     }
     assert _stored_tickets(server) == before
     health = httpx.get(server.base + "/api/executor/health", timeout=10)

@@ -4,7 +4,7 @@ import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from fastapi import FastAPI
@@ -187,7 +187,9 @@ def _interrupted_server(
         conn.execute("INSERT INTO conversation_runtime_epoch VALUES (1,'old-epoch')")
         if ticket_owned:
             conn.execute(
-                "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Project',0,0)"
+                "INSERT INTO projects(id,name,folder_path,created_at,updated_at) "
+                "VALUES ('p','Project',?,0,0)",
+                (str(tmp_path),),
             )
             conn.execute(
                 "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
@@ -197,9 +199,14 @@ def _interrupted_server(
                 "INSERT INTO "
                 "tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,"
                 "created_at,updated_at,conversation_id,worker_step_claim,"
-                "worker_step_claim_revision,manager_kind,manager_id) VALUES "
+                "worker_step_claim_revision,manager_kind,manager_id,project_id,"
+                "employee_launch_model) VALUES "
                 "('t','Worker','coding','claude','needs_implementation',"
-                "'needs_implementation','{}',0,0,'interrupted','out',7,'manager','m')"
+                "'needs_implementation','{}',0,0,'interrupted','out',7,'manager','m','p','opus')"
+            )
+            conn.execute(
+                "UPDATE ticket_launch_validation SET selection_kind='provider_alias' "
+                "WHERE ticket_id='t'"
             )
         conn.commit()
     write_manifest(
@@ -212,7 +219,11 @@ def _interrupted_server(
             None,
             (
                 CapturedTurn(
-                    "interrupted", 1, "interrupted-occurrence", "old-epoch", "running",
+                    "interrupted",
+                    1,
+                    "interrupted-occurrence",
+                    "old-epoch",
+                    "running",
                     *(
                         ("Interrupted worker", "ticket", "t", 7, "out")
                         if ticket_owned
@@ -256,11 +267,60 @@ def test_server_lifespan_delivers_recovery_after_runtime_admission(tmp_path: Pat
     assert backend.live_children == 0
 
 
-def test_unresumable_ticket_recovery_keeps_conversation_status_readable(tmp_path: Path) -> None:
+def test_unresumable_ticket_recovery_keeps_conversation_status_readable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Marking the recovered claim errored inside a Signal-guarded delivery write must not
     switch conversation status off for the rest of the process."""
     from fastapi.testclient import TestClient
     from tests.unit.test_conversation_system import _FakeBackend
+    from tests.unit.test_current_model_resolution import ScopedCatalogue, context, observation, row
+
+    from planner.conversation.backends.contracts import BackendEmissionInputs
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        ConversationSystem,
+        WorkspacePathPolicy,
+    )
+    from planner.conversation.deploy_interruptions import coordinator
+    from planner.conversation.model_resolution.contracts import (
+        CatalogWorkspaceBinding,
+        LaunchContext,
+        SelectionKind,
+    )
+    from planner.conversation.system import SqliteProcessConversationSystem
+
+    launch = context(
+        backend_key=ConversationBackendKey.claude,
+        workspace=CatalogWorkspaceBinding(tmp_path, WorkspacePathPolicy.legacy_home_mapping, None),
+        localized_workspace_folder=tmp_path,
+        account_generation=None,
+    )
+
+    class RecoveryCatalogue(ScopedCatalogue):
+        def verify_context(self, expected: LaunchContext) -> bool:
+            return expected == self.current_context
+
+        def verify_prepared_launch(
+            self, expected: LaunchContext, prepared: BackendEmissionInputs
+        ) -> bool:
+            return self.verify_context(expected) and prepared.workspace == tmp_path
+
+    catalogue = RecoveryCatalogue(
+        observation(
+            (row("opus", kind=SelectionKind.provider_alias, target="claude-opus-5", efforts=()),),
+            launch=launch,
+            stamp=int(time.time()),
+        )
+    )
+    automatic_recovery = coordinator.run_automatic_recovery
+
+    async def admitted_recovery(system: ConversationSystem, store: ConversationStore) -> None:
+        cast(SqliteProcessConversationSystem, system).configure_destination_validation(catalogue)
+        await automatic_recovery(system, store)
+
+    monkeypatch.setattr(coordinator, "run_automatic_recovery", admitted_recovery)
 
     backend = _FakeBackend("interrupted")
     # The prompt starts, but without the interruption context, so it cannot resume.
@@ -269,13 +329,17 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(tmp_path
 
     with TestClient(app) as client:
         assert _settled_recovery_state(path) == "unable_to_resume"
+        assert catalogue.calls
+        assert len(backend.writes) == 1
         with connect(str(path)) as conn:
-            assert conn.execute(
-                "SELECT worker_step_claim FROM tickets WHERE id='t'"
-            ).fetchone()[0] == "errored"
-            assert conn.execute(
-                "SELECT status FROM deploy_interruption_deliveries"
-            ).fetchone()[0] == "context_not_delivered"
+            assert (
+                conn.execute("SELECT worker_step_claim FROM tickets WHERE id='t'").fetchone()[0]
+                == "errored"
+            )
+            assert (
+                conn.execute("SELECT status FROM deploy_interruption_deliveries").fetchone()[0]
+                == "context_not_delivered"
+            )
             assert [
                 str(row[0])
                 for row in conn.execute("SELECT source_kind FROM manager_wakes WHERE ticket_id='t'")

@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from tests.unit.test_executor_native_runtime import ScriptedChild, canonical_snapshot
+from pydantic import TypeAdapter
+from tests.unit.test_executor_native_runtime import (
+    ScriptedChild,
+    _fixture_admission,
+    canonical_snapshot,
+)
 
 from planner.conversation.backends.contracts import (
     BackendChild,
@@ -47,7 +52,9 @@ from planner.executor.contracts import (
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
 
-IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
+IDENTITY = ExecutorIdentity(
+    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "11111111-1111-4111-8111-111111111111", 1
+)
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +112,19 @@ def build(tmp_path: Path) -> tuple[NativeChildRegistry, Native, ChildCommand]:
             "canonical_skill_snapshot": encode_value(canonical_snapshot()),
         },
     )
-    return registry, native, command
+    return registry, native, _admitted_start(registry, command)
+
+
+def _admitted_start(registry: NativeChildRegistry, command: ChildCommand) -> ChildCommand:
+    """Give each new child identity real synthetic evidence for ordinary admission."""
+    resolved = TypeAdapter(ResolvedConversationStart).validate_python(
+        command.arguments["resolved_start"]
+    )
+    expectation = _fixture_admission(registry, command.child, resolved)
+    return replace(
+        command,
+        arguments={**command.arguments, "admission_expectation": encode_value(expectation)},
+    )
 
 
 def drain(registry: NativeChildRegistry) -> None:
@@ -138,7 +157,9 @@ def test_retirement_tombstones_absent_delayed_start_and_allows_fresh_child(tmp_p
         refused = await registry.execute_command(start)
         assert refused.disposition is CommandDisposition.refused
         assert native.starts == 0
-        fresh = replace(start, command_id="fresh", child=replace(start.child, child_id="new"))
+        fresh = _admitted_start(
+            registry, replace(start, command_id="fresh", child=replace(start.child, child_id="new"))
+        )
         assert (await registry.execute_command(fresh)).disposition is CommandDisposition.succeeded
         assert native.starts == 1
         with pytest.raises(ValueError, match="different content"):
@@ -246,10 +267,6 @@ def test_source_fence_covers_awaited_stop_and_leaves_other_ticket_usable(tmp_pat
             command_id="other",
             child=replace(start.child, child_id="other", conversation_id="c_other"),
         )
-        from pydantic import TypeAdapter
-
-        from planner.conversation.contracts import ResolvedConversationStart
-
         settings = TypeAdapter(ResolvedConversationStart).validate_python(
             resolved["resolved_start"]
         )
@@ -258,8 +275,12 @@ def test_source_fence_covers_awaited_stop_and_leaves_other_ticket_usable(tmp_pat
             conversation_id="c_other",
             role_materials=ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "t_other"),)),
         )
-        other_start = replace(
-            other_start, arguments={**start.arguments, "resolved_start": encode_value(settings)}
+        other_start = _admitted_start(
+            registry,
+            replace(
+                other_start,
+                arguments={**start.arguments, "resolved_start": encode_value(settings)},
+            ),
         )
         assert (
             await registry.execute_command(other_start)
@@ -349,8 +370,9 @@ def test_no_conversation_stop_uncertainty_blocks_fresh_ticket_start_after_vps_re
         assert result.result.disposition is MoveRetirementDisposition.uncertain
         # A new VPS process can allocate a UUID with no restored conversation/core-turn row.
         # The resident registry outlives it and must fence that second native start.
-        fresh = replace(
-            start, command_id="new-vps-start", child=replace(start.child, child_id="new")
+        fresh = _admitted_start(
+            registry,
+            replace(start, command_id="new-vps-start", child=replace(start.child, child_id="new")),
         )
         outcome = await registry.execute_command(fresh)
         assert outcome.disposition is CommandDisposition.refused
@@ -360,8 +382,11 @@ def test_no_conversation_stop_uncertainty_blocks_fresh_ticket_start_after_vps_re
         assert (
             await registry.retire_source("fresh-proof", req, IDENTITY)
         ).result.disposition is MoveRetirementDisposition.retired
-        fresh = replace(
-            fresh, command_id="after-retirement", child=replace(start.child, child_id="after")
+        fresh = _admitted_start(
+            registry,
+            replace(
+                fresh, command_id="after-retirement", child=replace(start.child, child_id="after")
+            ),
         )
         assert (await registry.execute_command(fresh)).disposition is CommandDisposition.succeeded
         assert native.starts == 2 and native.stops == 1
