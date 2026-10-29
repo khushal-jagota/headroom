@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import json
 import platform
+import shlex
 import shutil
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -170,25 +171,60 @@ def test_host_refusal_precedes_payload_and_probe_failures_close(
     assert bool(commands) == (failure == "native")
 
 
-def test_probe_environment_has_no_ambient_credentials_or_state(
+def test_runtime_validation_and_admission_keep_credentials_out_of_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GH_TOKEN", "secret")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
-    monkeypatch.setenv("LD_LIBRARY_PATH", "/builder")
-    monkeypatch.setenv("PLAN_DB_PATH", "/production")
-    output = admission._run_probe(
-        [
-            "/bin/sh",
-            "-c",
-            'test -z "${GH_TOKEN-}${ANTHROPIC_API_KEY-}'
-            '${LD_LIBRARY_PATH-}${PLAN_DB_PATH-}" && printf safe',
-        ],
-        state=tmp_path,
+    # This replaces the original runtime-validation credential regression at the
+    # new boundary: validation never executes, admission executes scrubbed probes.
+    forbidden = (
+        "GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+        "PLAN_GROQ_API_KEY", "AWS_SECRET_ACCESS_KEY", "UNLISTED_SENTINEL",
+        "LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "PLAN_DB_PATH",
     )
-    assert output == "safe"
-    assert admission.probe_environment(tmp_path)["HOME"] == str(tmp_path)
+    for name in forbidden:
+        monkeypatch.setenv(name, "ambient-sentinel")
+    ambient_home = tmp_path / "operator-home"
+    monkeypatch.setenv("HOME", str(ambient_home))
+    monkeypatch.setenv("CODEX_HOME", str(ambient_home / "codex"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(ambient_home / "claude"))
+    root = _app(tmp_path / "app", SHA_B, "new")
+    markers = [tmp_path / "python-environment", tmp_path / "tool-environment"]
+    executables = [root / ".venv/bin/python", root / "bin/native-tool"]
+    for executable, marker in zip(executables, markers, strict=True):
+        checks = "".join(f'test -z "${{{name}+x}}" || exit 17\n' for name in forbidden)
+        executable.write_text(
+            f"#!/bin/sh\n: > {shlex.quote(str(marker))}\n"
+            + checks
+            + f"/usr/bin/env > {shlex.quote(str(marker))}\n"
+        )
+        executable.chmod(0o755)
+    manifest_path = root / "manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["artifact_digest"] = digest_app_artifact(root)
+    manifest_path.write_text(json.dumps(payload))
+
+    manifest = validate_app_manifest(manifest_path, expected_sha=SHA_B, require_runtime=True)
+    assert all(not marker.exists() for marker in markers)
+
+    # Keep the platform and package-selection prerequisites synthetic. The public
+    # admission entrypoint, candidate processes, and environment boundary are real.
+    monkeypatch.setattr(admission, "verify_runtime_host", lambda *args, **kwargs: None)
+    monkeypatch.setattr(admission, "native_tool_commands", lambda *args: [[str(executables[1])]])
+    admission.admit_runtime(root, manifest)
+    environments = [
+        dict(line.split("=", 1) for line in marker.read_text().splitlines())
+        for marker in markers
+    ]
+    for environment in environments:
+        assert not set(forbidden) & environment.keys()
+        assert environment["HOME"] != str(ambient_home)
+        assert environment["PWD"] == environment["HOME"] == environment["TMPDIR"]
+        assert environment["CODEX_HOME"] == str(Path(environment["HOME"]) / "codex")
+        assert environment["CLAUDE_CONFIG_DIR"] == str(Path(environment["HOME"]) / "claude")
+        assert not Path(environment["HOME"]).exists()
+    assert environments[0]["HOME"] == environments[1]["HOME"]
 
 
 def test_timeout_kills_owned_probe_group(tmp_path: Path) -> None:
