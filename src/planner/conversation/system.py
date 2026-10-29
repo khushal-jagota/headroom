@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Mapping
@@ -444,6 +445,20 @@ class SqliteProcessConversationSystem:
                 return False
             operation()
             return True
+
+    async def record_events_transaction[T](
+        self,
+        conversation_id: str,
+        operation: Callable[[sqlite3.Connection], tuple[T, tuple[ConversationEventPayload, ...]]],
+    ) -> T:
+        """Serialize a domain write with the canonical event transaction and publication."""
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            raise ValueError("conversation is absent")
+        async with state.lock:
+            result, written = await self._store.transact_events(conversation_id, operation)
+            self._take_in_written_rows(state, written)
+            return result
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         self._require_runtime_ownership()
@@ -4253,10 +4268,12 @@ class SqliteProcessConversationSystem:
                 recipient=payload.recipient,
                 recovery_references=payload.recovery_references,
             )
-        stored = await self._persist(
+        stored_result = await self._persist(
             state,
             partial(
-                self._store.append_event,
+                self._store.append_event_batch
+                if self._store.has_event_participant
+                else self._store.append_event,
                 state.record.conversation_id,
                 payload,
                 lifecycle=lifecycle,
@@ -4266,7 +4283,9 @@ class SqliteProcessConversationSystem:
             ),
             runtime_mutation=runtime_mutation,
         )
-        self._take_in_written_rows(state, (stored,))
+        written = stored_result if isinstance(stored_result, tuple) else (stored_result,)
+        stored: StoredConversationEvent = written[0]
+        self._take_in_written_rows(state, written)
         if agent_activity:
             state.record = replace(
                 state.record,

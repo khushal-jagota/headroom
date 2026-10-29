@@ -7,7 +7,9 @@ from typing import Literal
 
 from planner.conversation.views.contracts import ViewRowKind
 
-type LookupKind = Literal["tool", "permission", "user_input", "sender_message"]
+type LookupKind = Literal[
+    "tool", "permission", "user_input", "sender_message", "credential_request"
+]
 
 
 @dataclass(frozen=True, slots=True)
