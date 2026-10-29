@@ -8,13 +8,14 @@ import {
 export type FilePreviewTarget =
   | { kind: "ticket-file"; ticketId: string; path: string }
   | { kind: "manager-file"; managerId: string; path: string }
+  | { kind: "goal-file"; goalId: string; path: string }
   | { kind: "conversation-file"; href: string; fileName: string }
   | { kind: "external-link"; href: string; label?: string };
 
 /** A file Panels itself serves and can name in an address. */
 export type ManagedFileTarget = Extract<
   FilePreviewTarget,
-  { kind: "ticket-file" | "manager-file" }
+  { kind: "ticket-file" | "manager-file" | "goal-file" }
 >;
 
 export type FilePreviewKind =
@@ -119,6 +120,9 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   ) {
     throw new Error("unsafe Manager file target");
   }
+  if (target.kind === "goal-file" && !goalFileTarget(target.goalId, target.path)) {
+    throw new Error("unsafe goal file target");
+  }
   return {
     kind: KIND_BY_EXTENSION.get(extensionFor(target.path)) || "download",
     target,
@@ -199,6 +203,8 @@ export function targetFromHref(href: string, label = ""): FilePreviewTarget {
   if (ticketTarget) return ticketTarget;
   const managerTarget = managerFileTargetFromHref(href);
   if (managerTarget) return managerTarget;
+  const goalTarget = goalFileTargetFromHref(href);
+  if (goalTarget) return goalTarget;
   return { kind: "external-link", href, label: label || href };
 }
 
@@ -218,6 +224,14 @@ export function managerFileTarget(
   return { kind: "manager-file", managerId, path };
 }
 
+export function goalFileTarget(
+  goalId: string,
+  path: string
+): Extract<FilePreviewTarget, { kind: "goal-file" }> | null {
+  if (!/^goal_[a-z0-9]+$/.test(goalId) || !safeManagedPath(path)) return null;
+  return { kind: "goal-file", goalId, path };
+}
+
 /** One managed file, named in an address.
  *
  * The same three parameters everywhere a file rides in a hash: the `#/preview` address,
@@ -225,6 +239,13 @@ export function managerFileTarget(
  * and read by one pair of functions, so no address can name a file its own way.
  */
 export function previewQuery(target: ManagedFileTarget): string {
+  if (target.kind === "goal-file") {
+    return (
+      "source=goal" +
+      `&goal=${encodeURIComponent(target.goalId)}` +
+      `&path=${encodeURIComponent(target.path)}`
+    );
+  }
   if (target.kind === "manager-file") {
     return (
       "source=manager" +
@@ -241,6 +262,9 @@ export function previewQuery(target: ManagedFileTarget): string {
 
 export function targetFromPreviewQuery(params: URLSearchParams): ManagedFileTarget | null {
   const path = params.get("path") || "";
+  if (params.get("source") === "goal") {
+    return goalFileTarget(params.get("goal") || "", path);
+  }
   if (params.get("source") === "ticket") {
     return ticketFileTarget(params.get("ticket") || "", path);
   }
@@ -276,6 +300,7 @@ export function targetFromPreviewHref(href: string | null | undefined): ManagedF
 }
 
 function managedFileHref(target: ManagedFileTarget): string {
+  if (target.kind === "goal-file") return goalFileHref(target);
   return target.kind === "ticket-file" ? ticketFileHref(target) : managerFileHref(target);
 }
 
@@ -289,6 +314,18 @@ export function managerFileHref(
 ): string {
   const path = encodedManagedPath(target.path);
   return `/files/managers/${encodeURIComponent(target.managerId)}/${path}`;
+}
+
+export function goalFileHref(
+  target: Extract<FilePreviewTarget, { kind: "goal-file" }>
+): string {
+  return `/files/goals/${encodeURIComponent(target.goalId)}/${encodedManagedPath(target.path)}`;
+}
+
+function goalFileTargetFromHref(href: string): FilePreviewTarget | null {
+  const parts = managedHrefParts(href, "/files/goals/");
+  if (!parts) return null;
+  return goalFileTarget(parts.entityId, parts.path);
 }
 
 function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
