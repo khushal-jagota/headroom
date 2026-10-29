@@ -16,6 +16,31 @@ The goal agent uses the same conversation system as Tickets. The first message s
 
 `panels goal list` and `show` read saved goals. `create` and `edit` accept JSON on stdin. `edit` needs `expected_revision`. `read` returns the existing bound measure values, with optional `--first-date` and `--last-date`. The HTTP routes are `/api/goals`, `/api/goals/{id}`, and `/api/goals/{id}/readings`.
 
+## Supporting files
+
+Each goal keeps notes, research, and evidence in its own managed folder beside the database. Completion, deactivation, and conversation reset preserve that folder and its links. The goal page keeps current content in page JSON. Supporting files and measurements remain separate from that document.
+
+The goal workspace lists files through the shared Artifacts disclosure. Files open in the existing preview beside the goal conversation. Markdown and conversation links use the same preview. Folder index pages represent their supporting assets in the catalog.
+
+The owner, Chief, and the goal's own agent can read, write, list, and delete its managed files. This access does not change authority over sources or manual measurements.
+
+The agent uses the ordinary artifact commands with paths relative to `artifacts/`:
+
+```sh
+panels goal artifact write GOAL_ID notes/context.md --body-file context.md --json
+panels goal artifact list GOAL_ID --json
+panels goal artifact read GOAL_ID notes/context.md
+panels goal artifact delete GOAL_ID notes/context.md --json
+```
+
+Use `--body-file -` for UTF-8 text on stdin. A write returns its served URL. Reuse the same path to replace a file. Read preserves the exact text, including its final newline. All four commands support `--json`. The list includes openable artifacts. An index page represents its folder, while its supporting assets remain readable by known paths.
+
+Files live under `files/goals/<goal-id>/` beside the database and use `/files/goals/<goal-id>/<relative-path>` links. The CLI convention places artifacts beneath that goal root. The existing managed path rules apply to reads, writes, deletes, and HTML navigation.
+
+_Code paths:_ `src/planner/files/`, `src/planner/goals/cli.py`, and `web/src/components/goals/GoalWorkspace.svelte`.
+
+## Charts and measurement controls
+
 Interactive measurement entry and increment controls remain outside this implementation. Existing collection scripts, source schedules, corrections, and measure APIs keep their existing behavior.
 
 The approved chart sheet also includes a single progress bar, a time-budget ring, a time-allocation ring, and stacked composition bars. Progress and budget use a positive target as their denominator. Allocation and stacked bars use the same point identity across categories; a missing category leaves the total unavailable. Static ring and progress values are nonnegative. A negative measured value remains in the readings payload, but progress and budget summaries treat it as unavailable. Existing line and bar measurements still support signed values. Category colors use the shared palette.

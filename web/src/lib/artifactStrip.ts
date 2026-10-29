@@ -19,6 +19,7 @@ export type ArtifactStripItem = {
 };
 
 function targetKey(target: ManagedFileTarget): string {
+  if (target.kind === "goal-file") return `goal:${target.goalId}:${target.path}`;
   return target.kind === "ticket-file"
     ? `ticket:${target.ticketId}:${target.path}`
     : `manager:${target.managerId}:${target.path}`;
@@ -94,7 +95,7 @@ function managedTargets(markdown: string): ManagedFileTarget[] {
     const preview = targetFromPreviewHref(href);
     if (preview) return [preview];
     const target = targetFromHref(href);
-    return target.kind === "ticket-file" || target.kind === "manager-file" ? [target] : [];
+    return target.kind === "ticket-file" || target.kind === "manager-file" || target.kind === "goal-file" ? [target] : [];
   });
 }
 
@@ -106,7 +107,7 @@ export function managedFileTargetFromLinkHref(href: string | null): ManagedFileT
   const preview = targetFromPreviewHref(href);
   if (preview) return preview;
   const direct = href ? targetFromHref(href) : null;
-  return direct?.kind === "ticket-file" || direct?.kind === "manager-file" ? direct : null;
+  return direct?.kind === "ticket-file" || direct?.kind === "manager-file" || direct?.kind === "goal-file" ? direct : null;
 }
 
 export function ticketArtifactStripItems(

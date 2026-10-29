@@ -6,10 +6,12 @@ import asyncio
 import json
 from pathlib import Path
 from sqlite3 import Connection
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
+from starlette.requests import Request
 from tests.unit.test_conversation_system import _FakeBackendChild, _Harness
 
 from planner.cli import http
@@ -27,6 +29,8 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.errors import PlannerError
+from planner.files.api import get_goal_file
+from planner.files.goal_files import write_file
 from planner.goals.actions import create_goal
 from planner.goals.conversation import goal_agent_key, resolve_goal
 from planner.goals.data import read_goal
@@ -68,6 +72,12 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
     ]
     path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     harness = GoalHarness(path)
+    write_file(tmp_db, OWNER_PRINCIPAL, goals[0].id, str(path), "artifacts/retained.md", "retained")
+    file_request = Request({
+        "type": "http",
+        "headers": [],
+        "app": SimpleNamespace(state=SimpleNamespace(config=SimpleNamespace(db_path=str(path)))),
+    })
 
     async def exercise() -> None:
         try:
@@ -99,6 +109,10 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
                 assert "panels goal read " + goal.id in start.role_materials.role_text
                 assert (
                     "Completion and active state are independent" in start.role_materials.role_text
+                )
+                assert (
+                    "panels goal artifact list " + goal.id
+                    in harness.backend(ids[-1]).writes[-1].text
                 )
                 assert "Discuss this goal" in harness.backend(ids[-1]).writes[-1].text
                 assert (
@@ -132,7 +146,12 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
                     "SELECT subject_id FROM notification_attention_edges WHERE subject_kind='goal'"
                 )
             } == {goal.id for goal in goals}
+            before_reset = await get_goal_file(file_request, goals[0].id, "artifacts/retained.md")
+            assert before_reset.body == b"retained"
             await reset_agent_conversation(harness.system, tmp_db, goal_agent_key(goals[0].id))
+            after_reset = await get_goal_file(file_request, goals[0].id, "artifacts/retained.md")
+            assert after_reset.body == b"retained"
+            assert after_reset.headers["etag"] == before_reset.headers["etag"]
             assert read_agent_conversation(tmp_db, goal_agent_key(goals[0].id)) is None
             assert tuple(
                 tmp_db.execute(
