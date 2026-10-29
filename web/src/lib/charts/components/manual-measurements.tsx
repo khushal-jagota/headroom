@@ -236,7 +236,7 @@ export function ManualMeasurement({ block, values, adapter: suppliedAdapter, nar
       <div className="reading-row">{inline}{!reading && adds}</div><p className="comparison" style={{ color: current === undefined ? 'var(--text-faintest)' : current >= target ? green : reading ? 'var(--text-faint)' : red }}>{comparison}</p>
       {reading ? <div className="reading-chart"><LineChart data={dates.map((date, index) => ({ key: date, label: dateLabel(date), axisLabel: dateLabel(date), values: { actual: readings[index], target } }))}
         series={[{ key: 'actual', label: block.series?.[0]?.name ?? 'Reading', color: blue, area: true }, ...(target === undefined ? [] : [{ key: 'target', label: `${numberText(target)}${unit ? ` ${unit}` : ''} target`, color: 'var(--text-faintest)', dashed: true, area: false }])]}
-        label={title} height={196} domain={[minimum, maximum]} formatValue={value => `${value.toFixed(block.format?.decimals ?? 0)}${unit ? ` ${unit}` : ''}`} legend={false} onSelect={index => void select(dates[index], true)} /></div>
+        label={title} height={196} domain={[minimum, maximum]} formatValue={value => `${value.toFixed(block.format?.decimals ?? 0)}${unit ? ` ${unit}` : ''}`} onSelect={index => void select(dates[index], true)} /></div>
         : <div className="bar-chart" data-maximum={maximum}><div className="bar-grid" aria-hidden="true">
           {(maximum - target) / span > .09 && <span style={{ bottom: '100%' }}>{formatCompactNumber(maximum)}</span>}
           <span className="target" style={{ bottom: (target - minimum) / span * 100 + '%' }}>{(target - minimum) / span > .08 ? formatCompactNumber(target) : ''}</span><span style={{ bottom: -minimum / span * 100 + '%' }}>0</span>

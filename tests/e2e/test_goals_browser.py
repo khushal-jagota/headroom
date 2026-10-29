@@ -174,37 +174,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(reading).to_have_attribute("data-current", "52", timeout=WAIT_MS)
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
 
-    # A draft retains its original revision when another actor edits the goal.
-    title = page.locator('[aria-label="Edit goal title"]')
-    title.fill("My uncommitted title")
-    current = api.get(server, path)
-    with page.expect_response(
-        lambda reply: urlparse(reply.url).path == "/api/resource-body"
-        and parse_qs(urlparse(reply.url).query).get("key") == [path],
-        timeout=WAIT_MS,
-    ):
-        remote = httpx.patch(
-            server.base + path,
-            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
-            json={"expected_revision": current["revision"], "title": "Agent title"},
-            timeout=10,
-        )
-        assert remote.is_success, remote.text
-    with page.expect_response(
-        lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
-        timeout=WAIT_MS,
-    ) as rejected:
-        title.press("Tab")
-    assert rejected.value.status == 409
-    expect(title).to_have_text("My uncommitted title")
-    assert api.get(server, path)["title"] == "Agent title"
-    title.focus()
-    title.press("Escape")
-    expect(title).to_have_text("Agent title")
-
-    # Index-based cells must also refuse a stale edit after an agent reorders rows.
-    cell = page.locator('[data-block="table"] [aria-label="Edit Note"]').first
-    cell.fill("My uncommitted note")
+    # Authored text is read-only on a goal page. The goal agent still writes the document,
+    # and the page shows the written words without an editor of its own.
+    assert page.locator("[data-goal-page] [contenteditable]").count() == 0
     current = api.get(server, path)
     reordered = current["page"]
     reordered["blocks"][1]["rows"].reverse()
@@ -216,23 +188,21 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         remote = httpx.patch(
             server.base + path,
             headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
-            json={"expected_revision": current["revision"], "page": reordered},
+            json={
+                "expected_revision": current["revision"],
+                "title": "Agent title",
+                "page": reordered,
+            },
             timeout=10,
         )
         assert remote.is_success, remote.text
-    with page.expect_response(
-        lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
-        timeout=WAIT_MS,
-    ) as rejected:
-        cell.press("Tab")
-    assert rejected.value.status == 409
-    expect(cell).to_have_text("My uncommitted note")
+    expect(page.locator("[data-goal-page] h1")).to_have_text("Agent title", timeout=WAIT_MS)
+    expect(page.locator('[data-block="table"] tbody tr').first).to_contain_text(
+        "Second", timeout=WAIT_MS
+    )
     assert api.get(server, path)["page"]["blocks"][1]["rows"] == [
         ["Review", "Second"], ["Outline", "First"]
     ]
-    cell.focus()
-    cell.press("Escape")
-    expect(cell).to_have_text("Second")
 
     # The rail must subscribe to another active goal, even while this one is selected.
     other = api.direct_post(

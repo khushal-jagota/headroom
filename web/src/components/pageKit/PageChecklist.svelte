@@ -4,7 +4,6 @@
   import { fly } from "svelte/transition";
   import type { ChecklistBlock } from "../../lib/pageKit";
 
-  import GoalInlineEdit from "../goals/GoalInlineEdit.svelte";
   import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
   let saveError = $state<unknown>(null);
@@ -218,17 +217,10 @@
                   </span>
                 </button>
                 <div class="step-main">
-                  <!-- The item's wording is written once. An open item carries the shared
-                       editable text in that one place; a closed one is the disclosure control. -->
-                  {#if expanded === step.id && context?.updateBlock}
-                    <div class="step-title editing" data-title tabindex="-1">
-                      <span id="{uid}-{step.id}-title" class="title-text"><GoalInlineEdit revision={context!.revision} value={step.title} ariaLabel="Edit checklist item" onSave={(label, revision) => context!.updateBlock!(block.id, old => old.type === "checklist" ? {...old, items: old.items.map(item => item.id === step.id ? {...item, label} : item)} : old, revision)} /></span>
-                    </div>
-                  {:else}
-                    <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
-                      <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
-                    </button>
-                  {/if}
+                  <!-- The item's wording is written once, and it is the disclosure control. -->
+                  <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
+                    <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
+                  </button>
                   {#if expanded === step.id}
                     <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
                       <div class="step-panel-inner">
@@ -266,7 +258,7 @@
                           <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
                         </span>
                       </button>
-                      <span class="completed-title"><span id="{uid}-{step.id}-done" class="title-text">{#if context?.updateBlock}<GoalInlineEdit revision={context!.revision} value={step.title} ariaLabel="Edit completed checklist item" onSave={(label, revision) => context!.updateBlock!(block.id, old => old.type === "checklist" ? {...old, items: old.items.map(item => item.id === step.id ? {...item, label} : item)} : old, revision)} />{:else}{step.title}{/if}</span></span>
+                      <span class="completed-title"><span id="{uid}-{step.id}-done" class="title-text">{step.title}</span></span>
                     </div>
                   </li>
                 {/each}
@@ -433,8 +425,6 @@
     text-align: left;
   }
   .step-title { cursor: pointer; border-radius: var(--radius-md); }
-  .step-title.editing { cursor: auto; }
-  .step-title.editing:focus-visible { outline: none; }
   .title-text {
     background-image: linear-gradient(currentColor, currentColor);
     background-position: 0 60%;

@@ -22,7 +22,7 @@
     <details class="preview-controls">
       <summary>About this development page</summary>
       <p>These 22 approved sheet examples use the application’s production page and chart components. All dates and values are synthetic samples from October 28, 2026. Sample controls change this page only. The optional mobile goal host preview also demonstrates production disclosure behavior beyond the sheet’s always-open supporting measures.</p>
-      <p>Inspect plots with a pointer or arrow keys. Use Home, End, and Escape on charts, legend buttons for series and rings, and column headers to sort records.</p>
+      <p>Inspect plots with a pointer or arrow keys. Use Home, End, and Escape on charts, the ring and allocation readouts, and column headers to sort records.</p>
       <label><input type="checkbox" bind:checked={narrowPreview} /> Preview the mobile goal host (supporting charts collapse)</label>
     </details>
   </header>

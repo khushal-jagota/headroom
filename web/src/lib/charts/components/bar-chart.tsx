@@ -1,5 +1,5 @@
 /** Production adapter of the approved app.tsx BarCard (period and composition). */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useReducedMotion } from 'motion/react';
 import { Chart, registerables, type ChartDataset } from 'chart.js';
 import type { ChartBlock, ChartSeries } from '../../goals/contracts';
@@ -17,7 +17,6 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
   const callback = useRef(onActive); callback.current = onActive;
   const found = data.findIndex(datum => datum.key === activeKey);
   const index = found < 0 ? null : found;
-  const [hidden, setHidden] = useState<string[]>([]);
   const reduce = useReducedMotion();
   const plotted = series.length ? series : [{ name: block.title ?? 'Current', points: [] }];
   const latest = data.at(-1)?.values;
@@ -35,13 +34,12 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
     const datasets: ChartDataset<'bar' | 'line', (number | null)[]>[] = entries.map(entry => entry.key === 'target' ? {
       type: 'line', label: entry.label, data: data.map(d => d.values.target ?? null),
       borderColor: color('--chart-reference'), borderDash: [4, 5], borderWidth: 1.5, pointRadius: 0,
-      hidden: hidden.includes(entry.key),
     } : {
       type: 'bar', label: entry.label, data: data.map(d => d.values[entry.key] ?? null),
       backgroundColor: block.stacked || entry.key !== 'actual' ? resolve(entry.color) : data.map(d => d.values.target === undefined ? color('--accent-bright') :
         color(chartTone(block, d.values.actual, d.values.target) === 'good' ? '--accent-done' : block.below_target_tone === 'attention' ? '--accent-attention' : '--accent-error')),
       borderRadius: block.stacked ? (entry.key === topStackKey ? { topLeft: 4, topRight: 4 } : 0) : 4,
-      maxBarThickness: 40, ...(block.stacked ? { stack: 'composition' } : {}), hidden: hidden.includes(entry.key),
+      maxBarThickness: 40, ...(block.stacked ? { stack: 'composition' } : {}),
     });
     const configuration = {
       type: 'bar', data: { labels: data.map(d => d.axisLabel), datasets },
@@ -66,7 +64,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
       chart.current.options = configuration.options;
       chart.current.update();
     } else chart.current = new Chart<'bar' | 'line'>(ref.current, configuration);
-  }, [data, block, series, reduce, hidden]);
+  }, [data, block, series, reduce]);
 
   useEffect(() => () => { chart.current?.destroy(); chart.current = null; }, []);
 
@@ -84,10 +82,6 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
   const selected = data[index ?? data.length - 1];
   const reading = chartHeadline(block, data, selected?.key ?? null).value;
   return <>
-    <div className="bar-legend" aria-label="Chart series">{entries.map(entry => <button key={entry.key} type="button" aria-pressed={!hidden.includes(entry.key)}
-      onClick={() => { inspect(null); setHidden(current => current.includes(entry.key) ? current.filter(key => key !== entry.key) : [...current, entry.key]); }}>
-      <i style={{ background: entry.color }} />{entry.label}
-    </button>)}</div>
     <div className="bar-plot" style={{ height: block.plot_height ?? (compact ? 176 : 242) }}>
       <canvas ref={ref} role="slider" tabIndex={data.length ? 0 : -1} aria-label={`${block.title ?? 'Chart'}, explore observations`}
         aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={Math.max(1, (index ?? data.length - 1) + 1)}
@@ -97,7 +91,6 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
           event.preventDefault();
           inspect(event.key === 'Escape' ? null : event.key === 'Home' ? 0 : event.key === 'End' ? data.length - 1 : Math.max(0, Math.min(data.length - 1, (index ?? data.length - 1) + (event.key === 'ArrowLeft' ? -1 : 1))));
         }} />
-      {entries.every(entry => hidden.includes(entry.key)) && <p className="chart-empty">Choose a series to show</p>}
     </div>
   </>;
 }

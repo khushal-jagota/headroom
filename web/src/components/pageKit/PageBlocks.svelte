@@ -1,7 +1,4 @@
 <script lang="ts">
-  import { getContext } from "svelte";
-  import GoalInlineEdit from "../goals/GoalInlineEdit.svelte";
-  import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   import type { Block } from "../../lib/pageKit";
   import PageBlocks from "./PageBlocks.svelte";
   import PageChart from "./PageChart.svelte";
@@ -10,7 +7,6 @@
   import PageTable from "./PageTable.svelte";
   import PageSegmented from "./PageSegmented.svelte";
 
-  const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
   let { blocks, inset = false }: { blocks: Block[]; inset?: boolean } = $props();
 </script>
 
@@ -27,7 +23,7 @@
     {#if block.type === "section"}
       <PageSection {block} {view} />
     {:else if block.type === "text"}
-      <div class="text" data-block="text">{#if context?.updateBlock}<GoalInlineEdit revision={context!.revision} value={block.text} multiline ariaLabel="Edit text" onSave={(text, revision) => context!.updateBlock!(block.id, old => old.type === "text" ? {...old, text} : old, revision)} />{:else}{block.text}{/if}</div>
+      <div class="text" data-block="text">{block.text}</div>
     {:else if block.type === "callout"}
       <aside class="callout" data-block="callout" data-tone={block.tone}>
         {#if block.title}<p class="callout-title">{block.title}</p>{/if}
@@ -268,9 +264,23 @@
     min-width: 0;
   }
   .grid[data-align="stretch"] { align-items: stretch; }
-  .grid[data-columns="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .grid[data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .grid[data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  /* A chart stops being readable before it stops fitting. Its date axis carries one label
+     per 76px and needs three to say anything, so the plot needs 228px and the value gutter
+     the rest. Below that a cell wraps to the next row: two charts and one beats three thin
+     ones. The authored count stays the ceiling, and min() keeps a narrow page from overflowing. */
+  .grid[data-columns] {
+    --grid-min: 280px;
+    --grid-gap: var(--space-6);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, max(var(--grid-min), (100% - (var(--grid-columns) - 1) * var(--grid-gap)) / var(--grid-columns))), 1fr));
+  }
+  .grid[data-columns="2"] { --grid-columns: 2; }
+  .grid[data-columns="3"] { --grid-columns: 3; }
+  .grid[data-columns="4"] { --grid-columns: 4; }
+  /* A joined grid draws its own dividers from the column count, so it keeps that count. */
+  .grid[data-joined="true"] { --grid-gap: 0px; }
+  .grid[data-joined="true"][data-columns="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid[data-joined="true"][data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid[data-joined="true"][data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .grid-cell { min-width: 0; }
   .grid[data-joined="true"] {
     gap: 0;
@@ -345,14 +355,14 @@
   @container page (max-width: 720px) {
     .metrics[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .metrics[data-count="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .grid[data-columns="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid[data-joined="true"][data-columns="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @container page (max-width: 640px) {
     .metrics[data-count="5"] { grid-template-columns: minmax(0, 1fr); }
   }
   @container page (max-width: 480px) {
     .metrics[data-count="3"] { grid-template-columns: minmax(0, 1fr); }
-    .grid[data-columns="3"] { grid-template-columns: minmax(0, 1fr); }
+    .grid[data-joined="true"][data-columns="3"] { grid-template-columns: minmax(0, 1fr); }
     .grid[data-joined="true"][data-columns="3"] .grid-cell { border-left: 0; }
     .grid[data-joined="true"][data-columns="3"] .grid-cell:first-child { border-top: 0; }
     .grid[data-joined="true"][data-columns="3"] .grid-cell + .grid-cell {

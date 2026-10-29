@@ -92,7 +92,7 @@ export function GoalChart({ block, values, narrow, preferenceKey, completed = fa
     ]} />;
   else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} />;
   else if (block.kind === 'number') chart = null;
-  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} legend={series.length > 2} emptyLabel="No readings yet" />;
+  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
   const plot = <>{chart}{compact && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
   if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? 'Completed' : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : 'Not done'} /></article>;

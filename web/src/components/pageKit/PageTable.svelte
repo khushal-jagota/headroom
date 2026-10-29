@@ -1,8 +1,4 @@
 <script lang="ts">
-  import {getContext} from "svelte";
-  import GoalInlineEdit from "../goals/GoalInlineEdit.svelte";
-  import {PAGE_CONTEXT,type PageContext} from "../../lib/pageKit/context";
-  const context=getContext<PageContext | undefined>(PAGE_CONTEXT);
   import { fade } from "svelte/transition";
   import type { TableBlock } from "../../lib/pageKit";
 
@@ -390,7 +386,7 @@
                     data-numeric={numeric[index] ? "" : undefined}
                     data-tone={block.cell_tones?.[line.key]?.[index] ?? undefined}
                     data-missing={missing(cell) ? "" : undefined}
-                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}{#if context?.updateBlock}<GoalInlineEdit revision={context!.revision} value={cell} ariaLabel={`Edit ${block.columns[index]}`} onSave={(value, revision)=>context!.updateBlock!(block.id,old=>old.type === "table" ? {...old,rows:old.rows.map((row,r)=>r===line.key?row.map((c,i)=>i===index?value:c):row)} : old, revision)} />{:else}{cell}{/if}</div></td>
+                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}{cell}</div></td>
                 {/each}
               </tr>
             {/each}

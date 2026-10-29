@@ -1,20 +1,7 @@
 .figure { display: grid; min-width: 0; gap: var(--space-4); margin: 0; color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); }
 
-/* Series toggles: a plain line swatch beside each name. A hidden series keeps its place, its swatch empties and its name steps back. */
-.legend { display: flex; flex-wrap: wrap; gap: 2px 4px; min-width: 0; margin-inline: -8px; }
-.toggle { display: inline-flex; min-height: 32px; align-items: center; gap: 8px; padding: 0 10px 0 8px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--text-sm); line-height: var(--leading-body); -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
-.toggle:active { transform: scale(.97); }
-.toggle[aria-pressed="false"] { color: var(--text-faintest); }
-.toggleLabel { white-space: nowrap; transition: opacity var(--duration-fast) var(--ease-standard); }
-.toggle[aria-pressed="false"] .toggleLabel { opacity: .72; text-decoration: line-through; text-decoration-color: color-mix(in oklab, currentColor 55%, transparent); }
-.swatch { position: relative; width: 14px; height: 10px; flex: none; }
-.swatch::before { position: absolute; top: 50%; left: 0; width: 100%; height: 2.5px; border-radius: 2px; background: var(--series); content: ""; transform: translateY(-50%) scaleX(1); transform-origin: left; transition: transform var(--duration-standard) var(--ease-spring), opacity var(--duration-fast) var(--ease-standard); }
-.swatch[data-dashed]::before { background: repeating-linear-gradient(to right, var(--series) 0 4px, transparent 4px 7px); }
-.toggle[aria-pressed="false"] .swatch::before { opacity: .45; transform: translateY(-50%) scaleX(.35); }
-@media (hover: hover) and (pointer: fine) { .toggle:hover { background: color-mix(in oklab, var(--foreground) 5%, transparent); color: var(--foreground); } }
-
 /* Plot, right-hand value axis, and the date axis beneath. */
-.chart { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 48px; grid-template-rows: auto 26px; min-width: 0; }
+.chart { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto 26px; min-width: 0; }
 .plot { position: relative; grid-area: 1 / 1; min-width: 0; outline: none; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
 .svg { display: block; overflow: visible; }
 .grid { stroke: var(--border); stroke-width: 1; shape-rendering: crispEdges; }
@@ -44,7 +31,10 @@
 /* First load with nothing to keep on screen: a calm band that breathes where the lines will be. */
 .skeleton { position: absolute; inset: 30% 0 25%; border-radius: 12px; background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--foreground) 5%, transparent)); animation: breathe 1.4s var(--ease-in-out) infinite alternate; }
 
-.gutter { position: relative; grid-area: 1 / 2; min-width: 0; }
+.gutter { position: relative; grid-area: 1 / 2; padding-left: 10px; }
+/* Sizes the column to the widest tick, so the labels end where the card's padding does. */
+.gutterWidth { display: block; width: max-content; height: 0; overflow: hidden; visibility: hidden; }
+.gutterWidth b { display: block; font-size: var(--text-xs); line-height: 1; font-weight: inherit; font-variant-numeric: tabular-nums; }
 .tick { position: absolute; top: 0; left: 10px; display: block; height: 0; white-space: nowrap; pointer-events: none; }
 .tickText { display: block; transform: translateY(-50%); color: var(--text-faintest); font-size: var(--text-xs); line-height: 1; font-variant-numeric: tabular-nums; }
 
@@ -55,6 +45,6 @@
 
 @keyframes breathe { from { opacity: .22; } to { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) {
-  .toggle, .swatch::before, .line, .tooltip, .crosshair, .dot, .series { transition: none; }
+  .line, .tooltip, .crosshair, .dot, .series { transition: none; }
   .chart[data-loading] .series, .skeleton { animation: none; }
 }

@@ -8,7 +8,7 @@ import styles from "./line-chart.module.css";
 export interface LineChartSeries {
   /** Stable identity. A series keeps its line across data changes, so switching ranges morphs the path instead of redrawing it. */
   key: string;
-  /** Name in the legend, the tooltip, and the data table. */
+  /** Name in the tooltip and the data table. */
   label: string;
   /** Any CSS color. Defaults to the accent for the first series, then quieter neutral steps. */
   color?: string;
@@ -49,10 +49,8 @@ export interface LineChartProps {
   formatValue?: (value: number, series: LineChartSeries) => string;
   /** Formats the value axis. Defaults to a compact number, such as 1.2K. */
   formatTick?: (value: number) => string;
-  /** Controlled hidden series keys. */
+  /** Controlled hidden series keys. The chart draws no control of its own for them. */
   hiddenSeries?: string[];
-  defaultHiddenSeries?: string[];
-  onHiddenSeriesChange?: (hidden: string[]) => void;
   /** Called as the crosshair moves, and with null when it leaves. Use it to drive a headline readout. */
   /** Commits a selected observation for an editable measurement. */
   onSelect?: (index: number) => void;
@@ -61,8 +59,6 @@ export interface LineChartProps {
   loading?: boolean;
   /** Shown when there are no points. */
   emptyLabel?: string;
-  /** Series toggles above the plot. Shown by default when there is more than one series. */
-  legend?: boolean;
   /** Header of the first column in the data table read by screen readers. */
   categoryLabel?: string;
   /** Smooth monotone curves that never swing past the data, or straight segments. */
@@ -193,7 +189,7 @@ function axisPicks(data: LineChartDatum[], width: number) {
   return labeled.reverse().filter((_, rank) => rank % stride === 0).reverse();
 }
 
-export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), hiddenSeries, defaultHiddenSeries, onHiddenSeriesChange, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", legend, categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
+export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), hiddenSeries, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
   const reduced = useReducedMotionSafe();
   const figure = useRef<HTMLElement>(null);
   const plot = useRef<HTMLDivElement>(null);
@@ -212,16 +208,9 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   const positionAt = (x:number) => {if(last<1)return x;const index=Math.min(last-1,Math.floor(x*last)),t=x*last-index;return positions[index]+t*(positions[index+1]-positions[index]);};
   const empty = data.length === 0;
 
-  // Hidden series, controlled or not.
-  const [ownHidden, setOwnHidden] = useState<string[]>(defaultHiddenSeries ?? []);
-  const hidden = hiddenSeries ?? ownHidden;
-  const toggle = (key: string) => {
-    const next = hidden.includes(key) ? hidden.filter(item => item !== key) : [...hidden, key];
-    if (hiddenSeries === undefined) setOwnHidden(next);
-    onHiddenSeriesChange?.(next);
-  };
+  // Hidden series stay a caller's decision. The chart carries no series key of its own.
+  const hidden = hiddenSeries ?? [];
   const visible = series.filter(item => !hidden.includes(item.key));
-  const showLegend = legend ?? series.length > 1;
 
   // Each series becomes a dense curve in data units; the scale fits only the series on show.
   const signature = `${curve}|${series.map(item => item.key).join(",")}|${data.map(item => `${item.key}:${item.position??""}:${series.map(line => item.values[line.key] ?? NaN).join(",")}`).join(";")}`;
@@ -422,12 +411,6 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   const tipX = reduced ? tipTargetX : tipSpringX, tipY = reduced ? tipTargetY : tipSpringY;
 
   return <figure ref={figure} className={[styles.figure, className].filter(Boolean).join(" ")} aria-label={label} aria-busy={loading || undefined}>
-    {showLegend && <div className={styles.legend} role="group" aria-label={`${label} series`}>
-      {series.map((line, at) => <button key={line.key} type="button" className={styles.toggle} aria-pressed={!hidden.includes(line.key)} onClick={() => toggle(line.key)} style={{ "--series": colorOf(line, at) } as CSSProperties}>
-        <span className={styles.swatch} data-dashed={line.dashed || undefined} aria-hidden="true" />
-        <span className={styles.toggleLabel}>{line.label}</span>
-      </button>)}
-    </div>}
     <div className={styles.chart} data-scrubbing={scrubbing || undefined} data-loading={loading || undefined}>
       <div ref={plot} className={styles.plot} style={{ height }} role="slider" tabIndex={empty ? -1 : 0} aria-label={`${label}, explore by ${categoryLabel.toLowerCase()}`} aria-orientation="horizontal" aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={(index ?? last) + 1} aria-valuetext={valueText}
         onClick={event => { if (!empty) onSelect?.(pointAt(event.clientX)); }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setActive(null); }} onPointerCancel={() => setActive(null)} onPointerLeave={event => { if (event.pointerType === "mouse") setActive(null); }} onKeyDown={onKeyDown} onBlur={() => setActive(null)}
@@ -459,6 +442,9 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
         </AnimatePresence>
       </div>
       <div className={styles.gutter} aria-hidden="true">
+        {/* The widest tick, in flow and invisible, gives the column its width. The labels
+            themselves are placed against the scale, so none of them can measure it. */}
+        <span className={styles.gutterWidth}>{steady.ticks.map(value => <b key={value}>{formatTick(value)}</b>)}</span>
         <AnimatePresence initial={false}>{steady.ticks.map(value => <TickLabel key={value} value={value} scale={scale} height={height} format={formatTick} />)}</AnimatePresence>
       </div>
       <div className={styles.axis} aria-hidden="true">
