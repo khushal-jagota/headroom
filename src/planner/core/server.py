@@ -50,6 +50,7 @@ from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingre
 from planner.core.web_assets import WebAssets
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.update_admission import matching_commit, startup_requires_commit
+from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
 from planner.environments.update_api import router as updates_router
 from planner.environments.update_provider import GitHubUpdateProvider
 from planner.environments.update_requests import FileUpdateRequestStore
@@ -437,51 +438,7 @@ def create_app(
         can_refresh=lambda: not app.state.update_startup_pending,
     )
 
-    @app.middleware("http")
-    async def update_admission(request: Request, call_next: Any) -> Any:
-        path = request.url.path
-        browser_sha = request.headers.get("X-Panels-App-SHA")
-        if (
-            request.method not in {"GET", "HEAD", "OPTIONS"}
-            and browser_sha is not None
-            and browser_sha != config.app_sha
-        ):
-            return JSONResponse(
-                status_code=409,
-                content=PlannerError(
-                    ErrorCode.validation, "Refresh page before making changes.", {}
-                ).to_payload(),
-            )
-        status_path = path in {"/api/health", "/api/meta", "/api/deployment-status", "/api/updates"}
-        static_path = not path.startswith("/api/") and request.method in {"GET", "HEAD"}
-        if (
-            (app.state.update_startup_pending or app.state.update_admission_closed)
-            and not status_path
-            and not static_path
-        ):
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "detail": (
-                        "Normal work waits for the deployment runner. "
-                        "Recovery requires the owner if progress expires."
-                    )
-                },
-            )
-        system = app.state.conversation_system
-        if (
-            system is not None
-            and request.method not in {"GET", "HEAD", "OPTIONS"}
-            and not path.startswith("/api/updates")
-            and not status_path
-        ):
-            with system.workspace_admission.operation() as admitted:
-                if not admitted:
-                    return JSONResponse(
-                        status_code=503, content={"detail": "Owner update in progress."}
-                    )
-                return await call_next(request)
-        return await call_next(request)
+    app.add_middleware(UpdateAdmissionMiddleware, config=config)
 
     app.state.resource_version_epoch = str(uuid4())
 

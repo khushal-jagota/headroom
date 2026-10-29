@@ -366,6 +366,17 @@ and Problem for failure or rollback. Failure takes precedence over connection lo
 Healthy operation and successful recovery show no card. The card opens space before
 arriving and leaves before that space closes; reduced motion removes the animation.
 
+Navigation health occupies a separate row in this card. A lost navigation stream says
+**Navigation reconnecting**. Degraded server availability says **Navigation degraded**
+and shows the supplied reason as wrapping text. This row remains visible beside
+deployment problems and update controls. It sits outside the page-refresh button.
+If no other status applies, navigation health occupies the card alone.
+
+Existing retries keep their timing. The degraded reason survives a deliberate retry.
+Only accepted current data for the demanded navigation scope clears the warning.
+Panel errors report their own data failures. Navigation health does not authorize stale data
+or remove local drafts.
+
 The rail's Feedback icon and More's Feedback item open the same persistent composer.
 It appears above the complete foot, including its status card, outside the rail's clipped
 content. On phones it uses a sheet above the bar and visible keyboard. Saving records
