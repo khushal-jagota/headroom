@@ -377,6 +377,7 @@ def run_credentials(browser, urls):
     import os
     import time
     from pathlib import Path
+
     from playwright.sync_api import expect
 
     started = time.perf_counter()

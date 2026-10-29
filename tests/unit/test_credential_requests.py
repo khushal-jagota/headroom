@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterator
+import sqlite3
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,7 +21,7 @@ from tests.unit.test_conversation_system import _link_test_ticket_to_conversatio
 
 from planner.conversation.backends.contracts import BackendSteerRefused
 from planner.conversation.contracts import ConversationStartRequest, PromptDeliveryRefusalReason
-from planner.conversation.events import CredentialRequestEventPayload
+from planner.conversation.events import ConversationEventPayload, CredentialRequestEventPayload
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.conversation.views.storage import read_row
@@ -41,8 +42,10 @@ from planner.credentials import data as credential_data
 from planner.credentials.contracts import (
     BearerSecret,
     CredentialAuthKind,
+    CredentialMetadata,
     CredentialReference,
     CredentialScheme,
+    CredentialSecret,
     CredentialWrite,
 )
 from planner.credentials.requests import actions, api, data
@@ -119,6 +122,17 @@ async def start(host: _Harness, *, busy: bool = False) -> None:
         await host.system.send(
             "c", text_message_content("Work until the current turn ends."), sender_label="owner"
         )
+
+
+def gated_call[**P, T](
+    operation: Callable[P, Awaitable[T]], entered: asyncio.Event, release: asyncio.Event
+) -> Callable[P, Awaitable[T]]:
+    async def blocked(*args: P.args, **kwargs: P.kwargs) -> T:
+        entered.set()
+        await release.wait()
+        return await operation(*args, **kwargs)
+
+    return blocked
 
 
 def saved_write(name: str) -> CredentialWrite:
@@ -239,8 +253,25 @@ def test_replacement_conflict_requires_review_and_atomic_failure_keeps_request_p
             assert reviewed.json()["replacement"]["revision"] == 2
             original = credentials.replace_credential_in_transaction
 
-            def fail_after_write(*args, **kwargs):
-                original(*args, **kwargs)
+            def fail_after_write(
+                db: sqlite3.Connection,
+                credential_id: str,
+                secret: CredentialSecret,
+                *,
+                expected_revision: int,
+                principal: Principal,
+                now: int,
+                key_path: Path,
+            ) -> CredentialMetadata:
+                original(
+                    db,
+                    credential_id,
+                    secret,
+                    expected_revision=expected_revision,
+                    principal=principal,
+                    now=now,
+                    key_path=key_path,
+                )
                 raise PlannerError(ErrorCode.validation, "synthetic storage failure")
 
             with monkeypatch.context() as patch:
@@ -442,7 +473,9 @@ def test_origin_rejects_foreign_missing_and_retired_conversation(host: _Harness)
             assert not host.backends
         record = await host.store.read_conversation("c")
         assert record is not None
-        identity = dict(record.resolved_start().role_materials.identity_environment_variables)
+        role_materials = record.resolved_start().role_materials
+        assert role_materials is not None
+        identity = dict(role_materials.identity_environment_variables)
         assert identity["PLAN_CONVERSATION_ID"] == "c"
 
     asyncio.run(exercise())
@@ -459,12 +492,9 @@ def test_canceled_http_owner_write_still_delivers_before_a_racing_reset(
         entered, release, reset_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original = host.system.send_with_receipt
 
-        async def blocked(*args, **kwargs):
-            entered.set()
-            await release.wait()
-            return await original(*args, **kwargs)
-
-        monkeypatch.setattr(host.system, "send_with_receipt", blocked)
+        monkeypatch.setattr(
+            host.system, "send_with_receipt", gated_call(original, entered, release)
+        )
         async with host.client() as client:
             request = request_body()
             await client.post("/api/credentials/requests", json=request, headers=HEADERS)
@@ -490,7 +520,9 @@ def test_canceled_http_owner_write_still_delivers_before_a_racing_reset(
             await resetting
             state = data.read(conn, str(request["request_id"]))
             assert state["state"] == "rejected"
-            assert state["delivery"]["status"] == "started"
+            delivery = state["delivery"]
+            assert delivery is not None
+            assert delivery["status"] == "started"
             assert len(host.backend("c").written_texts) == 1
             assert (
                 conn.execute("SELECT conversation_id FROM tickets WHERE id='t_failed'").fetchone()[
@@ -572,15 +604,15 @@ def test_request_transaction_and_receipt_companions_use_production_signal_admiss
                 assert resolved.status_code == 200, resolved.text
                 assert resolved.json()["delivery"]["status"] == "injected"
                 events = await host.store.read_events_after("c", 0)
-                assert (
-                    events[-1].sequence == (await host.store.read_conversation("c")).latest_sequence
-                )
+                record = await host.store.read_conversation("c")
+                assert record is not None
+                assert events[-1].sequence == record.latest_sequence
                 snapshots = [
-                    event
+                    event.payload
                     for event in events
                     if isinstance(event.payload, CredentialRequestEventPayload)
                 ]
-                assert snapshots[-1].payload.request == resolved.json()
+                assert snapshots[-1].request == resolved.json()
                 assert SECRET not in json.dumps(resolved.json())
         finally:
             await host.runtime.shutdown()
@@ -594,14 +626,14 @@ def test_request_transaction_and_receipt_companions_use_production_signal_admiss
 def test_domain_callback_cannot_escape_conversation_owned_transaction(
     host: _Harness, control: str
 ) -> None:
-    import sqlite3
-
     async def exercise() -> None:
         await start(host)
         request = request_body()
         context = RequestContext(Principal(PrincipalKind.ticket, "t_failed"), "c")
 
-        def forbidden(conn):
+        def forbidden(
+            conn: sqlite3.Connection,
+        ) -> tuple[None, tuple[ConversationEventPayload, ...]]:
             actions.create(
                 conn,
                 request,
@@ -721,12 +753,9 @@ def test_manager_deletion_waits_for_an_admitted_result_delivery(
         entered, release, deleting = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original = host.system.send_with_receipt
 
-        async def blocked(*args, **kwargs):
-            entered.set()
-            await release.wait()
-            return await original(*args, **kwargs)
-
-        monkeypatch.setattr(host.system, "send_with_receipt", blocked)
+        monkeypatch.setattr(
+            host.system, "send_with_receipt", gated_call(original, entered, release)
+        )
         async with host.client() as client:
             request = request_body()
             created = await client.post(
