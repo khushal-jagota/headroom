@@ -386,7 +386,7 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
         onClick={event => { if (!empty) onSelect?.(pointAt(event.clientX)); }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setActive(null); }} onPointerCancel={() => setActive(null)} onPointerLeave={event => { if (event.pointerType === "mouse") setActive(null); }} onKeyDown={onKeyDown} onBlur={() => setActive(null)}
         onFocus={event => { if (event.currentTarget.matches(":focus-visible") && !empty) setActive(current => current ?? last); }}>
         <svg className={styles.svg} width="100%" height={height} aria-hidden="true" focusable="false">
-          <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
+          <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} gradientUnits="userSpaceOnUse" x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
           <AnimatePresence initial={false}>{steady.ticks.slice(1).map(value => <Gridline key={value} value={value} scale={scale} height={height} />)}</AnimatePresence>
           <line className={styles.baseline} x1={0} x2="100%" y1={height - .5} y2={height - .5} />
           <line ref={crosshair} className={styles.crosshair} y1={TOP - 4} y2={height} />
