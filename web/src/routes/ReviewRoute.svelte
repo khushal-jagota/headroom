@@ -264,7 +264,7 @@
 {/snippet}
 
 <section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement}>
-  <ResourceState shape="block" error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
+  <ResourceState shape="block" loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
     {#if showFinal}
       <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
     {:else if currentItem}

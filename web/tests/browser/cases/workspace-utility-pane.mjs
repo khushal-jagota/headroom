@@ -50,6 +50,7 @@ class QuietEventSource {
   }
   async refresh({signal}: {signal?: AbortSignal} = {}) {
     const refreshId = ++this.generation;
+    if ((globalThis as any).__navigationOffline) { queueMicrotask(() => (this.onerror as any)?.()); return; }
     const request = JSON.parse(new URL(this.url, location.href).searchParams.get('view')!);
     const receipt: any = {sourceId:this.id, refreshId, url:this.url, request, snapshot:null, dispatched:false};
     const response = await fetch(this.url.replace('/events?', '/snapshot?'), {signal});
@@ -96,6 +97,10 @@ class QuietEventSource {
   close() { this.closed = true; sources.delete(this); }
 }
 (globalThis as any).__navigationSources = () => [...sources];
+(globalThis as any).__disconnectNavigation = () => {
+  (globalThis as any).__navigationOffline = true;
+  for (const source of [...sources]) (source.onerror as any)?.();
+};
 (globalThis as any).__refreshNavigation = (options = {}) => Promise.all([...sources].map(source => source.refresh(options)));
 (globalThis as any).EventSource = QuietEventSource;
 </script>

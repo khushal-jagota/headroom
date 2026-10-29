@@ -12,7 +12,15 @@ Feature modules own their DOM assertions and command dependencies. The applicati
 
 The Ticket current-stage section admits private detail only when its public identity, gate, proposal revision, and control facts match the shared record. Worker configuration must describe that exact stage. The retained section preserves its original detail and local edits. It cannot certify a newer publication or authorize a gesture against a replaced identity. Private bodies remain detail reads.
 
-The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. A retained header after deletion cannot acknowledge a current publication. A composed workspace shows its shared request error once. Independent detail or content errors keep their own existing error lines.
+The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. A retained header after deletion cannot acknowledge a current publication. The shell reports navigation health. Independent detail or content errors keep their own existing error lines.
+
+The scoped owner carries client health separately from its mechanical connection state.
+A degraded snapshot preserves the server's availability and reason through the existing retry sequence.
+A transport or protocol failure reports reconnecting. Only accepted current data for the demanded scope clears the warning.
+Current frames from an older active scope cannot clear a warning for its pending replacement.
+Obsolete callbacks cannot update health. Rejected authority cannot supply a degraded reason or restore healthy status.
+Generation changes, runtime knowledge loss, and retry timing retain their existing rules.
+The application passes this health to both shell status mounts, alongside deployment and update messages.
 
 `navigationWorkingAgentCount(view)` in `presentation.ts` supplies the shared workspace-wide count as a number or `null`. It accepts an effective view, `null`, or `undefined`. An absent view or lost runtime authority returns `null`. A scoped view returns `counts.running_conversations` directly, including zero or `null`, without a resident-record scan. Filters and pagination do not reduce this global total.
 
