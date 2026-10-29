@@ -143,7 +143,11 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
             timeout=30,
         )
         recorded = store.read()
-        if response.status_code != 200 or recorded is None or response.json() != asdict(recorded):
+        if (
+            response.status_code != 200
+            or recorded is None
+            or response.json() != json.loads(json.dumps(asdict(recorded)))
+        ):
             raise ValueError(
                 "Runner admission was refused or uncertain. The service remains unchanged."
             )

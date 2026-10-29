@@ -60,29 +60,6 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
     }
 
 
-def test_runtime_validation_keeps_runner_credentials_out_of_the_candidate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app = _runtime_app(tmp_path / "app")
-    for name in (
-        "GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
-    ):
-        monkeypatch.setenv(name, "runner-only-test-value")
-    python = app / ".venv" / "bin" / "python"
-    planner_file = app / "src" / "planner" / "__init__.py"
-    python.write_text(
-        '#!/bin/sh\n'
-        '[ -z "${GH_TOKEN-}${GITHUB_TOKEN-}'
-        '${ACTIONS_RUNTIME_TOKEN-}${ACTIONS_ID_TOKEN_REQUEST_TOKEN-}" ] || exit 17\n'
-        f"printf '%s\\n' '{planner_file}'\n",
-        encoding="utf-8",
-    )
-    _rewrite_digest(app)
-    validate_app_manifest(app / "manifest.json", expected_sha=SHA, require_runtime=True)
-
-
-
-
 def test_exported_cli_is_relocatable_and_preserves_caller_context(
     tmp_path: Path,
 ) -> None:

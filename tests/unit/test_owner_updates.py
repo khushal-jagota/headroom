@@ -25,6 +25,7 @@ from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMid
 from planner.environments.app import AppManifest
 from planner.environments.deployment import deploy_app
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_admission import matching_commit, startup_requires_commit
 from planner.environments.update_api import router
 from planner.environments.update_contracts import OwnerUpdateRequest, PublishedUpdate
@@ -37,7 +38,7 @@ def release() -> PublishedUpdate:
         1,
         2,
         3,
-        AppManifest(SHA_B, "c" * 64, "d" * 64),
+        AppManifest(SHA_B, "c" * 64, "d" * 64, RuntimeContract("3.12.12", "f" * 64)),
         "e" * 64,
         "video_upload_ledger",
         (datetime.now(UTC) + timedelta(days=1)).isoformat(),
@@ -501,6 +502,8 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     from dataclasses import asdict
     from typing import Any
 
+    from alembic.script import ScriptDirectory
+
     from planner.core.db import MIGRATIONS_DIRECTORY
     from planner.environments import update_runner
     from planner.environments.app import (
@@ -514,8 +517,13 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     _app(current / "app", SHA_A, "old", include_cli=False)
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     history = candidate / "src" / "planner" / "core" / "migrations"
-    shutil.copytree(MIGRATIONS_DIRECTORY, history)
-    (history / "versions" / "video_upload_ledger.py").unlink()
+    (history / "versions").mkdir(parents=True)
+    shutil.copy(MIGRATIONS_DIRECTORY / "env.py", history / "env.py")
+    # Copy only the predecessor chain, regardless of later shipped descendants.
+    for revision in ScriptDirectory(str(MIGRATIONS_DIRECTORY)).walk_revisions(
+        base="base", head="owner_message_preview"
+    ):
+        shutil.copy(revision.path, history / "versions" / Path(revision.path).name)
     manifest_path = candidate / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["source_digest"] = digest_app_source(candidate)
@@ -575,3 +583,9 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
         update_runner.apply(arguments)
     assert effects == []
     assert store.read().state == "dispatched"  # type: ignore[union-attr]
+
+
+@pytest.fixture(autouse=True)
+def synthetic_runtime_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Transaction tests use shell stubs. Real admission has separate focused tests.
+    monkeypatch.setattr("planner.environments.deployment.admit_runtime", lambda *args: None)
