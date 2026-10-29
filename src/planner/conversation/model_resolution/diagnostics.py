@@ -38,6 +38,7 @@ from planner.conversation.model_resolution.diagnostic_contracts import (
 from planner.conversation.model_resolution.diagnostic_contracts import (
     validate_record as validate_record,
 )
+from planner.conversation.model_resolution.logic.claude_configuration import ClaudeConfigurationRole
 from planner.executor.contracts import ExecutorIdentity, JsonObject
 from planner.tickets.contracts import TicketLocale
 
@@ -87,7 +88,7 @@ _FIELD_SHAPES: dict[type, dict[str, str]] = {
         "global_selection": "string", "documents": "documents", "directories": "directories",
         "credential": "credential",
     },
-    ClaudeInputDocument: {"role": "string", "location": "location", "content": "content"},
+    ClaudeInputDocument: {"role": "role", "location": "location", "content": "content"},
     ClaudeInputDirectory: {"location": "location", "candidates": "paths"},
     ClaudeInputLocation: {"logical": "path", "resolved": "path"},
     ClaudeCredentialMarker: {
@@ -177,6 +178,8 @@ class _Budget:
         if shape is not None and not (value is None and shape in _OPTIONAL_SHAPES):
             if shape == "path":
                 valid = isinstance(value, Path)
+            elif shape == "role":
+                valid = type(value) in (str, ClaudeConfigurationRole)
             elif shape in _ITEM_SHAPES:
                 valid = type(value) is tuple
                 if valid and shape == "environment_pair":
@@ -221,7 +224,7 @@ class _Budget:
                     if self.candidates > 256:
                         raise _Limit("limit_candidates")
             if isinstance(value, ClaudeInputDocument):
-                if (type(value.role) is not str or len(value.role) > 32
+                if (type(value.role) not in (str, ClaudeConfigurationRole) or len(value.role) > 32
                         or value.role not in _ROLE_NAMES):
                     raise ValueError("Invalid diagnostic input")
             if isinstance(value, ClaudeJsonValue):
