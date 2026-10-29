@@ -55,25 +55,63 @@ def expression_references(
     raise invalid("invalid measure expression")
 
 
-def phase_changed(expression: FormulaExpression, day: str) -> bool:
-    """Compare only active branch choices, without resolving any numeric input."""
+def phase_changed(
+    expression: FormulaExpression,
+    day: str,
+    definitions: Mapping[str, Measure] | None = None,
+) -> bool:
+    """Compare active choices through dated inputs, without numeric evaluation.
+
+    Paths distinguish independent references to the same measure. A daily sum
+    collects choices at one path, so a different number of dates alone does not
+    introduce a phase boundary.
+    """
     current = calendar_date(day)
     if current.toordinal() == 1:
         return False
     previous = (current - timedelta(days=1)).isoformat()
 
-    def trace(at: str) -> tuple[bool, ...]:
-        choices: list[bool] = []
-        pending = [expression]
+    def trace(at: str) -> dict[tuple[int, ...], set[bool]]:
+        choices: dict[tuple[int, ...], set[bool]] = {}
+        pending: list[tuple[FormulaExpression, str, tuple[int, ...], frozenset[str]]] = [
+            (expression, at, (), frozenset())
+        ]
         while pending:
-            node = pending.pop()
+            node, on_date, path, ancestors = pending.pop()
             if node["op"] == "if_before":
-                before = at < node["date"]
-                choices.append(before)
-                pending.append(node["before"] if before else node["otherwise"])
+                before = on_date < node["date"]
+                choices.setdefault(path, set()).add(before)
+                pending.append(
+                    (
+                        node["before"] if before else node["otherwise"],
+                        on_date,
+                        (*path, 0 if before else 1),
+                        ancestors,
+                    )
+                )
             elif node["op"] in ("add", "subtract", "multiply", "divide", "power", "min", "max"):
-                pending.extend((node["right"], node["left"]))
-        return tuple(choices)
+                pending.extend(
+                    (
+                        (node["right"], on_date, (*path, 1), ancestors),
+                        (node["left"], on_date, (*path, 0), ancestors),
+                    )
+                )
+            elif node["op"] in ("reference", "reference_at", "sum_daily"):
+                identifier = node["measure_id"]
+                measure = definitions.get(identifier) if definitions is not None else None
+                if measure is None or measure.formula is None or identifier in ancestors:
+                    continue
+                try:
+                    # References name calendar dates; neither timezone nor instant
+                    # changes their identity.
+                    references = expression_references(node, on_date, measure.timezone, 0)
+                except PlannerError:
+                    continue  # An unavailable date has no additional phase choices.
+                pending.extend(
+                    (measure.formula, pair.date, (*path, 2), ancestors | {identifier})
+                    for pair in references
+                )
+        return choices
 
     return trace(previous) != trace(day)
 
