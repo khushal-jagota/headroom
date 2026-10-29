@@ -10,7 +10,7 @@ import contextvars
 import threading
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from tests.unit.test_catalog_diagnostic_comparison import capture
@@ -18,6 +18,7 @@ from tests.unit.test_claude_input_identity import sources as sources
 
 from planner.conversation.model_resolution import claude_inputs
 from planner.conversation.model_resolution import diagnostics as d
+from planner.conversation.model_resolution.diagnostic_contracts import DiagnosticStatus
 
 
 @pytest.fixture
@@ -50,14 +51,16 @@ def offer(sources: Any, owner: object, *, mutation: str = "", tail: str = "") ->
             d._collector_success(vector)
         value = replace(capture(), vector=vector, environment=tuple(sources[3].items()))
         if tail == "environment_pair":
-            value = replace(value, environment=(*value.environment, ("bad",)))
+            value = replace(value, environment=(*value.environment, cast(Any, ("bad",))))
         elif tail == "environment_value":
-            value = replace(value, environment=(*value.environment, ("bad", 1)))
+            value = replace(value, environment=(*value.environment, cast(Any, ("bad", 1))))
         elif tail == "context":
-            value = replace(value, context=replace(value.context, account_generation="bad"))
+            value = replace(value, context=replace(
+                value.context, account_generation=cast(Any, "bad"),
+            ))
         elif tail == "workspace":
             value = replace(value, context=replace(value.context, workspace=replace(
-                value.context.workspace, workspace_home_relative=1,
+                value.context.workspace, workspace_home_relative=cast(Any, 1),
             )))
         elif tail == "oversized_environment":
             value = replace(value, environment=(*value.environment, ("bad", "x" * 4097)))
@@ -294,8 +297,9 @@ def test_shared_exhaustion_removes_fact_at_every_completion_boundary(
             return result
         monkeypatch.setattr(d, "validate_record", validate)
     result = sink.finish()
-    expected = d.unavailable_record("limit_documents" if "finalization" in boundary
-                                    else f"limit_{resource}")
+    status: DiagnosticStatus = ("limit_documents" if "finalization" in boundary else
+                                "limit_time" if resource == "time" else "limit_work")
+    expected = d.unavailable_record(status)
     expected["provider_source_snapshot"] = "equal"
     assert result == expected
 

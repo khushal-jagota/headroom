@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -640,7 +641,7 @@ def test_canonical_shared_limit_preserves_service_and_prepared_launch_admission(
     selected = tmp_path / ".claude" / "settings.json"
     selected.parent.mkdir()
     database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    monkeypatch.setattr(admission.time, "time", lambda: 1000)
+    monkeypatch.setattr(time, "time", lambda: 1000)
     results: list[Any] = []
 
     async def run() -> None:
