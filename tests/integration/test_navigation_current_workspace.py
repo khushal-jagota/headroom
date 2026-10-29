@@ -147,7 +147,9 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
     with current_navigation_database(path) as conn:
         before = snapshot(conn)
         conn.execute("BEGIN")
-        # Rewind the empty synthetic ledger with its historical migration marker.
+        # Remove both empty synthetic tables before rewinding their migration marker.
+        assert conn.execute("SELECT COUNT(*) FROM ticket_application_previews").fetchone()[0] == 0
+        conn.execute("DROP TABLE ticket_application_previews")
         assert conn.execute("SELECT COUNT(*) FROM conversation_video_uploads").fetchone()[0] == 0
         conn.execute("DROP TABLE conversation_video_uploads")
         conn.execute("UPDATE alembic_version SET version_num=?", (revision,))
