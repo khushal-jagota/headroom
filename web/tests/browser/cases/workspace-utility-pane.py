@@ -1534,7 +1534,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             authority = {**source["authority"], "availability": {
                 "state": "current" if navigation_health["mode"] == "current" else "unavailable",
                 "generation": str(navigation_health["generation"]), "reason": navigation_health["reason"],
-            }, "permit": source["authority"]["permit"] if navigation_health["mode"] == "current" else None}
+            }, "permit": {**source["authority"]["permit"], "generation": str(navigation_health["generation"])} if navigation_health["mode"] == "current" else None}
             projected = {**source, "mode": navigation_health["mode"], "authority": authority}
             route.fulfill(json=navigation["scoped_navigation_response"](projected, view))
             return

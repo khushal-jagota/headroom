@@ -51,6 +51,13 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   function publication(value:ViewSnapshot):NavigationPublication {
     return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context),reviewSummary:Object.freeze(value.content.review_summary)})});
   }
+  function rememberAuthority(authority:CurrentAuthority|DegradedAuthority) {
+    if(lastAuthority && lastAuthority.delivery_session_id!==authority.delivery_session_id) {
+      if(retiredSessions.size>=64)throw new Error('Navigation authority history full; reload workspace');
+      retiredSessions.add(lastAuthority.delivery_session_id);
+    }
+    lastAuthority=authority;
+  }
   function admit(value:ViewFrame,generation:number,scope=activeRequest):NavigationPublication|undefined {
     if(disposed || generation!==state.generation) return;
     if(value.scope_generation!==scope.scope_generation)throw new Error('Obsolete navigation view scope');
@@ -60,11 +67,8 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     if(value.event==='snapshot' && current && sameDomain(value.coverage,current.coverage) && compareRevision(value.coverage.revision,current.coverage.revision)<0)throw new Error('Obsolete navigation coverage');
     const next=applyFrame(current,value);
     const unchanged=current && next.view_id===current.view_id && next.content_version===current.content_version && sameAuthority(next.authority,current.authority) && state.effective?.runtimeCurrent===true;
-    if(lastAuthority && lastAuthority.delivery_session_id!==next.authority.delivery_session_id) {
-      if(retiredSessions.size>=64)throw new Error('Navigation authority history full; reload workspace');
-      retiredSessions.add(lastAuthority.delivery_session_id);
-    }
-    current=next;lastAuthority=next.authority;
+    rememberAuthority(next.authority);
+    current=next;
     const admitted=publication(next);
     // Recovery concerns the demanded scope. Updates to the retained active scope
     // cannot certify that its failed replacement is current.
@@ -149,7 +153,10 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
           buffered=applyFrame(buffered,frame);
           if(retiredSessions.has(buffered.authority.delivery_session_id))throw new Error('Retired navigation authority');
           if(lastAuthority?.delivery_session_id===buffered.authority.delivery_session_id && compareRevision(buffered.authority.availability.generation,lastAuthority.availability.generation)<0)throw new Error('Obsolete navigation authority');
-          if(buffered.mode!=='current'){failure(state.generation,undefined,{state:'degraded',availability:{...buffered.authority.availability}});return;}
+          if(buffered.mode!=='current'){
+            rememberAuthority(buffered.authority);
+            failure(state.generation,undefined,{state:'degraded',availability:{...buffered.authority.availability}});return;
+          }
           // Active scope remains authoritative while this bounded pending stream catches up.
           if(current && sameDomain(buffered.coverage,current.coverage) && compareRevision(buffered.coverage.revision,current.coverage.revision)<0)return;
           const sameContent=current?.view_id===buffered.view_id && current.content_version===buffered.content_version && sameAuthority(current.authority,buffered.authority);

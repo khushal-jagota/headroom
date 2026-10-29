@@ -252,7 +252,7 @@ def test_write_lease_ends_once_at_headers_before_upstream_send_or_body(harness: 
 
 
 @pytest.mark.parametrize(
-    "ending", ("error-before", "error-after", "disconnect", "cancel", "send-error")
+    "ending", ("error-before", "error-after", "disconnect", "no-start", "cancel", "send-error")
 )
 def test_write_lease_releases_once_on_error_disconnect_or_cancellation(
     harness: Harness, ending: str
@@ -264,6 +264,8 @@ def test_write_lease_releases_once_on_error_disconnect_or_cancellation(
             assert harness.admission.active and harness.admission.exits == 0
             if ending == "disconnect":
                 assert (await receive())["type"] == "http.disconnect"
+                return
+            if ending == "no-start":
                 return
             if ending == "cancel":
                 raise asyncio.CancelledError
@@ -281,7 +283,7 @@ def test_write_lease_releases_once_on_error_disconnect_or_cancellation(
             if ending == "send-error":
                 raise failure
 
-        if ending == "disconnect":
+        if ending in {"disconnect", "no-start"}:
             await harness.wrap(endpoint)(harness.scope("POST"), receive, send)
         else:
             expected = asyncio.CancelledError if ending == "cancel" else ValueError
@@ -313,8 +315,9 @@ def test_non_http_scope_and_callables_pass_through_unchanged(harness: Harness, k
     asyncio.run(run())
 
 
-def test_navigation_disconnect_before_headers_finishes_without_synthetic_response(
-    harness: Harness, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("disconnected", (False, True))
+def test_navigation_stream_connected_success_or_preheader_disconnect(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, disconnected: bool
 ) -> None:
     async def run() -> None:
         entered = asyncio.Event()
@@ -338,7 +341,10 @@ def test_navigation_disconnect_before_headers_finishes_without_synthetic_respons
 
         async def receive() -> Message:
             await entered.wait()
-            return {"type": "http.disconnect"}
+            if disconnected:
+                return {"type": "http.disconnect"}
+            release.set()
+            return await idle_receive()
 
         sent: list[Message] = []
 
@@ -354,7 +360,11 @@ def test_navigation_disconnect_before_headers_finishes_without_synthetic_respons
             )
         finally:
             release.set()
-        assert sent == []
+        if disconnected:
+            assert sent == []
+        else:
+            assert sent[0]["status"] == 200
+            assert b"".join(message.get("body", b"") for message in sent) == b": heartbeat\n\n"
 
     asyncio.run(run())
 
@@ -401,7 +411,7 @@ def test_connected_header_timeout_still_logs_and_returns_500_at_uvicorn_boundary
             connection.next_event()
             connection.next_event()
             cycle = RequestResponseCycle(
-                scope=cast(Any, harness.scope(path="/api/navigation/view/events")),
+                scope=cast(Any, harness.scope("POST")),
                 conn=connection,
                 transport=transport,
                 flow=flow,
@@ -426,6 +436,10 @@ def test_connected_header_timeout_still_logs_and_returns_500_at_uvicorn_boundary
                     flow.resume_writing()
 
             await cycle.run_asgi(cast(ASGI3Application, harness.wrap(endpoint)))
+            assert not harness.admission.active
+            assert (
+                harness.admission.entries == harness.admission.exits == (2 if disconnected else 1)
+            )
             if disconnected:
                 assert caplog.records == []
                 assert transport.writes == []

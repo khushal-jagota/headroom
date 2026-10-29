@@ -91,12 +91,20 @@ describe('bounded navigation owner',()=>{
         expect(owner.getState()).toMatchObject({connection:'subscribed',health:{state:'reconnecting'},effective:{runtimeCurrent:true}});
         await vi.advanceTimersByTimeAsync(1000);
       }
-      const replacement=connections.at(-1)!,accepted=degraded(replacement.request,null,'3');
+      const retained=owner.getState().publication;
+      const replacement=connections.at(-1)!,accepted=degraded(replacement.request,null,'3','next-delivery');
       replacement.send(accepted);
       expect(owner.getState()).toMatchObject({connection:'reconnecting',health:{state:'degraded',availability:accepted.authority.availability},effective:{runtimeCurrent:false}});
       await vi.advanceTimersByTimeAsync(1000);
       expect(owner.getState()).toMatchObject({connection:'snapshot',health:{state:'degraded',availability:{reason:null}}});
-      const recovery=connections.at(-1)!,current=snapshot(recovery.request);current.authority=authority('signal-workspace','3');
+      for(const [generation,session] of [['2','next-delivery'],['9','delivery']]) {
+        const recovery=connections.at(-1)!,rejected=snapshot(recovery.request);rejected.authority=authority('signal-workspace',generation,session);
+        recovery.send(rejected);
+        expect(owner.getState()).toMatchObject({health:{state:'reconnecting'},effective:{runtimeCurrent:false}});
+        expect(owner.getState().publication).toBe(retained);
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      const recovery=connections.at(-1)!,current=snapshot(recovery.request);current.authority=authority('signal-workspace','3','next-delivery');
       recovery.send(current);expect(owner.getState().health).toBeNull();
     } finally {owner.dispose();vi.useRealTimers();}
   });
