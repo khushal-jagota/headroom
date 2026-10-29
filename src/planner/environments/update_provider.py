@@ -121,6 +121,8 @@ class GitHubUpdateProvider:
             raise ValueError("Publication identity differs from trusted repository evidence.")
         if datetime.fromisoformat(release.expires_at.replace("Z", "+00:00")) <= datetime.now(UTC):
             return None
+        if release.manifest.runtime_contract is None:
+            return None
         self._publication_cache = release
         return release
 
