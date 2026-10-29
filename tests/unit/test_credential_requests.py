@@ -688,3 +688,87 @@ def test_owner_resolution_after_manager_deletion_is_refused_without_resurrecting
         conn.close()
 
     asyncio.run(exercise())
+
+
+def test_manager_deletion_waits_for_an_admitted_result_delivery(
+    host: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.managers import data as managers
+    from planner.managers import service as manager_service
+    from planner.runtime.logic.conversation_start_resolution import manager_role_materials
+
+    async def exercise() -> None:
+        conn = connect(str(host.db_path))
+        manager = managers.create_manager(
+            conn,
+            title="Concurrent deletion manager",
+            project_id="project_personal",
+            clock=host.app.state.clock,
+        )
+        await host.system.start_conversation(
+            ConversationStartRequest(
+                conversation_id="manager-origin",
+                model="gpt-6-sol",
+                role_materials=manager_role_materials(manager.id),
+                workspace_folder=host.db_path.parent,
+            )
+        )
+        conn.execute(
+            "UPDATE agents SET conversation_id='manager-origin' WHERE agent_key=?",
+            (manager.manager_agent_key,),
+        )
+        conn.commit()
+        entered, release, deleting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = host.system.send_with_receipt
+
+        async def blocked(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(host.system, "send_with_receipt", blocked)
+        async with host.client() as client:
+            request = request_body()
+            created = await client.post(
+                "/api/credentials/requests",
+                json=request,
+                headers={
+                    "X-Plan-Actor": "manager",
+                    "X-Plan-Manager-ID": manager.id,
+                    "X-Plan-Conversation-ID": "manager-origin",
+                },
+            )
+            assert created.status_code == 200, created.text
+            resolving = asyncio.create_task(
+                client.post(f"/api/credentials/requests/{request['request_id']}/reject")
+            )
+            await entered.wait()
+
+            async def delete() -> None:
+                deleting.set()
+                await manager_service.delete_manager(
+                    host.system, conn, manager.id, principal=OWNER_PRINCIPAL
+                )
+
+            removal = asyncio.create_task(delete())
+            await deleting.wait()
+            await asyncio.sleep(0)
+            # This is a different lock from the Ticket reset race. Without the Manager
+            # lifecycle lock, deletion completes before the gated provider write.
+            try:
+                assert not removal.done()
+            finally:
+                release.set()
+            resolved = await resolving
+            assert resolved.status_code == 200, resolved.text
+            assert resolved.json()["delivery"]["status"] == "started"
+            await removal
+            assert (
+                conn.execute("SELECT 1 FROM managers WHERE id=?", (manager.id,)).fetchone() is None
+            )
+            assert len(host.backend("manager-origin").written_texts) == 1
+            assert not await host.system.is_running("manager-origin")
+            assert conn.execute("SELECT count(*) FROM credentials").fetchone()[0] == 0
+        conn.close()
+
+    asyncio.run(asyncio.wait_for(exercise(), 15))

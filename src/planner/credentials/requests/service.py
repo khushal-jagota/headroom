@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from collections.abc import Callable, Coroutine
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, cast
 
 from planner.conversation.contracts import (
@@ -26,6 +27,7 @@ from planner.core.authctx import RequestContext
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.credentials.requests import actions, data
 from planner.credentials.requests.contracts import CredentialRequestRowBody, RequestDeliveryStatus
+from planner.managers.service import manager_lifecycle_lock
 from planner.message_delivery.service import _sender_conversation_link_key
 from planner.runtime import conversation_start
 
@@ -75,57 +77,66 @@ async def dispatch(
     status: RequestDeliveryStatus
     reason: str | None = None
     principal = Principal(PrincipalKind(row["requester_kind"]), str(row["requester_id"]))
-    try:
-        link_key = await runtime.reads.run(
-            lambda conn: _sender_conversation_link_key(conn, principal)
-        )
-    except PlannerError:
-        status, reason = "refused", "requesting_conversation_retired"
-    else:
-        async with conversation_start.conversation_link_lock(link_key):
-            try:
-                await runtime.reads.run(
-                    lambda conn: actions.origin_conversation(
-                        conn, RequestContext(principal, origin)
-                    )
-                )
-            except PlannerError:
-                status, reason = "refused", "requesting_conversation_retired"
-            else:
+    # Match ordinary addressed Manager delivery: lifecycle first, then association.
+    # Manager deletion uses the lifecycle lock and reset uses the association lock.
+    lifecycle = (
+        manager_lifecycle_lock(principal.id)
+        if principal.kind is PrincipalKind.manager
+        else nullcontext()
+    )
+    async with lifecycle:
+        try:
+            link_key = await runtime.reads.run(
+                lambda conn: _sender_conversation_link_key(conn, principal)
+            )
+        except PlannerError:
+            status, reason = "refused", "requesting_conversation_retired"
+        else:
+            async with conversation_start.conversation_link_lock(link_key):
                 try:
-                    receipt = await runtime.system.send_with_receipt(
-                        origin,
-                        text_message_content(str(attempt["prompt"])),
-                        sender_label="Panels credential request result",
-                        sender_message_id=str(attempt["sender_message_id"]),
-                        mode=PromptDeliveryMode.steer,
-                        reply_requested=False,
-                        record_refusal=True,
+                    await runtime.reads.run(
+                        lambda conn: actions.origin_conversation(
+                            conn, RequestContext(principal, origin)
+                        )
                     )
-                except Exception:
-                    # A missing response is not evidence that no provider received the result.
-                    status = "uncertain"
+                except PlannerError:
+                    status, reason = "refused", "requesting_conversation_retired"
                 else:
-                    match receipt.fate:
-                        case PromptDeliveryStarted():
-                            status = "started"
-                        case PromptDeliveryInjected():
-                            status = "injected"
-                        case PromptDeliveryQueued():
-                            status = "queued"
-                        case PromptDeliveryRefused(refusal_reason=refusal):
-                            status = (
-                                "uncertain"
-                                if refusal == PromptDeliveryRefusalReason.write_to_backend_failed
-                                else "refused"
-                            )
-                            reason = str(refusal)
-                        case PromptDeliverySuppressed():
-                            status = "canceled"
-                        case PromptDeliveryUncertain():
-                            status = "uncertain"
-                        case _:
-                            raise AssertionError("unknown credential result delivery fate")
+                    try:
+                        receipt = await runtime.system.send_with_receipt(
+                            origin,
+                            text_message_content(str(attempt["prompt"])),
+                            sender_label="Panels credential request result",
+                            sender_message_id=str(attempt["sender_message_id"]),
+                            mode=PromptDeliveryMode.steer,
+                            reply_requested=False,
+                            record_refusal=True,
+                        )
+                    except Exception:
+                        # A missing response is not evidence that no provider received the result.
+                        status = "uncertain"
+                    else:
+                        match receipt.fate:
+                            case PromptDeliveryStarted():
+                                status = "started"
+                            case PromptDeliveryInjected():
+                                status = "injected"
+                            case PromptDeliveryQueued():
+                                status = "queued"
+                            case PromptDeliveryRefused(refusal_reason=refusal):
+                                status = (
+                                    "uncertain"
+                                    if refusal
+                                    == PromptDeliveryRefusalReason.write_to_backend_failed
+                                    else "refused"
+                                )
+                                reason = str(refusal)
+                            case PromptDeliverySuppressed():
+                                status = "canceled"
+                            case PromptDeliveryUncertain():
+                                status = "uncertain"
+                            case _:
+                                raise AssertionError("unknown credential result delivery fate")
 
     def settle(
         conn: sqlite3.Connection,
