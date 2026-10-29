@@ -278,11 +278,11 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
                 == 2
             )
             assert executor.spool.pending_count() == 0 and not executor.registry.children
-            assert PROTOCOL_VERSION == 11 and SPOOL_FORMAT_VERSION == 2
+            assert PROTOCOL_VERSION == 12 and SPOOL_FORMAT_VERSION == 2
             with pytest.raises(ProtocolRefused):
                 parse_identity(
                     encode_value(
-                        replace(executor.identity, protocol_version=10, connection_generation=1)
+                        replace(executor.identity, protocol_version=11, connection_generation=1)
                     )
                 )
             assert (
