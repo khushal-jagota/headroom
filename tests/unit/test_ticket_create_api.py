@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,7 +15,7 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import CreateTicketBody
@@ -25,8 +24,6 @@ from planner.tickets.contracts import CreateTicketBody
 @pytest.fixture
 def create_api(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "ticket-create.db"
-    with closing(connect(str(db_path))) as conn:
-        create_schema(conn)
     config = load_config(
         path=None,
         env={
