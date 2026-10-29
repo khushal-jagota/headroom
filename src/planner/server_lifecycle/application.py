@@ -14,6 +14,7 @@ from planner.core.config import HOST, load_config
 from planner.core.db import connect
 from planner.core.server import create_app
 from planner.core.sse import close_open_change_streams
+from planner.previews import config as preview_limits
 
 
 class ChangeStreamClosingServer(uvicorn.Server):
@@ -44,9 +45,26 @@ def run_application_process() -> None:
     app = create_app(config, clock, conn_factory)
     listener_fd = os.environ.get("PLAN_SERVER_LISTENER_FD")
     if listener_fd is not None:
-        server_config = uvicorn.Config(app, fd=int(listener_fd))
+        server_config = uvicorn.Config(
+            app,
+            fd=int(listener_fd),
+            ws="websockets",
+            ws_max_size=preview_limits.WEBSOCKET_MESSAGE_BYTES,
+            ws_max_queue=preview_limits.WEBSOCKET_QUEUE_DEPTH,
+            ws_ping_interval=preview_limits.WEBSOCKET_PING_SECONDS,
+            ws_ping_timeout=preview_limits.WEBSOCKET_PONG_SECONDS,
+        )
     else:
-        server_config = uvicorn.Config(app, host=HOST, port=config.port)
+        server_config = uvicorn.Config(
+            app,
+            host=HOST,
+            port=config.port,
+            ws="websockets",
+            ws_max_size=preview_limits.WEBSOCKET_MESSAGE_BYTES,
+            ws_max_queue=preview_limits.WEBSOCKET_QUEUE_DEPTH,
+            ws_ping_interval=preview_limits.WEBSOCKET_PING_SECONDS,
+            ws_ping_timeout=preview_limits.WEBSOCKET_PONG_SECONDS,
+        )
     ChangeStreamClosingServer(server_config).run()
 
 

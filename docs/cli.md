@@ -300,3 +300,23 @@ Projects accept `--requires-macos` at creation and
 `panels project set <project> requires-macos --value true|false` for later edits.
 These requirements affect future locale resolution. See
 [Ticket locale rules](tickets-and-gates.md#execution-locale).
+
+
+## Application previews
+
+These commands use the caller's own Worker Ticket identity:
+
+```sh
+panels preview prepare --json
+panels preview register --port 5173 --json
+panels preview show --json
+panels preview stop
+```
+
+Prepare first, then start a prefix-aware application from the returned reserved
+Git worktree and register its loopback port. Share the returned `url` only after
+registration succeeds. Stop revokes the link; stop the application process too.
+Never serve untrusted or third-party content, downloaded samples, vendor demos,
+or pages embedding third-party scripts: preview code shares Panels' browser
+authority. Read [application-previews.md](application-previews.md) for startup,
+limits, the tailnet gate, and automatic expiry.

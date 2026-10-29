@@ -1,3 +1,4 @@
+import { usageAliases } from "../../usage-aliases.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -96,7 +97,7 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     receipt.timing.prepareSeconds = (performance.now() - prepareStarted) / 1000;
     const output = join(temporary, "dist");
     const buildStarted = performance.now();
-    await build({root: webRoot, base: "/", configFile: false, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
+    await build({root: webRoot, base: "/", configFile: false, resolve: { alias: usageAliases }, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
       build: {outDir: output, emptyOutDir: true, rollupOptions: {input: prepared.flatMap(case_ => case_.inputs)}}});
     receipt.timing.sharedBuildSeconds = (performance.now() - buildStarted) / 1000;
     const serverStarted = performance.now();

@@ -127,6 +127,9 @@ def test_deploy_cli_accepts_portable_proof_and_preserves_legacy_health_guard(
         return DeploymentResult("succeeded", "a" * 40, None, None)
 
     monkeypatch.setattr(cli, "deploy_app", deploy)
+    monkeypatch.setattr(
+        "planner.environments.deployment.require_external_service_execution", lambda *args: None
+    )
     result = CliRunner().invoke(cli.environment, [
         "app-deploy", "--candidate-app", str(app), "--current-root", str(tmp_path / "current"),
         "--source-db", str(tmp_path / "database.sqlite"), "--backup-dir", str(tmp_path / "backups"),

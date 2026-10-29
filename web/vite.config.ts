@@ -1,3 +1,4 @@
+import { usageAliases } from "./usage-aliases.mjs";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
 import { markdownWorkerPlugins } from "./build/markdown-worker.mjs";
@@ -6,6 +7,7 @@ const backend = process.env.PLAN_WEB_BACKEND || "http://127.0.0.1:8787";
 
 export default defineConfig({
   base: "/_app/",
+  resolve: { alias: usageAliases },
   plugins: [svelte()],
   worker: { plugins: markdownWorkerPlugins },
   build: {
