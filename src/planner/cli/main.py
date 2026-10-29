@@ -34,6 +34,7 @@ from planner.cli.record_projection import (
 )
 from planner.core.authctx import normalize_manager_identity
 from planner.credentials.cli import credential as credential_group
+from planner.datasets.cli import dataset as dataset_group
 from planner.environments.cli import environment as environment_group
 from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
@@ -451,6 +452,7 @@ main.add_command(maintenance_group)
 main.add_command(credential_group)
 main.add_command(goal_group)
 main.add_command(measure_group)
+main.add_command(dataset_group)
 main.add_command(measure_source_group)
 environment_group.hidden = True
 
