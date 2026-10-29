@@ -12,12 +12,16 @@ def checklist_save_feedback(page):
     page.evaluate("window.__checklist(true)")
     checklist = page.locator('[data-checklist-fixture]')
     progress = checklist.get_by_role('progressbar')
-    publish = checklist.get_by_role('list', name='Open items').get_by_role('checkbox', name='Publish')
+    publish = (
+        checklist.get_by_role('list', name='Open items').get_by_role('checkbox', name='Publish')
+    )
     expect(progress).to_have_attribute('aria-valuenow', '1')
     publish.click()
     expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
     expect(progress).to_have_attribute('aria-valuenow', '1')
-    expect(checklist.locator('[data-block=checklist]')).not_to_have_attribute('data-complete', 'true')
+    expect(checklist.locator('[data-block=checklist]')).not_to_have_attribute(
+        'data-complete', 'true'
+    )
     assert 'All 2 items done.' not in checklist.inner_text()
     page.wait_for_function("typeof window.__checklistReply === 'function'")
     page.evaluate("window.__checklistReply(false)")
@@ -39,7 +43,10 @@ def checklist_save_feedback(page):
     expect(checklist.get_by_role('status')).to_have_text('All 2 items done.')
     # An accepted uncheck reopens the checklist through the same writer queue.
     checklist.get_by_role('button', name='2 completed', exact=True).click()
-    checklist.get_by_role('list', name='Completed items').get_by_role('checkbox', name='Publish').click()
+    (
+        checklist.get_by_role('list', name='Completed items')
+        .get_by_role('checkbox', name='Publish').click()
+    )
     expect(progress).to_have_attribute('aria-valuenow', '2')
     page.wait_for_function("typeof window.__checklistReply === 'function'")
     page.evaluate("window.__checklistReply(true)")
@@ -79,7 +86,10 @@ def run(browser, urls):
     page.emulate_media(reduced_motion="reduce")
     checklist_started = time.monotonic()
     checklist_save_feedback(page)
-    print(f"checklist save feedback: passed ({time.monotonic() - checklist_started:.2f}s)", flush=True)
+    print(
+        f"checklist save feedback: passed ({time.monotonic() - checklist_started:.2f}s)",
+        flush=True,
+    )
     page.evaluate("window.__load(false)")
     page.wait_for_function("!document.querySelector('.skeleton')")
     page.emulate_media(reduced_motion="no-preference")
