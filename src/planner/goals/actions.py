@@ -14,9 +14,17 @@ from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.goals import data
 from planner.goals.contracts import ChartBlock, Goal
-from planner.goals.logic.documents import blocks, measure_ids, prepare_document, validate_chart
+from planner.goals.logic.documents import (
+    blocks,
+    charts,
+    expectation_measure_ids,
+    measure_ids,
+    prepare_document,
+    validate_chart,
+)
 from planner.measures.contracts import MeasureOrigin
-from planner.measures.data import read_measure, transaction
+from planner.measures.data import read_definitions, read_measure, transaction
+from planner.measures.logic.formulas import validate_graph
 from planner.worker_settings.service import read_chief_settings
 
 _EDITABLE = {
@@ -73,10 +81,14 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
         raise ValueError("primary chart ID must be unique")
     for identifier in measure_ids(result.primary_chart, result.page):
         read_measure(conn, identifier)
-    charts = ([result.primary_chart] if result.primary_chart else []) + [
-        cast(ChartBlock, item) for item in blocks(result.page) if item["type"] == "chart"
-    ]
-    for chart in charts:
+    expectation_inputs = tuple(expectation_measure_ids(result.primary_chart, result.page))
+    graph_roots = tuple(
+        set(expectation_inputs) | set(measure_ids(result.primary_chart, result.page))
+    )
+    definitions = read_definitions(conn, graph_roots)
+    for identifier in graph_roots:
+        validate_graph(identifier, definitions)
+    for chart in charts(result.primary_chart, result.page):
         if (
             "manual" in chart
             and read_measure(conn, chart["measure_id"]).origin is not MeasureOrigin.manual
