@@ -55,25 +55,76 @@ def expression_references(
     raise invalid("invalid measure expression")
 
 
-def phase_changed(expression: FormulaExpression, day: str) -> bool:
-    """Compare only active branch choices, without resolving any numeric input."""
+def phase_changed(
+    expression: FormulaExpression,
+    day: str,
+    definitions: Mapping[str, Measure] | None = None,
+) -> bool:
+    """Compare memoized phase structure, without numeric evaluation.
+
+    Ordered binary signatures distinguish independent references. Daily sums
+    collect distinct signatures, so date membership alone adds no boundary.
+    """
     current = calendar_date(day)
     if current.toordinal() == 1:
         return False
     previous = (current - timedelta(days=1)).isoformat()
+    signatures: dict[tuple[object, ...], int] = {}
+    cache: dict[tuple[int, str], int] = {}
 
-    def trace(at: str) -> tuple[bool, ...]:
-        choices: list[bool] = []
-        pending = [expression]
+    def children(node: FormulaExpression, at: str) -> tuple[tuple[FormulaExpression, str], ...]:
+        if node["op"] == "if_before":
+            return ((node["before"] if at < node["date"] else node["otherwise"], at),)
+        if node["op"] in ("add", "subtract", "multiply", "divide", "power", "min", "max"):
+            return ((node["left"], at), (node["right"], at))
+        if node["op"] in ("reference", "reference_at", "sum_daily"):
+            measure = definitions.get(node["measure_id"]) if definitions is not None else None
+            if measure is None or measure.formula is None:
+                return ()
+            try:
+                # References name calendar dates, independent of the clock.
+                references = expression_references(node, at, measure.timezone, 0)
+            except PlannerError:
+                return ()  # An unavailable date has no additional phase choices.
+            return tuple((measure.formula, pair.date) for pair in references)
+        return ()
+
+    def trace(at: str) -> int:
+        active: set[int] = set()
+        pending = [(expression, at, False)]
         while pending:
-            node = pending.pop()
+            node, on_date, expanded = pending.pop()
+            key = (id(node), on_date)
+            if key in cache:
+                continue
+            if not expanded:
+                if id(node) in active:
+                    continue  # Invalid dependency cycles contribute no additional phases.
+                active.add(id(node))
+                pending.append((node, on_date, True))
+                pending.extend(
+                    (child, child_date, False) for child, child_date in children(node, on_date)
+                )
+                continue
+            active.remove(id(node))
+            resolved = tuple(
+                cache.get((id(child), child_date), 0)
+                for child, child_date in children(node, on_date)
+            )
+            signature: tuple[object, ...]
             if node["op"] == "if_before":
-                before = at < node["date"]
-                choices.append(before)
-                pending.append(node["before"] if before else node["otherwise"])
-            elif node["op"] in ("add", "subtract", "multiply", "divide", "power", "min", "max"):
-                pending.extend((node["right"], node["left"]))
-        return tuple(choices)
+                signature = ("phase", id(node), on_date < node["date"], *resolved)
+            elif node["op"] == "sum_daily":
+                signature = ("sum", frozenset(resolved))
+            else:
+                signature = ("children", *resolved)
+            if node["op"] != "if_before" and not any(resolved):
+                cache[key] = 0
+            elif node["op"] in ("reference", "reference_at"):
+                cache[key] = resolved[0]
+            else:
+                cache[key] = signatures.setdefault(signature, len(signatures) + 1)
+        return cache[(id(expression), at)]
 
     return trace(previous) != trace(day)
 

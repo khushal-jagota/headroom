@@ -412,3 +412,98 @@ def test_demand_limit_counts_unique_transitive_pairs_without_capping_ordinary_re
     with pytest.raises(PlannerError, match="7 pairs.*narrower range"):
         demanded_pairs(roots, definitions, now=NOW, limit=7)
     assert len(demanded_pairs(roots, definitions, now=NOW)) == 8
+
+
+def test_phase_boundaries_follow_composed_references_at_their_evaluation_dates() -> None:
+    phase = replace(
+        definition("phase"),
+        source_id=None,
+        origin=MeasureOrigin.assembled,
+        formula=IfBeforeExpression(
+            op="if_before",
+            date="2026-10-28",
+            before=ConstantExpression(op="constant", value=100),
+            otherwise=ConstantExpression(op="constant", value=120),
+        ),
+    )
+    nested = replace(
+        phase,
+        id="nested",
+        formula=ReferenceExpression(op="reference", measure_id=phase.id, day_offset=0),
+    )
+    definitions = {phase.id: phase, nested.id: nested}
+    context = Evaluation(definitions, {}, now=NOW)
+    reference = ReferenceExpression(op="reference", measure_id=nested.id, day_offset=0)
+    assert context.expression(reference, "2026-10-27", "UTC").value == 100
+    assert context.expression(reference, "2026-10-28", "UTC").value == 120
+    assert phase_changed(reference, "2026-10-28", definitions)
+    assert not phase_changed(reference, "2026-10-29", definitions)
+    shifted = ReferenceExpression(op="reference", measure_id=phase.id, day_offset=-2)
+    assert not phase_changed(shifted, "2026-10-28", definitions)
+    assert phase_changed(shifted, "2026-10-30", definitions)
+    fixed = ReferenceAtExpression(op="reference_at", measure_id=phase.id, date="2026-10-28")
+    assert not phase_changed(fixed, "2026-10-28", definitions)
+    lazy = IfBeforeExpression(
+        op="if_before",
+        date="2026-11-01",
+        before=ConstantExpression(op="constant", value=0),
+        otherwise=reference,
+    )
+    assert not phase_changed(lazy, "2026-10-28", definitions)
+    assert phase_changed(lazy, "2026-11-01", definitions)
+    # Separate paths cannot cancel when another reference already uses the new phase.
+    combined = BinaryExpression(op="add", left=fixed, right=reference)
+    assert phase_changed(combined, "2026-10-28", definitions)
+    monthly = SumDailyExpression(op="sum_daily", measure_id=phase.id, period=CountPeriod.month)
+    assert phase_changed(monthly, "2026-11-01", definitions)
+    # November and December differ in length, but every contribution uses the same phase.
+    assert not phase_changed(monthly, "2026-12-01", definitions)
+    missing = ReferenceExpression(op="reference", measure_id="absent", day_offset=0)
+    assert not phase_changed(missing, "2026-10-28", definitions)
+    out_of_range = ReferenceExpression(op="reference", measure_id=phase.id, day_offset=999999999)
+    assert not phase_changed(out_of_range, "2026-10-28", definitions)
+
+
+def test_phase_detection_reuses_shared_assembled_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.measures.logic import evaluation as evaluation_rules
+
+    phase = replace(
+        definition("phase"),
+        source_id=None,
+        origin=MeasureOrigin.assembled,
+        formula=IfBeforeExpression(
+            op="if_before",
+            date="2026-10-28",
+            before=ConstantExpression(op="constant", value=100),
+            otherwise=ConstantExpression(op="constant", value=120),
+        ),
+    )
+    definitions = {phase.id: phase}
+    for index in range(20):
+        previous = phase.id
+        phase = replace(
+            phase,
+            id=f"double-{index}",
+            formula=BinaryExpression(
+                op="add",
+                left=ReferenceExpression(op="reference", measure_id=previous, day_offset=0),
+                right=ReferenceExpression(op="reference", measure_id=previous, day_offset=0),
+            ),
+        )
+        definitions[phase.id] = phase
+    references = evaluation_rules.expression_references
+    visits = 0
+
+    def counted(
+        formula: FormulaExpression, day: str, zone: str, now: int
+    ) -> tuple[MeasureDate, ...]:
+        nonlocal visits
+        visits += 1
+        assert visits <= 200, "phase detection unfolded the shared dependency graph"
+        return references(formula, day, zone, now)
+
+    monkeypatch.setattr(evaluation_rules, "expression_references", counted)
+    reference = ReferenceExpression(op="reference", measure_id=phase.id, day_offset=0)
+    assert phase_changed(reference, "2026-10-28", definitions)
