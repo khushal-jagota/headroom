@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -95,6 +96,104 @@ def synthetic_scope(registry: ClaudeSettingsScopeRegistry | None) -> str:
 
 def binding(path: Path) -> CatalogWorkspaceBinding:
     return CatalogWorkspaceBinding(path, WorkspacePathPolicy.native_absolute, None)
+
+
+@pytest.mark.parametrize("change", ["stable", "configuration", "provider"])
+def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    """Keep both real probe owners and the actual settings comparison callback."""
+    import json
+
+    from tests.unit.test_claude_settings_snapshot import ScriptedTransport
+
+    from planner.conversation.backends import claude_model_catalog
+    from planner.conversation.model_resolution import diagnostics
+
+    for key in tuple(os.environ):
+        if key.startswith(("PLAN_", "PANELS_", "HERMES_", "CLAUDE_", "CODEX_", "ANTHROPIC_")):
+            monkeypatch.delenv(key)
+    launches = launch_fixture(tmp_path, monkeypatch)
+    config = tmp_path / "claude-home" / "settings.json"
+    config.parent.mkdir()
+    (tmp_path / "managed" / "managed-settings.d").mkdir(parents=True)
+    transports: list[ScriptedTransport] = []
+    task_evidence: list[tuple[bool, bool, bool]] = []
+
+    class ExternalTransport(ScriptedTransport):
+        async def send(self, data: str) -> None:
+            frame = json.loads(data)
+            if frame.get("request", {}).get("subtype") == "list_models":
+                lease = diagnostics._observation.get()
+                sink = diagnostics._sink.get()
+                if lease is not None and sink is not None:
+                    task_evidence.append((
+                        lease.task is not asyncio.current_task(),
+                        lease.thread == threading.get_ident(),
+                        sink._failure is None,
+                    ))
+                if change == "configuration":
+                    config.write_text('{"model":"sonnet"}')
+                elif change == "provider":
+                    self.settings["sources"][0]["settings"]["model"] = "sonnet"
+            await super().send(data)
+
+    def transport_factory(*, prompt: Any, options: Any) -> ExternalTransport:
+        del prompt
+        transport = ExternalTransport(options)
+        transports.append(transport)
+        return transport
+
+    monkeypatch.setattr(claude_model_catalog, "SubprocessCLITransport", transport_factory)
+
+    async def run() -> None:
+        results: list[Any] = []
+        calls: list[Any] = []
+        for enabled in (False, True):
+            config.write_text('{"model":"opus"}')
+            environment = ScriptedLaunchEnvironment()
+            reader = observer.ProductionCatalogObserver(
+                destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
+                launches=lambda: launches, environment=environment,
+            )
+            sink = diagnostics.DiagnosticSink(clock=lambda: 0.0)
+            scope = diagnostics.diagnostic_scope(sink) if enabled else contextlib.nullcontext()
+            with scope:
+                result = await reader.observe(
+                    ConversationBackendKey.claude, workspace=binding(tmp_path), attempt_id="nested",
+                    deadline=asyncio.get_running_loop().time() + 10,
+                )
+            results.append(result)
+            calls.append(environment.calls)
+            if enabled:
+                record = sink.finish()
+                assert record == diagnostics.unavailable_record("internal_error")
+                assert task_evidence == [(True, True, True)]
+                print("finite nested reproduction: " + json.dumps({
+                    "change": change,
+                    "callback_task_differs_from_lease": task_evidence[0][0],
+                    "callback_thread_matches_lease": task_evidence[0][1],
+                    "failure_absent_before_callback": task_evidence[0][2],
+                    "diagnostic_status": record["diagnostic_status"],
+                    "ordinary_reason": getattr(result, "reason", "observation"),
+                }, default=str, sort_keys=True))
+        assert calls[0] == calls[1]
+        if change == "stable":
+            assert all(isinstance(result, CatalogObservation) for result in results)
+            assert results[0].rows == results[1].rows
+        else:
+            expected = (ValidationReason.context_changed if change == "configuration"
+                        else ValidationReason.catalog_unavailable)
+            assert all(isinstance(result, CatalogUnavailable) and result.reason is expected
+                       for result in results)
+        subtypes = [[frame["request"]["subtype"] for frame in transport.frames
+                     if frame.get("type") == "control_request"] for transport in transports]
+        assert subtypes == [["initialize", "get_settings", "list_models", "get_settings"]] * 2
+        assert all(not transport.is_ready() for transport in transports)
+        assert all(all(frame.get("type") != "user" for frame in transport.frames)
+                   for transport in transports)
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("backend", [ConversationBackendKey.codex, ConversationBackendKey.claude])
