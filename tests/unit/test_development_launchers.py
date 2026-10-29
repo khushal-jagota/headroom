@@ -59,6 +59,8 @@ def test_safe_commands_preserve_arguments_and_use_local_python(
     monkeypatch.setattr(launcher, "check_tree", lambda *args, **kwargs: None)
     monkeypatch.setattr(launcher, "check_paths", lambda *args, **kwargs: None)
     monkeypatch.setattr(launcher, "check_python", lambda *args, **kwargs: None)
+    # Configuration has its own cases. Dispatch must not depend on a host npm path.
+    monkeypatch.setattr(launcher, "node_environment", lambda *args, **kwargs: None)
     monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: "/usr/bin/npm")
     assert launcher.npm_command(tree, ["--prefix", "web", "run", "test", "--", "a b"], {}) == [
         "/usr/bin/npm",
