@@ -107,6 +107,32 @@ def main() -> None:
             unavailable_reason=unavailable_reason,
         )
 
+    def record_dataset(
+        dataset_id: str,
+        date: str,
+        rows: list[dict[str, Any]],
+        *,
+        query_end_at: float,
+        query_start_at: float | None = None,
+        labels: dict[str, dict[str, str]] | None = None,
+        unavailable_reason: str | None = None,
+        limitation: str | None = None,
+    ) -> None:
+        try:
+            call(
+                "record_dataset",
+                dataset_id=dataset_id,
+                date=date,
+                rows=rows,
+                query_end_at=query_end_at,
+                query_start_at=query_start_at,
+                labels=labels if labels is not None else {},
+                unavailable_reason=unavailable_reason,
+                limitation=limitation,
+            )
+        except (TypeError, ValueError, OverflowError):
+            raise InvalidOutput() from None
+
     failure: dict[str, Any] | None = None
     try:
         source = compile(config["script"], "<measure-source>", "exec")
@@ -118,6 +144,7 @@ def main() -> None:
                 "request": request,
                 "latest": latest,
                 "record": record,
+                "record_dataset": record_dataset,
             },
         )
     except BaseException as error:

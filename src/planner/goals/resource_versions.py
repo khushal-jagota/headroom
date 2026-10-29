@@ -59,6 +59,8 @@ class GoalResources:
             and not set(query) - {"first_date", "last_date"}
         ):
             revision += ":" + source_revision(conn, "automatic-measures", "all")
+            # Bound dataset and named-input calendars change readings at midnight.
+            # The saved goal document keeps its independent revision above.
             dates, _ = views.reading_calendar(conn, data.read_goal(conn, parts[1]), now)
             revision += ":" + dates
             return ResourceSnapshot(

@@ -6,6 +6,8 @@ import json
 from dataclasses import asdict
 from typing import Any
 
+from planner.datasets.contracts import CandidateDatasetResult, OutputDataset
+from planner.datasets.logic.validation import parse_dimensions, parse_fields, parse_result
 from planner.measure_sources.contracts import FailureCode, RunFailure, RunMetrics, RuntimeBudget
 from planner.measures.contracts import (
     CandidateObservation,
@@ -15,6 +17,32 @@ from planner.measures.contracts import (
     OutputMeasure,
     PeriodInterval,
 )
+
+
+def encode_dataset_outputs(outputs: tuple[OutputDataset, ...]) -> str:
+    return json.dumps([asdict(item) for item in outputs], allow_nan=False, separators=(",", ":"))
+
+
+def decode_dataset_outputs(raw: str) -> tuple[OutputDataset, ...]:
+    return tuple(
+        OutputDataset(
+            dataset_id=row["dataset_id"],
+            definition_revision=row["definition_revision"],
+            timezone=row["timezone"],
+            dimensions=parse_dimensions(row["dimensions"]),
+            fields=parse_fields(row["fields"]),
+            required_date=row["required_date"],
+        )
+        for row in json.loads(raw)
+    )
+
+
+def encode_dataset_results(results: tuple[CandidateDatasetResult, ...]) -> str:
+    return json.dumps([asdict(item) for item in results], allow_nan=False, separators=(",", ":"))
+
+
+def decode_dataset_results(raw: str | None) -> tuple[CandidateDatasetResult, ...] | None:
+    return None if raw is None else tuple(parse_result(row) for row in json.loads(raw))
 
 
 def encode_outputs(outputs: tuple[OutputMeasure, ...]) -> str:

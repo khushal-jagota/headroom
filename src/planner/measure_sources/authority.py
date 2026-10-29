@@ -1,4 +1,4 @@
-"""Source work follows the existing responsible Manager/Chief assignment chain."""
+"""Source work follows the responsible Chief, Manager, or goal."""
 
 from __future__ import annotations
 
@@ -18,6 +18,9 @@ def require_owner_or_chief(conn: sqlite3.Connection, principal: Principal) -> No
 def require_assignment(
     conn: sqlite3.Connection, principal: Principal, responsible: Principal
 ) -> None:
+    if responsible.kind is PrincipalKind.goal:
+        authority.require_above_or_self(conn, principal, authority.goal(responsible.id))
+        return
     if responsible.kind is PrincipalKind.manager:
         authority.require_in_chain(conn, principal, authority.manager(responsible.id))
         return

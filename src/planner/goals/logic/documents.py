@@ -21,6 +21,7 @@ from typing import (
 )
 
 from planner.goals.contracts import ChartBlock, PageDocument
+from planner.goals.logic.categories import validate_category_chart
 from planner.measures.contracts import FormulaExpression
 from planner.measures.logic.formulas import dependencies, parse_formula
 
@@ -152,6 +153,8 @@ def prepare_document(value: Any, new_identity: Callable[[], str]) -> PageDocumen
 
 def validate_chart(chart: ChartBlock) -> None:
     validate_shape(chart, ChartBlock)
+    if "binding" in chart:
+        validate_category_chart(chart)
     if "expectation" in chart:
         if (
             chart["kind"] not in ("line", "number")
@@ -193,9 +196,14 @@ def validate_chart(chart: ChartBlock) -> None:
         raise ValueError("chart range domain minimum must be less than its maximum")
     if chart.get("plot_height", 1) <= 0:
         raise ValueError("chart plot height must be positive")
-    if chart["kind"] in ("progress", "time-budget") and (
-        chart.get("target", 0) <= 0
-        or any(group.get("target", chart["target"]) <= 0 for group in chart.get("ranges", []))
+    live_budget = chart["kind"] == "time-budget" and "binding" in chart
+    if (
+        chart["kind"] in ("progress", "time-budget")
+        and not live_budget
+        and (
+            chart.get("target", 0) <= 0
+            or any(group.get("target", chart["target"]) <= 0 for group in chart.get("ranges", []))
+        )
     ):
         raise ValueError("progress and time-budget charts need a positive target")
     if chart["kind"] in ("progress", "time-budget", "allocation"):
@@ -214,7 +222,24 @@ def validate_chart(chart: ChartBlock) -> None:
 
 
 def measure_ids(primary: ChartBlock | None, page: PageDocument) -> list[str]:
-    return sorted({item["measure_id"] for item in charts(primary, page) if "measure_id" in item})
+    identifiers = set()
+    for chart in charts(primary, page):
+        if "measure_id" in chart:
+            identifiers.add(chart["measure_id"])
+        binding = chart.get("binding")
+        if binding is not None and binding["kind"] == "scalar_inputs":
+            identifiers.update(item["measure_id"] for item in binding["inputs"])
+    return sorted(identifiers)
+
+
+def dataset_ids(primary: ChartBlock | None, page: PageDocument) -> list[str]:
+    return sorted(
+        {
+            binding["dataset_id"]
+            for chart in charts(primary, page)
+            if (binding := chart.get("binding")) is not None and binding["kind"] == "dataset"
+        }
+    )
 
 
 def charts(primary: ChartBlock | None, page: PageDocument) -> list[ChartBlock]:

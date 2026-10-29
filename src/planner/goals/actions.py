@@ -12,12 +12,15 @@ from typing import Any, cast
 from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
+from planner.datasets.data import read_dataset
 from planner.goals import data
 from planner.goals.contracts import ChartBlock, Goal
+from planner.goals.logic.categories import validate_category_references
 from planner.goals.logic.completion import prepare_completion
 from planner.goals.logic.documents import (
     blocks,
     charts,
+    dataset_ids,
     expectation_measure_ids,
     measure_ids,
     prepare_document,
@@ -96,9 +99,15 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
         set(expectation_inputs) | set(measure_ids(result.primary_chart, result.page))
     )
     definitions = read_definitions(conn, graph_roots)
+    dataset_definitions = {
+        identifier: read_dataset(conn, identifier)
+        for identifier in dataset_ids(result.primary_chart, result.page)
+    }
     for identifier in graph_roots:
         validate_graph(identifier, definitions)
     for chart in charts(result.primary_chart, result.page):
+        if "binding" in chart:
+            validate_category_references(chart, datasets=dataset_definitions, measures=definitions)
         if (
             "manual" in chart
             and read_measure(conn, chart["measure_id"]).origin is not MeasureOrigin.manual

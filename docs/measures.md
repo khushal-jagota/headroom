@@ -8,7 +8,7 @@ The owner chose trusted scripts and simple, replaceable secret storage. Scripts 
 
 ## Set up a source
 
-Create a source with a name, Project, account, and responsible Manager or Chief. The existing assignment chain controls source work. The responsible agent and its assigned Workers can save scripts, configure schedules, test, and collect. There is no repair designation or publication step. Taken measures use that same source authority. Assembled and manual definitions use the existing owner/Chief authority for Project definitions.
+Create a source with a name, Project, account, and responsible Chief, Manager, or goal. Source work follows that responsibility. A goal agent can create and manage a source responsible to its own goal without another approval. This does not grant control over another goal's source. The responsible agent and authorized Workers can save scripts, configure schedules, test, and collect. There is no repair designation or publication step. Taken measures use that same source authority. Assembled and manual definitions use the existing owner/Chief authority for Project definitions.
 
 Credentials use descriptive names such as `Panels_posthog_production`. The names identify their use without exclusive Project ownership. Source Project/account remain data metadata. The credential CLI lists names and metadata without secret values. Scripts reference named keys rather than embed secret literals.
 
@@ -36,9 +36,43 @@ Create its measure through `panels measure create`:
 
 Save the script through `panels measure-source submit-script SOURCE_ID`. Its body contains `expected_revision` and `text`. The save immediately replaces the current script. Revision checks prevent an older editor from overwriting a newer change.
 
+A source can also own a dataset with declared dimensions and numeric fields. The responsible source author can create and update its definition. Its Project must match the source Project. A successful run replaces each supplied dataset and date with retained rows, the captured output declaration, query bounds, and provenance. It retains other dates. Goal charts read those retained results and category labels without another provider request. Missing or unavailable results remain explicit. The reader does not invent zeroes.
+
+Pass this definition as JSON on stdin to `panels dataset create`. Use `name` for each dimension and field, and include the source's Project:
+
+```json
+{
+  "project_id": "PROJECT_ID",
+  "source_id": "SOURCE_ID",
+  "name": "Daily events by team",
+  "timezone": "UTC",
+  "dimensions": [{"name": "team", "label": "Team"}],
+  "fields": [{"name": "events", "label": "Events", "unit": "events", "kind": "count"}]
+}
+```
+
+The source script receives the captured declarations in `context["dataset_outputs"]`. This example records one date with query bounds in Unix seconds and an explicit provider limit:
+
+```python
+from datetime import datetime, timezone
+
+output = context["dataset_outputs"][0]
+day = output["required_date"]
+record_dataset(
+    output["dataset_id"], day,
+    [{"dimensions": {"team": "north"}, "values": {"events": 7}}],
+    query_start_at=datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp(),
+    query_end_at=context["frozen_at"],
+    labels={"team": {"north": "North"}},
+    limitation="Provider returned a sample.",
+)
+```
+
+Replace the sample row, interval, and limitation with the provider's result. `query_end_at` is required. `query_start_at` and `limitation` are optional. A successful result with `rows: []` replaces that date with an empty result. Omitting a date preserves its prior result, or leaves it missing when no result exists. A test run saves dataset candidates in its receipt but does not publish them. A collection run publishes accepted date results.
+
 ## Write a script
 
-The runtime supplies `context`, `request`, `record`, and `latest`. It resolves named credentials only when the script requests them. Ordinary runtime code can access resolved values. Key indirection avoids embedded secrets; it is not a security sandbox.
+The runtime supplies `context`, `request`, `record`, `record_dataset`, and `latest`. It resolves named credentials only when the script requests them. Ordinary runtime code can access resolved values. Key indirection avoids embedded secrets; it is not a security sandbox.
 
 ```python
 response = request(
@@ -93,7 +127,7 @@ New scripts can use ordinary installed Python capabilities. This is not a univer
 
 ## Manual observations
 
-A manual measure has `origin: "manual"`, no source, and no formula. Owner controls use the existing owner/Chief authority. Goal-agent writes remain outside this approved operation.
+A manual measure has `origin: "manual"`, no source, and no formula. Owner controls use the existing owner/Chief authority. A goal agent can write a manual measure bound in its own primary chart or page without another approval. This includes a shared measure bound in that goal. The permission does not extend to unbound measures or another goal's charts.
 
 `GET /api/measures/{id}/manual-state?date=YYYY-MM-DD` returns the selected observation, latest snapshot through that date, timezone, current local date, definition revision, and write revision. Without a date, the snapshot selects the measure-local current date from the server clock. An absent observation remains missing. Every snapshot carries the measure-wide write revision, including absent dates.
 

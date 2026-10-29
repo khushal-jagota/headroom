@@ -20,6 +20,8 @@ from planner.measure_sources.contracts import (
 from planner.measure_sources.logic.health import collection_health
 from planner.measure_sources.records import (
     decode_candidates,
+    decode_dataset_outputs,
+    decode_dataset_results,
     decode_failure,
     decode_metrics,
     decode_outputs,
@@ -52,7 +54,14 @@ def read_source(conn: sqlite3.Connection, source_id: str) -> MeasureSource:
         scope=SourceScope(str(row["project_id"]), str(row["account"])),
         responsible=CHIEF_PRINCIPAL
         if row["responsible_kind"] == "chief"
-        else Principal(PrincipalKind.manager, str(row["responsible_manager_id"])),
+        else Principal(
+            PrincipalKind(row["responsible_kind"]),
+            str(
+                row["responsible_goal_id"]
+                if row["responsible_kind"] == "goal"
+                else row["responsible_manager_id"]
+            ),
+        ),
         responsibility_revision=int(row["responsibility_revision"]),
         enabled=bool(row["enabled"]),
         local_time=row["local_time"],
@@ -100,16 +109,19 @@ def read_run(conn: sqlite3.Connection, run_id: str) -> SourceRun:
         failure=decode_failure(row["failure"]),
         metrics=decode_metrics(row["metrics"]),
         observation_count=int(row["observation_count"]),
+        dataset_outputs=decode_dataset_outputs(str(row["dataset_outputs"])),
+        dataset_result_count=int(row["dataset_result_count"]),
+        dataset_row_count=int(row["dataset_row_count"]),
     )
 
 
 def read_run_detail(conn: sqlite3.Connection, run_id: str) -> SourceRunDetail:
     run = read_run(conn, run_id)
     row = conn.execute(
-        "SELECT test_candidates FROM measure_source_runs WHERE id=?", (run_id,)
+        "SELECT test_candidates,test_dataset_results FROM measure_source_runs WHERE id=?", (run_id,)
     ).fetchone()
     assert row is not None
-    return SourceRunDetail(run, decode_candidates(row[0]))
+    return SourceRunDetail(run, decode_candidates(row[0]), decode_dataset_results(row[1]))
 
 
 def read_failure_episode(conn: sqlite3.Connection, source_id: str) -> FailureEpisode | None:

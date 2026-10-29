@@ -45,10 +45,15 @@ def _run_summary(row: sqlite3.Row) -> SourceRunSummary:
         row["finished_at"],
         decode_failure(row["failure"]),
         int(row["observation_count"]),
+        int(row["dataset_result_count"]),
+        int(row["dataset_row_count"]),
     )
 
 
-_RUN_SUMMARY_COLUMNS = "id,mode,status,created_at,finished_at,failure,observation_count"
+_RUN_SUMMARY_COLUMNS = (
+    "id,mode,status,created_at,finished_at,failure,observation_count,"
+    "dataset_result_count,dataset_row_count"
+)
 
 
 def status(conn: sqlite3.Connection, source_id: str, *, now: int) -> SourceStatus:
@@ -102,6 +107,11 @@ def status(conn: sqlite3.Connection, source_id: str, *, now: int) -> SourceStatu
         episode,
         None if failure_row is None else decode_failure(failure_row[0]),
         None if running is None else str(running[0]),
+        int(
+            conn.execute(
+                "SELECT COUNT(*) FROM datasets WHERE source_id=?", (source_id,)
+            ).fetchone()[0]
+        ),
     )
 
 

@@ -56,6 +56,8 @@ export interface LineChartProps {
   formatValue?: (value: number, series: LineChartSeries) => string;
   /** Formats the value axis. Defaults to a compact number, such as 1.2K. */
   formatTick?: (value: number) => string;
+  /** Count measures label only whole-number positions. */
+  integerTicks?: boolean;
   /** Controlled hidden series keys. The chart draws no control of its own for them. */
   hiddenSeries?: string[];
   /** Called as the crosshair moves, and with null when it leaves. Use it to drive a headline readout. */
@@ -148,7 +150,7 @@ function axisPicks(data: LineChartDatum[], width: number) {
   return labeled.reverse().filter((_, rank) => rank % stride === 0).reverse();
 }
 
-export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), hiddenSeries, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
+export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), integerTicks = false, hiddenSeries, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
   const reduced = useReducedMotionSafe();
   const figure = useRef<HTMLElement>(null);
   const plot = useRef<HTMLDivElement>(null);
@@ -179,6 +181,7 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   const [steady, setSteady] = useState(() => range ?? niceScale(0, 100));
   if (range && (range.min !== steady.min || range.max !== steady.max)) setSteady(range);
   const scale = { min: useMotionValue(steady.min), max: useMotionValue(steady.max) };
+  const ticks = integerTicks ? steady.ticks.filter(Number.isInteger) : steady.ticks;
 
   // Scrubbing: a new range lets go of the crosshair.
   const [active, setActive] = useState<number | null>(null);
@@ -387,7 +390,7 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
         onFocus={event => { if (event.currentTarget.matches(":focus-visible") && !empty) setActive(current => current ?? last); }}>
         <svg className={styles.svg} width="100%" height={height} aria-hidden="true" focusable="false">
           <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} gradientUnits="userSpaceOnUse" x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
-          <AnimatePresence initial={false}>{steady.ticks.slice(1).map(value => <Gridline key={value} value={value} scale={scale} height={height} />)}</AnimatePresence>
+          <AnimatePresence initial={false}>{ticks.slice(1).map(value => <Gridline key={value} value={value} scale={scale} height={height} />)}</AnimatePresence>
           <line className={styles.baseline} x1={0} x2="100%" y1={height - .5} y2={height - .5} />
           <line ref={crosshair} className={styles.crosshair} y1={TOP - 4} y2={height} />
           <g className={styles.series} clipPath={`url(#${uid}-draw)`}>
@@ -414,8 +417,8 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
       <div className={styles.gutter} aria-hidden="true">
         {/* The widest tick, in flow and invisible, gives the column its width. The labels
             themselves are placed against the scale, so none of them can measure it. */}
-        <span className={styles.gutterWidth}>{steady.ticks.map(value => <b key={value}>{formatTick(value)}</b>)}</span>
-        <AnimatePresence initial={false}>{steady.ticks.map(value => <TickLabel key={value} value={value} scale={scale} height={height} format={formatTick} />)}</AnimatePresence>
+        <span className={styles.gutterWidth}>{ticks.map(value => <b key={value}>{formatTick(value)}</b>)}</span>
+        <AnimatePresence initial={false}>{ticks.map(value => <TickLabel key={value} value={value} scale={scale} height={height} format={formatTick} />)}</AnimatePresence>
       </div>
       <div className={styles.axis} aria-hidden="true">
         <AnimatePresence initial={false}>

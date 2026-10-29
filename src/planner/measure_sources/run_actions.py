@@ -1,4 +1,4 @@
-"""Durable run admission and the single atomic observation completion door."""
+"""Durable run admission and the single atomic source completion door."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from datetime import datetime
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import new_id
+from planner.datasets import data as datasets_data
 from planner.measure_sources import data
 from planner.measure_sources.authority import require_author
 from planner.measure_sources.contracts import (
@@ -24,7 +25,12 @@ from planner.measure_sources.contracts import (
     SourceRunDetail,
 )
 from planner.measure_sources.notices import record_failure
-from planner.measure_sources.records import encode_candidates, encode_outputs
+from planner.measure_sources.records import (
+    encode_candidates,
+    encode_dataset_outputs,
+    encode_dataset_results,
+    encode_outputs,
+)
 from planner.measure_sources.transaction import transaction
 from planner.measures import data as measures_data
 from planner.measures.contracts import HistoryWindow
@@ -53,12 +59,13 @@ def _admit(
             raise PlannerError(ErrorCode.validation, "history starts after its end date")
     revision, sha256 = _selected_script(source)
     outputs = measures_data.prepare_outputs(conn, source.id, frozen_at=now)
+    dataset_outputs = datasets_data.prepare_outputs(conn, source.id, frozen_at=now)
     run_id = new_id("source_run")
     conn.execute(
         "INSERT INTO measure_source_runs(id,source_id,mode,trigger,status,source_revision,"
         "script_revision,script_sha256,frozen_at,required_outputs,history_first_date,"
-        "history_last_date,schedule_date,schedule_time,created_at) "
-        "VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
+        "history_last_date,schedule_date,schedule_time,created_at,dataset_outputs) "
+        "VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)",
         (
             run_id,
             source.id,
@@ -74,6 +81,7 @@ def _admit(
             None if slot is None else slot[0],
             None if slot is None else slot[1],
             now,
+            encode_dataset_outputs(dataset_outputs),
         ),
     )
     return data.read_run(conn, run_id)
@@ -193,12 +201,15 @@ def complete_run(
             raise PlannerError(ErrorCode.stale_claim, "only a running source run can complete")
         failure = result.failure
         encoded: str | None = None
+        encoded_datasets: str | None = None
         count = 0
+        dataset_count = row_count = 0
         if failure is None and not current_definition(conn, run):
             failure = RunFailure(FailureCode.stale_definition)
         if failure is None:
             try:
                 encoded = encode_candidates(result.observations)
+                encoded_datasets = encode_dataset_results(result.dataset_results)
                 # Validation runs first for both modes. The commit function also validates
                 # as its own transaction-owned contract, before it performs any write.
                 measures_data.validate_batch(
@@ -208,6 +219,12 @@ def complete_run(
                     outputs=run.required_outputs,
                     candidates=result.observations,
                     history=run.history,
+                )
+                datasets_data.validate_batch(
+                    conn,
+                    source_id=run.source_id,
+                    outputs=run.dataset_outputs,
+                    candidates=result.dataset_results,
                 )
             except (ValueError, TypeError):
                 failure = RunFailure(FailureCode.invalid_output)
@@ -234,6 +251,15 @@ def complete_run(
                     candidates=result.observations,
                     history=run.history,
                 )
+                row_count = datasets_data.commit_results(
+                    conn,
+                    run_id=run.id,
+                    source_id=run.source_id,
+                    outputs=run.dataset_outputs,
+                    candidates=result.dataset_results,
+                    collected_at=now,
+                )
+                dataset_count = len(result.dataset_results)
                 conn.execute(
                     "UPDATE measure_source_failure_episodes SET closed_at=? "
                     "WHERE source_id=? AND closed_at IS NULL",
@@ -241,9 +267,17 @@ def complete_run(
                 )
             conn.execute(
                 "UPDATE measure_source_runs SET status='succeeded',finished_at=?,"
-                "observation_count=?,"
-                "test_candidates=? WHERE id=?",
-                (now, count, encoded if run.mode is RunMode.test else None, run.id),
+                "observation_count=?,dataset_result_count=?,dataset_row_count=?,"
+                "test_candidates=?,test_dataset_results=? WHERE id=?",
+                (
+                    now,
+                    count,
+                    dataset_count,
+                    row_count,
+                    encoded if run.mode is RunMode.test else None,
+                    encoded_datasets if run.mode is RunMode.test else None,
+                    run.id,
+                ),
             )
         conn.execute(
             "UPDATE measure_source_runs SET metrics=? WHERE id=?",

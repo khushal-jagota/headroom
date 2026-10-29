@@ -1,4 +1,4 @@
-import type { ChartBlock, ChartSeries, MeasureValue, GoalResponse, ScalarChartProjection, ScalarChartPoint } from '../goals/contracts';
+import type { ChartBlock, ChartSeries, MeasureValue, GoalResponse, ChartProjection, ScalarChartPoint, CategoryChartRange, CategoryChartSummary, CategoryChartValue } from '../goals/contracts';
 import type { LineChartDatum } from './components/line-chart-integrated';
 
 export type ChartRangeSelection = 'week' | 'month' | 'all' | string;
@@ -23,13 +23,37 @@ export function formatTrimmedReading(block: ChartBlock, value: number): string {
 export function formatAxisTick(block: ChartBlock, value: number): string {
   const prefix = block.format?.prefix ?? '';
   const suffix = block.format?.suffix ?? block.unit ?? '';
-  if (prefix && (block.stacked || Math.abs(value) >= 1000)) return `${prefix}${(value / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k${suffix}`;
-  if (suffix === '%') return `${Number(value.toFixed(1))}%`;
-  if (prefix) return `${prefix}${Math.round(value).toLocaleString('en-US')}${suffix}`;
-  return String(Math.round(value));
+  if (prefix && Math.abs(value) >= 1000) return `${prefix}${Number((value / 1000).toPrecision(12)).toLocaleString('en-US', { maximumSignificantDigits: 12 })}k${suffix}`;
+  const number = Number(value.toPrecision(12)).toLocaleString('en-US', { maximumSignificantDigits: 12, useGrouping: !!prefix });
+  return prefix ? `${prefix}${number}${suffix}` : suffix === '%' ? `${number}%` : number;
 }
 
-export function selectedSeries(block: ChartBlock, range: string): ChartSeries[] {
+/** Only retained field declarations establish count semantics; ratios remain fractional. */
+export function hasCountAxis(block: ChartBlock, projection?: ChartProjection, range = 'all'): boolean {
+  const binding = block.binding;
+  if (binding?.kind !== 'dataset' || !('field' in binding.metric) || projection?.kind !== 'category') return false;
+  const field = binding.metric.field, selected = categoryRange(projection, range);
+  const results = projection.dataset_results.filter(item => item.dataset_id === binding.dataset_id && selected && item.date >= selected.first_date && item.date <= selected.last_date);
+  return results.length > 0 && results.every(item => item.output.fields.find(item => item.name === field)?.kind === 'count');
+}
+
+export function categoryRange(projection: ChartProjection | undefined, range = 'all'): CategoryChartRange | undefined {
+  return projection?.kind === 'category' ? projection.ranges.find(item => item.id === range) ?? projection.ranges.find(item => item.id === 'all') : undefined;
+}
+
+export function categoryNumber(value: CategoryChartValue | null | undefined): number | undefined {
+  return value?.status === 'value' && value.value !== null && Number.isFinite(value.value) ? value.value : undefined;
+}
+
+export function seriesKey(series: ChartSeries, index: number): string {
+  return series.key ?? (index === 0 ? 'actual' : series.name);
+}
+
+export function selectedSeries(block: ChartBlock, range: string, projection?: ChartProjection): ChartSeries[] {
+  if (block.binding) return categoryRange(projection, range)?.series.map(item => ({
+    key: item.key, name: item.label,
+    points: item.points.map(point => ({ label: point.label, value: categoryNumber(point.actual) ?? null })),
+  })) ?? [];
   const series = block.ranges?.find(item => item.id === range)?.series ?? block.series ?? block.ranges?.[0]?.series ?? [];
   return block.measure_id ? series.slice(0, 1) : series;
 }
@@ -44,9 +68,34 @@ export function selectedDomain(block: ChartBlock, range: string): ChartBlock['do
   return selected?.domain ?? block.domain;
 }
 
-export function chartData(block: ChartBlock, values: MeasureValue[], range: ChartRangeSelection, projection?: ScalarChartProjection): LineChartDatum[] {
+export function chartData(block: ChartBlock, values: MeasureValue[], range: ChartRangeSelection, projection?: ChartProjection): LineChartDatum[] {
+  if (block.binding) {
+    const selected = categoryRange(projection, range);
+    if (!selected) return [];
+    const points = new Map<string, LineChartDatum>();
+    const empty = Object.fromEntries(selected.series.map(item => [item.key, undefined]));
+    const summaries = new Map(selected.point_summaries.map(item => [item.key, item.summary]));
+    const dates = new Map<string, string>();
+    for (const series of selected.series) for (const point of series.points) {
+      const datum = points.get(point.key) ?? {
+        key: point.key, label: point.label,
+        axisLabel: selected.axis === 'date' && point.date ? new Date(point.date + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : point.label,
+        values: { ...empty },
+      };
+      datum.values[series.key] = categoryNumber(point.actual);
+      const summary = summaries.get(point.key);
+      if (summary) datum.values.target = categoryNumber(summary.comparison);
+      // Dated summaries compare the whole population, never each category line.
+      if (selected.axis === 'category' && series.key === 'actual') datum.comparisons = { actual: summary?.meets_expectation ?? null };
+      if (selected.axis === 'date' && point.date) dates.set(point.key, point.date);
+      points.set(point.key, datum);
+    }
+    const data = [...points.values()];
+    const first = Date.parse(dates.get(data[0]?.key) ?? ''), last = Date.parse(dates.get(data.at(-1)?.key ?? '') ?? '');
+    return data.map(datum => ({ ...datum, ...(selected.axis === 'date' && last > first ? { position: (Date.parse(dates.get(datum.key) ?? '') - first) / (last - first) } : {}) }));
+  }
   if (block.expectation) {
-    if (!projection) return [];
+    if (projection?.kind !== 'scalar') return [];
     const cutoff = Date.parse(projection.today) - (range === 'week' ? 6 : 29) * 86400000;
     const points = projection.points.filter(point => range !== 'week' && range !== 'month' || point.date <= projection.today && Date.parse(point.date) >= cutoff);
     const first = Date.parse(points[0]?.date ?? ''), last = Date.parse(points.at(-1)?.date ?? '');
@@ -61,7 +110,7 @@ export function chartData(block: ChartBlock, values: MeasureValue[], range: Char
   }
   const selected = selectedSeries(block, range);
   const target = selectedTarget(block, range);
-  const missingCategories = Object.fromEntries((block.measure_id ? [] : selected).map((series, index) => [index === 0 ? 'actual' : series.name, undefined]));
+  const missingCategories = Object.fromEntries((block.measure_id ? [] : selected).map((series, index) => [seriesKey(series, index), undefined]));
   let data: LineChartDatum[];
   if (block.measure_id) {
     const actual = values.filter(v => v.measure_id === block.measure_id).sort((a, b) => a.date.localeCompare(b.date));
@@ -76,7 +125,7 @@ export function chartData(block: ChartBlock, values: MeasureValue[], range: Char
     const points = new Map<string, LineChartDatum>();
     selected.forEach((series, index) => series.points.forEach(p => {
       const d = points.get(p.label) ?? { key: p.label, label: p.axis ?? p.label, axisLabel: p.axis ?? p.label, values: {} };
-      d.values[index === 0 ? 'actual' : series.name] = p.value ?? undefined;
+      d.values[seriesKey(series, index)] = p.value ?? undefined;
       points.set(p.label, d);
     }));
     data = [...points.values()];
@@ -118,26 +167,40 @@ export function compositionTotal(data: LineChartDatum[], reading: LineChartDatum
 }
 
 /** Whole-percent summaries preserve the total and put the largest category first. */
-export function allocationSummary(series: ChartSeries[], reading: LineChartDatum | undefined): string {
-  const values = series.map((item, index) => ({ name: item.name, index, value: reading?.values[index === 0 ? 'actual' : item.name] }));
-  if (values.some(item => item.value === undefined)) return 'Current reading unavailable';
-  const total = values.reduce((sum, item) => sum + item.value!, 0);
+export function allocationSummary(series: ChartSeries[], reading: LineChartDatum | undefined, summary?: CategoryChartSummary): string {
+  const values = series.map((item, index) => ({ name: item.name, index, value: reading?.values[seriesKey(item, index)] }));
+  if (values.some(item => item.value === undefined)) return summary ? 'Some category readings are unavailable' : 'Current reading unavailable';
+  const total = summary ? categoryNumber(summary.actual) : values.reduce((sum, item) => sum + item.value!, 0);
+  if (total === undefined) return 'Current reading unavailable';
   if (total <= 0) return '';
+  if (summary) return [...values].sort((a, b) => b.value! - a.value! || a.index - b.index).map(item => `${(item.value! / total * 100).toLocaleString('en-US', { maximumFractionDigits: 1 })}% ${item.name.toLowerCase()}`).join(' · ');
   const shares = values.map(item => ({ ...item, exact: item.value! / total * 100, percent: Math.floor(item.value! / total * 100) }));
   const remaining = 100 - shares.reduce((sum, item) => sum + item.percent, 0);
   [...shares].sort((a, b) => (b.exact - b.percent) - (a.exact - a.percent) || a.index - b.index).slice(0, remaining).forEach(item => item.percent++);
   return shares.sort((a, b) => b.exact - a.exact || a.index - b.index).map(item => `${item.percent}% ${item.name.toLowerCase()}`).join(' · ');
 }
 
-export interface ChartHeadline { value: number | undefined; target: number | undefined; label: string | undefined; missingCount: number; point?: ScalarChartPoint }
+export interface ChartHeadline { value: number | undefined; target: number | undefined; label: string | undefined; missingCount: number; point?: ScalarChartPoint; categorySummary?: CategoryChartSummary }
 
-export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeKey: string | null = null, projection?: ScalarChartProjection): ChartHeadline {
+export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeKey: string | null = null, projection?: ChartProjection, range = 'all'): ChartHeadline {
+  if (block.binding) {
+    const selected = categoryRange(projection, range);
+    const inspected = activeKey ? selected?.point_summaries.find(item => item.key === activeKey) : undefined;
+    const summary = inspected?.summary ?? selected?.summary;
+    return {
+      value: categoryNumber(summary?.actual), target: categoryNumber(summary?.comparison),
+      label: inspected ? data.find(item => item.key === inspected.key)?.label : summary?.date ?? undefined,
+      missingCount: summary?.actual.missing_dates.length ?? 0, categorySummary: summary,
+    };
+  }
   if (block.expectation) {
-    const reading = data.find(item => item.key === (activeKey ?? projection?.summary_date));
-    return { value: reading?.values.actual, target: reading?.values.target, label: reading?.label, missingCount: data.filter(item => item.values.actual === undefined).length, point: projection?.points.find(point => point.date === reading?.key) };
+    const scalar = projection?.kind === 'scalar' ? projection : undefined;
+    const reading = data.find(item => item.key === (activeKey ?? scalar?.summary_date));
+    return { value: reading?.values.actual, target: reading?.values.target, label: reading?.label, missingCount: data.filter(item => item.values.actual === undefined).length, point: scalar?.points.find(point => point.date === reading?.key) };
   }
   const reading = inspectedReading(data, activeKey);
-  const missingCount = data.filter(d => d.values.actual === undefined).length;
+  const primary = block.measure_id ? 'actual' : selectedSeries(block, range)[0] ? seriesKey(selectedSeries(block, range)[0], 0) : 'actual';
+  const missingCount = data.filter(d => d.values[primary] === undefined).length;
   if (block.stacked || block.kind === 'allocation') {
     return { value: compositionTotal(data, reading), target: reading?.values.target, label: reading?.label, missingCount };
   }
@@ -146,35 +209,71 @@ export function chartHeadline(block: ChartBlock, data: LineChartDatum[], activeK
       const known = data.flatMap(d => d.values[key] === undefined ? [] : [d.values[key]!]);
       return known.length ? known.reduce((a, b) => a + b, 0) : undefined;
     };
-    return { value: sum('actual'), target: sum('target'), label: undefined, missingCount };
+    return { value: sum(primary), target: sum('target'), label: undefined, missingCount };
   }
-  const value = reading?.values.actual;
+  const value = reading?.values[primary];
   return { value: (block.kind === 'progress' || block.kind === 'time-budget') && value !== undefined && value < 0 ? undefined : value, target: reading?.values.target, label: reading?.label, missingCount };
 }
 
-export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint): GoalResponse['status'] {
+export function chartTone(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary): GoalResponse['status'] {
+  if (block.binding) return categorySummary?.meets_expectation == null || categorySummary.actual.partial || categorySummary.comparison?.partial ? 'neutral' : categorySummary.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
   if (block.expectation) return point?.meets_expectation == null ? 'neutral' : point.meets_expectation ? 'good' : block.below_target_tone ?? 'bad';
   if (value === undefined || target === undefined) return 'neutral';
   const good = (block.direction ?? (block.kind === 'time-budget' ? 'atmost' : 'atleast')) === 'atmost' ? value <= target : value >= target;
   return good ? 'good' : block.below_target_tone ?? 'bad';
 }
 
-export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint): string {
+export function comparisonText(block: ChartBlock, value: number | undefined, target: number | undefined, point?: ScalarChartPoint, categorySummary?: CategoryChartSummary): string {
+  if (block.binding && categorySummary?.difference == null) return categorySummary?.actual.partial || categorySummary?.comparison?.partial ? 'Partial total' : '';
   if (block.expectation && (point?.difference == null || point.meets_expectation == null)) return '';
   if (value === undefined || target === undefined) return '';
-  const signedDifference = block.expectation ? point!.difference! : value - target;
+  const signedDifference = block.binding ? categorySummary!.difference! : block.expectation ? point!.difference! : value - target;
   const difference = Math.abs(signedDifference);
   const decimals = block.comparison_decimals ?? block.format?.decimals ?? 0;
-  const amount = block.difference_unit === 'pp'
-    ? `${difference.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} pp`
-    : formatReading({ ...block, format: { ...block.format, decimals } }, difference);
-  if (block.kind === 'progress') return value === target ? 'Target reached' : amount + (value < target ? ' remaining' : ' beyond target');
-  if (block.kind === 'time-budget') return value === target ? 'Budget used' : amount + (value < target ? ' remaining' : ' over budget');
+  const formatDifference = (quantity: number) => block.difference_unit === 'pp'
+    ? `${quantity.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} pp`
+    : formatReading({ ...block, format: { ...block.format, decimals } }, quantity);
+  if (block.binding && categorySummary!.meets_expectation == null) return `Partial difference: ${formatDifference(signedDifference)}`;
+  const amount = formatDifference(difference);
+  if (block.kind === 'progress') return signedDifference === 0 ? 'Target reached' : amount + (signedDifference < 0 ? ' remaining' : ' beyond target');
+  if (block.kind === 'time-budget') return signedDifference === 0 ? 'Budget used' : amount + (signedDifference < 0 ? ' remaining' : ' over budget');
   const label = block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target');
-  if ((block.expectation ? signedDifference === 0 : difference < .0001) && block.kind !== 'bar' && !block.aggregate) return `On ${label}`;
+  if ((block.expectation || block.binding ? signedDifference === 0 : difference < .0001) && block.kind !== 'bar' && !block.aggregate) return `On ${label}`;
   if (signedDifference < 0 && block.direction === 'atmost' && block.within_limit_label === 'remaining') return `${amount} remaining`;
   if (signedDifference < 0 && block.direction !== 'atmost' && label === 'target' && block.shortfall_label === 'to target') return `${amount} to target`;
   return `${amount} ${block.direction === 'atmost' ? (signedDifference <= 0 ? 'under' : 'over') : (signedDifference >= 0 ? 'above' : 'below')} ${label}`;
+}
+
+/** Ring quantities come from the selected backend summary, not plotted sums. */
+export function allocationData(data: LineChartDatum[], series: ChartSeries[], selected?: CategoryChartRange, activeKey: string | null = null): { reading: LineChartDatum | undefined; series: ChartSeries[]; total: number | undefined; summary?: CategoryChartSummary } {
+  if (!selected) {
+    const reading = inspectedReading(data, activeKey);
+    return { reading, series, total: compositionTotal(data, reading) };
+  }
+  const inspected = activeKey ? selected.point_summaries.find(item => item.key === activeKey) : undefined;
+  if (inspected) return { reading: data.find(item => item.key === inspected.key), series, total: categoryNumber(inspected.summary.actual), summary: inspected.summary };
+  const members = selected.series.filter(item => item.summary !== null);
+  return {
+    reading: { key: 'range', label: selected.label, values: Object.fromEntries(members.map(item => [item.key, categoryNumber(item.summary)])) },
+    series: series.filter(item => members.some(member => member.key === item.key)),
+    total: categoryNumber(selected.summary.actual), summary: selected.summary,
+  };
+}
+
+export function categoryDetails(summary?: CategoryChartSummary, projection?: ChartProjection, range = 'all'): string[] {
+  if (!summary) return [];
+  const values = [summary.actual, ...(summary.comparison ? [summary.comparison] : [])];
+  const missing = [...new Set(values.flatMap(item => item.missing_dates))];
+  const details = values.flatMap(item => item.reasons);
+  if (missing.length) details.push(`${missing.length} missing ${missing.length === 1 ? 'date' : 'dates'}: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}.`);
+  if (projection?.kind === 'category' && (values.some(item => item.partial) || summary.date !== null)) {
+    const selected = categoryRange(projection, range);
+    const evidence = projection.dataset_results.filter(item => summary.date === null
+      ? selected && item.date >= selected.first_date && item.date <= selected.last_date
+      : item.date === summary.date).at(-1);
+    if (evidence) details.push(`${summary.date === null ? 'Latest retained query' : 'Retained query'} for ${evidence.date} has ${evidence.query_start_at === null ? 'no supplied start restriction' : `a start at ${new Date(evidence.query_start_at * 1000).toISOString()}`} and ends at ${new Date(evidence.query_end_at * 1000).toISOString()}.`);
+  }
+  return [...new Set(details)];
 }
 
 export function missingReadingText(data: LineChartDatum[], label?: string): string {

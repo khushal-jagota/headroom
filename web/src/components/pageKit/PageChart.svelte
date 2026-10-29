@@ -5,9 +5,9 @@
  import {ManualMeasurement} from '../../lib/charts/components/manual-measurements';
  import type {ManualMeasurementAdapter} from '../../lib/goals/manualMeasurements';
  import {GoalChart} from '../../lib/charts/GoalChart';
- import type {ChartBlock,ScalarChartProjection,MeasureValue,GoalResponse} from '../../lib/goals/contracts';
+ import type {ChartBlock,ChartProjection,MeasureValue,GoalResponse} from '../../lib/goals/contracts';
  import {PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
- let {block,inset=false,integrated=false,projection,values,goalId,narrow,completed,status,compact=false,manualAdapter}:{block:ChartBlock;inset?:boolean;integrated?:boolean;values?:MeasureValue[];projection?:ScalarChartProjection;goalId?:string;narrow?:boolean;completed?:boolean;status?:GoalResponse['status'];compact?:boolean;manualAdapter?:ManualMeasurementAdapter}=$props();
+ let {block,inset=false,integrated=false,projection,values,goalId,narrow,completed,status,compact=false,manualAdapter}:{block:ChartBlock;inset?:boolean;integrated?:boolean;values?:MeasureValue[];projection?:ChartProjection;goalId?:string;narrow?:boolean;completed?:boolean;status?:GoalResponse['status'];compact?:boolean;manualAdapter?:ManualMeasurementAdapter}=$props();
  const context=getContext<PageContext|undefined>(PAGE_CONTEXT);
  let host:HTMLDivElement; let root=$state.raw<Root|null>(null);
  onMount(()=>{root=createRoot(host);return()=>root?.unmount();});

@@ -284,3 +284,89 @@ def test_reusable_credentials_preserve_legacy_ciphertext_and_explicit_collisions
             ).fetchone()
             is not None
         )
+
+
+@pytest.mark.parametrize("retain_notice", [True, False])
+def test_dataset_and_goal_source_upgrade_preserves_runtime_rows_and_notice_sequences(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retain_notice: bool,
+) -> None:
+    shipped = db.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "reusable_named_credentials")
+    with closing(db.connect(str(tmp_path / "before-goal-sources.db"))) as conn:
+        db.create_schema(conn)
+        conn.execute("""INSERT INTO measure_sources(id,name,project_id,account,responsible_kind,
+            responsibility_revision,source_revision,created_at,updated_at)
+            VALUES('source','Retained','project_vylo','fixture','chief',1,1,1,1)""")
+        conn.execute("""INSERT INTO measure_source_runs(id,source_id,mode,trigger,status,
+            source_revision,script_revision,script_sha256,frozen_at,required_outputs,created_at)
+            VALUES('legacy-run','source','collection','manual','succeeded',1,1,'script',1,'[]',1)""")
+        conn.execute("""INSERT INTO manager_wakes(id,source_kind,source_revision,summary,created_at,
+            target_kind,target_id,measure_source_id,source_episode,source_responsibility_revision)
+            VALUES(7,'source_failure',1,'retained',1,'chief','chief','source',1,1)""")
+        conn.execute("""INSERT INTO manager_wake_batches(id,sender_message_id,message,status,
+            created_at,updated_at,target_kind,target_id)
+            VALUES(3,'retained','retained','pending',1,1,'chief','chief')""")
+        conn.execute("INSERT INTO manager_wake_batch_members(batch_id,wake_id) VALUES(3,7)")
+        conn.execute("""INSERT INTO manager_wakes(id,source_kind,source_revision,summary,created_at,
+            target_kind,target_id) VALUES(100,'turn_failure',2,'deleted',1,'chief','chief')""")
+        conn.execute("DELETE FROM manager_wakes WHERE id=100")
+        conn.execute("""INSERT INTO manager_wake_batches(id,sender_message_id,message,status,
+            created_at,updated_at,target_kind,target_id)
+            VALUES(200,'deleted','deleted','pending',1,1,'chief','chief')""")
+        conn.execute("DELETE FROM manager_wake_batches WHERE id=200")
+        if not retain_notice:
+            conn.execute("DELETE FROM manager_wake_batches WHERE id=3")
+            conn.execute("DELETE FROM manager_wakes WHERE id=7")
+        conn.execute("CREATE INDEX fixture_source_name ON measure_sources(name)")
+        conn.execute(
+            "CREATE TRIGGER fixture_batch_update AFTER UPDATE ON manager_wake_batches "
+            "BEGIN SELECT 1; END"
+        )
+        tables = (
+            "measure_sources",
+            "measure_source_runs",
+            "manager_wakes",
+            "manager_wake_batches",
+            "manager_wake_batch_members",
+        )
+        before = {
+            table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}")] for table in tables
+        }
+        objects = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE sql IS NOT NULL AND tbl_name IN "
+                "('measure_sources','manager_wakes','manager_wake_batches')"
+            )
+        }
+        conn.commit()
+        for migration in (
+            "credential_conversation_requests.py",
+            "dimensional_datasets.py",
+            "goal_source_responsibility.py",
+        ):
+            shutil.copy(shipped / "versions" / migration, tree / "versions" / migration)
+        db.create_schema(conn)
+        for table, rows in before.items():
+            current = [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            assert len(current) == len(rows)
+            for old, new in zip(rows, current, strict=True):
+                assert old == {key: new[key] for key in old}
+        assert objects <= {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert conn.execute("SELECT responsible_goal_id FROM measure_sources").fetchone()[0] is None
+        from planner.measure_sources.data import read_run, read_run_detail
+
+        legacy = read_run(conn, "legacy-run")
+        assert legacy.dataset_outputs == ()
+        assert legacy.dataset_result_count == legacy.dataset_row_count == 0
+        assert read_run_detail(conn, "legacy-run").test_dataset_results is None
+        inserted = conn.execute("""INSERT INTO manager_wakes(source_kind,source_revision,summary,
+            created_at,target_kind,target_id) VALUES('turn_failure',3,'goal',1,'goal','goal')""")
+        assert inserted.lastrowid == 101
+        inserted = conn.execute("""INSERT INTO manager_wake_batches(
+            sender_message_id,message,status,created_at,updated_at,target_kind,target_id)
+            VALUES('goal','goal','pending',1,1,'goal','goal')""")
+        assert inserted.lastrowid == 201
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

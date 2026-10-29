@@ -307,3 +307,98 @@ def test_script_change_fences_results_but_schedule_or_label_change_does_not(
     )
     assert measure_data.latest_observations(tmp_db, (measure.id,))[0].value == 100
     assert views.status(tmp_db, source.id, now=NOW + 4).health is SourceHealth.failed
+
+
+def test_mixed_dataset_receipts_validation_test_isolation_and_captured_schema(
+    tmp_db: Connection,
+) -> None:
+    from dataclasses import replace
+
+    from tests.unit.test_dataset_persistence import candidate, dataset, request
+
+    from planner.datasets import actions as datasets
+    from planner.datasets import data as dataset_data
+    from planner.datasets.contracts import DatasetDimension, DatasetField, DatasetFieldKind
+
+    source, measure = configured_source(tmp_db)
+    table = dataset(tmp_db, source.id)
+    original = replace(candidate(table, "2026-10-25", "de"), labels={"region": {"de": "Germany"}})
+    scalar = CandidateObservation(measure.id, "2026-10-25", 3)
+    first = _run(tmp_db, source.id)
+    completed = run_actions.complete_run(
+        tmp_db, first.id, RunResult((scalar,), None, METRICS, (original,)), now=NOW + 1
+    )
+    assert (
+        completed.run.observation_count,
+        completed.run.dataset_result_count,
+        completed.run.dataset_row_count,
+    ) == (1, 1, 1)
+    retained = dataset_data.read_values(tmp_db, request(table), now=NOW)
+    assert retained.results[0].output == first.dataset_outputs[0]
+    status = views.status(tmp_db, source.id, now=NOW)
+    assert status.dataset_output_count == 1
+    assert status.latest_run is not None and status.latest_run.dataset_row_count == 1
+    replacement = replace(
+        candidate(table, "2026-10-25", "us"), labels={"region": {"de": "Renamed"}}
+    )
+    test_run = _run(tmp_db, source.id, mode=RunMode.test)
+    tested = run_actions.complete_run(
+        tmp_db,
+        test_run.id,
+        RunResult((replace(scalar, value=9),), None, METRICS, (replacement,)),
+        now=NOW + 2,
+    )
+    assert tested.test_dataset_results == (replacement,)
+    assert tested.run.dataset_result_count == tested.run.dataset_row_count == 0
+    assert dataset_data.read_values(tmp_db, request(table), now=NOW) == retained
+    assert measure_data.latest_observations(tmp_db, (measure.id,))[0].value == 3
+    for rejected in ((replacement, replacement), (replace(replacement, dataset_id="foreign"),)):
+        pending = _run(tmp_db, source.id)
+        failed = run_actions.complete_run(
+            tmp_db,
+            pending.id,
+            RunResult((replace(scalar, value=99),), None, METRICS, rejected),
+            now=NOW + 3,
+        )
+        assert (
+            failed.run.failure is not None and failed.run.failure.code is FailureCode.invalid_output
+        )
+        assert failed.run.dataset_result_count == failed.run.dataset_row_count == 0
+        # Health changes, but the retained headers, rows, and labels do not.
+        current = dataset_data.read_values(tmp_db, request(table), now=NOW)
+        assert current.results == retained.results and current.labels == retained.labels
+        assert measure_data.latest_observations(tmp_db, (measure.id,))[0].value == 3
+    captured = _run(tmp_db, source.id)
+    datasets.update_dataset(
+        tmp_db,
+        table.id,
+        {
+            "expected_revision": 1,
+            "dimensions": (DatasetDimension("new_region", "New region"),),
+            "fields": (DatasetField("new_events", "New events", "events", DatasetFieldKind.count),),
+        },
+        principal=OWNER_PRINCIPAL,
+        now=NOW + 4,
+    )
+    result = run_actions.complete_run(
+        tmp_db,
+        captured.id,
+        RunResult(
+            (),
+            None,
+            METRICS,
+            (candidate(table, "2026-10-25"), replace(original, date="2026-10-27")),
+        ),
+        now=NOW + 5,
+    )
+    assert result.run.status is RunStatus.succeeded
+    assert (result.run.dataset_result_count, result.run.dataset_row_count) == (2, 1)
+    corrected = dataset_data.read_values(tmp_db, request(table), now=NOW)
+    assert corrected.results[0].rows == ()
+    assert all(value.output == captured.dataset_outputs[0] for value in corrected.results)
+    assert all(
+        value.provenance.source_revision == captured.source_revision
+        and value.provenance.script_sha256 == captured.script_sha256
+        and value.provenance.collected_at == NOW + 5
+        for value in corrected.results
+    )

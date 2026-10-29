@@ -268,3 +268,111 @@ def test_manual_authority_validation_and_http_state_contract(tmp_db: Connection)
         assert tomorrow["body"]["current_date"] == "2026-10-28"
         assert tomorrow["body"]["date"] == "2026-10-27"
     assert tmp_db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_goal_writes_require_its_current_saved_manual_binding(tmp_db: Connection) -> None:
+    """Shared bindings grant writes, but another goal or an old receipt grants no capability."""
+    from tests.unit.test_goal_pages import create
+
+    from planner.goals import actions as goals
+
+    shared = manual_measure(tmp_db)
+    private = manual_measure(tmp_db)
+    external = taken(tmp_db, source(tmp_db))
+    derived = actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="Derived",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="UTC",
+            period=None,
+            source_id=None,
+            formula=ReferenceExpression(op="reference", measure_id=shared.id, day_offset=0),
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    chart = {
+        "type": "chart",
+        "id": "shared",
+        "kind": "line",
+        "placement": "primary",
+        "measure_id": shared.id,
+    }
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        primary_chart=chart,
+        page={
+            "kind": "headroom.page",
+            "version": 1,
+            "title": "Inputs",
+            "summary": "",
+            "blocks": [
+                {
+                    "type": "chart",
+                    "id": item.id,
+                    "kind": "line",
+                    "placement": "supporting",
+                    "measure_id": item.id,
+                }
+                for item in (external, derived)
+            ],
+        },
+    )
+    also_shared = create(tmp_db, kind="quantitative", primary_chart=chart)
+    unrelated = create(
+        tmp_db, kind="quantitative", primary_chart={**chart, "measure_id": private.id}
+    )
+    actor = Principal(PrincipalKind.goal, goal.id)
+    first = replacement("goal-first", "2026-10-27", 4, 0)
+    accepted = manual.write_value(tmp_db, shared.id, first, principal=actor, now=NOW)
+    assert accepted.receipt.actor == actor and accepted.receipt.value == 4
+    replay = manual.write_value(tmp_db, shared.id, first, principal=actor, now=NOW)
+    assert replay.replayed and replay.receipt == accepted.receipt
+    second_actor = Principal(PrincipalKind.goal, also_shared.id)
+    incremented = manual.write_value(
+        tmp_db,
+        shared.id,
+        ManualIncrementBody(
+            request_id="goal-shared",
+            date="2026-10-27",
+            expected_definition_revision=1,
+            basis="date",
+            operation="increment",
+            delta=2,
+        ),
+        principal=second_actor,
+        now=NOW,
+    )
+    assert incremented.receipt.actor == second_actor and incremented.receipt.value == 6
+    # These are real saved goals. Each denied measure is either foreign or nonmanual.
+    for identifier, principal in (
+        (shared.id, Principal(PrincipalKind.goal, unrelated.id)),
+        (private.id, actor),
+        (external.id, actor),
+        (derived.id, actor),
+    ):
+        with pytest.raises(PlannerError, match="bound manual measures"):
+            manual.write_value(
+                tmp_db,
+                identifier,
+                replacement("goal-denied", "2026-10-27", 99, 0),
+                principal=principal,
+                now=NOW,
+            )
+    # Removing the saved binding revokes replay as well as new writes.
+    goals.update_goal(
+        tmp_db,
+        goal.id,
+        {"expected_revision": 1, "primary_chart": None},
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    with pytest.raises(PlannerError, match="bound manual measures"):
+        manual.write_value(tmp_db, shared.id, first, principal=actor, now=NOW)
+    assert manual.read_state(tmp_db, shared.id, "2026-10-27", now=NOW).write_revision == 2
+    assert tmp_db.execute("SELECT COUNT(*) FROM manual_measure_writes").fetchone()[0] == 2

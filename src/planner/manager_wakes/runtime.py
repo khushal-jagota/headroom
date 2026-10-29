@@ -24,6 +24,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.goals.conversation import goal_agent_key, resolve_goal
 from planner.manager_wakes import data
 from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus
 from planner.managers import data as managers_data
@@ -47,9 +48,7 @@ def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
     for batch in data.batches_waiting_for_outcome(conn):
         if batch.conversation_id is None:
             continue
-        outcome = data.delivery_outcome_kind(
-            conn, batch.conversation_id, batch.sender_message_id
-        )
+        outcome = data.delivery_outcome_kind(conn, batch.conversation_id, batch.sender_message_id)
         if outcome == "prompt":
             data.close_delivered_batch(conn, batch.id, now=now)
             settled += 1
@@ -72,8 +71,7 @@ def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
             )
             settled += 1
         elif (
-            outcome == "prompt_delivery_uncertain"
-            and batch.status is not WakeBatchStatus.uncertain
+            outcome == "prompt_delivery_uncertain" and batch.status is not WakeBatchStatus.uncertain
         ):
             data.record_batch_uncertain(
                 conn,
@@ -106,6 +104,7 @@ async def deliver_batch(
             else _no_lifecycle_lock()
         )
         async with lifecycle:
+            required_goal_id: str | None = None
             try:
                 if target.kind is PrincipalKind.manager:
                     item = managers_data.read_manager(conn, target.id).item
@@ -115,6 +114,11 @@ async def deliver_batch(
                 elif target.kind is PrincipalKind.chief:
                     agent_key = CHIEF_SETTINGS_KEY
                     resolved = conversation_start.agent_resolve(conn)
+                    required_manager_id = None
+                elif target.kind is PrincipalKind.goal:
+                    agent_key = goal_agent_key(target.id)
+                    resolved = resolve_goal(conn, target.id)
+                    required_goal_id = target.id
                     required_manager_id = None
                 else:
                     ticket = tickets_data.read_ticket(conn, target.id)
@@ -180,6 +184,7 @@ async def deliver_batch(
                             sender_message_id=batch.sender_message_id,
                             reply_requested=False,
                             required_manager_id=required_manager_id,
+                            required_goal_id=required_goal_id,
                         )
                 except BaseException:
                     data.record_batch_uncertain(
@@ -208,8 +213,7 @@ async def deliver_batch(
                     data.record_batch_uncertain(
                         conn,
                         batch.id,
-                        conversation_id=delivered.conversation_id
-                        or intended_conversation_id,
+                        conversation_id=delivered.conversation_id or intended_conversation_id,
                         process_token=process_token,
                         now=now(),
                     )
@@ -261,18 +265,14 @@ class ManagerWakeLoop:
         try:
             now = self._clock.now_unix()
             reconcile_batch_outcomes(conn, now=now)
-            data.preserve_interrupted_dispatches(
-                conn, process_token=self._process_token, now=now
-            )
+            data.preserve_interrupted_dispatches(conn, process_token=self._process_token, now=now)
             data.recover_accepted_batches_from_other_processes(
                 conn, process_token=self._process_token, now=now
             )
             batches = list(data.pending_batches(conn))
             attempted_targets = {batch.target for batch in batches}
             while True:
-                batch = data.claim_next_batch(
-                    conn, process_token=self._process_token, now=now
-                )
+                batch = data.claim_next_batch(conn, process_token=self._process_token, now=now)
                 if batch is None:
                     break
                 if batch.target in attempted_targets:

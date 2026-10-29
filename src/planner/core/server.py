@@ -45,6 +45,7 @@ from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingre
 from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
+from planner.datasets.api import router as datasets_router
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
@@ -374,6 +375,7 @@ def create_app(
         scheduled_tickets_router,
         measure_sources_router,
         measures_router,
+        datasets_router,
         goals_router,
         goal_conversation_router,
         credentials_router,

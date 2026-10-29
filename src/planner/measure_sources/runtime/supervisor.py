@@ -15,7 +15,10 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import date
 
+from planner.core.contracts import PlannerError
 from planner.credentials.contracts import CredentialReference, CredentialResolver, CredentialScheme
+from planner.datasets.contracts import CandidateDatasetResult
+from planner.datasets.logic.validation import parse_result, validate_result
 from planner.measure_sources.configuration import PIPE_CHUNK_BYTES, POLL_SECONDS
 from planner.measure_sources.contracts import (
     FailureCode,
@@ -82,7 +85,9 @@ class _Execution:
             self.started + admission.limits.wall_seconds,
         )
         self.observations: list[CandidateObservation] = []
+        self.dataset_results: list[CandidateDatasetResult] = []
         self.outputs = {item.measure_id for item in admission.run.required_outputs}
+        self.dataset_outputs = {item.dataset_id: item for item in admission.run.dataset_outputs}
         self.output_bytes = 0
         self.requests = 0
         self.response_bytes = 0
@@ -116,6 +121,7 @@ class _Execution:
                             "run_id": self.admission.run.id,
                             "frozen_at": self.admission.run.frozen_at,
                             "required_outputs": self.admission.run.required_outputs,
+                            "dataset_outputs": self.admission.run.dataset_outputs,
                             "history": self.admission.run.history,
                         },
                     }
@@ -139,7 +145,10 @@ class _Execution:
             self.cpu_milliseconds,
         )
         return RunResult(
-            tuple(self.observations) if self.failure is None else (), self.failure, metrics
+            tuple(self.observations) if self.failure is None else (),
+            self.failure,
+            metrics,
+            tuple(self.dataset_results) if self.failure is None else (),
         )
 
     def _check_stop(self) -> None:
@@ -219,6 +228,19 @@ class _Execution:
                 self.pending.extend(encode({"failure": "credential_unavailable"}))
             else:
                 self.pending.extend(encode(reply))
+            return
+        if op == "record_dataset":
+            try:
+                candidate = parse_result({key: value for key, value in data.items() if key != "op"})
+                output = self.dataset_outputs.get(candidate.dataset_id)
+                if output is None:
+                    raise ValueError("foreign dataset output")
+                validate_result(output, candidate)
+            except (PlannerError, ValueError, TypeError, OverflowError):
+                self.pending.extend(encode({"failure": "invalid_output"}))
+            else:
+                self.dataset_results.append(candidate)
+                self.pending.extend(encode({"value": None}))
             return
         measure_id = string(data.get("measure_id"))
         if measure_id not in self.outputs:

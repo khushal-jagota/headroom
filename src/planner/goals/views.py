@@ -4,24 +4,31 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from planner.core.clock import Clock, RealClock
 from planner.core.contracts import JsonDict, PlannerError
+from planner.datasets.data import read_dataset
 from planner.goals import configuration as limits
 from planner.goals import data
+from planner.goals.category_reads import (
+    category_projections,
+    category_read_ranges,
+    earliest_measure_date,
+)
 from planner.goals.contracts import (
+    ChartProjection,
     Goal,
     GoalResponse,
     GoalsResponse,
     ScalarChartProjection,
 )
 from planner.goals.logic.completion import effective_completion
-from planner.goals.logic.documents import charts, expectation_measure_ids, measure_ids
+from planner.goals.logic.documents import charts, dataset_ids, expectation_measure_ids, measure_ids
 from planner.goals.logic.projection import (
     projection_bounds,
     projection_point,
@@ -135,22 +142,16 @@ def reading_calendar(conn: sqlite3.Connection, goal: Goal, now: datetime) -> tup
         local_day, next_day = calendar_projection(now.astimezone(ZoneInfo(definition.timezone)))
         dates.append(identifier + ":" + local_day)
         midnight = min(midnight, next_day)
+    for identifier in dataset_ids(goal.primary_chart, goal.page):
+        dataset = read_dataset(conn, identifier)
+        local_day, next_day = calendar_projection(now.astimezone(ZoneInfo(dataset.timezone)))
+        dates.append(identifier + ":" + local_day)
+        midnight = min(midnight, next_day)
     return "|".join(dates), midnight
 
 
 def _earliest_date(conn: sqlite3.Connection, identifier: str) -> str | None:
-    return cast(
-        str | None,
-        conn.execute(
-            "WITH RECURSIVE inputs(id) AS (SELECT ? UNION "
-            "SELECT input_measure_id FROM measure_dependencies "
-            "JOIN inputs ON measure_id=id) "
-            "SELECT MIN(date) FROM (SELECT date FROM measure_observations "
-            "WHERE measure_id IN inputs "
-            "UNION ALL SELECT date FROM measure_history_gaps WHERE measure_id IN inputs)",
-            (identifier,),
-        ).fetchone()[0],
-    )
+    return earliest_measure_date(conn, identifier)
 
 
 def _formula_projections(
@@ -160,6 +161,7 @@ def _formula_projections(
     first_date: str | None,
     last_date: str | None,
     retained_ranges: list[tuple[str, str, str]],
+    category_dates: int = 0,
 ) -> tuple[dict[str, ScalarChartProjection], dict[str, JsonDict]]:
     formula_charts = [
         chart for chart in charts(goal.primary_chart, goal.page) if "expectation" in chart
@@ -173,7 +175,7 @@ def _formula_projections(
     bound_ids = tuple(sorted({chart["measure_id"] for chart in formula_charts}))
     bound_definitions = {identifier: read_measure(conn, identifier) for identifier in bound_ids}
     bounds = {}
-    point_count = 0
+    point_count = category_dates
     for chart in formula_charts:
         definition = bound_definitions[chart["measure_id"]]
         today = now.astimezone(ZoneInfo(definition.timezone)).date().isoformat()
@@ -312,7 +314,19 @@ def _formula_projections(
     return projections, {item.source_id: asdict(item) for item in health}
 
 
-def _projection_json(projection: ScalarChartProjection) -> JsonDict:
+def _json_value(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _projection_json(projection: ChartProjection) -> JsonDict:
+    if projection["kind"] == "category":
+        return cast(JsonDict, _json_value(projection))
     return {
         **projection,
         "points": [
@@ -333,7 +347,15 @@ def readings_json(
     with transaction(conn, read_only=True):
         goal = data.read_goal(conn, goal_id)
         today, midnight = calendar_projection(now)
-        identifiers = measure_ids(goal.primary_chart, goal.page)
+        # Named inputs enter the compatibility values from their category read.
+        # Read direct scalar bindings here only once per distinct measure.
+        identifiers = sorted(
+            {
+                chart["measure_id"]
+                for chart in charts(goal.primary_chart, goal.page)
+                if "measure_id" in chart
+            }
+        )
         _, midnight = reading_calendar(conn, goal, now)
         retained_ranges = []
         for identifier in identifiers:
@@ -345,9 +367,28 @@ def readings_json(
                 earliest = _earliest_date(conn, identifier)
                 first = min(earliest, last) if earliest else last
             retained_ranges.append((identifier, first, last))
-        projections, sources = _formula_projections(
-            conn, goal, now, first_date, last_date, retained_ranges
+        category_ranges, category_dates = category_read_ranges(
+            conn, goal, now, first_date=first_date, last_date=last_date
         )
+        budget_ranges: dict[str, tuple[str, str]] = {}
+        for identifier, first, last in retained_ranges + category_ranges:
+            prior = budget_ranges.get(identifier, (first, last))
+            budget_ranges[identifier] = min(first, prior[0]), max(last, prior[1])
+        formula_projections, sources = _formula_projections(
+            conn,
+            goal,
+            now,
+            first_date,
+            last_date,
+            [(identifier, first, last) for identifier, (first, last) in budget_ranges.items()],
+            category_dates,
+        )
+        categories, category_health = category_projections(
+            conn, goal, now, first_date=first_date, last_date=last_date
+        )
+        sources.update((item.source_id, asdict(item)) for item in category_health)
+        projections: dict[str, ChartProjection] = dict(formula_projections)
+        projections.update(categories)
         values: list[JsonDict] = []
         primary_observations: list[tuple[str, float | None]] = []
         for identifier, first, last in retained_ranges:
@@ -364,6 +405,13 @@ def readings_json(
             sources.update({source.source_id: asdict(source) for source in reading.sources})
             if goal.primary_chart and goal.primary_chart.get("measure_id") == identifier:
                 primary_observations = [(value.date, value.value) for value in reading.values]
+        known_values = {(value["measure_id"], value["date"]) for value in values}
+        for category_projection in categories.values():
+            for value in category_projection["measure_values"]:
+                identity = value.measure_id, value.date
+                if identity not in known_values:
+                    values.append(asdict(value))
+                    known_values.add(identity)
         if goal.kind == "binary":
             status = goal_status(
                 effective_completion(
@@ -373,7 +421,18 @@ def readings_json(
                 today,
             )
         elif goal.primary_chart and goal.primary_chart["id"] in projections:
-            status = projection_status(goal.primary_chart, projections[goal.primary_chart["id"]])
+            projection = projections[goal.primary_chart["id"]]
+            if projection["kind"] == "scalar":
+                status = projection_status(goal.primary_chart, projection)
+            else:
+                summary = next(item for item in projection["ranges"] if item["id"] == "all")[
+                    "summary"
+                ]
+                meets = summary["meets_expectation"]
+                if meets is None or summary["actual"]["partial"]:
+                    status = "neutral"
+                else:
+                    status = "good" if meets else goal.primary_chart.get("below_target_tone", "bad")
         else:
             status = chart_status(goal.primary_chart, primary_observations)
         return dict(

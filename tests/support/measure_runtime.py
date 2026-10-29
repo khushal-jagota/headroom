@@ -9,6 +9,7 @@ from planner.credentials.contracts import (
     CredentialReference,
     ResolvedCredential,
 )
+from planner.datasets.contracts import OutputDataset
 from planner.measure_sources.configuration import DEFAULT_LIMITS
 from planner.measure_sources.contracts import (
     RunAdmission,
@@ -27,6 +28,7 @@ def admission(
     outputs: tuple[str, ...] = ("m",),
     limits: RuntimeLimits = DEFAULT_LIMITS,
     run_id: str = "synthetic-run",
+    dataset_outputs: tuple[OutputDataset, ...] = (),
 ) -> RunAdmission:
     run = SourceRun(
         id=run_id,
@@ -51,6 +53,7 @@ def admission(
         failure=None,
         metrics=None,
         observation_count=0,
+        dataset_outputs=dataset_outputs,
     )
     return RunAdmission(
         run,

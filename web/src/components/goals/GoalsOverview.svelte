@@ -20,8 +20,8 @@
  let filters=$state(emptyFilters());
  let summaries=$derived((goals.data?.goals??[]).map((goal,i)=>goal.primary_chart?chartHeadline(goal.primary_chart,chartData(goal.primary_chart,readings[i]?.data?.values??[],'all',readings[i]?.data?.charts?.[goal.primary_chart.id]),null,readings[i]?.data?.charts?.[goal.primary_chart.id]):undefined));
  let filtered=$derived((goals.data?.goals??[]).filter((goal,i)=>goalMatches(goal,summaries[i]?.value,filters,{target:target(goal)})));
- /** Formula targets use the same dated summary as the current reading. */
- function target(goal:GoalResponse){const index=goals.data?.goals.findIndex(item=>item.id===goal.id)??-1;return goal.primary_chart?.expectation?summaries[index]?.target:goal.primary_chart?selectedTarget(goal.primary_chart,'all'):undefined;}
+ /** Live targets use the same supplied summary as the current reading. */
+ function target(goal:GoalResponse){const index=goals.data?.goals.findIndex(item=>item.id===goal.id)??-1;return goal.primary_chart?.binding||goal.primary_chart?.expectation?summaries[index]?.target:goal.primary_chart?selectedTarget(goal.primary_chart,'all'):undefined;}
  function targetText(goal:GoalResponse){
   const checklist=goal.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null;
   if(checklist)return `${checklistCounts(checklist).total} items`;

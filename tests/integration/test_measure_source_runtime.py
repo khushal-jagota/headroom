@@ -18,10 +18,14 @@ from planner.measure_sources.runtime import Runtime
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for key in tuple(os.environ):
-        if key.startswith("PLAN_"):
+        if key.startswith(("PLAN_", "PANELS_REAL_")):
             monkeypatch.delenv(key)
+    for key in ("CODEX_HOME", "HERMES_HOME", "CLAUDE_CONFIG_DIR", "PLAN_HERMES_HOME"):
+        path = tmp_path / key.lower()
+        path.mkdir()
+        monkeypatch.setenv(key, str(path))
 
 
 def test_normal_python_files_processes_and_prints(tmp_path: Path) -> None:
@@ -142,3 +146,47 @@ def test_timeout_can_exceed_old_product_ceiling() -> None:
         MemoryCredentials(),
     )
     assert result.failure is None
+
+
+def test_dataset_helper_exposes_captured_declarations_and_keeps_scalar_helpers() -> None:
+    from planner.datasets.contracts import (
+        DatasetDimension,
+        DatasetField,
+        DatasetFieldKind,
+        OutputDataset,
+    )
+
+    output = OutputDataset(
+        "d",
+        3,
+        "UTC",
+        (DatasetDimension("region", "Region"),),
+        (DatasetField("events", "Events", "events", DatasetFieldKind.count),),
+        "2026-10-27",
+    )
+    script = """
+output = context['dataset_outputs'][0]
+assert output['definition_revision'] == 3 and output['dimensions'][0]['name'] == 'region'
+assert latest('m') is None
+record('m', '2026-10-27', 4)
+record_dataset(output['dataset_id'], '2026-10-20',
+               [{'dimensions': {'region': 'de'}, 'values': {'events': 7}}],
+               query_end_at=context['frozen_at'], query_start_at=context['frozen_at'] - 3600,
+               labels={'region': {'de': 'Germany'}}, limitation='Provider sample')
+"""
+    result = Runtime().execute(admission(script, dataset_outputs=(output,)), MemoryCredentials())
+    assert result.failure is None and result.observations[0].value == 4
+    assert result.dataset_results[0].dataset_id == "d"
+    assert result.dataset_results[0].date == "2026-10-20"
+    assert result.dataset_results[0].rows[0].values == {"events": 7}
+    assert result.dataset_results[0].labels == {"region": {"de": "Germany"}}
+    assert result.dataset_results[0].limitation == "Provider sample"
+    for statement in (
+        "record_dataset('foreign', '2026-10-27', [], query_end_at=0)",
+        "record_dataset('d', '2026-10-27', [], query_end_at=float('nan'))",
+    ):
+        failed = Runtime().execute(
+            admission(statement, dataset_outputs=(output,)), MemoryCredentials()
+        )
+        assert failed.failure is not None and failed.failure.code is FailureCode.invalid_output
+        assert failed.dataset_results == () and failed.observations == ()
