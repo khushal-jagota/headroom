@@ -1,5 +1,5 @@
 .figure { display: grid; justify-items: center; min-width: 0; gap: 10px; margin: 0; text-align: center; }.figure figcaption { display: grid; gap: 3px; min-width: 0; }.figure strong { font-size: var(--text-sm); font-weight: 500; }.detail { color: var(--text-faintest); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-.accent { --gauge-color: var(--accent); --gauge-text: var(--accent-strong); }.success { --gauge-color: var(--success); --gauge-text: var(--success); }.warning { --gauge-color: var(--warning); --gauge-text: var(--warning); }.danger { --gauge-color: var(--danger); --gauge-text: var(--danger); }
+.neutral { --gauge-color: var(--chart-muted); --gauge-text: var(--text-muted); }.accent { --gauge-color: var(--accent); --gauge-text: var(--accent-strong); }.success { --gauge-color: var(--success); --gauge-text: var(--success); }.warning { --gauge-color: var(--warning); --gauge-text: var(--warning); }.danger { --gauge-color: var(--danger); --gauge-text: var(--danger); }
 
 /* An activity style ring: a thick stroke with round caps over a faint tint of its own color. The stroke scales with the ring. */
 .visual { position: relative; width: min(100%, 176px); aspect-ratio: 100 / 90; }

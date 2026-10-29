@@ -29,6 +29,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "credential_conversation_requests",
         "dimensional_datasets",
         "goal_source_responsibility",
+        "scalar_observation_coverage",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(
