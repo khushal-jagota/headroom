@@ -79,6 +79,17 @@ Linux uses systemd user services. `panels-live.service` launches the deployed ap
 The backup timer invokes the deployed application's backup command.
 The `vps` user controls them with `systemctl --user`; these operations need no sudo.
 
+The installer must run outside the service it replaces. Service control refuses an
+installer in the target unit's cgroup before it can change deployment state. `nohup`
+and shell backgrounding do not leave that cgroup. Owner adoption uses a separate
+`panels-adoption-<run>-<attempt>` user unit, so stopping Panels cannot kill its installer.
+
+Development worktrees must never link dependencies into the deployed application.
+Matching lockfiles do not make a shared directory safe: test and build tools write
+caches into `node_modules`, invalidating the deployed app's integrity proof. Use a
+development-owned dependency tree. Automated refusal across npm and Python entry
+points remains follow-up work.
+
 The operator establishes the filesystem layout, units, runner, and private route
 before adoption. The workflow does not provision the host or change Tailscale Serve.
 It keeps these existing paths:

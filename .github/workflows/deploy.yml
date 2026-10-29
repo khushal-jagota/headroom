@@ -488,8 +488,12 @@ jobs:
           UPDATE_APP_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
-          # Use an independent control runtime. Adoption never builds or runs publication checks.
-          "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_runner apply \
+          # A separate unit owns the install even if the caller belongs to Panels.
+          systemd-run --user --wait --collect --pipe \
+            --unit="panels-adoption-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --working-directory="$GITHUB_WORKSPACE" \
+            --setenv=GH_TOKEN --setenv=GITHUB_REPOSITORY --setenv=PANELS_DEPLOYMENT_ID \
+            "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_runner apply \
             --request-id "$UPDATE_REQUEST_ID" --publication-run-id "$UPDATE_PUBLICATION_RUN_ID" \
             --artifact-id "$UPDATE_ARTIFACT_ID" --proof-artifact-id "$UPDATE_PROOF_ARTIFACT_ID" \
             --app-sha "$UPDATE_APP_SHA" --artifact-digest "$UPDATE_ARTIFACT_DIGEST" \
