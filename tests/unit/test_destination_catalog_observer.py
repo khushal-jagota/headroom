@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import sys
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -119,6 +120,24 @@ def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
     (tmp_path / "managed" / "managed-settings.d").mkdir(parents=True)
     transports: list[ScriptedTransport] = []
     task_evidence: list[tuple[bool, bool, bool]] = []
+    failures: list[dict[str, Any]] = []
+    original_fail = diagnostics.DiagnosticSink._fail
+
+    def observe_failure(sink: Any, status: Any) -> None:
+        caller = sys._getframe(1)
+        lease = diagnostics._observation.get()
+        failures.append({
+            "status": status,
+            "caller": caller.f_code.co_name,
+            "source": "diagnostics.py:" + str(caller.f_lineno),
+            "task_differs_from_lease": (
+                lease is not None and lease.task is not asyncio.current_task()
+            ),
+            "thread_matches_lease": lease is not None and lease.thread == threading.get_ident(),
+        })
+        original_fail(sink, status)
+
+    monkeypatch.setattr(diagnostics.DiagnosticSink, "_fail", observe_failure)
 
     class ExternalTransport(ScriptedTransport):
         async def send(self, data: str) -> None:
@@ -169,12 +188,21 @@ def test_real_nested_claude_probe_reproduces_diagnostic_task_mismatch(
                 record = sink.finish()
                 assert record == diagnostics.unavailable_record("internal_error")
                 assert task_evidence == [(True, True, True)]
+                assert [{key: value for key, value in failure.items() if key != "source"}
+                        for failure in failures] == [{
+                    "status": "internal_error",
+                    "caller": "offer_provider_comparison",
+                    "task_differs_from_lease": True,
+                    "thread_matches_lease": True,
+                }]
                 print("finite nested reproduction: " + json.dumps({
                     "change": change,
                     "callback_task_differs_from_lease": task_evidence[0][0],
                     "callback_thread_matches_lease": task_evidence[0][1],
                     "failure_absent_before_callback": task_evidence[0][2],
                     "diagnostic_status": record["diagnostic_status"],
+                    "receipt": record,
+                    "failure_calls": failures,
                     "ordinary_reason": getattr(result, "reason", "observation"),
                 }, default=str, sort_keys=True))
         assert calls[0] == calls[1]
