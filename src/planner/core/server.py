@@ -28,8 +28,7 @@ from planner.conversation.history.api import router as conversation_history_rout
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 from planner.conversation.usage.api import router as recorded_usage_router
-from planner.conversation.usage.pricing import UsagePricingService
-from planner.conversation.usage.service import RecordedUsageService
+from planner.conversation.usage.composition import makeUsageService
 from planner.conversation.video_uploads.api import create_router as create_video_upload_router
 from planner.conversation.video_uploads.config import CLEANUP_INTERVAL_SECONDS
 from planner.conversation.video_uploads.destinations import authorize_destination
@@ -394,11 +393,7 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.recorded_usage = RecordedUsageService(
-        conn_factory,
-        now=clock.now,
-        pricing=UsagePricingService(conn_factory, now=clock.now),
-    )
+    app.state.recorded_usage = makeUsageService(config, now=clock.now)
     app.state.conversation = None
     app.state.vps_metrics = None
     # The conversation system is the running one, so it belongs to the lifespan that
