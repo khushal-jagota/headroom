@@ -58,12 +58,14 @@
  </section>{/if}
  {#if readings.error}<ErrorLine error={readings.error}/>{/if}
  {#each readings.data?.sources.filter(s=>s.health!=='healthy')??[] as source(source.source_id)}<p class="source-warning">{source.source_name}: {source.health}</p>{/each}
- <section class="approach" aria-label="Approach"><h2>Approach</h2><PageDocument document={goal.page} showHeader={false}/></section>
+ <!-- The saved page is the goal's content. It carries its own authored headings; the page
+      renderer adds none, and nothing here wraps it in a section of our own naming. -->
+ <div class="goal-page"><PageDocument document={goal.page} showHeader={false}/></div>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:goal:${id}`} label={goal?.title??'Goal'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={{kind:'goal',id}}/>{/snippet}
 </ManagerFrame>
 <style>
 .goal-content{container-type:inline-size;max-width:900px;margin:0 auto;padding-top:32px}.breadcrumb{display:flex;gap:10px;align-items:center;color:var(--text-faintest);font-size:13px;line-height:1.45;margin-bottom:26px}.breadcrumb a{color:inherit;text-decoration:none}/* The approved card: the chart sits inside it without a second frame. */
-.measure-panel{margin-top:28px;padding:28px;border:1px solid var(--chart-card-border);border-radius:28px;background:var(--chart-surface)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:20px}.completion-action{border:1px solid var(--border-color);border-radius:var(--radius-md);background:none;padding:8px 14px;color:var(--text-muted);font:inherit;font-size:13px;cursor:pointer}.completion-action:hover{color:var(--text-strong)}.approach{margin-top:40px}h2{font-size:15px;font-weight:500;margin:0 0 16px;color:var(--text-default)}.source-warning{font-size:12px;color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}@media (max-width:760px){.goal-content{padding-top:24px}}
+.measure-panel{margin-top:28px;padding:28px;border:1px solid var(--chart-card-border);border-radius:28px;background:var(--chart-surface)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:20px}.completion-action{border:1px solid var(--border-color);border-radius:var(--radius-md);background:none;padding:8px 14px;color:var(--text-muted);font:inherit;font-size:13px;cursor:pointer}.completion-action:hover{color:var(--text-strong)}.goal-page{margin-top:40px}.source-warning{font-size:12px;color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}@media (max-width:760px){.goal-content{padding-top:24px}}
 </style>
