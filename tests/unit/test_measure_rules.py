@@ -462,3 +462,48 @@ def test_phase_boundaries_follow_composed_references_at_their_evaluation_dates()
     assert not phase_changed(missing, "2026-10-28", definitions)
     out_of_range = ReferenceExpression(op="reference", measure_id=phase.id, day_offset=999999999)
     assert not phase_changed(out_of_range, "2026-10-28", definitions)
+
+
+def test_phase_detection_reuses_shared_assembled_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.measures.logic import evaluation as evaluation_rules
+
+    phase = replace(
+        definition("phase"),
+        source_id=None,
+        origin=MeasureOrigin.assembled,
+        formula=IfBeforeExpression(
+            op="if_before",
+            date="2026-10-28",
+            before=ConstantExpression(op="constant", value=100),
+            otherwise=ConstantExpression(op="constant", value=120),
+        ),
+    )
+    definitions = {phase.id: phase}
+    for index in range(20):
+        previous = phase.id
+        phase = replace(
+            phase,
+            id=f"double-{index}",
+            formula=BinaryExpression(
+                op="add",
+                left=ReferenceExpression(op="reference", measure_id=previous, day_offset=0),
+                right=ReferenceExpression(op="reference", measure_id=previous, day_offset=0),
+            ),
+        )
+        definitions[phase.id] = phase
+    references = evaluation_rules.expression_references
+    visits = 0
+
+    def counted(
+        formula: FormulaExpression, day: str, zone: str, now: int
+    ) -> tuple[MeasureDate, ...]:
+        nonlocal visits
+        visits += 1
+        assert visits <= 200, "phase detection unfolded the shared dependency graph"
+        return references(formula, day, zone, now)
+
+    monkeypatch.setattr(evaluation_rules, "expression_references", counted)
+    reference = ReferenceExpression(op="reference", measure_id=phase.id, day_offset=0)
+    assert phase_changed(reference, "2026-10-28", definitions)
