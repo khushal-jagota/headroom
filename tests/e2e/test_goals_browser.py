@@ -330,7 +330,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
                         "type": "checklist",
                         "id": "supporting-tasks",
                         "title": "Supporting tasks",
-                        "items": [{"id": "notes", "label": "Keep source notes", "state": "open"}],
+                        "items": [
+                            {"id": "source-notes", "label": "Keep source notes", "state": "open"}
+                        ],
                     },
                 ],
             },
