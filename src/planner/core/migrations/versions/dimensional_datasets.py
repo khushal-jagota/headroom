@@ -3,14 +3,21 @@
 from alembic import op
 
 revision = "dimensional_datasets"
-# Development parent only; rebase after the checked credential/request handoff.
-down_revision = "reusable_named_credentials"
+down_revision = "credential_conversation_requests"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
     conn = op.get_bind()
+    for declaration in (
+        "dataset_outputs TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(dataset_outputs))",
+        "dataset_result_count INTEGER NOT NULL DEFAULT 0 CHECK(dataset_result_count>=0)",
+        "dataset_row_count INTEGER NOT NULL DEFAULT 0 CHECK(dataset_row_count>=0)",
+        "test_dataset_results TEXT CHECK(test_dataset_results IS NULL OR "
+        "(json_valid(test_dataset_results) AND mode='test' AND status='succeeded'))",
+    ):
+        conn.exec_driver_sql("ALTER TABLE measure_source_runs ADD COLUMN " + declaration)
     declarations = (
         """CREATE TABLE datasets (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),

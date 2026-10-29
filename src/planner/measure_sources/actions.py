@@ -31,15 +31,22 @@ def _revision(source: MeasureSource, expected: int) -> None:
 
 
 def _responsibility(conn: sqlite3.Connection, principal: Principal) -> None:
-    if principal.kind not in (PrincipalKind.chief, PrincipalKind.manager) or (
+    if principal.kind not in (PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.goal) or (
         principal.kind is PrincipalKind.chief and principal.id != "chief"
     ):
-        raise PlannerError(ErrorCode.validation, "a source needs Chief or a Manager responsibility")
+        raise PlannerError(
+            ErrorCode.validation, "a source needs Chief, Manager, or goal responsibility"
+        )
     if (
         principal.kind is PrincipalKind.manager
         and conn.execute("SELECT 1 FROM managers WHERE id=?", (principal.id,)).fetchone() is None
     ):
         raise PlannerError(ErrorCode.validation, "responsible Manager does not exist")
+    if (
+        principal.kind is PrincipalKind.goal
+        and conn.execute("SELECT 1 FROM goals WHERE id=?", (principal.id,)).fetchone() is None
+    ):
+        raise PlannerError(ErrorCode.validation, "responsible goal does not exist")
 
 
 def create_source(
@@ -65,8 +72,8 @@ def create_source(
         source_id = new_id("source")
         conn.execute(
             "INSERT INTO measure_sources(id,name,project_id,account,responsible_kind,"
-            "responsible_manager_id,responsibility_revision,source_revision,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,1,1,?,?)",
+            "responsible_manager_id,responsible_goal_id,responsibility_revision,"
+            "source_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,1,?,?)",
             (
                 source_id,
                 request.name.strip(),
@@ -76,6 +83,7 @@ def create_source(
                 request.responsible.id
                 if request.responsible.kind is PrincipalKind.manager
                 else None,
+                request.responsible.id if request.responsible.kind is PrincipalKind.goal else None,
                 now,
                 now,
             ),
@@ -126,11 +134,13 @@ def set_responsible(
         if source.responsible != responsible:
             conn.execute(
                 "UPDATE measure_sources SET responsible_kind=?,responsible_manager_id=?,"
+                "responsible_goal_id=?,"
                 "responsibility_revision=responsibility_revision+1,"
                 "updated_at=? WHERE id=?",
                 (
                     responsible.kind.value,
                     responsible.id if responsible.kind is PrincipalKind.manager else None,
+                    responsible.id if responsible.kind is PrincipalKind.goal else None,
                     now,
                     source_id,
                 ),
@@ -183,12 +193,16 @@ def delete_source(conn: sqlite3.Connection, source_id: str, *, principal: Princi
                 "SELECT 1 FROM measures WHERE source_id=? LIMIT 1", (source_id,)
             ).fetchone()
             or conn.execute(
+                "SELECT 1 FROM datasets WHERE source_id=? LIMIT 1", (source_id,)
+            ).fetchone()
+            or conn.execute(
                 "SELECT 1 FROM measure_source_runs WHERE source_id=? AND mode!='test' LIMIT 1",
                 (source_id,),
             ).fetchone()
         ):
             raise PlannerError(
-                ErrorCode.validation, "source has retained measures or runs; disable it instead"
+                ErrorCode.validation,
+                "source has retained measures, datasets, or runs; disable it instead",
             )
         conn.execute(
             "DELETE FROM measure_source_runs WHERE source_id=? AND mode='test'", (source_id,)

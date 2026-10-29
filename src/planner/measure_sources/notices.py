@@ -20,7 +20,7 @@ FAILURE_MESSAGES = {
     FailureCode.transport_failure: "The provider request failed.",
     FailureCode.http_error: "The provider returned an HTTP error.",
     FailureCode.invalid_json: "The provider returned invalid JSON.",
-    FailureCode.invalid_output: "The source returned invalid observations.",
+    FailureCode.invalid_output: "The source returned invalid output.",
     FailureCode.stale_definition: "The saved source script changed during the run.",
     FailureCode.budget_exhausted: "The run exceeded its execution timeout.",
     FailureCode.interrupted: "The collection stopped before completion.",
@@ -57,7 +57,10 @@ def notify_episode(conn: sqlite3.Connection, source: MeasureSource, *, now: int)
         (source.id,),
     ).fetchone()
     last_success_text = "none" if last_success is None else str(last_success[0])
-    affected = ", ".join(dict.fromkeys(output.required_date for output in run.required_outputs[:5]))
+    dates = [output.required_date for output in run.required_outputs[:5]] + [
+        output.required_date for output in run.dataset_outputs[:5]
+    ]
+    affected = ", ".join(dict.fromkeys(dates))
     summary = (
         f"Measure source {source.name!r} in {project_name} / {source.scope.account} failed. "
         f"{failure_message(run.failure)} "
@@ -114,15 +117,18 @@ def record_failure(conn: sqlite3.Connection, run: SourceRun, *, now: int) -> Non
 
 def notice_is_current(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     source = conn.execute(
-        "SELECT responsible_kind,responsible_manager_id,responsibility_revision "
+        "SELECT responsible_kind,responsible_manager_id,responsible_goal_id,"
+        "responsibility_revision "
         "FROM measure_sources WHERE id=?",
         (row["measure_source_id"],),
     ).fetchone()
     if source is None:
         return False
-    target_id = (
-        source["responsible_manager_id"] if source["responsible_kind"] == "manager" else "chief"
-    )
+    target_id = "chief"
+    if source["responsible_kind"] == "manager":
+        target_id = source["responsible_manager_id"]
+    elif source["responsible_kind"] == "goal":
+        target_id = source["responsible_goal_id"]
     if (source["responsible_kind"], target_id, source["responsibility_revision"]) != (
         row["target_kind"],
         row["target_id"],

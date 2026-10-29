@@ -109,6 +109,10 @@ def source_client(
             "CLAUDE_CONFIG_DIR",
         ):
             monkeypatch.delenv(key)
+    for key in ("CODEX_HOME", "HERMES_HOME", "CLAUDE_CONFIG_DIR", "PLAN_HERMES_HOME"):
+        path = tmp_path / key.lower()
+        path.mkdir()
+        monkeypatch.setenv(key, str(path))
     monkeypatch.setattr(
         "planner.conversation.snapshot.SubprocessBackendProbeEnvironment",
         NoInstalledBackends,
@@ -190,6 +194,8 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
         "POST", "/api/projects", {"name": "Another source Project", "summary": "Fixture"}
     )
 
+    dataset_ids: dict[str, str] = {}
+
     def configure(*, second: bool = False) -> tuple[dict[str, Any], str]:
         selected_project = second_project if second else project
         source = request(
@@ -215,6 +221,25 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
                 "source_id": source["id"],
             },
         )
+        if not second:
+            table = request(
+                "POST",
+                "/api/datasets",
+                {
+                    "project_id": selected_project["id"],
+                    "source_id": source["id"],
+                    "name": "Fixture categories",
+                    "timezone": "UTC",
+                    "dimensions": [
+                        {"name": "region", "label": "Region"},
+                        {"name": "device", "label": "Device"},
+                    ],
+                    "fields": [
+                        {"name": "events", "label": "Events", "unit": "events", "kind": "count"}
+                    ],
+                },
+            )
+            dataset_ids[source["id"]] = table["id"]
         route = "/api/projects/fixture/query" if second else "/api/subscriptions"
         extra = (
             ",method='POST',json_body={'query':{'kind':'HogQLQuery',"
@@ -228,6 +253,10 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
             f"credential_ref='provider-production'{extra})\n"
             "response.raise_for_status()\noutput=context['required_outputs'][0]\n"
             f"record(output['measure_id'],output['required_date'],response.json(){field})"
+            "\nfor dataset in context['dataset_outputs']:\n"
+            " record_dataset(dataset['dataset_id'],dataset['required_date'],"
+            "[{'dimensions':{'region':'de','device':'web'},'values':{'events':response.json()['value']}}],"
+            "query_end_at=context['frozen_at'],labels={'region':{'de':'Germany'}})"
         )
         source = request("GET", f"/api/measure-sources/{source['id']}")
         source = request(
@@ -265,6 +294,19 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
         assert result["values"][0]["date"] == "2026-10-27"
         return float(result["values"][0]["value"])
 
+    def dataset_result(source_id: str) -> dict[str, Any]:
+        return dict(
+            request(
+                "POST",
+                "/api/datasets/read",
+                {
+                    "dataset_ids": [dataset_ids[source_id]],
+                    "first_date": "2026-10-27",
+                    "last_date": "2026-10-27",
+                },
+            )["results"][0]
+        )
+
     source, measure_id = configure()
     source = request(
         "PUT",
@@ -279,11 +321,18 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
     assert scheduled["status"] == "succeeded" and scheduled["trigger"] == "scheduled"
     assert scheduled["schedule_date"] == "2026-10-27" and scheduled["schedule_time"] == "12:00"
     assert value(measure_id) == 42
+    assert scheduled["dataset_result_count"] == scheduled["dataset_row_count"] == 1
+    retained = dataset_result(source["id"])
+    assert retained["rows"] == [
+        {"dimensions": {"region": "de", "device": "web"}, "values": {"events": 42}}
+    ]
+    assert retained["provenance"]["run_id"] == scheduled["id"]
 
     provider.token, provider.value = SECOND_TOKEN, 43
     failed = collect(source)
     assert failed["status"] == "failed" and failed["failure"]["http_status"] == 401
     assert value(measure_id) == 42
+    assert dataset_result(source["id"]) == retained
     status = request("GET", f"/api/measure-sources/{source['id']}/status")
     assert status["health"] == "failed" and status["collection_failure"]["code"] == "http_error"
     request(
@@ -296,6 +345,9 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
     )
     recovered = collect(source)
     assert recovered["status"] == "succeeded" and value(measure_id) == 43
+    corrected = dataset_result(source["id"])
+    assert corrected["rows"][0]["values"] == {"events": 43}
+    assert corrected["provenance"]["run_id"] == recovered["id"]
     status = request("GET", f"/api/measure-sources/{source['id']}/status")
     assert status["health"] == "healthy" and status["collection_failure"] is None
     assert status["latest_run"]["id"] == recovered["id"]

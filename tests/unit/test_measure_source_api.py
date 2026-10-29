@@ -134,3 +134,162 @@ def test_explicit_runtime_constructor_executes_source_only_lifespan(tmp_db: Conn
         assert tmp_db.execute("SELECT value FROM measure_observations").fetchone()[0] == 7
     assert tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == ticket_count
     assert not any(thread.name.startswith("measure-source") for thread in threading.enumerate())
+
+
+def test_goal_source_authority_covers_own_definitions_scripts_runs_and_schedule(
+    tmp_db: Connection,
+) -> None:
+    from tests.unit.test_goal_pages import create
+
+    from planner.core.contracts import Principal, PrincipalKind
+    from planner.datasets.data import read_dataset
+    from planner.measure_sources import data
+
+    own, other = create(tmp_db), create(tmp_db)
+    actor = Principal(PrincipalKind.goal, own.id)
+    headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": own.id}
+    other_headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": other.id}
+    managed, _ = configured_source(tmp_db)
+    with TestClient(_app(tmp_db)) as client:
+        body = {
+            "name": "Goal source",
+            "project_id": "project_vylo",
+            "account": "fixture",
+            "responsible": {"kind": "goal", "id": own.id},
+        }
+        created = client.post("/api/measure-sources", json=body, headers=headers)
+        assert created.status_code == 200, created.text
+        source_id = created.json()["id"]
+        assert created.json()["responsible"] == {"kind": "goal", "id": own.id}
+        assert data.read_source(tmp_db, source_id).responsible == actor
+        assert (
+            client.post("/api/measure-sources", json=body, headers=other_headers).json()["error"][
+                "code"
+            ]
+            == "agent_forbidden"
+        )
+        table = client.post(
+            "/api/datasets",
+            headers=headers,
+            json={
+                "project_id": "project_vylo",
+                "source_id": source_id,
+                "name": "Own categories",
+                "timezone": "UTC",
+                "dimensions": [{"name": "region", "label": "Region"}],
+                "fields": [
+                    {"name": "events", "label": "Events", "unit": "events", "kind": "count"}
+                ],
+            },
+        )
+        assert table.status_code == 200, table.text
+        assert read_dataset(tmp_db, table.json()["id"]).source_id == source_id
+        # A dataset alone prevents source deletion before any scalar definition exists.
+        assert (
+            client.delete(f"/api/measure-sources/{source_id}", headers=headers).status_code == 400
+        )
+        measure = client.post(
+            "/api/measures",
+            headers=headers,
+            json={
+                "project_id": "project_vylo",
+                "source_id": source_id,
+                "name": "Own reading",
+                "unit": "events",
+                "origin": "taken",
+                "kind": "reading",
+                "timezone": "UTC",
+            },
+        )
+        assert measure.status_code == 200, measure.text
+        assert (
+            client.patch(
+                f"/api/datasets/{table.json()['id']}",
+                headers=other_headers,
+                json={"expected_revision": 1, "name": "Foreign"},
+            ).json()["error"]["code"]
+            == "agent_forbidden"
+        )
+        source = data.read_source(tmp_db, source_id)
+        submitted = client.put(
+            f"/api/measure-sources/{source_id}/script",
+            headers=headers,
+            json={"expected_revision": source.source_revision, "text": "pass"},
+        )
+        assert submitted.status_code == 200, submitted.text
+        assert submitted.json()["active_script"]["authored_by"] == {"kind": "goal", "id": own.id}
+        source = data.read_source(tmp_db, source_id)
+        scheduled = client.put(
+            f"/api/measure-sources/{source_id}/schedule",
+            headers=headers,
+            json={
+                "expected_revision": source.source_revision,
+                "enabled": True,
+                "local_time": "23:59",
+            },
+        )
+        assert scheduled.status_code == 200, scheduled.text
+        own_script = submitted.json()["active_script"]["revision"]
+        requested = client.post(
+            f"/api/measure-sources/{source_id}/runs",
+            headers=headers,
+            json={"mode": "test", "expected_script_revision": own_script},
+        )
+        assert requested.status_code == 200, requested.text
+        assert requested.json()["dataset_outputs"][0]["dataset_id"] == table.json()["id"]
+        for target in (source_id, managed.id):
+            foreign = other_headers if target == source_id else headers
+            current = data.read_source(tmp_db, target)
+            assert (
+                client.put(
+                    f"/api/measure-sources/{target}/script",
+                    headers=foreign,
+                    json={"expected_revision": current.source_revision, "text": "pass # foreign"},
+                ).json()["error"]["code"]
+                == "agent_forbidden"
+            )
+            assert (
+                client.put(
+                    f"/api/measure-sources/{target}/schedule",
+                    headers=foreign,
+                    json={
+                        "expected_revision": current.source_revision,
+                        "enabled": False,
+                        "local_time": None,
+                    },
+                ).json()["error"]["code"]
+                == "agent_forbidden"
+            )
+            assert current.active_script is not None
+            assert (
+                client.post(
+                    f"/api/measure-sources/{target}/runs",
+                    headers=foreign,
+                    json={
+                        "mode": "collection",
+                        "expected_script_revision": current.active_script.revision,
+                    },
+                ).json()["error"]["code"]
+                == "agent_forbidden"
+            )
+        assert (
+            client.put(
+                f"/api/measure-sources/{source_id}/responsible",
+                headers=headers,
+                json={
+                    "expected_responsibility_revision": 1,
+                    "responsible": {"kind": "goal", "id": other.id},
+                },
+            ).json()["error"]["code"]
+            == "agent_forbidden"
+        )
+        assert (
+            client.delete(f"/api/measure-sources/{source_id}", headers=headers).status_code == 400
+        )
+        assert (
+            client.post(
+                "/api/measure-sources",
+                json={**body, "responsible": {"kind": "goal", "id": "missing"}},
+            ).status_code
+            == 400
+        )

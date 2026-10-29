@@ -92,10 +92,40 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
             chief_writes = await subject.backend_writes(chief_conversation)
             assert len(chief_writes) == 1 and source.id in chief_writes[0].text
             assert "HTTP status: 401" in chief_writes[0].text
+            from tests.unit.test_goal_pages import create
+
+            from planner.goals.conversation import goal_agent_key
+            from planner.runtime.conversation_start import read_agent_conversation
+
+            goal = create(tmp_db)
+            goal_actor = Principal(PrincipalKind.goal, goal.id)
+            actions.set_responsible(
+                tmp_db,
+                source.id,
+                goal_actor,
+                expected_responsibility_revision=2,
+                principal=OWNER_PRINCIPAL,
+                now=NOW + 6,
+            )
+            goal_batch = wakes.claim_next_batch(tmp_db, process_token="goal-proof", now=NOW + 7)
+            assert goal_batch is not None and goal_batch.target == goal_actor
+            assert await deliver_batch(
+                goal_batch,
+                connect_database=lambda: connect(str(database)),
+                conversation_system=subject.system,
+                process_token="goal-proof",
+                now=lambda: NOW + 8,
+            )
+            await subject.settle()
+            goal_conversation = read_agent_conversation(tmp_db, goal_agent_key(goal.id))
+            assert goal_conversation is not None
+            goal_writes = await subject.backend_writes(goal_conversation)
+            assert len(goal_writes) == 1
+            assert source.id in goal_writes[0].text and "HTTP status: 401" in goal_writes[0].text
             rows = tmp_db.execute(
                 "SELECT closed_at FROM manager_wakes WHERE source_kind='source_failure'"
             ).fetchall()
-            assert len(rows) == 2 and all(row[0] is not None for row in rows)
+            assert len(rows) == 3 and all(row[0] is not None for row in rows)
 
     asyncio.run(exercise())
 
@@ -112,10 +142,13 @@ def test_reassignment_before_delivery_discards_old_responsibility_batch(
     )
     old = wakes.claim_next_batch(tmp_db, process_token="stale", now=NOW)
     assert old is not None
+    from tests.unit.test_goal_pages import create
+
+    goal_actor = Principal(PrincipalKind.goal, create(tmp_db).id)
     actions.set_responsible(
         tmp_db,
         source.id,
-        CHIEF_PRINCIPAL,
+        goal_actor,
         expected_responsibility_revision=1,
         principal=OWNER_PRINCIPAL,
         now=NOW + 1,
@@ -158,4 +191,4 @@ def test_reassignment_before_delivery_discards_old_responsibility_batch(
         == 1
     )
     latest = wakes.claim_next_batch(tmp_db, process_token="current", now=NOW + 3)
-    assert latest is not None and latest.target == CHIEF_PRINCIPAL
+    assert latest is not None and latest.target == goal_actor

@@ -55,7 +55,7 @@ def principal(value: object) -> Principal:
         result = Principal(PrincipalKind(value["kind"]), text(value, "id"))
     except ValueError:
         raise invalid() from None
-    if result.kind not in (PrincipalKind.chief, PrincipalKind.manager):
+    if result.kind not in (PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.goal):
         raise invalid()
     if result.kind is PrincipalKind.chief and result.id != "chief":
         raise invalid()
