@@ -73,7 +73,9 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     assert names.index("Collect rehearsal proof") < names.index(
         "Write immutable publication receipt"
     )
-    assert "update_publication.py selection" in steps["Select complete publication checks"]["run"]
+    assert "publication_checks.py verify-selection" in (
+        steps["Select complete publication checks"]["run"]
+    )
     for name in ("Retain exact executable archive", "Retain publication proof"):
         assert steps[name]["with"]["retention-days"] == 30
     commands = "\n".join(step.get("run", "") for step in adoption["steps"])
@@ -91,8 +93,10 @@ def test_publication_preserves_existing_isolated_suite_report_boundaries() -> No
     shell = "python3 scripts/deployment_progress.py {0}"
     assert job["defaults"]["run"]["shell"] == shell
     steps = {step.get("name"): step for step in job["steps"] if "run" in step}
+    suite_job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["suites"]
+    suite_steps = {step.get("name"): step for step in suite_job["steps"] if "run" in step}
     for suite in ("unit", "integration", "E2E"):
-        script = steps[f"pytest {suite} at requested source"]["run"]
+        script = suite_steps[f"pytest {suite} at requested source"]["run"]
         assert script.index('"$GITHUB_WORKSPACE/scripts/deployment_codex.py" verify') < (
             script.index('.venv/bin/pytest "${selected[@]}"')
         )
@@ -110,6 +114,82 @@ def test_publication_preserves_existing_isolated_suite_report_boundaries() -> No
     assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in (
         steps["Provision offline Hermes packaging prerequisite"]["run"]
     )
+
+
+def test_parallel_publication_requires_all_suites_before_any_candidate_work() -> None:
+    jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+    preparation, suites, publication = jobs["prepare"], jobs["suites"], jobs["deploy"]
+    assert suites["needs"] == "prepare"
+    assert suites["strategy"] == {"fail-fast": False,
+                                  "matrix": {"suite": ["unit", "integration", "e2e", "browser"]}}
+    assert publication["needs"] == ["prepare", "suites"]
+    assert "always()" in publication["if"]
+    for job in (preparation, suites, publication):
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert job["steps"][0]["with"]["ref"] == "${{ github.sha }}"
+        assert not job.get("continue-on-error")
+        assert all(not step.get("continue-on-error") for step in job["steps"])
+    steps = {step.get("name"): step for step in publication["steps"]}
+    names = list(steps)
+    gate_name = "Collect checked suite evidence and require successful prerequisites"
+    gate = steps[gate_name]
+    assert "always()" in gate["if"]
+    assert gate["env"]["PANELS_PREREQUISITES"] == (
+        '{"prepare":"${{ needs.prepare.result }}","suites":"${{ needs.suites.result }}"}'
+    )
+    assert "publication_checks.py collect" in gate["run"]
+    assert names.index("Set deployment paths") < names.index(gate_name)
+    assert names.index(gate_name) < names.index("Provision offline Hermes packaging prerequisite")
+    assert names.index(gate_name) < names.index("Start known-good rehearsal release")
+    assert names.index("Validate collected suite reports at requested source") < (
+        names.index("Build exact candidate once")
+    )
+    for name in ("Provision offline Hermes packaging prerequisite", "Build exact candidate once",
+                 "Seal immutable executable archive", "Retain exact executable archive",
+                 "Write immutable publication receipt"):
+        assert "if" not in steps[name]
+    assert sum("app-build" in step.get("run", "") for step in publication["steps"]) == 1
+    assert not any("app-build" in step.get("run", "") for step in suites["steps"])
+    downloads = [step for step in publication["steps"]
+                 if "actions/download-artifact@" in step.get("uses", "")]
+    assert len(downloads) == 5
+    assert len({step["with"]["path"] for step in downloads}) == 5
+    assert all("github.run_attempt" in step["with"]["name"] for step in downloads)
+
+
+def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_boundaries() -> None:
+    suites = yaml.safe_load(WORKFLOW.read_text())["jobs"]["suites"]
+    steps = {step.get("name"): step for step in suites["steps"]}
+    bootstrap = steps["Bootstrap disposable hosted runner"]["run"]
+    assert "ffmpeg" in bootstrap and "bubblewrap" in bootstrap
+    assert 'sudo systemctl start "user@$(id -u).service"' in bootstrap
+    hermes = steps["Provision offline Hermes integration prerequisite"]
+    assert hermes["if"] == "${{ matrix.suite == 'integration' }}"
+    assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]
+    assert '"$hermes_source[acp]"' in hermes["run"]
+    setup = steps["Prepare requested-source check environment"]["run"]
+    for command in ("python3 -m venv .venv", "npm ci --prefix web",
+                    "npm ci --prefix agent_backends", "npm --prefix web run build"):
+        assert command in setup
+    assert '"$GITHUB_WORKSPACE/scripts/deployment_codex.py" setup' in setup
+    for name in ("pytest E2E at requested source", "Browser hosts at requested source"):
+        command = steps[name]["run"]
+        for mount in ('--bind "$PANELS_GATE_DIR/artifact-shadow" /home/vps/Deployments/Panels',
+                      '--bind "$PANELS_CANDIDATE_SOURCE" "$PANELS_CANDIDATE_SOURCE"',
+                      '--bind "$PANELS_REPORT_DIR" "$PANELS_REPORT_DIR"'):
+            assert mount in command
+        assert "PLAN_*|PANELS_REAL_*|HERMES_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR" in command
+        assert "deployment_check_report.py" in command
+    assert '--ro-bind "$git_common_dir" "$git_common_dir"' in (
+        steps["Browser hosts at requested source"]["run"]
+    )
+    upload = steps["Retain suite evidence and diagnostics"]
+    assert upload["if"] == "${{ always() }}"
+    assert upload["with"]["name"] == (
+        "panels-publication-${{ matrix.suite }}-${{ github.run_attempt }}"
+    )
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["include-hidden-files"] is True
 
 
 def test_post_health_failure_reports_installed_app_without_undoing_local_commit(

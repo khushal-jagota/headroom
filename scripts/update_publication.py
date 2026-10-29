@@ -25,27 +25,9 @@ from planner.environments.update_contracts import (
     UPDATE_ARTIFACT_RETENTION_DAYS,
 )
 
-
-def full_selection(source: Path) -> dict[str, object]:
-    """Use every current suite entry, without diff-based check selection."""
-
-    def files(pattern: str) -> list[str]:
-        return sorted(path.relative_to(source).as_posix() for path in source.glob(pattern))
-
-    catalog = json.loads((source / "web/tests/browser/catalog.json").read_text())
-    if catalog.get("schema") != 1:
-        raise ValueError("unsupported browser catalog")
-    return {
-        "ruff_paths": ["."],
-        "mypy": True,
-        "web_check": True,
-        "unit": files("tests/unit/**/test_*.py"),
-        "integration": files("tests/integration/**/test_*.py"),
-        "e2e": files("tests/e2e/**/test_*.py"),
-        "vitest": files("web/tests/**/*.test.ts"),
-        "browser": [entry["path"] for entry in catalog["entries"]],
-        "browser_format": "shared-v1",
-    }
+# Keep the historical import available to archive callers and focused tests.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.publication_checks import full_selection as full_selection  # noqa: E402
 
 
 def validate_target_proof(

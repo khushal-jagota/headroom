@@ -124,7 +124,12 @@ Code paths: `ops/panels-environments/`, `src/planner/environments/deployment.py`
 
 Publication uses GitHub-hosted Ubuntu, Python 3.12, and Node 22. It runs full Ruff,
 mypy, Svelte checks, typechecked Vitest, and the complete browser catalog.
-Unit, integration, and E2E suites run in separate pytest processes.
+A preparation job resolves the exact requested SHA and records the complete selection.
+Unit, integration, E2E, and browser suites run on four separate hosted runners.
+The matrix lets every suite finish when another fails. Each runner checks the same
+requested SHA and selection, creates its own dependencies, and uses the same sandbox
+mounts. Integration provisions the pinned offline Hermes core and ACP prerequisite;
+E2E uses a real systemd user manager. No service or candidate moves between runners.
 Nested test directories participate. Documentation-only changes use the same checks.
 The requested checkout supplies its dependencies, test configuration, and source.
 The trusted workflow checkout supplies the orchestration and report validators.
@@ -139,6 +144,19 @@ The source, reports, and temporary tools remain reachable through explicit mount
 Browser entries share the existing build, static server, and Chromium process.
 Cases retain separate contexts. Their receipts bind the requested revision,
 invocation, entries, and required cases. No unisolated fallback exists.
+
+Each suite uploads an explicitly named artifact for the current run attempt. It
+contains the existing report, all browser evidence including hidden files, and a
+record of the source and workflow revisions, run, attempt, selection, and file hashes.
+Publication downloads each artifact separately. It checks the complete inventory,
+hashes, safe paths, and destination collisions before restoring original report paths.
+Missing reports, foreign evidence, symlinks, failed jobs, and skipped prerequisites
+fail publication. Available checked diagnostics remain in the proof artifact.
+
+The publication job runs its collection gate even after a suite fails. A failed gate
+stops Hermes setup, the baseline runtime, candidate construction, and the receipt.
+On success it repeats the report validators against the requested source catalog and
+rechecks the complete selection before building.
 
 Publication builds the target application once. It seals `panels-app.tar.gz` before
 smoke starts. Smoke and rehearsal each extract that same archive into separate trees.
@@ -161,7 +179,8 @@ The final job duration remains available in GitHub after the last timing snapsho
 These reports describe their own execution. Local implementation checks do not prove
 that a hosted publication or production installation succeeded.
 
-Code paths: `.github/workflows/deploy.yml`, `scripts/update_publication.py`,
+Code paths: `.github/workflows/deploy.yml`, `scripts/publication_checks.py`,
+`scripts/update_publication.py`,
 `scripts/deployment_check_report.py`, `src/planner/environments/update_artifacts.py`,
 `src/planner/environments/deployment_gate.py`.
 
