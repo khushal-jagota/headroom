@@ -1,4 +1,7 @@
 import {expect,it} from 'vitest';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {LineChart} from '../src/lib/charts/components/line-chart-integrated';
 import {segmentedCurve,valueAt,morphShape,comparisonAt} from '../src/lib/charts/lib/line-geometry';
 
 it('keeps exact endpoints and phase/missing gaps through crosshair interpolation and morphs',()=>{
@@ -29,4 +32,22 @@ it('keeps phase smoothing separate and backend unavailable comparisons neutral',
  expect(comparisonAt([[0,true],[.5,null],[1,false]],.5)).toBeNull();
  expect(comparisonAt([[0,true],[.5,null],[1,false]],.98)).toBe(false);
  expect(comparisonAt([],0)).toBeNull();
+});
+
+it('anchors dated gradient offsets to the whole plot when actuals stop before future expectations',()=>{
+ const data=[
+  {key:'past',label:'Past',position:0,values:{actual:5,target:4},comparisons:{actual:true}},
+  {key:'today',label:'Today',position:.5,values:{actual:4,target:5},comparisons:{actual:false}},
+  {key:'future',label:'Future',position:1,values:{actual:undefined,target:6},comparisons:{actual:null}},
+ ];
+ const markup=renderToStaticMarkup(createElement(LineChart,{
+  label:'Formula',data,series:[{key:'actual',label:'Current',datedComparisons:true},{key:'target',label:'Expected'}],
+ }));
+ const gradient=markup.match(/<linearGradient\b[^>]*>/)?.[0];
+ expect(gradient).toContain('gradientUnits="userSpaceOnUse"');
+ expect(gradient).toContain('x1="0%"');
+ expect(gradient).toContain('x2="100%"');
+ // With viewport coordinates, today's actual endpoint keeps its 50% sample.
+ expect(comparisonAt(data.map(item=>[item.position,item.comparisons.actual]),.5)).toBe(false);
+ expect(comparisonAt(data.map(item=>[item.position,item.comparisons.actual]),1)).toBeNull();
 });

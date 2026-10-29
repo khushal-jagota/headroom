@@ -56,7 +56,11 @@ A script can declare unavailable history with a null value and `provider_has_no_
 
 Kinds (`reading`, `running_total`, `period_count`), units, timezone, and period are descriptive metadata. They do not constrain compatible arithmetic or whether values can rise or fall. Definitions can change after collection.
 
-Assembled expressions support constants, references with integer day offsets, addition, subtraction, multiplication, division, and an explicit `sum_daily` operation. `sum_daily` selects the requested date's day, ISO week, or calendar month. It does not require the current period to finish. If an input is absent, the result identifies the missing input. Division by zero and invalid arithmetic also remain explicit.
+Assembled expressions support constants, references with integer day offsets, arithmetic, real powers, minimums, maximums, elapsed calendar days, fixed-date references, and date branches. The explicit `sum_daily` operation selects the requested date's day, ISO week, or calendar month. It does not require the current period to finish. If an input is absent, the result identifies the missing input. Division by zero and invalid arithmetic also remain explicit.
+
+Date branches evaluate only the selected phase. The boundary date belongs to the new phase. Elapsed days count calendar dates across daylight-saving changes. A fixed-date reference follows corrections to that retained observation; a literal constant does not. Calendar-month growth and repeating completed-period steps are not supported. Do not substitute thirty-day months or fractional weeks for those meanings.
+
+Goal expectations use this same evaluator without creating another measure. Their date projections have separate operational bounds described in [Goals](goals.md).
 
 The system prevents dependency cycles and unknown input references. Formula reads use retained values and report the input provenance. They do not call providers or models. Cross-Project formulas are supported. They do not grant credential access across Projects.
 
