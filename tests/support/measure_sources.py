@@ -4,12 +4,12 @@ from datetime import UTC, datetime
 from sqlite3 import Connection
 
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal
-from planner.credentials.contracts import CredentialScope
 from planner.measure_sources import actions, data
 from planner.measure_sources.contracts import (
     MeasureSource,
     SourceCreate,
     SourceScheduleBody,
+    SourceScope,
     SourceScriptBody,
 )
 from planner.measures import actions as measures
@@ -29,7 +29,7 @@ def configured_source(
 ) -> tuple[MeasureSource, Measure]:
     source = actions.create_source(
         conn,
-        SourceCreate("Synthetic source", CredentialScope("project_vylo", "fixture"), responsible),
+        SourceCreate("Synthetic source", SourceScope("project_vylo", "fixture"), responsible),
         principal=principal,
         now=now,
     )

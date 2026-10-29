@@ -6,7 +6,6 @@ import sqlite3
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.credentials.contracts import CredentialScope
 from planner.measure_sources.contracts import (
     FailureEpisode,
     MeasureSource,
@@ -16,6 +15,7 @@ from planner.measure_sources.contracts import (
     ScriptRevision,
     SourceRun,
     SourceRunDetail,
+    SourceScope,
 )
 from planner.measure_sources.logic.health import collection_health
 from planner.measure_sources.records import (
@@ -49,7 +49,7 @@ def read_source(conn: sqlite3.Connection, source_id: str) -> MeasureSource:
     return MeasureSource(
         id=str(row["id"]),
         name=str(row["name"]),
-        scope=CredentialScope(str(row["project_id"]), str(row["account"])),
+        scope=SourceScope(str(row["project_id"]), str(row["account"])),
         responsible=CHIEF_PRINCIPAL
         if row["responsible_kind"] == "chief"
         else Principal(PrincipalKind.manager, str(row["responsible_manager_id"])),

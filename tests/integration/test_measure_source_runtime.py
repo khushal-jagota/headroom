@@ -66,7 +66,7 @@ def test_missing_credential_is_an_actual_use_failure() -> None:
     )
     assert result.failure is not None
     assert result.failure.code is FailureCode.credential_unavailable
-    assert resolver.calls[0][1].name == "project missing key"
+    assert resolver.calls[0].name == "project missing key"
     unused = Runtime().execute(admission("record('m', '2026-10-27', 1)"), resolver)
     assert unused.failure is None
     assert len(resolver.calls) == 1

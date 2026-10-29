@@ -7,10 +7,7 @@ from enum import StrEnum
 from typing import Protocol, TypedDict
 
 from planner.core.contracts import Principal
-from planner.credentials.contracts import (
-    CredentialResolver,
-    CredentialScope,
-)
+from planner.credentials.contracts import CredentialResolver
 from planner.measures.contracts import (
     CandidateObservation,
     HistoryWindow,
@@ -21,6 +18,14 @@ from planner.measures.contracts import (
 )
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceScope:
+    """Project/account metadata for source data, independent of credential lookup."""
+
+    project_id: str
+    account: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +41,7 @@ class ScriptRevision:
 class MeasureSource:
     id: str
     name: str
-    scope: CredentialScope
+    scope: SourceScope
     responsible: Principal
     responsibility_revision: int
     enabled: bool
@@ -50,7 +55,7 @@ class MeasureSource:
 @dataclass(frozen=True, slots=True)
 class SourceCreate:
     name: str
-    scope: CredentialScope
+    scope: SourceScope
     responsible: Principal
 
 
@@ -165,7 +170,6 @@ class RunAdmission:
 
     run: SourceRun
     script_text: str = field(repr=False)
-    scope: CredentialScope
     previous: tuple[Observation, ...]
     limits: RuntimeLimits
     deadline_monotonic: float
@@ -219,7 +223,7 @@ class SourceSummary:
 
     id: str
     name: str
-    scope: CredentialScope
+    scope: SourceScope
     responsible: Principal
     source_revision: int
     enabled: bool

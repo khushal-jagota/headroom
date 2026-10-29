@@ -208,7 +208,7 @@ class _Execution:
                     CredentialScheme(string(value.get("scheme"))),
                     string(value.get("name")),
                 )
-                resolved = self.credentials.resolve(self.admission.scope, reference)
+                resolved = self.credentials.resolve(reference)
                 reply = {
                     "value": {
                         "kind": resolved.metadata.auth_kind.value,

@@ -24,14 +24,13 @@ from planner.credentials.contracts import (
     CredentialAuthKind,
     CredentialReference,
     CredentialScheme,
-    CredentialScope,
     CredentialWrite,
     HeaderSecret,
 )
 from planner.credentials.logic.validation import associated_data, validate_secret
 from planner.credentials.store import DatabaseCredentialResolver, FileCredentialCipher
 from planner.measure_sources import actions as source_actions
-from planner.measure_sources.contracts import SourceCreate
+from planner.measure_sources.contracts import SourceCreate, SourceScope
 
 SECRET = "synthetic-credential-do-not-expose-94"
 REPLACEMENT = "synthetic-replacement-75"
@@ -39,44 +38,44 @@ REPLACEMENT = "synthetic-replacement-75"
 
 def write() -> CredentialWrite:
     return CredentialWrite(
-        CredentialScope("project_vylo", "fixture-account"),
         CredentialReference(CredentialScheme.local, "example-read-key"),
         CredentialAuthKind.bearer,
         BearerSecret(SECRET),
     )
 
 
-def test_encryption_names_only_scope_replace_and_authenticated_metadata(
+def test_encryption_reusable_names_replace_and_authenticated_metadata(
     tmp_db: Connection, tmp_path: Path
 ) -> None:
     key = tmp_path / "private" / "key"
-    requested = replace(write(), scope=CredentialScope("project_vylo", " fixture-account "))
+    requested = write()
     metadata = actions.create_credential(
         tmp_db, requested, principal=OWNER_PRINCIPAL, now=1, key_path=key
     )
     source = source_actions.create_source(
         tmp_db,
-        SourceCreate("Named-key source", requested.scope, CHIEF_PRINCIPAL),
+        SourceCreate(
+            "Named-key source", SourceScope("project_other", "different account"), CHIEF_PRINCIPAL
+        ),
         principal=OWNER_PRINCIPAL,
         now=1,
     )
-    assert source.scope == metadata.scope
+    assert source.scope.project_id == "project_other"
+    assert "scope" not in data.metadata_json(metadata)
     encrypted = data.read_encrypted(tmp_db, metadata.id)
     assert SECRET.encode() not in encrypted.ciphertext
     assert SECRET not in json.dumps(data.metadata_json(metadata))
-    listing = data.list_metadata(tmp_db, project_id=None, account=None, limit=10, offset=0)
+    listing = data.list_metadata(tmp_db, limit=10, offset=0)
     public = json.dumps([data.metadata_json(value) for value in listing.rows])
     assert SECRET not in public and "ciphertext" not in public and "nonce" not in public
     cipher = FileCredentialCipher(key, has_records=True)
     resolver = DatabaseCredentialResolver(tmp_db, cipher)
-    assert resolver.resolve(source.scope, metadata.reference).secret == BearerSecret(SECRET)
-    with pytest.raises(PlannerError, match="scope"):
-        resolver.resolve(replace(metadata.scope, account="other-account"), metadata.reference)
+    assert resolver.resolve(metadata.reference).secret == BearerSecret(SECRET)
     with pytest.raises(PlannerError, match="decrypted"):
         cipher.decrypt(
             encrypted,
             associated_data=associated_data(
-                replace(metadata, scope=replace(metadata.scope, account="other-account"))
+                replace(metadata, reference=replace(metadata.reference, name="other-name"))
             ),
         )
     changed = actions.replace_credential(
@@ -89,7 +88,7 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
         key_path=key,
     )
     assert changed.reference == metadata.reference and changed.id == metadata.id
-    assert resolver.resolve(metadata.scope, metadata.reference).secret == BearerSecret(REPLACEMENT)
+    assert resolver.resolve(metadata.reference).secret == BearerSecret(REPLACEMENT)
     with pytest.raises(PlannerError, match="owner"):
         actions.replace_credential(
             tmp_db,
@@ -113,7 +112,7 @@ def test_encryption_names_only_scope_replace_and_authenticated_metadata(
 
     actions.delete_credential(tmp_db, metadata.id, principal=OWNER_PRINCIPAL)
     with pytest.raises(PlannerError, match="unavailable"):
-        resolver.resolve(metadata.scope, metadata.reference)
+        resolver.resolve(metadata.reference)
 
 
 def test_missing_wrong_key_fails_without_reset(tmp_db: Connection, tmp_path: Path) -> None:
@@ -146,7 +145,7 @@ def test_missing_wrong_key_fails_without_reset(tmp_db: Connection, tmp_path: Pat
     alias.symlink_to(key)
     cipher = FileCredentialCipher(alias, has_records=True)
     assert DatabaseCredentialResolver(tmp_db, cipher).resolve(
-        metadata.scope, metadata.reference
+        metadata.reference
     ).secret == BearerSecret(SECRET)
 
 
@@ -191,8 +190,6 @@ def test_actual_route_parsing_never_echoes_secret_input(tmp_db: Connection) -> N
         deeply_nested = client.post("/api/credentials", content="[" * 2000 + "0" + "]" * 2000)
         assert deeply_nested.status_code == 400
         body = {
-            "project_id": "project_vylo",
-            "account": "fixture-account",
             "scheme": "local",
             "name": "example-read-key",
             "auth_kind": "bearer",
@@ -214,3 +211,111 @@ def test_auth_values_follow_protocol_syntax_without_extra_policy() -> None:
         validate_secret(HeaderSecret("invalid header", "synthetic"), CredentialAuthKind.header)
     with pytest.raises(PlannerError):
         validate_secret(BasicSecret("invalid:username", "synthetic"), CredentialAuthKind.basic)
+
+
+def test_owner_rename_preserves_secret_revision_and_outer_transaction(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    key = tmp_path / "key"
+    original = actions.create_credential(
+        tmp_db, write(), principal=OWNER_PRINCIPAL, now=1, key_path=key
+    )
+    cipher = FileCredentialCipher(key, has_records=True)
+    resolver = DatabaseCredentialResolver(tmp_db, cipher)
+    with pytest.raises(PlannerError, match="owner"):
+        actions.rename_credential(
+            tmp_db,
+            original.id,
+            "owner-name",
+            expected_revision=1,
+            principal=CHIEF_PRINCIPAL,
+            now=2,
+            key_path=key,
+        )
+    renamed = actions.rename_credential(
+        tmp_db,
+        original.id,
+        "Panels_provider_production",
+        expected_revision=1,
+        principal=OWNER_PRINCIPAL,
+        now=2,
+        key_path=key,
+    )
+    assert renamed.id == original.id and renamed.revision == 2
+    assert resolver.resolve(renamed.reference).secret == BearerSecret(SECRET)
+    with pytest.raises(PlannerError, match="unavailable"):
+        resolver.resolve(original.reference)
+    with pytest.raises(PlannerError, match="changed"):
+        actions.rename_credential(
+            tmp_db,
+            original.id,
+            "stale-name",
+            expected_revision=1,
+            principal=OWNER_PRINCIPAL,
+            now=3,
+            key_path=key,
+        )
+    # The conversation owns commit and rollback. Neither helper can publish early.
+    tmp_db.execute("BEGIN IMMEDIATE")
+    statements: list[str] = []
+    tmp_db.set_trace_callback(statements.append)
+    try:
+        created = actions.create_credential_in_transaction(
+            tmp_db,
+            replace(write(), reference=replace(write().reference, name="temporary")),
+            principal=OWNER_PRINCIPAL,
+            now=4,
+            key_path=key,
+        )
+        actions.replace_credential_in_transaction(
+            tmp_db,
+            renamed.id,
+            BearerSecret(REPLACEMENT),
+            expected_revision=2,
+            principal=OWNER_PRINCIPAL,
+            now=4,
+            key_path=key,
+        )
+    finally:
+        tmp_db.set_trace_callback(None)
+        tmp_db.rollback()
+    assert not any(
+        statement.lstrip().upper().startswith(("BEGIN", "SAVEPOINT", "RELEASE", "COMMIT"))
+        for statement in statements
+    )
+    with pytest.raises(PlannerError, match="not found"):
+        data.read_metadata(tmp_db, created.id)
+    assert resolver.resolve(renamed.reference).secret == BearerSecret(SECRET)
+    assert data.read_metadata(tmp_db, renamed.id).revision == 2
+
+
+def test_competing_replacements_increment_revision_once(tmp_db: Connection, tmp_path: Path) -> None:
+    key = tmp_path / "key"
+    metadata = actions.create_credential(
+        tmp_db, write(), principal=OWNER_PRINCIPAL, now=1, key_path=key
+    )
+    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+
+    def replace_once(token: str) -> str:
+        conn = connect(path)
+        try:
+            actions.replace_credential(
+                conn,
+                metadata.id,
+                BearerSecret(token),
+                expected_revision=1,
+                principal=OWNER_PRINCIPAL,
+                now=2,
+                key_path=key,
+            )
+            return "saved"
+        except PlannerError as error:
+            assert error.message == "credential changed"
+            return "stale"
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(replace_once, [SECRET, REPLACEMENT]))
+    assert sorted(results) == ["saved", "stale"]
+    assert data.read_metadata(tmp_db, metadata.id).revision == 2

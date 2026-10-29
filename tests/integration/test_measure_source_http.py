@@ -19,7 +19,6 @@ from planner.credentials.contracts import (
     CredentialMetadata,
     CredentialReference,
     CredentialScheme,
-    CredentialScope,
     ResolvedCredential,
 )
 from planner.measure_sources.configuration import DEFAULT_LIMITS
@@ -95,7 +94,6 @@ def credentials() -> MemoryCredentials:
         ResolvedCredential(
             CredentialMetadata(
                 "key",
-                CredentialScope("synthetic-project", "synthetic-account"),
                 CredentialReference(CredentialScheme.local, "project production analytics"),
                 CredentialAuthKind.bearer,
                 1,

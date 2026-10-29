@@ -176,8 +176,6 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
         "POST",
         "/api/credentials",
         {
-            "project_id": project["id"],
-            "account": "Fixture account",
             "scheme": "local",
             "name": "provider-production",
             "auth_kind": "bearer",
@@ -188,14 +186,19 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
     assert FIRST_TOKEN not in json.dumps(public_keys)
     assert public_keys["credentials"][0]["reference"]["name"] == "provider-production"
 
+    second_project = request(
+        "POST", "/api/projects", {"name": "Another source Project", "summary": "Fixture"}
+    )
+
     def configure(*, second: bool = False) -> tuple[dict[str, Any], str]:
+        selected_project = second_project if second else project
         source = request(
             "POST",
             "/api/measure-sources",
             {
                 "name": "Provider query count" if second else "Daily subscriptions",
-                "project_id": project["id"],
-                "account": "Fixture account",
+                "project_id": selected_project["id"],
+                "account": "Different account" if second else "Fixture account",
                 "responsible": {"kind": "chief", "id": "chief"},
             },
         )
@@ -203,7 +206,7 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
             "POST",
             "/api/measures",
             {
-                "project_id": project["id"],
+                "project_id": selected_project["id"],
                 "name": "Query events" if second else "Subscriptions",
                 "unit": "events" if second else "subscriptions",
                 "origin": "taken",
@@ -298,6 +301,9 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
     assert status["latest_run"]["id"] == recovered["id"]
 
     second, second_measure = configure(second=True)
+    assert source["scope"]["project_id"] != second["scope"]["project_id"]
+    assert source["scope"]["account"] != second["scope"]["account"]
+    assert "scope" not in credential
     assert collect(second)["status"] == "succeeded" and value(second_measure) == 25
     assert provider.accepted == 3 and provider.refused == 1 and provider.post_queries == 1
     assert len(request("GET", "/api/measure-sources")["sources"]) == 2

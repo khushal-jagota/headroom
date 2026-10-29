@@ -22,12 +22,6 @@ class CredentialAuthKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class CredentialScope:
-    project_id: str
-    account: str
-
-
-@dataclass(frozen=True, slots=True)
 class CredentialReference:
     scheme: CredentialScheme
     name: str
@@ -36,7 +30,6 @@ class CredentialReference:
 @dataclass(frozen=True, slots=True)
 class CredentialMetadata:
     id: str
-    scope: CredentialScope
     reference: CredentialReference
     auth_kind: CredentialAuthKind
     revision: int
@@ -71,6 +64,14 @@ class EncryptedCredential:
 
 
 @dataclass(frozen=True, slots=True)
+class CredentialEncryptionContext:
+    """Complete authenticated context retained only in host persistence."""
+
+    version: int
+    associated_data: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedCredential:
     """Host-only admission value. Never give this object to the script context."""
 
@@ -84,8 +85,6 @@ class CredentialReferenceBody(TypedDict):
 
 
 class CreateCredentialBody(TypedDict):
-    project_id: str
-    account: str
     scheme: CredentialScheme
     name: str
     auth_kind: CredentialAuthKind
@@ -95,7 +94,6 @@ class CreateCredentialBody(TypedDict):
 class CredentialWrite:
     """Canonical write input after private request parsing; never a response."""
 
-    scope: CredentialScope
     reference: CredentialReference
     auth_kind: CredentialAuthKind
     secret: CredentialSecret = field(repr=False)
@@ -122,6 +120,11 @@ class CreateCredentialRequest(CreateCredentialBody):
     secret: SecretBody
 
 
+class RenameCredentialRequest(TypedDict):
+    name: str
+    expected_revision: int
+
+
 class ReplaceCredentialRequest(TypedDict):
     expected_revision: int
     secret: SecretBody
@@ -140,8 +143,6 @@ class CredentialCipher(Protocol):
 
 
 class CredentialResolver(Protocol):
-    """Host-only lookup with no environment or cross-scope fallback."""
+    """Host-only lookup by reusable descriptive reference, without ambient fallback."""
 
-    def resolve(
-        self, scope: CredentialScope, reference: CredentialReference
-    ) -> ResolvedCredential: ...
+    def resolve(self, reference: CredentialReference) -> ResolvedCredential: ...

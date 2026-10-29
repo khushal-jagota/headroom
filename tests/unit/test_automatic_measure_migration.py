@@ -165,3 +165,122 @@ def test_manual_measure_upgrade_preserves_sources_values_gaps_and_references(
             ).fetchone()[0]
             > before_version
         )
+
+
+def test_reusable_credentials_preserve_legacy_ciphertext_and_explicit_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
+    from planner.credentials import actions, data
+    from planner.credentials.contracts import BearerSecret, CredentialReference, CredentialScheme
+    from planner.credentials.store import DatabaseCredentialResolver, FileCredentialCipher
+
+    shipped = db.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "primary_goal_checklist")
+    with closing(db.connect(str(tmp_path / "before-reusable.db"))) as conn:
+        db.create_schema(conn)
+        cipher = FileCredentialCipher(tmp_path / "key", has_records=False)
+        reference = CredentialReference(CredentialScheme.local, "same legacy name")
+        retained: dict[str, tuple[bytes, bytes, bytes]] = {}
+        for identifier, project, account, revision in (
+            ("credential_a", "project_vylo", " Production Zürich ", 3),
+            ("credential_b", "project_other", "Other account", 7),
+        ):
+            context = json.dumps(
+                {
+                    "project_id": project,
+                    "account": account,
+                    "scheme": "local",
+                    "name": reference.name,
+                    "auth_kind": "bearer",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            encrypted = cipher.encrypt(BearerSecret(identifier), associated_data=context)
+            conn.execute(
+                "INSERT INTO credentials VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    identifier,
+                    project,
+                    account,
+                    "local",
+                    reference.name,
+                    "bearer",
+                    encrypted.nonce,
+                    encrypted.ciphertext,
+                    revision,
+                    11,
+                    12,
+                ),
+            )
+            retained[identifier] = (encrypted.nonce, encrypted.ciphertext, context)
+        conn.execute("CREATE INDEX fixture_credential_name ON credentials(name)")
+        conn.commit()
+        shutil.copy(
+            shipped / "versions/reusable_named_credentials.py",
+            tree / "versions/reusable_named_credentials.py",
+        )
+        db.create_schema(conn)
+        resolver = DatabaseCredentialResolver(conn, cipher)
+        with pytest.raises(PlannerError, match="ambiguous") as ambiguity:
+            resolver.resolve(reference)
+        assert {row["id"] for row in ambiguity.value.detail["candidates"]} == set(retained)
+        assert "ciphertext" not in json.dumps(ambiguity.value.detail)
+        for identifier, (nonce, ciphertext, context) in retained.items():
+            row = conn.execute("SELECT * FROM credentials WHERE id=?", (identifier,)).fetchone()
+            assert (row["nonce"], row["ciphertext"], row["encryption_context"]) == (
+                nonce,
+                ciphertext,
+                context,
+            )
+            assert row["encryption_version"] == 1
+            assert (row["created_at"], row["updated_at"]) == (11, 12)
+            assert cipher.decrypt(
+                data.read_encrypted(conn, identifier),
+                associated_data=data.read_encryption_context(conn, identifier).associated_data,
+            ) == BearerSecret(identifier)
+        assert data.read_metadata(conn, "credential_b").revision == 7
+        replaced = actions.replace_credential(
+            conn,
+            "credential_b",
+            BearerSecret("replacement"),
+            expected_revision=7,
+            principal=OWNER_PRINCIPAL,
+            now=15,
+            key_path=tmp_path / "key",
+        )
+        assert replaced.revision == 8
+        before = conn.execute(
+            "SELECT revision FROM resource_source_versions "
+            "WHERE source_kind='automatic-measures' AND source_id='all'"
+        ).fetchone()[0]
+        renamed = actions.rename_credential(
+            conn,
+            "credential_a",
+            "Panels_provider_production",
+            expected_revision=3,
+            principal=OWNER_PRINCIPAL,
+            now=16,
+            key_path=tmp_path / "key",
+        )
+        assert renamed.id == "credential_a" and renamed.revision == 4
+        assert resolver.resolve(renamed.reference).secret == BearerSecret("credential_a")
+        assert data.read_encryption_context(conn, renamed.id).version == 2
+        assert (
+            conn.execute(
+                "SELECT revision FROM resource_source_versions "
+                "WHERE source_kind='automatic-measures' AND source_id='all'"
+            ).fetchone()[0]
+            > before
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("PRAGMA foreign_key_list(credentials)").fetchall() == []
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='fixture_credential_name'"
+            ).fetchone()
+            is not None
+        )

@@ -7,7 +7,6 @@ import time
 
 from planner.credentials.contracts import (
     CredentialReference,
-    CredentialScope,
     ResolvedCredential,
 )
 from planner.measure_sources.configuration import DEFAULT_LIMITS
@@ -56,7 +55,6 @@ def admission(
     return RunAdmission(
         run,
         script,
-        CredentialScope("synthetic-project", "synthetic-account"),
         (),
         limits,
         time.monotonic() + limits.wall_seconds,
@@ -66,12 +64,12 @@ def admission(
 class MemoryCredentials:
     def __init__(self, *credentials: ResolvedCredential) -> None:
         self.credentials = credentials
-        self.calls: list[tuple[CredentialScope, CredentialReference]] = []
+        self.calls: list[CredentialReference] = []
 
-    def resolve(self, scope: CredentialScope, reference: CredentialReference) -> ResolvedCredential:
-        self.calls.append((scope, reference))
+    def resolve(self, reference: CredentialReference) -> ResolvedCredential:
+        self.calls.append(reference)
         return next(
             item
             for item in self.credentials
-            if item.metadata.scope == scope and item.metadata.reference == reference
+            if item.metadata.reference == reference
         )
