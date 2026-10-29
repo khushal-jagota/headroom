@@ -71,7 +71,7 @@ def test_saved_page_race_and_independent_completion_activation(tmp_db: Connectio
         principal=agent,
         now=NOW + 1,
     )
-    assert accepted.active and accepted.completed
+    assert accepted.active and accepted.binary_checked
     assert data.read_goal(tmp_db, goal.id).page == draft
     assert [item.id for item in data.list_goals(tmp_db, active=True)] == [goal.id]
     with pytest.raises(PlannerError, match="goal changed"):
@@ -85,15 +85,15 @@ def test_saved_page_race_and_independent_completion_activation(tmp_db: Connectio
     inactive = actions.update_goal(
         tmp_db, goal.id, {"expected_revision": 2, "active": False}, principal=agent, now=NOW + 3
     )
-    assert inactive.completed and not data.list_goals(tmp_db, active=True)
+    assert inactive.binary_checked and not data.list_goals(tmp_db, active=True)
     reactivated = actions.update_goal(
         tmp_db, goal.id, {"expected_revision": 3, "active": True}, principal=agent, now=NOW + 4
     )
-    assert reactivated.active and reactivated.completed
+    assert reactivated.active and reactivated.binary_checked
     reversed_goal = actions.update_goal(
         tmp_db, goal.id, {"expected_revision": 4, "completed": False}, principal=agent, now=NOW + 5
     )
-    assert reversed_goal.active and not reversed_goal.completed
+    assert reversed_goal.active and not reversed_goal.binary_checked
     other = create(tmp_db, title="Another goal")
     with pytest.raises(PlannerError):
         actions.update_goal(
@@ -631,7 +631,7 @@ def test_formula_projection_uses_same_date_and_keeps_future_path_out_of_summary(
     assert future["charts"][goal.primary_chart["id"]]["points"][-1]["expected"]["value"] == 180
     tomorrow = views.readings_json(tmp_db, goal.id, now.replace(day=28))
     assert tomorrow["status"] == "neutral"
-    assert data.read_goal(tmp_db, goal.id).completed is False
+    assert data.read_goal(tmp_db, goal.id).binary_checked is False
 
 
 def test_formula_inputs_follow_corrections_and_deleted_inactive_inputs(

@@ -20,6 +20,7 @@ from planner.goals.contracts import (
     GoalsResponse,
     ScalarChartProjection,
 )
+from planner.goals.logic.completion import effective_completion
 from planner.goals.logic.documents import charts, expectation_measure_ids, measure_ids
 from planner.goals.logic.projection import (
     projection_bounds,
@@ -68,18 +69,34 @@ def goal_json(conn: sqlite3.Connection, goal: Goal, now: datetime) -> GoalRespon
     agent = conn.execute(
         "SELECT conversation_id FROM agents WHERE agent_key=?", (f"goal_{goal.id}",)
     ).fetchone()
-    return cast(
-        GoalResponse,
-        dict(
-            **asdict(goal),
-            conversation_id=agent["conversation_id"] if agent else None,
-            status=goal_status(goal.completed, goal.deadline, today)
-            if goal.kind == "binary"
-            else "neutral",
-            status_date=today,
-            next_refresh_at=midnight,
-        ),
+    completed = effective_completion(
+        goal.binary_checked, goal.page, goal.primary_checklist_block_id
     )
+    return {
+        "id": goal.id,
+        "project_id": goal.project_id,
+        "title": goal.title,
+        "why": goal.why,
+        "kind": goal.kind,
+        "active": goal.active,
+        "completed": completed,
+        "primary_checklist_block_id": goal.primary_checklist_block_id,
+        "deadline": goal.deadline,
+        "primary_chart": goal.primary_chart,
+        "page": goal.page,
+        "revision": goal.revision,
+        "created_at": goal.created_at,
+        "updated_at": goal.updated_at,
+        "employee_backend": goal.employee_backend,
+        "employee_launch_model": goal.employee_launch_model,
+        "employee_launch_reasoning_effort": goal.employee_launch_reasoning_effort,
+        "conversation_id": agent["conversation_id"] if agent else None,
+        "status": goal_status(completed, goal.deadline, today)
+        if goal.kind == "binary"
+        else "neutral",
+        "status_date": today,
+        "next_refresh_at": midnight,
+    }
 
 
 def list_json(
@@ -325,7 +342,13 @@ def readings_json(
             if goal.primary_chart and goal.primary_chart.get("measure_id") == identifier:
                 primary_observations = [(value.date, value.value) for value in reading.values]
         if goal.kind == "binary":
-            status = goal_status(goal.completed, goal.deadline, today)
+            status = goal_status(
+                effective_completion(
+                    goal.binary_checked, goal.page, goal.primary_checklist_block_id
+                ),
+                goal.deadline,
+                today,
+            )
         elif goal.primary_chart and goal.primary_chart["id"] in projections:
             status = projection_status(goal.primary_chart, projections[goal.primary_chart["id"]])
         else:

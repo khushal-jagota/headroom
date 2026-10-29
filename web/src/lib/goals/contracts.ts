@@ -250,6 +250,7 @@ export interface GoalResponse {
   kind: "binary" | "quantitative";
   active: boolean;
   completed: boolean;
+  primary_checklist_block_id: string | null;
   deadline: string | null;
   primary_chart: ChartBlock | null;
   page: PageDocument;
