@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from planner.conversation.contracts import ConversationSystem
 from planner.environments.app import AppManifest
+from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_api import router
 from planner.environments.update_contracts import (
     OwnerUpdateRequest,
@@ -37,7 +38,7 @@ class FakeProvider:
             42,
             101,
             102,
-            AppManifest("b" * 40, "c" * 64, "d" * 64),
+            AppManifest("b" * 40, "c" * 64, "d" * 64, RuntimeContract("3.12.12", "f" * 64)),
             "e" * 64,
             "video_upload_ledger",
             (datetime.now(UTC) + timedelta(days=1)).isoformat(),
