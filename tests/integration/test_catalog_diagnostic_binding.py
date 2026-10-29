@@ -157,8 +157,11 @@ def _ordinary_facts(value: object) -> object:
     """Compare complete domain output except per-capture reference/time identities."""
     if isinstance(value, dict):
         return {key: (
-            "per-capture-reference" if key == "context_ref" and isinstance(item, str)
-            else 0 if key == "observed_at" and type(item) is int
+            "per-capture-reference" if key in {
+                "context_ref", "observation_id", "observation_revision", "attempt_id",
+            } and isinstance(item, str)
+            else 0 if key in {"observed_at", "clock_uncertainty_seconds"}
+            and type(item) in (int, float)
             else _ordinary_facts(item)
         ) for key, item in value.items()}
     if isinstance(value, list):
@@ -209,7 +212,8 @@ def _partial_record(scenario: str) -> JsonObject:
 
 
 @pytest.mark.parametrize("scenario", [
-    "compared", "collector_compared", "collector_long_global", "collector_long_settings",
+    "compared", "collector_compared", "collector_shared_stable", "collector_shared_changed",
+    "collector_long_global", "collector_long_settings",
     "collector_long_key", "collector_long_environment", "collector_long_identity",
     "collector_path_rejected", "collector_long_settings_realtime", "capture_missing",
     "provider_missing", "provider_changed",
@@ -226,6 +230,7 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
     collected = scenario.startswith("collector_")
     partial = scenario == "limit_string" or scenario.startswith("collector_long_")
     realtime = scenario == "collector_long_settings_realtime"
+    shared = scenario in {"collector_shared_stable", "collector_shared_changed"}
     # This fixture never inherits destinations or provider selectors from the live Worker.
     for key in tuple(os.environ):
         if key.startswith(("PLAN_", "PANELS_", "HERMES_", "CLAUDE_", "CODEX_", "ANTHROPIC_")):
@@ -256,6 +261,9 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                         employee_launch_reasoning_effort=None,
                     )
                 before = list(conn.iterdump())
+                before_observation_ids = {row[0] for row in conn.execute(
+                    "SELECT observation_id FROM scoped_model_catalog_observations"
+                )}
             assert target.id == TARGET
             app = harness.transport_app
             app.include_router(api.router, prefix="/api/conversation")
@@ -320,6 +328,14 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                 })
             elif scenario == "collector_long_key":
                 source_before = json.dumps({_long_private_string(4097): "private-before"})
+            if shared:
+                # Both real collector captures exceed the shared document allowance.
+                # Ordinary complete JSON identity remains valid and unchanged.
+                source_before = json.dumps({"private-sentinel": 1})
+                managed = tmp_path / "managed" / "managed-settings.d"
+                managed.mkdir(parents=True)
+                for index in range(20):
+                    (managed / f"{index:02}.json").write_text("{}")
             source_after = source_before.replace("private-before", "private-after")
             source_file.write_text(source_before)
             original_configuration = observer._configuration_revisions
@@ -393,6 +409,11 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
             class SyntheticDestination(observer.ProductionCatalogObserver):
                 def _launch(self, *args: Any, **kwargs: Any) -> Any:
                     executable, launch_environment = super()._launch(*args, **kwargs)
+                    if shared:
+                        launch_environment["SYNTHETIC_PRIVATE"] = (
+                            "private-after" if current[0] and scenario == "collector_shared_changed"
+                            else "private-before"
+                        )
                     if scenario == "collector_long_environment":
                         launch_environment["SYNTHETIC_PRIVATE"] = _long_private_string(8192)
                     if scenario == "limit_work":
@@ -439,7 +460,12 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                         "context_changed"
                     )
                 )
-                assert baseline["validation"]["reason"] == expected_reason
+                if scenario == "collector_shared_stable":
+                    assert baseline["validation"]["state"] == "unresolved"
+                    expected_reason = "legacy_unscoped"
+                    assert baseline["validation"]["reason"] == expected_reason
+                else:
+                    assert baseline["validation"]["reason"] == expected_reason
                 baseline_calls = list(calls)
                 baseline_probes = list(environment.calls)
                 baseline_opened_sources = list(opened_sources)
@@ -529,7 +555,7 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     return clock_ticks[0] * 0.01 if scenario == "limit_time" else 0.0
 
                 sink_type = diagnostics.DiagnosticSink
-                if scenario.startswith("limit_") or (partial and not realtime):
+                if scenario.startswith("limit_") or shared or (partial and not realtime):
                     monkeypatch.setattr(native_diagnostics, "DiagnosticSink",
                                         lambda: sink_type(clock=diagnostic_clock))
                 if scenario == "provider_missing":
@@ -578,7 +604,10 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                 assert environment.calls == baseline_probes
                 assert opened_sources == baseline_opened_sources
                 if collected and scenario != "collector_path_rejected":
-                    assert opened_sources == [str(source_file.relative_to(tmp_path))] * 4
+                    if shared:
+                        assert len(opened_sources) == 84
+                    else:
+                        assert opened_sources == [str(source_file.relative_to(tmp_path))] * 4
                 assert attempts[-1] == arm["request_id"] and attempts[0] != arm["request_id"]
                 await eventually(
                     lambda: harness.mac._catalog_diagnostics.state == "settled",
@@ -612,7 +641,9 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     "duplicate_hook": "internal_error", "internal_shape": "internal_error",
                     "finalization_error": "internal_error",
                 }.get(scenario, scenario)
-                if partial:
+                if shared:
+                    expected_status = "limit_documents"
+                elif partial:
                     expected_status = "limit_string"
                 elif scenario == "collector_path_rejected":
                     expected_status = "capture_missing"
@@ -629,6 +660,13 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                 assert receipt["provider_source_snapshot"] == provider
                 if partial and not (realtime and "limit_time" in observed_limits):
                     assert receipt == _partial_record(scenario)
+                elif shared:
+                    expected_receipt = diagnostics.unavailable_record("limit_documents")
+                    expected_receipt["provider_source_snapshot"] = "equal"
+                    expected_receipt["launch_environment"] = (
+                        "changed" if scenario == "collector_shared_changed" else "equal"
+                    )
+                    assert receipt == expected_receipt
                 elif expected_status != "compared":
                     unavailable = diagnostics.unavailable_record()
                     for key in unavailable:
@@ -664,7 +702,8 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     assert private not in encoded
                 print("finite diagnostic evidence: " + json.dumps({
                     "scenario": scenario, "receipt": receipt,
-                    "clock": "production" if realtime else "boundary" if partial else "default",
+                    "clock": ("production" if realtime else "boundary"
+                              if partial or shared else "default"),
                     "diagnostic_finish_seconds": finalization_seconds,
                     "observed_limits": observed_limits,
                 }))
@@ -680,7 +719,33 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     assert response.status != 200
                 assert len(attempts) == 2
             with closing(connect(harness.endpoint.db_path)) as conn:
-                assert list(conn.iterdump()) == before
+                after = list(conn.iterdump())
+                if scenario == "collector_shared_stable":
+                    # Stable discovery retains its ordinary observation cache in
+                    # both runs. No canonical Ticket or launch value changes.
+                    cache_prefixes = (
+                        'INSERT INTO "scoped_model_catalog_observations"',
+                        'INSERT INTO "scoped_model_catalog_rows"',
+                    )
+                    added_cache = {
+                        line for line in after
+                        if line.startswith(cache_prefixes) and line not in before
+                    }
+                    assert len(added_cache) == 4
+                    assert [line for line in after if line not in added_cache] == before
+                    metadata = [json.loads(row[1]) for row in conn.execute(
+                        "SELECT observation_id,metadata_json "
+                        "FROM scoped_model_catalog_observations ORDER BY rowid"
+                    ) if row[0] not in before_observation_ids]
+                    rows = [row[1] for row in conn.execute(
+                        "SELECT observation_id,row_json "
+                        "FROM scoped_model_catalog_rows ORDER BY rowid"
+                    ) if row[0] not in before_observation_ids]
+                    assert len(metadata) == len(rows) == 2
+                    assert _ordinary_facts(metadata[0]) == _ordinary_facts(metadata[1])
+                    assert rows[0] == rows[1]
+                else:
+                    assert after == before
         finally:
             await harness.close()
 

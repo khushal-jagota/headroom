@@ -5,7 +5,9 @@ never serialized, hashed, read again, or retained after ``finish``.
 """
 from __future__ import annotations
 
+import asyncio
 import math
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -164,8 +166,9 @@ class _Budget:
     def __init__(self, clock: Callable[[], float], elapsed: float = 0.0) -> None:
         self.elapsed = elapsed
         self.clock = clock
-        self.started = _clock_value(clock)
-        self.last = self.started
+        self.last = _clock_value(clock)
+        self.started: float | None = None
+        self.exhaustion: DiagnosticStatus | None = None
         self.units = 0
         self.nodes = 0
         self.documents = 0
@@ -174,17 +177,41 @@ class _Budget:
         self.blocked = 0
         self.first_limit: DiagnosticStatus | None = None
 
-    def step(self) -> None:
-        self.units += 1
-        # Cap wrapper/structural work too, including zero-length private scalars.
-        if self.units > 262_144:
-            raise _Limit("limit_work")
+    def _sample(self) -> float:
         now = _clock_value(self.clock)
         if now < self.last:
             raise ValueError("Invalid diagnostic clock")
         self.last = now
-        if self.elapsed + now - self.started > 0.025:
-            raise _Limit("limit_time")
+        return now
+
+    def begin(self) -> None:
+        if self.started is not None:
+            raise ValueError("Nested diagnostic work")
+        self.started = self._sample()
+
+    def end(self) -> None:
+        now = self._sample()
+        if self.started is not None:
+            self.elapsed += now - self.started
+            self.started = None
+        self._time_limit()
+
+    def _time_limit(self) -> None:
+        elapsed = self.elapsed
+        if self.started is not None:
+            elapsed += self.last - self.started
+        if elapsed > 0.025:
+            self.exhaustion = self.exhaustion or "limit_time"
+            raise _Limit(self.exhaustion)
+
+    def step(self) -> None:
+        self.units += 1
+        self._sample()
+        if self.units > 262_144:
+            self.exhaustion = self.exhaustion or "limit_work"
+        self._time_limit()
+        if self.exhaustion is not None:
+            raise _Limit(self.exhaustion)
 
     def scalar(self, value: object, mask: int = 0) -> None:
         if isinstance(value, str):
@@ -332,9 +359,13 @@ class _Budget:
         return "equal" if self.equal(left, right) else "changed"
 
 
-def _compare(before: DiagnosticCapture, after: DiagnosticCapture, budget: _Budget) -> JsonObject:
-    budget.check(before)
-    budget.check(after)
+def _compare(
+    before: DiagnosticCapture, after: DiagnosticCapture, budget: _Budget,
+    *, preflight: bool = True, environment: DiagnosticState | None = None,
+) -> JsonObject:
+    if preflight:
+        budget.check(before)
+        budget.check(after)
     result = unavailable_record("capture_missing")
     left, right = before.context, after.context
 
@@ -345,7 +376,9 @@ def _compare(before: DiagnosticCapture, after: DiagnosticCapture, budget: _Budge
         a, b = getattr(left, key), getattr(right, key)
         if available(key) and a is not None and b is not None:
             result[key] = budget.state(a, b)
-    if available("launch_environment"):
+    if environment is not None:
+        result["launch_environment"] = environment
+    elif available("launch_environment"):
         result["launch_environment"] = budget.state(before.environment, after.environment)
     if available("workspace"):
         result["workspace"] = budget.state(
@@ -414,38 +447,55 @@ class DiagnosticSink:
 
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._clock = clock or time.monotonic
+        self._budget: _Budget | None = None
         self._captures: list[DiagnosticCapture] = []
+        self._certified: list[object | None] = []
+        self._lease: _ObservationLease | None = None
+        self._invocation: _CaptureInvocation | None = None
+        self._claimed = False
         self._provider: bool | None = None
         self._failure: DiagnosticStatus | None = None
         self._finished = False
-        self._elapsed = 0.0
+        self._environment: DiagnosticState | None = None
 
     def _fail(self, status: DiagnosticStatus) -> None:
         if self._failure is None or status == "internal_error":
             self._failure = status
 
+    def _allowance(self) -> _Budget:
+        if self._budget is None:
+            self._budget = _Budget(self._clock)
+        return self._budget
+
     @contextmanager
     def _work(self) -> Iterator[None]:
-        # Charge diagnostic-only hooks, excluding all ordinary collection/waits.
-        started: float | None = None
+        if self._finished:
+            try:
+                yield
+            except Exception:
+                pass
+            return
+        budget: _Budget | None = None
         try:
-            started = _clock_value(self._clock)
+            budget = self._allowance()
+            budget.begin()
+            budget.step()
+        except _Limit as limit:
+            self._fail(limit.status)
         except Exception:
             self._fail("internal_error")
         try:
             yield
+        except _Limit as limit:
+            self._fail(limit.status)
         except Exception:
             self._fail("internal_error")
         finally:
-            if started is not None:
+            if budget is not None:
                 try:
-                    elapsed = _clock_value(self._clock) - started
-                    if not math.isfinite(elapsed) or elapsed < 0:
-                        self._fail("internal_error")
-                    else:
-                        self._elapsed += elapsed
-                        if self._elapsed > 0.025:
-                            self._fail("limit_time")
+                    budget.end()
+                except _Limit as limit:
+                    self._fail(limit.status)
                 except Exception:
                     self._fail("internal_error")
 
@@ -456,7 +506,24 @@ class DiagnosticSink:
             if type(value) is not DiagnosticCapture or len(self._captures) == 2:
                 self._fail("internal_error")
                 return
+            invocation = _invocation.get()
+            certified: object | None = None
+            if invocation is not None:
+                if not invocation.owned(self):
+                    self._fail("internal_error")
+                    return
+                if invocation.pending is not None:
+                    if invocation.pending is not value.vector or invocation.consumed:
+                        self._fail("internal_error")
+                        return
+                    certified = invocation.identity
+                    invocation.pending = None
+                    invocation.consumed = True
+                elif invocation.consumed:
+                    self._fail("internal_error")
+                    return
             self._captures.append(value)
+            self._certified.append(certified)
 
     def provider(self, equal: bool) -> None:
         if self._finished:
@@ -472,40 +539,150 @@ class DiagnosticSink:
             result["provider_source_snapshot"] = "equal" if self._provider else "changed"
         return result
 
+    def _preflight_certified(self, budget: _Budget) -> None:
+        # Preserve every original root/field charge, changing only visit order.
+        for capture in self._captures:
+            budget.step()
+            if (type(capture) is not DiagnosticCapture
+                    or type(capture.vector) is not ClaudeInputVector):
+                raise ValueError("Invalid diagnostic input")
+            budget.check(capture.context, shape="context", mask=_ALL_MASK)
+            budget.check(capture.environment, shape="environment",
+                         mask=_FACT_MASKS["launch_environment"])
+        if not budget.blocked & _FACT_MASKS["launch_environment"]:
+            self._environment = budget.state(
+                self._captures[0].environment, self._captures[1].environment,
+            )
+        for capture in self._captures:
+            budget.check(capture.vector, shape="vector", mask=_ALL_MASK)
+
+    def _fallback(self, budget: _Budget, status: DiagnosticStatus) -> JsonObject:
+        budget.first_limit = budget.first_limit or status
+        result = unavailable_record(budget.first_limit)
+        if budget.exhaustion is None and self._environment is not None:
+            result["launch_environment"] = self._environment
+        return self._with_provider(result)
+
     def finish(self) -> JsonObject:
+        clean = unavailable_record()
+        budget: _Budget | None = None
         try:
             if self._finished or self._failure == "internal_error":
-                return unavailable_record()
-            budget = _Budget(self._clock, self._elapsed)
+                return clean
+            budget = self._allowance()
+            budget.begin()
             try:
+                budget.step()
                 if self._failure is not None:
                     raise _Limit(self._failure)
                 result = unavailable_record("capture_missing")
                 if len(self._captures) == 2:
-                    result = _compare(self._captures[0], self._captures[1], budget)
+                    certified = (all(item is not None for item in self._certified)
+                                 and self._certified[0] is not self._certified[1])
+                    if certified:
+                        self._preflight_certified(budget)
+                    result = _compare(
+                        self._captures[0], self._captures[1], budget,
+                        preflight=not certified, environment=self._environment,
+                    )
                 self._with_provider(result)
-                budget.step()
-                clean = validate_record(result)
-                budget.step()
-                return clean
             except _Limit as limit:
-                # Outer comparisons are incomplete; the independently supplied,
-                # cardinality-checked provider boolean remains an observation.
-                return validate_record(self._with_provider(
-                    unavailable_record(budget.first_limit or limit.status),
-                ))
+                result = self._fallback(budget, limit.status)
+            # Finite validation also consumes this allowance, including fallback.
+            try:
+                budget.step()
+            except _Limit as limit:
+                result = self._fallback(budget, limit.status)
+            clean = validate_record(result)
+            try:
+                budget.step()
+            except _Limit as limit:
+                clean = self._fallback(budget, limit.status)
+            try:
+                budget.end()
+            except _Limit as limit:
+                clean = self._fallback(budget, limit.status)
+            return clean
         except Exception:
             return unavailable_record()
         finally:
+            if budget is not None and budget.started is not None:
+                try:
+                    budget.end()
+                except Exception:
+                    pass
             self._captures.clear()
+            self._certified.clear()
+            if self._lease is not None:
+                self._lease.clear()
+            self._lease = None
+            if self._invocation is not None:
+                self._invocation.clear()
+            self._invocation = None
             self._provider = None
             self._failure = None
-            self._elapsed = 0.0
+            self._environment = None
+            self._budget = None
             self._finished = True
 
 
+def _task() -> object | None:
+    try:
+        return asyncio.current_task()
+    except RuntimeError:
+        return None
+
+
+@dataclass(slots=True, repr=False)
+class _ObservationLease:
+    sink: DiagnosticSink | None
+    observer: object | None
+    task: object | None
+    thread: int
+    active: bool = True
+
+    def owned(self, sink: DiagnosticSink) -> bool:
+        return (self.active and self.sink is sink and self.task is _task()
+                and self.thread == threading.get_ident() and sink._lease is self
+                and not sink._finished)
+
+    def clear(self) -> None:
+        self.active = False
+        self.sink = None
+        self.observer = None
+        self.task = None
+
+
+@dataclass(slots=True, repr=False)
+class _CaptureInvocation:
+    lease: _ObservationLease | None
+    observer: object | None
+    identity: object
+    active: bool = True
+    eligible: bool = False
+    entered: bool = False
+    consumed: bool = False
+    pending: ClaudeInputVector | None = None
+
+    def owned(self, sink: DiagnosticSink) -> bool:
+        return (self.active and self.lease is not None and self.lease.owned(sink)
+                and self.observer is self.lease.observer and _invocation.get() is self
+                and sink._invocation is self)
+
+    def clear(self) -> None:
+        self.active = False
+        self.pending = None
+        self.lease = None
+        self.observer = None
+
+
 _sink: ContextVar[DiagnosticSink | None] = ContextVar("catalog_diagnostic_sink", default=None)
-_observation: ContextVar[bool] = ContextVar("catalog_diagnostic_observation", default=False)
+_observation: ContextVar[_ObservationLease | None] = ContextVar(
+    "catalog_diagnostic_observation", default=None,
+)
+_invocation: ContextVar[_CaptureInvocation | None] = ContextVar(
+    "catalog_diagnostic_invocation", default=None,
+)
 
 
 @contextmanager
@@ -518,21 +695,120 @@ def diagnostic_scope(sink: DiagnosticSink) -> Iterator[None]:
 
 
 @contextmanager
-def diagnostic_observation() -> Iterator[None]:
-    """Limit offers to observe.operation, excluding service/admission captures."""
-    token = _observation.set(True)
+def diagnostic_observation(observer: object | None = None) -> Iterator[None]:
+    """Lease only the actual operation task; inherited context is not ownership."""
+    sink = _sink.get()
+    if sink is None or sink._finished:
+        yield
+        return
+    with sink._work():
+        lease = _ObservationLease(sink, observer, _task(), threading.get_ident())
+        if sink._claimed:
+            sink._fail("internal_error")
+            lease.clear()
+        else:
+            sink._claimed = True
+            sink._lease = lease
+        token = _observation.set(lease)
     try:
         yield
     finally:
-        _observation.reset(token)
+        with sink._work():
+            try:
+                if not sink._finished and not lease.owned(sink):
+                    sink._fail("internal_error")
+            finally:
+                lease.clear()
+                if sink._lease is lease:
+                    sink._lease = None
+                if sink._invocation is not None:
+                    sink._invocation.clear()
+                    sink._invocation = None
+                _observation.reset(token)
+
+
+@contextmanager
+def diagnostic_capture_invocation(observer: object) -> Iterator[None]:
+    lease = _observation.get()
+    sink = _sink.get()
+    if sink is None or lease is None or sink._finished:
+        yield
+        return
+    with sink._work():
+        invocation = _CaptureInvocation(lease, observer, object())
+        if (not lease.owned(sink) or observer is not lease.observer
+                or sink._invocation is not None):
+            sink._fail("internal_error")
+        else:
+            sink._invocation = invocation
+        token = _invocation.set(invocation)
+    try:
+        yield
+    finally:
+        with sink._work():
+            try:
+                if not sink._finished and not invocation.owned(sink):
+                    sink._fail("internal_error")
+            finally:
+                invocation.clear()
+                if sink._invocation is invocation:
+                    sink._invocation = None
+                _invocation.reset(token)
+
+
+def _collector_entry(
+    workspace: Path, environment: object, home: Path, managed_directory: Path,
+) -> None:
+    invocation = _invocation.get()
+    sink = _sink.get()
+    if sink is None or sink._finished or invocation is None or invocation.lease is None:
+        return
+    with sink._work():
+        if not invocation.owned(sink) or invocation.entered:
+            sink._fail("internal_error")
+            return
+        invocation.entered = True
+        native_path = type(Path())
+        invocation.eligible = (
+            type(workspace) is native_path and type(home) is native_path
+            and type(managed_directory) is native_path and type(environment) is dict
+        )
+        if invocation.eligible:
+            selectors = cast(dict[object, object], environment)
+            for key in ("CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+                        "CLAUDE_CODE_CUSTOM_OAUTH_URL"):
+                sink._allowance().step()
+                if key in selectors and type(selectors[key]) is not str:
+                    invocation.eligible = False
+
+
+def _collector_success(vector: ClaudeInputVector) -> None:
+    invocation = _invocation.get()
+    sink = _sink.get()
+    if sink is None or sink._finished or invocation is None or invocation.lease is None:
+        return
+    with sink._work():
+        if not invocation.owned(sink) or invocation.pending is not None or invocation.consumed:
+            sink._fail("internal_error")
+            return
+        if invocation.entered and invocation.eligible:
+            if type(vector) is not ClaudeInputVector:
+                sink._fail("internal_error")
+            else:
+                invocation.pending = vector
 
 
 def offer_capture(value: DiagnosticCapture) -> None:
     """Offer an existing return value; a diagnostic error never escapes."""
     try:
         sink = _sink.get()
-        if sink is not None and _observation.get():
-            sink.capture(value)
+        lease = _observation.get()
+        if sink is not None and lease is not None:
+            if not lease.owned(sink):
+                with sink._work():
+                    sink._fail("internal_error")
+            else:
+                sink.capture(value)
     except Exception:
         pass
 
@@ -540,7 +816,12 @@ def offer_capture(value: DiagnosticCapture) -> None:
 def offer_provider_comparison(equal: bool) -> None:
     try:
         sink = _sink.get()
-        if sink is not None and _observation.get():
-            sink.provider(equal)
+        lease = _observation.get()
+        if sink is not None and lease is not None:
+            if not lease.owned(sink):
+                with sink._work():
+                    sink._fail("internal_error")
+            else:
+                sink.provider(equal)
     except Exception:
         pass

@@ -53,6 +53,7 @@ from planner.conversation.model_resolution.contracts import (
 )
 from planner.conversation.model_resolution.diagnostics import (
     DiagnosticCapture,
+    diagnostic_capture_invocation,
     diagnostic_observation,
     offer_capture,
 )
@@ -164,41 +165,42 @@ class ProductionCatalogObserver:
                 version = parse_version(outcome.standard_output + outcome.standard_error)
         except OSError:
             pass
-        revisions = _configuration_revisions(backend_key, localized, environment)
-        scope: str | None = None
-        if revisions is not None:
-            environment_items = tuple(sorted(environment.items()))
-            fingerprint = (environment_items, revisions, executable_identity)
-            key = (backend_key, localized)
-            kept = self._scopes.get(key)
-            if kept is None or kept[0] != fingerprint:
-                kept = (fingerprint, uuid4().hex)
-                self._scopes[key] = kept
-            scope = kept[1]
-        input_ref = scope
-        if backend_key is ConversationBackendKey.claude:
-            scope = None
-        generation = _account_generation(backend_key, environment, localized)
-        facts = (
-            self.destination, backend_key, self.executor_identity, workspace,
-            localized, executable_identity, version, scope, generation, input_ref,
-        )
-        context_ref = self._contexts.setdefault(facts, uuid4().hex)
-        context = LaunchContext(
-            context_ref, self.destination, backend_key, self.executor_identity, workspace,
-            localized, executable_identity, version, scope, generation,
-        )
-        if revisions is not None:
-            self._input_contexts[context] = None
-            self._input_contexts.move_to_end(context)
-            if len(self._input_contexts) > CLAUDE_MAX_RETAINED_FINALIZATIONS:
-                self._input_contexts.popitem(last=False)
-        if revisions is not None and backend_key is ConversationBackendKey.claude:
-            offer_capture(DiagnosticCapture(
-                context, environment_items,
-                revisions if isinstance(revisions, ClaudeInputVector) else None,
-            ))
-        return context
+        with diagnostic_capture_invocation(self):
+            revisions = _configuration_revisions(backend_key, localized, environment)
+            scope: str | None = None
+            if revisions is not None:
+                environment_items = tuple(sorted(environment.items()))
+                fingerprint = (environment_items, revisions, executable_identity)
+                key = (backend_key, localized)
+                kept = self._scopes.get(key)
+                if kept is None or kept[0] != fingerprint:
+                    kept = (fingerprint, uuid4().hex)
+                    self._scopes[key] = kept
+                scope = kept[1]
+            input_ref = scope
+            if backend_key is ConversationBackendKey.claude:
+                scope = None
+            generation = _account_generation(backend_key, environment, localized)
+            facts = (
+                self.destination, backend_key, self.executor_identity, workspace,
+                localized, executable_identity, version, scope, generation, input_ref,
+            )
+            context_ref = self._contexts.setdefault(facts, uuid4().hex)
+            context = LaunchContext(
+                context_ref, self.destination, backend_key, self.executor_identity, workspace,
+                localized, executable_identity, version, scope, generation,
+            )
+            if revisions is not None:
+                self._input_contexts[context] = None
+                self._input_contexts.move_to_end(context)
+                if len(self._input_contexts) > CLAUDE_MAX_RETAINED_FINALIZATIONS:
+                    self._input_contexts.popitem(last=False)
+            if revisions is not None and backend_key is ConversationBackendKey.claude:
+                offer_capture(DiagnosticCapture(
+                    context, environment_items,
+                    revisions if isinstance(revisions, ClaudeInputVector) else None,
+                ))
+            return context
 
     def verify_context(self, expected: LaunchContext) -> bool:
         """Compare observable launch facts without a probe or an asynchronous gap.
@@ -438,15 +440,18 @@ class ProductionCatalogObserver:
                     self._observations.popitem(last=False)
             return observation
 
+        async def diagnostic_operation() -> CatalogResult:
+            with diagnostic_observation(self):
+                return await operation()
+
         try:
-            with diagnostic_observation():
-                return await owned_probe(
-                    operation,
-                    timeout_seconds=min(
-                        CATALOGUE_COLD_START_TIMEOUT_SECONDS,
-                        max(0, deadline - asyncio.get_running_loop().time()),
-                    ),
-                )
+            return await owned_probe(
+                diagnostic_operation,
+                timeout_seconds=min(
+                    CATALOGUE_COLD_START_TIMEOUT_SECONDS,
+                    max(0, deadline - asyncio.get_running_loop().time()),
+                ),
+            )
         except TimeoutError:
             return self._unavailable(
                 backend_key, captured, ValidationReason.timeout, CorrectiveAction.refresh_catalog

@@ -42,13 +42,17 @@ Cancellation uses the existing frame on the original writer. It can invalidate a
 
 The fixed record contains `diagnostic_status` and only `equal`, `changed`, or `unavailable` under approved component and role labels. It contains no private values, hashes, paths, counts, account identifiers, dynamic keys, or exception details. Its serialized size is at most 4 KiB.
 
-An oversized existing string makes its dependent comparisons unavailable. Independently complete comparisons can survive only after both captures pass complete shape validation within shared resource bounds. The status remains `limit_string`. It does not identify a private field or guarantee that another component is available.
+The canonical collector certifies only the exact vector from its two complete, agreeing passes. The receipt belongs to one observer, operation, task, thread, and capture invocation. Copies, replacements, alternate collectors, and inherited contexts do not supply that proof. The collector accepts only exact native Path roots and an exact environment dictionary for certification. Ordinary collection keeps its existing behavior for other supported inputs.
 
-Content strings and object keys affect that role's semantic content. They do not alone invalidate source location or content presence. An oversized executable identity affects its own comparison. Checked context fields without a separate output conservatively invalidate every outer comparison.
+Both complete launch contexts and both environment tuples pass bounded validation before the diagnostic compares the environments. Every environment key and value must be a string. A malformed tail suppresses all diagnostic evidence, including independent provider evidence.
 
-Every oversized string contributes its full scalar estimate to the shared budget. The comparator never compares, copies, truncates, or hashes its content. Counters remain cumulative across both captures and repeated references. Path-specific guards, including the rendered-path scalar check, retain global fallback.
+A completed environment comparison can survive an unrelated canonical vector limit. It reports only `equal` or `changed` for those two tuples. It supplies no selected-content, account, historical-trigger, or provider-child claim. Raw captures retain complete generic validation and conservative suppression after a vector limit.
 
-The first observed limit determines the finite status. A later shared-budget failure discards every outer comparison even if the status remains `limit_string`. Internal failure suppresses independent provider evidence too. Native invalidation, missing captures, and finalization failure retain their existing conservative behavior. All outer comparisons can legitimately remain unavailable.
+An oversized existing string makes its dependent comparisons unavailable. Complete independent comparisons can survive within the shared bounds. Content strings and object keys affect that role's semantic content. Source location and content presence keep their separate meaning. An oversized executable identity affects its own comparison. Context fields without a separate output invalidate every outer comparison.
+
+Every oversized string contributes its full scalar estimate. No diagnostic copies, truncates, sorts, hashes, or serializes private inputs. Repeated references consume the same cumulative allowance. Path-specific guards retain global fallback.
+
+One lazy budget covers receipt hooks, both captures, comparison, and finite validation. Short active timing segments exclude ordinary collection and provider waits. The first observed limit determines the finite status. Later work or time exhaustion removes all outer evidence, including a completed environment fact. Checks before and after finite validation enforce this rule through finalization. Internal errors, invalid clocks, and schema failures suppress provider evidence too. Native invalidation, cancellation, and expiry retain precedence.
 
 The observer contributes only its two existing outer captures. The provider contributes only the result of its existing snapshot comparison. No extra configuration read, provider request, prompt, or comparison occurs.
 
@@ -57,9 +61,10 @@ Selected content keeps its existing significance, including unknown global membe
 Private diagnostic work obeys these limits:
 
 - 64 document records and 256 candidate paths.
-- 32,768 typed nodes and depth 64.
+- 32,768 typed nodes or sequence entries and depth 64.
 - 4,096 codepoints per string and 4,096 bits per integer.
 - 1 MiB aggregate scalar data, including keys, paths, and environment.
+- 262,144 traversal work units.
 - 25 milliseconds of cumulative cooperative diagnostic work.
 
 The ordinary operation retains its 35-second deadline and owned provider cleanup. The diagnostic budget is not a hard scheduling guarantee. An unavailable capture, cap breach, or diagnostic error affects diagnostic availability only. It never creates verified catalog evidence or launch authority. Final cleanup releases diagnostic references. It does not promise secure memory erasure or delete ordinary observer state.
@@ -68,4 +73,4 @@ The ordinary operation retains its 35-second deadline and owned provider cleanup
 
 If the package fails its cold preflight or identity checks, stop before activation. Preserve evidence and use the application Worker's reviewed prior-package recovery procedure. Do not reset configuration, alter caches, change accounts, or repeat provider discovery to repair the diagnostic.
 
-After the investigation, remove the temporary reservation route/header, its request-local context, native arm/result contracts and CLI, diagnostic state controller, observer/provider hooks, comparator with its dependency masks, and diagnostic-only tests through a reviewed follow-up. Restore ordinary request allocation through its unchanged no-header path. Retain sanitized evidence and immutable source recovery materials. The diagnostic is not a permanent incident framework.
+After the investigation, remove the temporary reservation route/header, its request-local context, native arm/result contracts and CLI, diagnostic state controller, observer/provider hooks, constructor receipts and operation leases, comparator with its dependency masks, and diagnostic-only tests through a reviewed follow-up. Restore ordinary request allocation through its unchanged no-header path. Retain sanitized evidence and immutable source recovery materials. The diagnostic is not a permanent incident framework.

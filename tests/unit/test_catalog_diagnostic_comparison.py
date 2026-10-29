@@ -312,14 +312,23 @@ def test_concurrent_request_scopes_cannot_share_private_inputs() -> None:
 
 @pytest.mark.parametrize("seconds_per_hook,status", [(0.001, "compared"), (0.009, "limit_time")])
 def test_budget_accumulates_hooks_but_excludes_provider_wait(
-    seconds_per_hook: float, status: str,
+    seconds_per_hook: float, status: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # One hundred seconds of ordinary wait between hooks does not enter the cap.
-    times = iter((0.0, seconds_per_hook, 100.0, 100.0 + seconds_per_hook,
-                  200.0, 200.0 + seconds_per_hook))
-    sink = DiagnosticSink(clock=lambda: next(times, 300.0))
+    # Sampling frequency is deliberately unconstrained. Each active segment takes
+    # the stated duration; one hundred seconds outside it consumes no allowance.
+    now = [0.0]
+    original_end = diagnostics._Budget.end
+
+    def end(budget: Any) -> None:
+        now[0] += seconds_per_hook
+        original_end(budget)
+
+    monkeypatch.setattr(diagnostics._Budget, "end", end)
+    sink = DiagnosticSink(clock=lambda: now[0])
     sink.capture(capture())
+    now[0] += 100
     sink.capture(capture())
+    now[0] += 100
     sink.provider(True)
     result = sink.finish()
     assert result["diagnostic_status"] == status

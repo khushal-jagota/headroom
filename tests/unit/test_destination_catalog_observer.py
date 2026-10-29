@@ -8,7 +8,7 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -487,13 +487,53 @@ def test_private_diagnostic_preserves_ordinary_reads_refusal_and_admission_bound
 
     launches = launch_fixture(tmp_path, monkeypatch)
     config = tmp_path / ".claude" / "settings.json"
-    config.parent.mkdir()
-    opened: list[str] = []
-    real_open = os.open
+    target = tmp_path / "linked-settings"
+    target.mkdir()
+    config.parent.symlink_to(target, target_is_directory=True)
+    (tmp_path / "managed" / "managed-settings.d").mkdir(parents=True)
+    trace: list[tuple[str, str]] = []
+    descriptors: dict[int, str] = {}
+    real_open, real_fdopen, real_fstat = os.open, os.fdopen, os.fstat
 
     def counted_open(path: Any, *args: Any, **kwargs: Any) -> int:
-        opened.append(str(path))
-        return real_open(path, *args, **kwargs)
+        trace.append(("open", str(path)))
+        descriptor = real_open(path, *args, **kwargs)
+        descriptors[descriptor] = str(path)
+        return descriptor
+
+    def counted_fstat(descriptor: int) -> os.stat_result:
+        trace.append(("fstat", descriptors.get(descriptor, "untracked")))
+        return real_fstat(descriptor)
+
+    class TracedStream:
+        def __init__(self, stream: Any, path: str) -> None:
+            self.stream, self.path = stream, path
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.stream, name)
+
+        def __enter__(self) -> TracedStream:
+            self.stream.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            return self.stream.__exit__(*args)
+
+        def read(self, *args: Any) -> Any:
+            trace.append(("read", self.path))
+            return self.stream.read(*args)
+
+    def counted_fdopen(descriptor: int, *args: Any, **kwargs: Any) -> TracedStream:
+        return TracedStream(real_fdopen(descriptor, *args, **kwargs), descriptors[descriptor])
+
+    def trace_path_operation(name: str) -> Any:
+        original = getattr(os, name)
+
+        def operation(path: Any, *args: Any, **kwargs: Any) -> Any:
+            trace.append((name, str(path)))
+            return original(path, *args, **kwargs)
+
+        return operation
 
     async def claude(
         executable: str, *, environment: Mapping[str, str] | None = None,
@@ -511,13 +551,20 @@ def test_private_diagnostic_preserves_ordinary_reads_refusal_and_admission_bound
         raise RuntimeError("PRIVATE_SENTINEL")
 
     monkeypatch.setattr(os, "open", counted_open)
+    monkeypatch.setattr(os, "fdopen", counted_fdopen)
+    monkeypatch.setattr(os, "fstat", counted_fstat)
+    for operation in ("stat", "lstat", "readlink", "scandir", "access"):
+        monkeypatch.setattr(os, operation, trace_path_operation(operation))
     monkeypatch.setattr(observer, "probe_claude_model_catalog", claude)
-    traces: list[tuple[list[str], list[tuple[tuple[str, ...], dict[str, str], Path | None]]]] = []
+    traces: list[tuple[list[tuple[str, str]], list[
+        tuple[tuple[str, ...], dict[str, str], Path | None]
+    ]]] = []
 
     async def run() -> None:
         for mode in ("off", "on", "failure"):
             config.write_text("{}")
-            opened.clear()
+            trace.clear()
+            descriptors.clear()
             environment = ScriptedLaunchEnvironment()
             reader = observer.ProductionCatalogObserver(
                 destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
@@ -556,8 +603,134 @@ def test_private_diagnostic_preserves_ordinary_reads_refusal_and_admission_bound
                     diagnostics.unavailable_record("capture_missing") if mode == "off"
                     else diagnostics.unavailable_record("internal_error")
                 )
-            traces.append((list(opened), environment.calls))
+            traces.append((list(trace), environment.calls))
         assert traces[0] == traces[1] == traces[2]
-        assert traces[0][0]  # Count real collector file opens, not only callback entries.
+        operations = {operation for operation, _ in traces[0][0]}
+        assert {
+            "open", "read", "fstat", "stat", "lstat", "readlink", "scandir", "access",
+        } <= operations
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("change", [
+    "stable", "environment", "selected_content", "malformed_initial", "malformed_late",
+])
+def test_canonical_shared_limit_preserves_service_and_prepared_launch_admission(
+    tmp_path: Path, tmp_db: Any, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    from planner.conversation.admission import service as admission
+    from planner.conversation.backend_state import BackendStateStore
+    from planner.conversation.backends.contracts import (
+        AdmissionRefused,
+        BackendEmissionInputs,
+        current_emission_check,
+    )
+    from planner.conversation.model_resolution import diagnostics
+    from planner.conversation.model_resolution.contracts import ModelSelection, ValidationState
+    from planner.conversation.model_resolution.data import ModelResolutionStore
+    from planner.conversation.model_resolution.service import ModelResolutionService
+
+    launch_fixture(tmp_path, monkeypatch)
+    executable = str(tmp_path / "selected-cli")
+    managed = tmp_path / "managed" / "managed-settings.d"
+    managed.mkdir(parents=True)
+    for index in range(20):
+        (managed / f"{index:02}.json").write_text("{}")
+    selected = tmp_path / ".claude" / "settings.json"
+    selected.parent.mkdir()
+    database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    monkeypatch.setattr(admission.time, "time", lambda: 1000)
+    results: list[Any] = []
+
+    async def run() -> None:
+        for enabled in (False, True):
+            selected.write_text("{broken" if change == "malformed_initial" else '{"private":1}')
+            launch_environment = {"HOME": str(tmp_path), "PRIVATE": "before"}
+
+            async def provider(
+                *args: Any, claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
+                launch_environment: dict[str, str] = launch_environment,
+                **kwargs: Any,
+            ) -> ClaudeModelCatalog:
+                if change == "environment":
+                    launch_environment["PRIVATE"] = "after"
+                elif change == "selected_content":
+                    selected.write_text('{"private":2}')
+                elif change == "malformed_late":
+                    selected.write_text("{broken")
+                diagnostics.offer_provider_comparison(True)
+                return ClaudeModelCatalog(
+                    (ClaudeModel("opus", "Opus", "claude-opus-5", (), True),), (),
+                    provider_scope=synthetic_scope(claude_scope_registry),
+                )
+
+            monkeypatch.setattr(observer, "probe_claude_model_catalog", provider)
+            reader = observer.ProductionCatalogObserver(
+                destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
+                environment=ScriptedLaunchEnvironment(), now=lambda: 1000,
+            )
+            monkeypatch.setattr(
+                reader, "_launch", lambda _, env=launch_environment: (executable, dict(env)),
+            )
+            service = ModelResolutionService(
+                snapshots=cast(Any, None), store=ModelResolutionStore(database_path),
+                backend_state=BackendStateStore(database_path), now=lambda: 1000, observer=reader,
+            )
+            selection = ModelSelection(
+                TicketLocale.vps, ConversationBackendKey.claude, "opus",
+                SelectionKind.provider_alias, None, "fixture-selection",
+            )
+            sink = diagnostics.DiagnosticSink(clock=lambda: 0.0)
+            scope = diagnostics.diagnostic_scope(sink) if enabled else contextlib.nullcontext()
+            with scope:
+                result = await service.validate_selection(
+                    selection, workspace=binding(tmp_path), attempt_id="fixture-attempt",
+                )
+            results.append((
+                result.state, result.reason, result.launch_token, result.resolved_model_id,
+            ))
+            record = sink.finish()
+            if change == "stable":
+                assert result.state is ValidationState.compatible
+                expectation = admission.expectation_from_validation(
+                    result, attempt_id="fixture-attempt", conversation_id="fixture-conversation",
+                    disabled_models_revision="fixture-policy",
+                )
+                prepared = BackendEmissionInputs(
+                    expectation.launch_token, expectation.reasoning_effort, tmp_path,
+                    executable, dict(launch_environment),
+                )
+                with admission.admission_scope(expectation, observer=reader):
+                    check = current_emission_check()
+                    assert check is not None
+                    check(prepared)
+                    for altered in (
+                        replace(prepared, model="foreign-model"),
+                        replace(prepared, environment={"PRIVATE": "foreign"}),
+                    ):
+                        with pytest.raises(AdmissionRefused):
+                            check(altered)
+            else:
+                assert result.state is ValidationState.unresolved
+                assert result.reason is (
+                    ValidationReason.configuration_scope_unknown if change == "malformed_initial"
+                    else ValidationReason.context_changed
+                )
+                with pytest.raises(AdmissionRefused):
+                    admission.expectation_from_validation(
+                        result, attempt_id="fixture-attempt",
+                        conversation_id="fixture-conversation",
+                        disabled_models_revision="fixture-policy",
+                    )
+            if enabled:
+                assert record["launch_environment"] == (
+                    "changed" if change == "environment" else "unavailable"
+                    if change.startswith("malformed") else "equal"
+                )
+                assert record["diagnostic_status"] == (
+                    "capture_missing" if change.startswith("malformed") else "limit_documents"
+                )
+        assert results[0] == results[1]
 
     asyncio.run(run())

@@ -14,6 +14,7 @@ from planner.conversation.model_resolution.claude_input_contracts import (
     ClaudeInputLocation,
     ClaudeInputVector,
 )
+from planner.conversation.model_resolution.diagnostics import _collector_entry, _collector_success
 from planner.conversation.model_resolution.logic.claude_configuration import (
     ClaudeConfigurationRole,
     claude_configuration_root,
@@ -216,6 +217,7 @@ def collect_claude_inputs(
     workspace: Path, environment: Mapping[str, str], *, home: Path, managed_directory: Path
 ) -> ClaudeInputVector | None:
     """Return two agreeing complete captures, without retries or private errors."""
+    _collector_entry(workspace, environment, home, managed_directory)
     try:
         first = _capture_pass(
             workspace, environment, home=home, managed_directory=managed_directory
@@ -223,6 +225,9 @@ def collect_claude_inputs(
         second = _capture_pass(
             workspace, environment, home=home, managed_directory=managed_directory
         )
-        return first if first == second else None
+        if first == second:
+            _collector_success(first)
+            return first
+        return None
     except (OSError, ValueError, UnicodeError, RecursionError, OverflowError):
         return None
