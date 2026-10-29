@@ -502,6 +502,8 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     from dataclasses import asdict
     from typing import Any
 
+    from alembic.script import ScriptDirectory
+
     from planner.core.db import MIGRATIONS_DIRECTORY
     from planner.environments import update_runner
     from planner.environments.app import (
@@ -515,8 +517,13 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     _app(current / "app", SHA_A, "old", include_cli=False)
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     history = candidate / "src" / "planner" / "core" / "migrations"
-    shutil.copytree(MIGRATIONS_DIRECTORY, history)
-    (history / "versions" / "video_upload_ledger.py").unlink()
+    (history / "versions").mkdir(parents=True)
+    shutil.copy(MIGRATIONS_DIRECTORY / "env.py", history / "env.py")
+    # Copy only the predecessor chain, regardless of later shipped descendants.
+    for revision in ScriptDirectory(str(MIGRATIONS_DIRECTORY)).walk_revisions(
+        base="base", head="owner_message_preview"
+    ):
+        shutil.copy(revision.path, history / "versions" / Path(revision.path).name)
     manifest_path = candidate / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["source_digest"] = digest_app_source(candidate)
