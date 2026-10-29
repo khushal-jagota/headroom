@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, cast
 
 import pytest
 
@@ -359,7 +359,7 @@ def test_replacement_during_guarded_read_refuses_even_with_equal_bytes(
 
     class ReplacingStream:
         def __init__(self, descriptor: int, *args: Any, **kwargs: Any) -> None:
-            self.stream = original(descriptor, *args, **kwargs)
+            self.stream = cast(BinaryIO, original(descriptor, *args, **kwargs))
 
         def __enter__(self) -> Any:
             self.stream.__enter__()
@@ -459,7 +459,7 @@ def test_selected_document_cannot_read_known_credential_bytes(
 
     class GuardedStream:
         def __init__(self, descriptor: int, *args: Any, **kwargs: Any) -> None:
-            self.stream = original(descriptor, *args, **kwargs)
+            self.stream = cast(BinaryIO, original(descriptor, *args, **kwargs))
 
         def __enter__(self) -> Any:
             self.stream.__enter__()
