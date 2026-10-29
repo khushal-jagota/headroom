@@ -862,91 +862,195 @@ async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, An
     return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
 
 
-@router.post("/backends/model-choices")
-async def read_destination_model_choices(
+def _model_choices_ticket_arguments(
+    raw: dict[str, Any],
+    conn: Any,
+    ctx: RequestContext,
+) -> tuple[Any, dict[str, Any]]:
+    from planner.core import authority
+    from planner.core.errors import ErrorCode, PlannerError
+    from planner.tickets import data as ticket_data
+
+    ticket_id = raw.get("ticket_id")
+    from planner.conversation.contracts import require_conversation_backend_key
+    from planner.conversation.model_resolution.contracts import SelectionKind
+    from planner.tickets.contracts import TicketLocale
+    from planner.tickets.validation.data import read_launch_selection
+
+    allowed = {
+        "ticket_id",
+        "locale",
+        "employee_backend",
+        "employee_launch_model",
+        "employee_launch_reasoning_effort",
+        "selection_kind",
+    }
+    if set(raw) - allowed:
+        raise PlannerError(ErrorCode.validation, "unknown model choices field", {})
+    if not isinstance(ticket_id, str) or not ticket_id.strip():
+        raise PlannerError(ErrorCode.validation, "invalid ticket_id", {})
+    for key, value in raw.items():
+        if key == "employee_launch_reasoning_effort" and value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise PlannerError(ErrorCode.validation, f"invalid {key}", {})
+    authority.require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
+    ticket = ticket_data.read_ticket(conn, ticket_id)
+    prior = None if ticket.employee_launch_model is None else read_launch_selection(conn, ticket_id)
+    backend = raw.get("employee_backend", ticket.employee_backend)
+    model = raw.get("employee_launch_model", ticket.employee_launch_model)
+    effort = raw.get("employee_launch_reasoning_effort", ticket.employee_launch_reasoning_effort)
+    changed = backend != ticket.employee_backend or model != ticket.employee_launch_model
+    try:
+        destination = TicketLocale(raw.get("locale", ticket.locale))
+        require_conversation_backend_key(backend)
+        requested_kind = SelectionKind(raw["selection_kind"]) if "selection_kind" in raw else None
+    except ValueError as error:
+        raise PlannerError(ErrorCode.validation, "invalid model choices selection", {}) from error
+    kind = (
+        requested_kind
+        if requested_kind is not None
+        else prior.selection_kind
+        if prior is not None and not changed
+        else SelectionKind.legacy_unclassified
+    )
+    changed = changed or (prior is not None and kind is not prior.selection_kind)
+    return ticket, {
+        "locale": destination,
+        "employee_backend": backend,
+        "employee_launch_model": model,
+        "employee_launch_reasoning_effort": effort,
+        "selection_kind": kind,
+        "classify_new": changed,
+    }
+
+
+@router.post("/backends/model-choices/diagnostic-reservation")
+async def reserve_catalog_diagnostic(
     raw: dict[str, Any],
     runtime: Runtime,
     ctx: Ctx,
+) -> dict[str, Any]:
+    from planner.core.errors import ErrorCode, PlannerError
+    from planner.executor.catalog_diagnostics import DiagnosticReservation
+    from planner.runtime.conversation_start import resolve_ticket_launch_selection
+
+    require_owner(ctx)
+    try:
+        with closing(connect(runtime.database_path)) as conn:
+            ticket, arguments = _model_choices_ticket_arguments(raw, conn, ctx)
+            arguments.pop("classify_new")
+            selection, workspace = resolve_ticket_launch_selection(conn, ticket, **arguments)
+            system = runtime.system
+            if system._catalog_diagnostic_used:
+                raise ValueError("catalog diagnostic reservation lifecycle is already used")
+            reservation = DiagnosticReservation.create(
+                ticket.id,
+                selection,
+                workspace,
+                system._catalog_endpoint,
+            )
+            system._catalog_diagnostic_reservation = reservation
+            system._catalog_diagnostic_used = True
+            from planner.executor.catalog_diagnostics import DIAGNOSTIC_LIFETIME_SECONDS
+
+            asyncio.get_running_loop().call_later(
+                DIAGNOSTIC_LIFETIME_SECONDS,
+                setattr,
+                system,
+                "_catalog_diagnostic_reservation",
+                None,
+            )
+            return reservation.operational_result()
+    except ValueError as error:
+        raise PlannerError(ErrorCode.validation, str(error), {}) from error
+
+
+@router.post("/backends/model-choices")
+async def read_destination_model_choices(
+    request: Request,
+    raw: dict[str, Any],
+    runtime: Runtime,
+    ctx: Ctx,
+) -> dict[str, Any]:
+    from planner.core.errors import ErrorCode, PlannerError
+    from planner.executor.catalog_diagnostics import reservation_scope
+    from planner.runtime.conversation_start import resolve_ticket_launch_selection
+
+    token = request.headers.get("X-Panels-Catalog-Diagnostic-Reservation")
+    if token is None:
+        return await _read_destination_model_choices(raw, runtime, ctx)
+    require_owner(ctx)
+    reservation = runtime.system._catalog_diagnostic_reservation
+    consumed_here = False
+    settled = False
+    try:
+        if reservation is None or reservation.consumed or token != reservation.token:
+            raise ValueError("catalog diagnostic reservation is unavailable")
+        # Consumption precedes all preview work and remains terminal on refusal.
+        reservation.consumed = True
+        consumed_here = True
+        with closing(connect(runtime.database_path)) as conn:
+            ticket, arguments = _model_choices_ticket_arguments(raw, conn, ctx)
+            arguments.pop("classify_new")
+            selection, workspace = resolve_ticket_launch_selection(conn, ticket, **arguments)
+            from planner.executor.catalog_diagnostics import require_selection
+
+            require_selection(ticket.id, selection, workspace)
+            reservation.check(selection, workspace, runtime.system._catalog_endpoint)
+        with reservation_scope(reservation):
+            result = await _read_destination_model_choices(raw, runtime, ctx)
+            settled = True
+            return result
+    except ValueError as error:
+        raise PlannerError(ErrorCode.validation, str(error), {}) from error
+    finally:
+        if (
+            reservation is not None
+            and consumed_here
+            and (not settled or not reservation.dispatched)
+        ):
+            endpoint = runtime.system._catalog_endpoint
+            if endpoint is not None:
+                from planner.conversation.model_resolution.contracts import (
+                    CatalogExpectedContext,
+                    CatalogRequest,
+                )
+
+                with suppress(Exception):
+                    await endpoint._cancel_catalog(
+                        reservation.request_id,
+                        CatalogRequest(
+                            reservation.selection.backend_key,
+                            CatalogExpectedContext(reservation.identity, reservation.workspace),
+                        ),
+                        reservation.identity,
+                        reservation.writer,
+                        diagnostic=True,
+                    )
+
+
+async def _read_destination_model_choices(
+    raw: dict[str, Any],
+    runtime: Runtime,
+    ctx: RequestContext,
 ) -> dict[str, Any]:
     """Read scoped typed facts from canonical Ticket or draft workspace authority."""
     from pydantic import TypeAdapter
 
     from planner.conversation.model_resolution.contracts import CanonicalModelValidation
     from planner.conversation.model_resolution.picker import serialize_picker_row
-    from planner.core import authority
-    from planner.core.errors import ErrorCode, PlannerError
     from planner.runtime.conversation_start import verify_ticket_launch
-    from planner.tickets import data as ticket_data
     from planner.tickets.api import validate_ticket_creation
 
     with closing(connect(runtime.database_path)) as conn:
-        ticket_id = raw.get("ticket_id")
         if "ticket_id" in raw:
-            from planner.conversation.contracts import require_conversation_backend_key
-            from planner.conversation.model_resolution.contracts import SelectionKind
-            from planner.tickets.contracts import TicketLocale
-            from planner.tickets.validation.data import read_launch_selection
-
-            allowed = {
-                "ticket_id",
-                "locale",
-                "employee_backend",
-                "employee_launch_model",
-                "employee_launch_reasoning_effort",
-                "selection_kind",
-            }
-            if set(raw) - allowed:
-                raise PlannerError(ErrorCode.validation, "unknown model choices field", {})
-            if not isinstance(ticket_id, str) or not ticket_id.strip():
-                raise PlannerError(ErrorCode.validation, "invalid ticket_id", {})
-            for key, value in raw.items():
-                if key == "employee_launch_reasoning_effort" and value is None:
-                    continue
-                if not isinstance(value, str) or not value.strip():
-                    raise PlannerError(ErrorCode.validation, f"invalid {key}", {})
-            authority.require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
-            ticket = ticket_data.read_ticket(conn, ticket_id)
-            prior = (
-                None
-                if ticket.employee_launch_model is None
-                else read_launch_selection(conn, ticket_id)
-            )
-            backend = raw.get("employee_backend", ticket.employee_backend)
-            model = raw.get("employee_launch_model", ticket.employee_launch_model)
-            effort = raw.get(
-                "employee_launch_reasoning_effort", ticket.employee_launch_reasoning_effort
-            )
-            changed = backend != ticket.employee_backend or model != ticket.employee_launch_model
-            try:
-                destination = TicketLocale(raw.get("locale", ticket.locale))
-                require_conversation_backend_key(backend)
-                requested_kind = (
-                    SelectionKind(raw["selection_kind"]) if "selection_kind" in raw else None
-                )
-            except ValueError as error:
-                raise PlannerError(
-                    ErrorCode.validation, "invalid model choices selection", {}
-                ) from error
-            kind = (
-                requested_kind
-                if requested_kind is not None
-                else prior.selection_kind
-                if prior is not None and not changed
-                else SelectionKind.legacy_unclassified
-            )
-            changed = changed or (prior is not None and kind is not prior.selection_kind)
-            # Supply the complete effective selection: an effort-only preview must not
-            # fall through the launch helper's omitted-configuration compatibility path.
+            ticket, arguments = _model_choices_ticket_arguments(raw, conn, ctx)
             validation = await verify_ticket_launch(
                 runtime.system,
                 conn,
                 ticket,
-                locale=destination,
-                employee_backend=backend,
-                employee_launch_model=model,
-                employee_launch_reasoning_effort=effort,
-                selection_kind=kind,
-                classify_new=changed,
+                **arguments,
                 persist=False,
                 now=int(time.time()),
             )

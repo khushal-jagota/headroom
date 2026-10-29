@@ -470,7 +470,10 @@ class ExecutorEndpoint:
             or request.expected_context.executor_identity != identity
         ):
             return self._catalog_failure(request, ValidationReason.offline)
-        request_id = str(uuid4())
+        from planner.executor.catalog_diagnostics import current_reservation
+
+        reservation = current_reservation()
+        request_id = reservation.request_id if reservation is not None else str(uuid4())
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         self._catalog_responses[request_id] = (request, writer, future)
         expires = asyncio.get_running_loop().time() + CATALOG_TIMEOUT_SECONDS
@@ -482,6 +485,20 @@ class ExecutorEndpoint:
                 async with self._send_lock:
                     if self.writer is not writer or self.identity != identity or not self.ready:
                         raise ConnectionError("catalog generation changed")
+                    if reservation is not None:
+                        reservation.check(
+                            reservation.selection,
+                            request.expected_context.workspace,
+                            self,
+                        )
+                        if (
+                            reservation.dispatched
+                            or not reservation.consumed
+                            or request.backend_key != reservation.selection.backend_key
+                            or request.expected_context.executor_identity != reservation.identity
+                        ):
+                            raise ValueError("catalog diagnostic dispatch mismatch")
+                        reservation.dispatched = True
                     await write_frame(
                         writer,
                         WireMessage(WireMessageKind.catalog_request, request_id, _object(request)),
@@ -522,7 +539,13 @@ class ExecutorEndpoint:
                 # Cancellation is a bounded read-only frame on the original
                 # writer. A lost frame leaves the native deadline in force.
                 task = asyncio.create_task(
-                    self._cancel_catalog(request_id, request, identity, writer)
+                    self._cancel_catalog(
+                        request_id,
+                        request,
+                        identity,
+                        writer,
+                        diagnostic=reservation is not None,
+                    )
                 )
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
@@ -652,11 +675,14 @@ class ExecutorEndpoint:
         request: CatalogRequest,
         identity: ExecutorIdentity,
         writer: FrameWriter,
+        *,
+        diagnostic: bool = False,
     ) -> None:
         try:
             async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
                 async with self._send_lock:
-                    if self.writer is writer and self.identity == identity and self.ready:
+                    current = self.writer is writer and self.identity == identity and self.ready
+                    if current or (diagnostic and not writer.is_closing()):
                         await write_frame(
                             writer,
                             WireMessage(

@@ -51,6 +51,11 @@ from planner.conversation.model_resolution.contracts import (
     SelectionKind,
     ValidationReason,
 )
+from planner.conversation.model_resolution.diagnostics import (
+    DiagnosticCapture,
+    diagnostic_observation,
+    offer_capture,
+)
 from planner.conversation.production_backends import (
     ProductionBackendLaunches,
     production_backend_launches,
@@ -162,7 +167,8 @@ class ProductionCatalogObserver:
         revisions = _configuration_revisions(backend_key, localized, environment)
         scope: str | None = None
         if revisions is not None:
-            fingerprint = (tuple(sorted(environment.items())), revisions, executable_identity)
+            environment_items = tuple(sorted(environment.items()))
+            fingerprint = (environment_items, revisions, executable_identity)
             key = (backend_key, localized)
             kept = self._scopes.get(key)
             if kept is None or kept[0] != fingerprint:
@@ -187,6 +193,11 @@ class ProductionCatalogObserver:
             self._input_contexts.move_to_end(context)
             if len(self._input_contexts) > CLAUDE_MAX_RETAINED_FINALIZATIONS:
                 self._input_contexts.popitem(last=False)
+        if revisions is not None and backend_key is ConversationBackendKey.claude:
+            offer_capture(DiagnosticCapture(
+                context, environment_items,
+                revisions if isinstance(revisions, ClaudeInputVector) else None,
+            ))
         return context
 
     def verify_context(self, expected: LaunchContext) -> bool:
@@ -428,13 +439,14 @@ class ProductionCatalogObserver:
             return observation
 
         try:
-            return await owned_probe(
-                operation,
-                timeout_seconds=min(
-                    CATALOGUE_COLD_START_TIMEOUT_SECONDS,
-                    max(0, deadline - asyncio.get_running_loop().time()),
-                ),
-            )
+            with diagnostic_observation():
+                return await owned_probe(
+                    operation,
+                    timeout_seconds=min(
+                        CATALOGUE_COLD_START_TIMEOUT_SECONDS,
+                        max(0, deadline - asyncio.get_running_loop().time()),
+                    ),
+                )
         except TimeoutError:
             return self._unavailable(
                 backend_key, captured, ValidationReason.timeout, CorrectiveAction.refresh_catalog

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 import click
@@ -126,3 +127,37 @@ def convert_spool(root: Path) -> None:
         "Spool format 2 is ready. "
         "Automatic upgrades and rollback across conversion are unsupported."
     )
+
+
+@executor_group.command("catalog-diagnostic-arm")
+def catalog_diagnostic_arm() -> None:
+    """Arm one reviewed catalog request. Read its owner reservation JSON on stdin."""
+    from planner.executor.catalog_diagnostics import DIAGNOSTIC_MAX_BYTES, arm_request
+
+    raw = sys.stdin.buffer.read(DIAGNOSTIC_MAX_BYTES + 1)
+    if len(raw) > DIAGNOSTIC_MAX_BYTES:
+        raise click.ClickException("catalog diagnostic payload exceeds limit")
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("catalog diagnostic arm must be an object")
+        arm_request(payload)
+        response = request(IpcOperation.catalog_diagnostic_arm, payload)
+    except (ValueError, OSError) as error:
+        raise click.ClickException(str(error)) from error
+    if response.error is not None:
+        raise click.ClickException(str(response.error))
+    click.echo(json.dumps(response.result))
+
+
+@executor_group.command("catalog-diagnostic-result")
+@click.option("--request-id", required=True)
+def catalog_diagnostic_result(request_id: str) -> None:
+    """Consume one finite receipt. No polling or provider call occurs."""
+    try:
+        response = request(IpcOperation.catalog_diagnostic_result, {"request_id": request_id})
+    except (ValueError, OSError) as error:
+        raise click.ClickException(str(error)) from error
+    if response.error is not None:
+        raise click.ClickException(str(response.error))
+    click.echo(json.dumps(response.result))

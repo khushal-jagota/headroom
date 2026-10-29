@@ -184,6 +184,9 @@ class MacExecutor:
             getattr(catalog_observer, "_claude_scope_registry", None)
             or ClaudeSettingsScopeRegistry()
         )
+        from planner.executor.catalog_diagnostics import NativeCatalogDiagnostics
+
+        self._catalog_diagnostics = NativeCatalogDiagnostics()
         self._catalog_observer = catalog_observer
         self._catalog_tasks: dict[str, tuple[CatalogRequest, FrameWriter, asyncio.Task[None]]] = {}
         self.registry = registry or NativeChildRegistry(
@@ -441,6 +444,7 @@ class MacExecutor:
                 return
         existing = self._catalog_tasks.get(message.request_id)
         if message.kind is WireMessageKind.catalog_cancel:
+            self._catalog_diagnostics.cancel(message.request_id, request, self._writer)
             if existing is not None and existing[0] == request and existing[1] is self._writer:
                 # Repeated cancellation must not interrupt physical cleanup.
                 if not existing[2].cancelling():
@@ -489,14 +493,28 @@ class MacExecutor:
             self._catalog_observer = observer
         owner = asyncio.current_task()
         assert owner is not None
-        work = asyncio.create_task(
-            observer.observe(
-                request.backend_key,
-                workspace=request.expected_context.workspace,
-                attempt_id=message.request_id,
-                deadline=deadline,
-            )
-        )
+        from planner.conversation.model_resolution.contracts import CatalogResult
+        from planner.conversation.model_resolution.diagnostics import diagnostic_scope
+
+        sink = self._catalog_diagnostics.begin(message.request_id, request, writer)
+
+        async def observe() -> CatalogResult:
+            if sink is None:
+                return await observer.observe(
+                    request.backend_key,
+                    workspace=request.expected_context.workspace,
+                    attempt_id=message.request_id,
+                    deadline=deadline,
+                )
+            with diagnostic_scope(sink):
+                return await observer.observe(
+                    request.backend_key,
+                    workspace=request.expected_context.workspace,
+                    attempt_id=message.request_id,
+                    deadline=deadline,
+                )
+
+        work = asyncio.create_task(observe())
         try:
             try:
                 async with asyncio.timeout_at(deadline):
@@ -518,6 +536,8 @@ class MacExecutor:
                     observed_at=int(time.time()),
                     retained_evidence=None,
                 )
+            # Publish the finite receipt before preview settlement permits its one read.
+            self._catalog_diagnostics.finish(message.request_id)
             # A catalog result has no authority after cancellation or generation
             # replacement. In particular, never write through self._send here.
             async with asyncio.timeout(CATALOG_CANCEL_TIMEOUT_SECONDS):
@@ -547,8 +567,10 @@ class MacExecutor:
             if not work.done():
                 work.cancel()
             await wait_for_settlement(work)
+            self._catalog_diagnostics.finish(message.request_id)
 
     async def _settle_catalogs(self) -> None:
+        self._catalog_diagnostics.invalidate()
         tasks = tuple(task for _, _, task in self._catalog_tasks.values())
         for task in tasks:
             if not task.cancelling():
@@ -954,6 +976,26 @@ class MacExecutor:
         try:
             if self._ipc_stopping:
                 raise ConnectionError("executor IPC is stopping")
+            if request.operation in (
+                IpcOperation.catalog_diagnostic_arm,
+                IpcOperation.catalog_diagnostic_result,
+            ):
+                if request.child_id is not None or request.capability is not None:
+                    raise ValueError("catalog diagnostic operations require the owner socket")
+                if request.operation is IpcOperation.catalog_diagnostic_arm:
+                    if (
+                        self.state != ConnectionState.ready
+                        or not self._handshake_accepted
+                        or self._writer is None
+                        or self._transport_admission_stopped
+                    ):
+                        raise ValueError("catalog diagnostic destination is unavailable")
+                    diagnostic_result = self._catalog_diagnostics.arm(
+                        request.payload, self.identity, self._writer
+                    )
+                else:
+                    diagnostic_result = self._catalog_diagnostics.result(request.payload)
+                return IpcResponse(request.request_id, diagnostic_result, None)
             if request.operation == IpcOperation.health:
                 return IpcResponse(request.request_id, as_object(self.health()), None)
             if request.operation == IpcOperation.quiesce:

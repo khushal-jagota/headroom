@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Any
 
@@ -321,3 +322,65 @@ def test_scope_comparison_preserves_json_types_configured_effort_and_null_launch
         finally:
             await client.disconnect()
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_diagnostic_uses_existing_provider_boolean_without_extra_calls(
+    monkeypatch: pytest.MonkeyPatch, changed: bool,
+) -> None:
+    from planner.conversation.backends.claude_settings import ClaudeSettingsSnapshot
+    from planner.conversation.model_resolution.diagnostics import (
+        DiagnosticSink,
+        diagnostic_observation,
+        diagnostic_scope,
+    )
+
+    original = ClaudeSettingsSnapshot.same_sources
+    comparisons: list[bool] = []
+
+    def compared(before: ClaudeSettingsSnapshot, after: ClaudeSettingsSnapshot) -> bool:
+        equal = original(before, after)
+        comparisons.append(equal)
+        return equal
+
+    monkeypatch.setattr(ClaudeSettingsSnapshot, "same_sources", compared)
+
+    async def run() -> None:
+        traces: list[list[str]] = []
+        for enabled in (False, True):
+            client, transport, inner, _ = bench()
+            sink = DiagnosticSink(clock=lambda: 0.0)
+            await client.connect()
+            original_request = transport.control_request
+
+            async def request(
+                subtype: str,
+                original_request: Callable[[str], Awaitable[dict[str, Any]]] = original_request,
+                inner: ScriptedTransport = inner,
+            ) -> dict[str, Any]:
+                response = await original_request(subtype)
+                if changed and subtype == "list_models":
+                    inner.settings["effective"]["model"] = "changed"
+                return response
+
+            monkeypatch.setattr(transport, "control_request", request)
+            try:
+                with diagnostic_scope(sink), diagnostic_observation() if enabled else nullcontext():
+                    if changed:
+                        with pytest.raises(ClaudeSettingsUnavailable):
+                            await read_claude_catalog_settings_snapshot(transport)
+                    else:
+                        await read_claude_catalog_settings_snapshot(transport)
+                traces.append([frame["request"]["subtype"] for frame in inner.frames])
+                record = sink.finish()
+                assert record["provider_source_snapshot"] == (
+                    ("changed" if changed else "equal") if enabled else "unavailable"
+                )
+            finally:
+                await client.disconnect()
+        assert traces[0] == traces[1] == [
+            "initialize", "get_settings", "list_models", "get_settings",
+        ]
+        assert comparisons == [not changed, not changed]
+
+    asyncio.run(run())

@@ -26,6 +26,7 @@ from planner.conversation.backends.contracts import (
     BackendUserEmissionReceipt,
     UserEmissionRequirement,
 )
+from planner.conversation.model_resolution.diagnostics import offer_provider_comparison
 
 _SOURCE_NAMES = (
     "userSettings", "projectSettings", "localSettings", "flagSettings", "policySettings",
@@ -206,7 +207,9 @@ async def _read_claude_catalog_settings_snapshot(
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
         raise ClaudeSettingsUnavailable("Claude model response is incompatible")
     after = _settings_snapshot(await transport.control_request("get_settings"))
-    if not before.same_sources(after):
+    sources_equal = before.same_sources(after)
+    offer_provider_comparison(sources_equal)
+    if not sources_equal:
         raise ClaudeSettingsUnavailable("Claude settings changed during observation")
     return ClaudeCatalogSettingsSnapshot(after, tuple(copy.deepcopy(rows)))
 

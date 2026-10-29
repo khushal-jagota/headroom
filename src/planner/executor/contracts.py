@@ -613,6 +613,8 @@ class IpcOperation(StrEnum):
     retry = "retry"
     health = "health"
     quiesce = "quiesce"
+    catalog_diagnostic_arm = "catalog_diagnostic_arm"
+    catalog_diagnostic_result = "catalog_diagnostic_result"
 
 
 @dataclass(frozen=True, slots=True)
@@ -745,3 +747,19 @@ class FrameWriter(ByteWriter, Protocol):
 
 class RemoteInputTransferFailed(RuntimeError):
     """Local input failure before any native command emission."""
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogDiagnosticArm:
+    """Owner-only local binding; never a peer wire payload."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    request_id: str
+    backend_key: str
+    expected_context: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogDiagnosticResult:
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    request_id: str

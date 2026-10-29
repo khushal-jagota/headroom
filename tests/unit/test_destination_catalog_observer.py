@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -474,5 +476,85 @@ def test_executable_identity_uses_launch_cwd_and_relative_effective_path(
         assert first.executable_version == second.executable_version == "2.1.267"
         assert second.executable_identity != first.executable_identity
         assert second.context_ref != first.context_ref
+
+    asyncio.run(run())
+
+
+def test_private_diagnostic_preserves_ordinary_reads_refusal_and_admission_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.model_resolution import diagnostics
+
+    launches = launch_fixture(tmp_path, monkeypatch)
+    config = tmp_path / ".claude" / "settings.json"
+    config.parent.mkdir()
+    opened: list[str] = []
+    real_open = os.open
+
+    def counted_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        opened.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    async def claude(
+        executable: str, *, environment: Mapping[str, str] | None = None,
+        working_directory: Path | None = None,
+        claude_scope_registry: ClaudeSettingsScopeRegistry | None = None,
+    ) -> ClaudeModelCatalog:
+        del executable, environment, working_directory
+        config.write_text('{"changed":true}')
+        return ClaudeModelCatalog(
+            (ClaudeModel("opus", "Opus", "claude-opus-5", ()),), (),
+            provider_scope=synthetic_scope(claude_scope_registry),
+        )
+
+    def diagnostic_failure(*args: Any) -> Any:
+        raise RuntimeError("PRIVATE_SENTINEL")
+
+    monkeypatch.setattr(os, "open", counted_open)
+    monkeypatch.setattr(observer, "probe_claude_model_catalog", claude)
+    traces: list[tuple[list[str], list[tuple[tuple[str, ...], dict[str, str], Path | None]]]] = []
+
+    async def run() -> None:
+        for mode in ("off", "on", "failure"):
+            config.write_text("{}")
+            opened.clear()
+            environment = ScriptedLaunchEnvironment()
+            reader = observer.ProductionCatalogObserver(
+                destination=TicketLocale.vps, panels_server_url="http://fixture.invalid",
+                launches=lambda: launches, environment=environment,
+            )
+            sink = diagnostics.DiagnosticSink(clock=lambda: 0.0)
+            if mode == "failure":
+                monkeypatch.setattr(diagnostics, "_compare", diagnostic_failure)
+            scope = (
+                diagnostics.diagnostic_scope(sink) if mode != "off" else contextlib.nullcontext()
+            )
+            with scope:
+                await reader.capture_context(
+                    ConversationBackendKey.claude, workspace=binding(tmp_path),
+                )
+                result = await reader.observe(
+                    ConversationBackendKey.claude, workspace=binding(tmp_path), attempt_id="a",
+                    deadline=asyncio.get_running_loop().time() + 10,
+                )
+                await reader.capture_context(
+                    ConversationBackendKey.claude, workspace=binding(tmp_path),
+                )
+            assert isinstance(result, CatalogUnavailable)
+            assert result.reason is ValidationReason.context_changed
+            record = sink.finish()
+            if mode == "on":
+                assert record["roles"] == {
+                    role: {"source_validity": "equal", "semantic_content": (
+                        "changed" if role == "settings" else "equal"
+                    )}
+                    for role in ("selected_global_state", "settings", "managed_settings",
+                                 "remote_policy_cache")
+                }
+            else:
+                assert record == diagnostics.unavailable_record()
+            traces.append((list(opened), environment.calls))
+        assert traces[0] == traces[1] == traces[2]
+        assert traces[0][0]  # Count real collector file opens, not only callback entries.
 
     asyncio.run(run())

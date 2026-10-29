@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import socket
@@ -31,6 +32,26 @@ from planner.executor.wire import encode_frame
 
 
 def request(operation: IpcOperation, payload: JsonObject) -> IpcResponse:
+    if operation in (IpcOperation.catalog_diagnostic_arm, IpcOperation.catalog_diagnostic_result):
+        from uuid import UUID
+
+        from planner.executor.catalog_diagnostics import arm_request, bounded_payload
+        from planner.executor.contracts import CatalogDiagnosticResult
+
+        if (
+            os.environ.get(EXECUTOR_CHILD_ID_ENV) is not None
+            or os.environ.get(EXECUTOR_CAPABILITY_ENV) is not None
+        ):
+            raise ValueError("catalog diagnostic operations require the owner socket")
+        bounded_payload(payload)
+        if operation is IpcOperation.catalog_diagnostic_arm:
+            arm_request(payload)
+        else:
+            UUID(
+                TypeAdapter(CatalogDiagnosticResult)
+                .validate_json(json.dumps(payload), strict=True)
+                .request_id
+            )
     deadline = time.monotonic() + CLI_RESULT_TIMEOUT_SECONDS
     request_id = str(uuid4())
     submission_id = request_id

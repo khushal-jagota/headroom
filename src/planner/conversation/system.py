@@ -495,6 +495,10 @@ class SqliteProcessConversationSystem:
         self._model_resolver = model_resolver
         self._catalog_observer: ProviderCatalogObserver | None = None
         self._catalog_endpoint: Any = None
+        from planner.executor.catalog_diagnostics import DiagnosticReservation
+
+        self._catalog_diagnostic_reservation: DiagnosticReservation | None = None
+        self._catalog_diagnostic_used = False
         self._message_files = message_files
         # Nobody watching is the ordinary case for a system built without one: the record
         # is written exactly the same way, and there is simply nowhere to show it.
@@ -3622,6 +3626,11 @@ class SqliteProcessConversationSystem:
         endpoint = self._catalog_endpoint
         if endpoint is None or endpoint.identity is None or not endpoint.ready:
             return unresolved_validation(selection, ValidationReason.offline)
+        from planner.executor.catalog_diagnostics import current_reservation
+
+        reservation = current_reservation()
+        if reservation is not None:
+            reservation.check(selection, workspace, endpoint)
         identity = endpoint.identity
         result = await endpoint.observe_catalog(
             CatalogRequest(selection.backend_key, CatalogExpectedContext(identity, workspace)),

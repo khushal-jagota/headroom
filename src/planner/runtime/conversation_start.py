@@ -54,6 +54,7 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.model_resolution.contracts import (
     CanonicalModelValidation,
     CatalogWorkspaceBinding,
+    ModelSelection,
     SelectionKind,
     ValidationReason,
 )
@@ -228,8 +229,7 @@ def workspace_binding_from_start(
     )
 
 
-async def verify_ticket_launch(
-    system: ConversationSystem,
+def resolve_ticket_launch_selection(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
@@ -238,19 +238,9 @@ async def verify_ticket_launch(
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
     selection_kind: SelectionKind | None = None,
-    persist: bool = True,
-    notify: bool = False,
-    classify_new: bool = False,
-    now: int,
-) -> CanonicalModelValidation:
-    """Observe outside transactions, then compare the exact captured launch selection."""
-    from planner.conversation.model_resolution.logic.validation import unresolved_validation
-    from planner.tickets.validation.data import (
-        read_launch_selection,
-        read_launch_validation,
-        record_launch_validation,
-        set_selection_kind,
-    )
+) -> tuple[ModelSelection, CatalogWorkspaceBinding]:
+    """Resolve the existing preview intent without observation or admission."""
+    from planner.tickets.validation.data import read_launch_selection
 
     proposed = employee_launch_model is not None or employee_backend is not None
     if ticket.employee_launch_model is None:
@@ -303,6 +293,42 @@ async def verify_ticket_launch(
         selection_kind=selection.selection_kind if selection_kind is None else selection_kind,
     )
     workspace = workspace_binding_from_start(values, selection.destination)
+    return selection, workspace
+
+
+async def verify_ticket_launch(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    locale: TicketLocale | None = None,
+    employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
+    selection_kind: SelectionKind | None = None,
+    persist: bool = True,
+    notify: bool = False,
+    classify_new: bool = False,
+    now: int,
+) -> CanonicalModelValidation:
+    """Observe outside transactions, then compare the exact captured launch selection."""
+    from planner.conversation.model_resolution.logic.validation import unresolved_validation
+    from planner.tickets.validation.data import (
+        read_launch_validation,
+        record_launch_validation,
+        set_selection_kind,
+    )
+
+    proposed = employee_launch_model is not None or employee_backend is not None
+    selection, workspace = resolve_ticket_launch_selection(
+        conn,
+        ticket,
+        locale=locale,
+        employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+        selection_kind=selection_kind,
+    )
     validator = getattr(system, "validate_launch_selection", None)
     if callable(validator):
         stored = read_launch_validation(conn, ticket.id)

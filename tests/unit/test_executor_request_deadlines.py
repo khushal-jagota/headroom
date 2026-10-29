@@ -428,6 +428,9 @@ def catalog_native(writer: Any) -> MacExecutor:
     executor._handshake_accepted = True
     executor._transport_admission_stopped = False
     executor._catalog_tasks = {}
+    from planner.executor.catalog_diagnostics import NativeCatalogDiagnostics
+
+    executor._catalog_diagnostics = NativeCatalogDiagnostics()
     executor._catalog_observer = ScriptedCatalogObserver(lambda: executor.identity)
     executor.server_url = "https://unused.example"
     return executor
