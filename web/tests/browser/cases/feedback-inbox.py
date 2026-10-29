@@ -201,7 +201,7 @@ def run(browser, urls):
     page.evaluate("window.__release('shipped')")
     expect(status).to_contain_text("New version ready")
     expect(status.locator(".status-action")).to_have_text("Refresh page")
-    assert status.evaluate("node => node.tagName") == "BUTTON"
+    expect(status.locator("[data-shell-refresh]")).to_be_visible()
     # A failed deploy displaces it: a rolled back release still differs from the boot.
     page.evaluate("window.__deployment('problem')")
     expect(status).to_have_text("Problem")
@@ -215,7 +215,7 @@ def run(browser, urls):
     page.evaluate(
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
     )
-    status.click()
+    status.locator("[data-shell-refresh]").click()
     expect(status).to_contain_text("Page refresh waits until this message is safe")
     expect(status.locator(".status-action")).to_have_count(0)
     assert status.evaluate("node => node.tagName") == "DIV"
@@ -277,8 +277,8 @@ def run(browser, urls):
         shown = page.locator(
             ".rail-foot .status-card" if breakpoint_ == "desktop" else ".compact-bar .status-card"
         )
-        if shown.evaluate("node => node.tagName") == "BUTTON":
-            shown.click()
+        if shown.locator("[data-shell-refresh]").count():
+            shown.locator("[data-shell-refresh]").click()
         expect(shown).to_contain_text("Page refresh waits until this message is safe")
         page.screenshot(animations="disabled", path=str(evidence / f"state-update-held-{breakpoint_}.png"))
 
@@ -293,7 +293,7 @@ def run(browser, urls):
       window.__slotActions = {
         held: () => {
           document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}));
-          document.querySelector('.rail-foot .status-card').click();
+          document.querySelector('.rail-foot [data-shell-refresh]').click();
         },
         problem: () => window.__deployment('problem'),
         ready: () => window.__release('shipped'),
@@ -502,8 +502,8 @@ def run(browser, urls):
     slot_element = page.locator(".rail-foot [data-shell-status]")
     assert slot_element.get_attribute("aria-hidden") is None
     assert slot_element.locator("> div").get_attribute("inert") is None
-    status.focus()
-    assert status.evaluate("node => node === document.activeElement")
+    status.locator("[data-shell-refresh]").focus()
+    expect(status.locator("[data-shell-refresh]")).to_be_focused()
     # The card's own entrance transition is expected. No scripted height effect is.
     assert slot_element.evaluate(
         "node => node.getAnimations().filter(a => a.transitionProperty === undefined).length"
@@ -524,7 +524,7 @@ def run(browser, urls):
     page.evaluate(
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
     )
-    status.click()
+    status.locator("[data-shell-refresh]").click()
     expect(status).to_contain_text("Page refresh waits until this message is safe")
     page.evaluate("window.__heldNarrow = true")
     page.evaluate(

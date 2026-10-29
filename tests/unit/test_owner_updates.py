@@ -238,11 +238,22 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from planner.conversation.send_body_limit import (
+        MAX_CONVERSATION_SEND_REQUEST_BYTES,
+        ConversationSendBodyLimitMiddleware,
+    )
     from planner.conversation.video_uploads.service import VideoUploadService
+    from planner.conversation.workspace_admission import WorkspaceAdmission
     from planner.core.clock import build_clock
     from planner.core.config import load_config
+    from planner.core.contracts import JsonDict
     from planner.core.db import connect, create_schema
+    from planner.core.response_compression import CompressExceptEventStreams
     from planner.core.server import create_app
+    from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
+    from planner.navigation.middleware import NavigationCommandFenceMiddleware
+    from planner.projects import api as projects_api
+    from planner.projects.contracts import CreateProjectBody
 
     database = tmp_path / "data" / "planner.db"
     database.parent.mkdir()
@@ -257,6 +268,9 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
             "PLAN_APP_SHA": SHA_B,
             "PLAN_LOGS_DIR": str(tmp_path / "logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "polling.lock"),
+            "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+            "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@example.test",
+            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.example.test",
         },
     )
     request_store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
@@ -271,6 +285,16 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     cleaned: list[bool] = []
     monkeypatch.setattr(VideoUploadService, "recover_and_cleanup", lambda _: cleaned.append(True))
     app = create_app(config, build_clock(config), lambda: connect(str(database)))
+    # Preserve the complete registered stack. This baseline has no CORS middleware.
+    registered: list[object] = [middleware.cls for middleware in app.user_middleware]
+    expected: list[object] = [
+        CompressExceptEventStreams,
+        UpdateAdmissionMiddleware,
+        TrustedIngressMiddleware,
+        ConversationSendBodyLimitMiddleware,
+        NavigationCommandFenceMiddleware,
+    ]
+    assert registered == expected
     with TestClient(app) as client:
         assert client.get("/api/health", params={"expected_sha": SHA_B}).status_code == 200
         assert client.get("/api/worker-types").status_code == 503
@@ -291,6 +315,47 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         assert stale.status_code == 409
         assert stale.json()["error"]["code"] == "validation"
         assert stale.json()["error"]["message"] == "Refresh page before making changes."
+
+        system = app.state.conversation_system
+        assert system is not None
+        admission = system.workspace_admission
+        assert isinstance(admission, WorkspaceAdmission)
+        marshal = projects_api._marshal_create_project
+        observed: list[bool] = []
+
+        def admitted_project(raw: JsonDict) -> CreateProjectBody:
+            observed.append(admission.active)
+            assert admission.active
+            return marshal(raw)
+
+        monkeypatch.setattr(projects_api, "_marshal_create_project", admitted_project)
+        created = client.post(
+            "/api/projects",
+            headers={"X-Panels-App-SHA": SHA_B, "tailscale-user-login": "owner@example.test"},
+            json={"name": "Admission proof"},
+        )
+        assert created.status_code == 200
+        assert observed == [True]
+        assert not admission.active
+        persisted = connect(str(database))
+        try:
+            assert persisted.execute(
+                "SELECT name FROM projects WHERE id=?", (created.json()["id"],)
+            ).fetchone()[0] == "Admission proof"
+        finally:
+            persisted.close()
+
+        oversized = {"content-length": str(MAX_CONVERSATION_SEND_REQUEST_BYTES + 1)}
+        # Each outer layer retains precedence over a rejection from an inner layer.
+        assert client.post(
+            "/api/messages/send",
+            headers={**oversized, "origin": "https://other.example", "X-Panels-App-SHA": SHA_A},
+        ).status_code == 409
+        assert client.post(
+            "/api/messages/send", headers={**oversized, "origin": "https://other.example"}
+        ).status_code == 403
+        assert client.post("/api/messages/send", headers=oversized).status_code == 413
+        assert not admission.active
 
 
 def test_uncertain_dispatch_timeout_records_failure_without_replay(

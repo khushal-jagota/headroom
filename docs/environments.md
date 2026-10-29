@@ -174,6 +174,16 @@ and active test node before it raises an exception. A caught refusal still fails
 session. Relative low-level write opens fail when CPython omits their directory base.
 The summary prints every receipt, including an explicit empty list on a clean run.
 
+Cleanup can try to remove a child through a descriptor for an already deleted
+directory. The hook leaves this operation to the operating system only when the
+operand is one ordinary child name, the descriptor names a directory with zero
+links, and Linux marks its absolute descriptor target as deleted. Such a directory
+is empty and cannot acquire children, so the removal cannot change protected
+skills. The native missing-file error creates no refusal receipt. Dot entries,
+paths with separators, and other unresolved operations retain the existing
+refusal behavior. A live directory whose literal name ends in ` (deleted)` does
+not qualify.
+
 Manifests record entry types, raw link targets, and SHA-256 hashes of regular files.
 The session compares its final manifest after fixture teardown with the immutable
 baseline. It reports traversal time, entry counts, file counts, and hashed bytes.

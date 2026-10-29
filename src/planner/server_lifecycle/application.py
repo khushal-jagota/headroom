@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from pathlib import Path
 from types import FrameType
 
 import uvicorn
@@ -15,6 +14,7 @@ from planner.core.db import connect
 from planner.core.server import create_app
 from planner.core.sse import close_open_change_streams
 from planner.previews import config as preview_limits
+from planner.server_lifecycle.supervisor import resolve_planner_launch_root
 
 
 class ChangeStreamClosingServer(uvicorn.Server):
@@ -31,8 +31,8 @@ class ChangeStreamClosingServer(uvicorn.Server):
 
 
 def run_application_process() -> None:
-    """Compose and run the existing application from its imported source root."""
-    launch_root = Path(__file__).resolve().parents[3]
+    """Compose and run the application from the root that owns its package."""
+    launch_root = resolve_planner_launch_root()
     os.chdir(launch_root)
     config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
     os.makedirs(os.path.dirname(config.db_path) or ".", exist_ok=True)
