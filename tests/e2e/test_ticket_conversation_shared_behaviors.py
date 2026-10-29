@@ -7,7 +7,9 @@ Only the backend wire is scripted. No installed provider participates.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable
+from contextlib import closing
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, expect
@@ -378,3 +380,129 @@ def test_owner_send_lands_at_the_end_of_the_conversation_not_the_retained_window
     # turn anchor.
     assert final["trailing"][-1] == f"turn:e{prompts[0]['sequence']}", final
     capture_success(page, "owner-send-placed-at-conversation-end.png")
+
+
+def test_private_credential_save_survives_reload_and_reaches_the_actual_wire(
+    signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """Only browser → private owner API → encrypted store → live card proves this wiring.
+
+    Reuse the existing Signal host and backend wire. Component tests cover the state
+    matrix; this one case covers the connected save, durable replay and actual delivery.
+    """
+    from planner.core.db import connect
+    from planner.credentials import data as credential_data
+
+    server = signal_server
+    conversation_id = "e2e-ticket-private-credential"
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Supply an API key",
+    )["id"]
+    _post(server, f"/api/test/signals/{conversation_id}/start", {"ticket_id": ticket_id})
+    request_id = str(uuid.uuid4())
+    requested_name = "Panels_provider_production"
+    response = httpx.post(
+        server.base + "/api/credentials/requests",
+        headers={
+            "X-Plan-Actor": "worker",
+            "X-Plan-Ticket-ID": ticket_id,
+            "X-Plan-Conversation-ID": conversation_id,
+        },
+        json={
+            "request_id": request_id,
+            "name": requested_name,
+            "provider": "Provider",
+            "use": "Read the authorized production measurement",
+            "auth_kind": "bearer",
+            "header_name": None,
+            "help": "Create a read key in the provider settings.",
+            "help_url": "https://example.com/api-keys",
+            "replacement": None,
+        },
+        timeout=10,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "pending"
+    _post(server, f"/api/test/signals/{conversation_id}/finish")
+    context = context_factory()
+    card_selector = f'[data-credential-request="{request_id}"]'
+    page = _open_ticket_conversation(
+        server,
+        ticket_id,
+        open_page,
+        context,
+        card_selector,
+    )
+    card = page.locator(card_selector)
+    page.reload()
+    page.wait_for_selector("[data-conversation-rest-bar]", timeout=WAIT_MS)
+    _open_conversation_layer(page)
+    expect(card).to_have_attribute("data-credential-state", "pending", timeout=WAIT_MS)
+    # Three captures share this connected case; no repeated backend or state matrix.
+    for label, width, height in (("desktop", 1280, 900), ("phone", 390, 844), ("short", 320, 568)):
+        page.set_viewport_size({"width": width, "height": height})
+        expect(card).to_be_visible(timeout=WAIT_MS)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+        capture_success(page, f"credential-request-connected-{label}.png")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    secret = "synthetic-browser-owner-only-" + uuid.uuid4().hex
+    posted: list[tuple[str, str | None]] = []
+    page.on("request", lambda request: posted.append((request.url, request.post_data)))
+    card.get_by_role("textbox", name="Key name", exact=True).fill(requested_name + "_edited")
+    card.get_by_label("API key", exact=True).fill(secret)
+    with page.expect_response(
+        lambda result: (
+            result.url.endswith(f"/credentials/requests/{request_id}/save")
+            and result.request.method == "POST"
+        ),
+    ) as saved_response:
+        card.get_by_role("button", name="Save", exact=True).click()
+    saved = saved_response.value
+    assert saved.status == 200, saved.text()
+    assert saved.request.post_data_json == {
+        "name": requested_name + "_edited",
+        "value": secret,
+        "expected_revision": None,
+    }
+    body = saved.json()
+    assert body["state"] == "saved"
+    assert body["delivery"]["status"] == "started"
+    assert [url for url, data in posted if data and secret in data] == [saved.url]
+    expect(card).to_have_attribute("data-credential-state", "saved", timeout=WAIT_MS)
+    expect(card.locator("input")).to_have_count(0)
+    assert secret not in page.locator("[data-conversation-thread]").inner_text()
+    with closing(connect(str(server.db_path))) as conn:
+        metadata = credential_data.read_metadata(conn, body["credential"]["id"])
+        assert metadata.reference.name == requested_name + "_edited"
+        assert metadata.revision == 1
+        assert secret.encode() not in credential_data.read_encrypted(conn, metadata.id).ciphertext
+    events = httpx.get(
+        server.base + f"/api/conversation/conversations/{conversation_id}/events",
+        timeout=10,
+    ).json()["events"]
+    assert secret not in json.dumps(events)
+    delivered = httpx.get(
+        server.base + f"/api/test/signals/{conversation_id}/delivered",
+        timeout=10,
+    ).json()["texts"]
+    assert len(delivered) == 2, delivered
+    assert request_id in delivered[-1] and '"outcome":"saved"' in delivered[-1]
+    assert requested_name + "_edited" in delivered[-1]
+    assert secret not in "".join(delivered)
+    _post(server, f"/api/test/signals/{conversation_id}/finish")
+    page.reload()
+    page.wait_for_selector("[data-conversation-rest-bar]", timeout=WAIT_MS)
+    _open_conversation_layer(page)
+    expect(card).to_have_attribute("data-credential-state", "saved", timeout=WAIT_MS)
+    expect(card.locator("input")).to_have_count(0)
+    expect(card.get_by_text("Saved", exact=True)).to_be_visible(timeout=WAIT_MS)
+    capture_success(page, "credential-request-connected-saved.png")

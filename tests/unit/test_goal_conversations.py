@@ -73,11 +73,15 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
     path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     harness = GoalHarness(path)
     write_file(tmp_db, OWNER_PRINCIPAL, goals[0].id, str(path), "artifacts/retained.md", "retained")
-    file_request = Request({
-        "type": "http",
-        "headers": [],
-        "app": SimpleNamespace(state=SimpleNamespace(config=SimpleNamespace(db_path=str(path)))),
-    })
+    file_request = Request(
+        {
+            "type": "http",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(config=SimpleNamespace(db_path=str(path)))
+            ),
+        }
+    )
 
     async def exercise() -> None:
         try:
@@ -105,6 +109,7 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
                 assert dict(start.role_materials.identity_environment_variables) == {
                     "PLAN_ACTOR": "goal",
                     "PLAN_GOAL_ID": goal.id,
+                    "PLAN_CONVERSATION_ID": result.conversation_id,
                 }
                 assert "panels goal read " + goal.id in start.role_materials.role_text
                 assert (
@@ -207,9 +212,14 @@ def test_goal_cli_identity_and_address_are_distinct_from_ticket_and_manager(
 ) -> None:
     monkeypatch.setenv("PLAN_ACTOR", "goal")
     monkeypatch.setenv("PLAN_GOAL_ID", "goal_one")
+    monkeypatch.setenv("PLAN_CONVERSATION_ID", "goal_origin")
     monkeypatch.delenv("PLAN_MANAGER_ID", raising=False)
     monkeypatch.delenv("PLAN_SPRINT_ITEM_ID", raising=False)
-    assert http._headers() == {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": "goal_one"}
+    assert http._headers() == {
+        "X-Plan-Actor": "goal",
+        "X-Plan-Goal-ID": "goal_one",
+        "X-Plan-Conversation-ID": "goal_origin",
+    }
     assert _classify("goal", goal_id="goal_one").principal == Principal(
         PrincipalKind.goal, "goal_one"
     )

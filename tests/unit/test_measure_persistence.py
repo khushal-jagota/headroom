@@ -14,9 +14,8 @@ from planner.core.contracts import (
     Principal,
     PrincipalKind,
 )
-from planner.credentials.contracts import CredentialScope
 from planner.measure_sources.actions import create_source
-from planner.measure_sources.contracts import SourceCreate
+from planner.measure_sources.contracts import SourceCreate, SourceScope
 from planner.measures import actions, data
 from planner.measures.contracts import (
     BinaryExpression,
@@ -41,7 +40,7 @@ NOW = int(datetime(2026, 10, 27, 12, tzinfo=UTC).timestamp())
 def source(conn: Connection, *, responsible: Principal = CHIEF_PRINCIPAL) -> str:
     return create_source(
         conn,
-        SourceCreate("Synthetic provider", CredentialScope("project_vylo", "fixture"), responsible),
+        SourceCreate("Synthetic provider", SourceScope("project_vylo", "fixture"), responsible),
         principal=OWNER_PRINCIPAL,
         now=NOW,
     ).id

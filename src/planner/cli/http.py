@@ -55,6 +55,9 @@ def _headers() -> dict[str, str]:
         headers["X-Plan-Ticket-ID"] = ticket_id
     if actor in {"manager", "sprint_item_supervisor"} and manager_id:
         headers["X-Plan-Manager-ID"] = manager_id
+    conversation_id = os.environ.get("PLAN_CONVERSATION_ID", "").strip()
+    if conversation_id:
+        headers["X-Plan-Conversation-ID"] = conversation_id
     return headers
 
 

@@ -44,6 +44,7 @@ from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
+from planner.credentials.requests.api import router as credential_requests_router
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
@@ -376,6 +377,7 @@ def create_app(
         goals_router,
         goal_conversation_router,
         credentials_router,
+        credential_requests_router,
         notifications_router,
         feedback_router,
         worker_settings_router,

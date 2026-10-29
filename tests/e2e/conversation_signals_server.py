@@ -22,7 +22,11 @@ from planner.conversation.backends.contracts import (
     BackendUserInputRequest,
     TurnToken,
 )
-from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ConversationRoleMaterials,
+    ConversationStartRequest,
+)
 from planner.conversation.events import (
     ConversationTurnEnding,
     UserInputAnswer,
@@ -38,6 +42,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.measure_sources.runtime import Runtime
 from planner.server_lifecycle.application import ChangeStreamClosingServer
+from planner.tickets import data as ticket_data
 
 
 class ScriptedChild:
@@ -158,7 +163,10 @@ def build_app(config: Config) -> FastAPI:
     install_connected_controls(app, config.db_path)
 
     @app.post("/api/test/signals/{conversation_id}/start")
-    async def start(conversation_id: str) -> dict[str, bool]:
+    async def start(
+        conversation_id: str, body: dict[str, str] | None = None,
+    ) -> dict[str, bool]:
+        ticket_id = (body or {}).get("ticket_id")
         system = app.state.conversation.system
         store = app.state.conversation.store
         if await store.read_conversation(conversation_id) is None:
@@ -166,8 +174,22 @@ def build_app(config: Config) -> FastAPI:
                 ConversationStartRequest(
                     conversation_id=conversation_id,
                     model="gpt-6.1-sol",
+                    role_materials=(
+                        None if ticket_id is None else ConversationRoleMaterials(
+                            role_text="Bounded synthetic Ticket worker for the browser proof.",
+                            identity_environment_variables=(
+                                ("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket_id),
+                            ),
+                        )
+                    ),
                 )
             )
+        if ticket_id is not None:
+            with closing(connect(config.db_path)) as conn:
+                ticket_data.write_ticket_conversation_start(
+                    conn, ticket_id, conversation_id=conversation_id, backend="codex",
+                    model="gpt-6.1-sol", reasoning_effort=None, now=build_clock(config).now_unix(),
+                )
         await system.send(
             conversation_id,
             text_message_content("Bounded proof turn"),

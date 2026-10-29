@@ -306,6 +306,7 @@ export type ConversationEvent =
       { request_id: string; answers: UserInputAnswers }
     >
   | Row<"user_input_failed", { request_id: string; detail: string }>
+  | Row<'credential_request', { request: import('./view/contracts').CredentialRequestRowBody }>
   | Row<"model_changed", { model: string | null; reasoning_effort: string | null }>
   /** What a turn has cost, as its backend counts it. Every field is absent when the
    *  backend did not say — never zero, because a backend silent about cached tokens has
@@ -532,6 +533,34 @@ export class ConversationWireError extends Error {
     this.name = "ConversationWireError";
     this.status = status;
   }
+}
+
+/** Private owner submission. Error text never includes the submitted request body. */
+export class CredentialRequestWireError extends Error {
+  constructor(message: string, readonly stale: boolean) { super(message); this.name = 'CredentialRequestWireError'; }
+}
+
+export async function mutateCredentialRequest(
+  requestId: string,
+  action: 'save' | 'reject' | 'review' | 'retry-delivery',
+  body?: { name: string; value: string; expected_revision: number | null }
+): Promise<import('./view/contracts').CredentialRequestRowBody> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
+      method: 'POST', ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    });
+  } catch { throw new CredentialRequestWireError('The server could not be reached.', false); }
+  if (!response.ok) {
+    let code: unknown;
+    try { code = (await response.json()).error?.code; } catch { /* Never echo arbitrary server payloads into this private form. */ }
+    throw new CredentialRequestWireError(
+      action === 'save' ? 'Could not save. Try again.' : 'The request could not be completed. Try again.',
+      response.status === 409 && code === 'stale_claim'
+    );
+  }
+  try { return await response.json(); }
+  catch { throw new CredentialRequestWireError('The result could not be read. Check the conversation before another attempt.', false); }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

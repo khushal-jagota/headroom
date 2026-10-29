@@ -84,6 +84,7 @@ def in_focus(payload: event.ConversationEventPayload, owner_label: str = "owner"
     return isinstance(
         payload,
         (
+            event.CredentialRequestEventPayload,
             event.ExplicitReplyMissingEventPayload,
             event.PermissionAskedEventPayload,
             event.PermissionAnsweredEventPayload,
@@ -105,6 +106,11 @@ def row_body(
     backend_key: ConversationBackendKey = ConversationBackendKey.hermes,
 ) -> ViewRowBody | None:
     """No history scan: callers supply at most the row and its indexed settlement."""
+    if isinstance(source, event.CredentialRequestEventPayload):
+        current = (
+            settlement if isinstance(settlement, event.CredentialRequestEventPayload) else source
+        )
+        return current.request
     if isinstance(source, event.PromptEventPayload):
         return {
             "kind": "prompt",
