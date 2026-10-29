@@ -3,6 +3,7 @@
  import {tick} from 'svelte';
  import type {GoalResponse} from '../../lib/goals/contracts';
  import {goalDateText} from '../../lib/goals/presentation';
+ import {savedChecklists} from '../../lib/goals/checklistCompletion';
  import {queries} from '../../lib/queryCatalogue';
  import ErrorLine from '../ErrorLine.svelte';
  let {goal,onSave,mark}:{goal:GoalResponse;onSave:(patch:Partial<GoalResponse>,revision?:number)=>Promise<unknown>;mark?:import('svelte').Snippet}=$props();
@@ -10,7 +11,7 @@
  let draft=$state<GoalResponse|null>(null),error=$state<unknown>(null),saving=$state(false),editButton=$state<HTMLButtonElement>(),titleInput=$state<HTMLTextAreaElement>();
  async function start(){draft=structuredClone($state.snapshot(goal));if(draft.primary_chart&&!draft.primary_chart.direction)draft.primary_chart.direction=draft.primary_chart.kind==='time-budget'?'atmost':'atleast';error=null;await tick();titleInput?.focus();}
  async function cancel(){draft=null;error=null;await tick();editButton?.focus();}
- async function save(){if(!draft)return;saving=true;try{await onSave({title:draft.title,why:draft.why,deadline:draft.deadline||null,project_id:draft.project_id,active:draft.active,primary_chart:draft.primary_chart},draft.revision);await cancel();}catch(e){error=e;}finally{saving=false;}}
+ async function save(){if(!draft)return;saving=true;try{await onSave({title:draft.title,why:draft.why,deadline:draft.deadline||null,project_id:draft.project_id,active:draft.active,primary_chart:draft.primary_chart,primary_checklist_block_id:draft.primary_checklist_block_id},draft.revision);await cancel();}catch(e){error=e;}finally{saving=false;}}
 </script>
 <svelte:window onkeydown={e=>{if(draft&&e.key==='Escape'){e.preventDefault();void cancel();}}}/>
 <header class="goal-heading">
@@ -18,6 +19,7 @@
  <form onsubmit={e=>{e.preventDefault();void save();}}>
  <div class="goal-context"><label>Project<select aria-label="Project" bind:value={draft.project_id}>{#each projects.data?.projects??[] as project}<option value={project.id}>{project.name}</option>{/each}</select></label><label>By<input type="date" aria-label="By date" bind:value={draft.deadline}/></label><label>State<select aria-label="State" bind:value={draft.active}><option value={true}>Active</option><option value={false}>Inactive</option></select></label><div class="actions"><button type="button" disabled={saving} onclick={cancel}>Cancel</button><button disabled={saving}>Save</button></div></div>
  <textarea bind:this={titleInput} class="title-input" aria-label="Goal title" required rows="1" bind:value={draft.title}></textarea><textarea class="why-input" aria-label="Why this goal matters" rows="2" bind:value={draft.why}></textarea>
+ {#if draft.kind==='binary'}<label class="threshold">Completion display<select aria-label="Completion display" bind:value={draft.primary_checklist_block_id}><option value={null}>Binary completion</option>{#each savedChecklists(draft.page) as checklist,index(checklist.id)}<option value={checklist.id}>{checklist.title?.trim()||`Checklist ${index+1}`}</option>{/each}</select></label>{/if}
  {#if draft.kind==='quantitative'&&draft.primary_chart}<div class="threshold"><span>Success threshold</span><select aria-label="Threshold direction" bind:value={draft.primary_chart.direction}><option value="atleast">At least</option><option value="atmost">At most</option></select><input aria-label="Success threshold" type="number" step="any" bind:value={draft.primary_chart.target}/><span>{draft.primary_chart.unit??draft.primary_chart.format?.suffix??''}</span></div>{/if}
  {#if error}<ErrorLine {error}/>{/if}</form>
  {:else}<div class="goal-context"><span class="goal-meta"><span>{projects.data?.projects.find(p=>p.id===goal.project_id)?.name??''}</span><span aria-hidden="true">·</span><span>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></span><span class="goal-state">{goal.active?'Active':'Inactive'}</span>{@render mark?.()}<button bind:this={editButton} class="edit" aria-label="Edit goal" onclick={start}>•••</button></div><h1>{goal.title}</h1><div class="why">{goal.why}</div>{/if}

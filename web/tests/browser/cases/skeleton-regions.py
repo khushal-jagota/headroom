@@ -1,9 +1,64 @@
 """Browser-only proof of immediate ready content, wait cancellation and layout ownership."""
 import json
 import os
+import time
 from pathlib import Path
 
 from playwright.sync_api import expect
+
+
+def checklist_save_feedback(page):
+    # Reuse this component host and browser. No backend is needed to reject a save.
+    page.evaluate("window.__checklist(true)")
+    checklist = page.locator('[data-checklist-fixture]')
+    progress = checklist.get_by_role('progressbar')
+    publish = checklist.get_by_role('list', name='Open items').get_by_role('checkbox', name='Publish')
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    publish.click()
+    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(checklist.locator('[data-block=checklist]')).not_to_have_attribute('data-complete', 'true')
+    assert 'All 2 items done.' not in checklist.inner_text()
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(false)")
+    expect(publish).to_have_attribute('aria-checked', 'false')
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(checklist.get_by_role('alert')).to_contain_text('Save rejected')
+    expect(checklist.get_by_role('heading', name='Delivery', exact=True)).to_be_visible()
+    assert 'All 2 items done.' not in checklist.inner_text()
+    checklist.get_by_role('button', name='Retry save').click()
+    expect(checklist.get_by_role('alert')).to_have_count(0)
+    expect(checklist.get_by_text('Saving checklist…')).to_be_visible()
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    expect(checklist.locator('[data-block=checklist]')).to_have_attribute('data-complete', 'true')
+    expect(checklist.get_by_role('heading', name='Delivery complete', exact=True)).to_be_visible()
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    expect(checklist.get_by_role('status')).to_have_text('All 2 items done.')
+    # An accepted uncheck reopens the checklist through the same writer queue.
+    checklist.get_by_role('button', name='2 completed', exact=True).click()
+    checklist.get_by_role('list', name='Completed items').get_by_role('checkbox', name='Publish').click()
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '1')
+    expect(publish).to_have_attribute('aria-checked', 'false')
+    # Equal first/last intents must not let an old rejection clear the last click.
+    publish.click()
+    publish.click()
+    publish.click()
+    for _ in range(2):
+        page.wait_for_function("typeof window.__checklistReply === 'function'")
+        page.evaluate("window.__checklistReply(false)")
+        expect(checklist.get_by_role('alert')).to_have_count(0)
+        expect(publish).to_have_attribute('aria-checked', 'true')
+    page.wait_for_function("typeof window.__checklistReply === 'function'")
+    page.evaluate("window.__checklistReply(true)")
+    expect(progress).to_have_attribute('aria-valuenow', '2')
+    expect(checklist.get_by_text('Saving checklist…')).to_have_count(0)
+    page.evaluate("window.__checklist(false)")
 
 
 def run(browser, urls):
@@ -22,6 +77,9 @@ def run(browser, urls):
     assert page.locator('[data-fixed] [role=status]').inner_text() == "Loading document"
     assert page.evaluate("!window.__status.closest('[aria-busy=true]')")
     page.emulate_media(reduced_motion="reduce")
+    checklist_started = time.monotonic()
+    checklist_save_feedback(page)
+    print(f"checklist save feedback: passed ({time.monotonic() - checklist_started:.2f}s)", flush=True)
     page.evaluate("window.__load(false)")
     page.wait_for_function("!document.querySelector('.skeleton')")
     page.emulate_media(reduced_motion="no-preference")

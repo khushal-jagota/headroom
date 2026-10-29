@@ -4,6 +4,7 @@
  import {workspaceAddress} from '../../lib/workspaceAddress';
  import {goalQueries} from '../../lib/goals/queries';
  import {refreshAtBoundary,updatePageBlock} from '../../lib/goals/presentation';
+ import {selectedChecklist,pageWithoutSelectedChecklistForRender} from '../../lib/goals/checklistCompletion';
  import type {GoalResponse,Block,ChartBlock,MeasureValue} from '../../lib/goals/contracts';
  import {PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
  import ConversationSignalMark from '../ConversationSignalMark.svelte';
@@ -19,6 +20,7 @@
  import LiveConversation from '../conversation/LiveConversation.svelte';
  import PageDocument from '../pageKit/PageDocument.svelte';
  import PageChart from '../pageKit/PageChart.svelte';
+ import PageChecklist from '../pageKit/PageChecklist.svelte';
  import GoalHeader from './GoalHeader.svelte';
  import ErrorLine from '../ErrorLine.svelte';
  let {id,requestedConversationId=null,openedFile=null,onOpenFile}:{id:string;requestedConversationId?:string|null;openedFile?:ManagedFileTarget|null;onOpenFile?:(file:ManagedFileTarget|null)=>void}=$props();
@@ -46,7 +48,9 @@
  async function change(patch:Partial<GoalResponse>){try{await save(patch);error=null;}catch(e){error=e;}}
  async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`/api/goals/${encodeURIComponent(id)}/conversation/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'send goal message'):await operation();await detail.refetch();return delivered;}
  async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`/api/goals/${encodeURIComponent(id)}/conversation/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;await detail.refetch();}
- let primary=$derived<ChartBlock|null>(goal?.kind==='binary'?{type:'chart',id:'completion',kind:'binary',placement:'primary'}:goal?.primary_chart??null);
+ let checklist=$derived(goal?.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null);
+ let renderedPage=$derived(goal?pageWithoutSelectedChecklistForRender(goal.page,checklist?.id??null):null);
+ let primary=$derived<ChartBlock|null>(checklist?null:goal?.kind==='binary'?{type:'chart',id:'completion',kind:'binary',placement:'primary'}:goal?.primary_chart??null);
 </script>
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
  <div class="goal-content" bind:this={content} data-goal-page={id}>
@@ -54,6 +58,7 @@
  {#if goal}
  <GoalHeader {goal} onSave={save}>{#snippet mark()}<ConversationSignalMark signal={navigationConversationSignal(navigation?.selectors.effective,goal.conversation_id)} conversationId={goal.conversation_id}/>{/snippet}</GoalHeader>
  {#if error}<ErrorLine {error}/>{/if}
+ {#if checklist}<section class="checklist-panel" aria-label="Completion checklist">{#key checklist.id}<PageChecklist block={checklist}/>{/key}</section>{/if}
  {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated/>
   {#if goal.kind==='binary'}<div class="panel-actions"><button class="completion-action" onclick={()=>change({completed:!goal!.completed})}>{goal.completed?'Mark not done':'Mark done'}</button></div>{/if}
  </section>{/if}
@@ -61,7 +66,7 @@
  {#each readings.data?.sources.filter(s=>s.health!=='healthy')??[] as source(source.source_id)}<p class="source-warning">{source.source_name}: {source.health}</p>{/each}
  <!-- The saved page is the goal's content. It carries its own authored headings; the page
       renderer adds none, and nothing here wraps it in a section of our own naming. -->
- <div class="goal-page"><PageDocument document={goal.page} showHeader={false}/></div>
+ {#if renderedPage}<div class="goal-page"><PageDocument document={renderedPage} showHeader={false}/></div>{/if}
  <ArtifactsBand owner={{kind:'goal',id}}/>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>

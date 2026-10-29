@@ -241,7 +241,9 @@ class Goal:
     why: str
     kind: GoalKind
     active: bool
-    completed: bool
+    # Stored binary-component input; effective completion belongs to GoalResponse.
+    binary_checked: bool
+    primary_checklist_block_id: str | None
     deadline: str | None
     primary_chart: ChartBlock | None
     page: PageDocument
@@ -261,6 +263,7 @@ class GoalResponse(TypedDict):
     kind: GoalKind
     active: bool
     completed: bool
+    primary_checklist_block_id: str | None
     deadline: str | None
     primary_chart: ChartBlock | None
     page: PageDocument

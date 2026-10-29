@@ -306,6 +306,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
                     {
                         "type": "checklist",
                         "id": "approach",
+                        "title": "Approach checklist",
                         "items": [
                             {"id": "outline", "label": "Write the outline", "state": "open"},
                             {"id": "review", "label": "Review the draft", "state": "open"},
@@ -324,6 +325,14 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
                         "placement": "supporting",
                         "title": "Draft words",
                         "measure_id": measure["id"],
+                    },
+                    {
+                        "type": "checklist",
+                        "id": "supporting-tasks",
+                        "title": "Supporting tasks",
+                        "items": [
+                            {"id": "source-notes", "label": "Keep source notes", "state": "open"}
+                        ],
                     },
                 ],
             },
@@ -358,7 +367,51 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert any(
         row["id"] == goal["id"] for row in api.get(server, "/api/goals?active=true")["goals"]
     )
-    # The approved page keeps the active state with the other goal fields, behind Edit goal.
+    # Promotion crosses the same revision-checked writer as ordinary checklist edits.
+    before_selection = current["page"]
+    page.get_by_role("button", name="Edit goal", exact=True).click(timeout=WAIT_MS)
+    page.get_by_label("Completion display", exact=True).select_option(label="Approach checklist")
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as selected:
+        page.get_by_role("button", name="Save", exact=True).click(timeout=WAIT_MS)
+    assert selected.value.ok
+    current = api.get(server, path)
+    assert current["primary_checklist_block_id"] == "approach"
+    assert current["page"] == before_selection and current["completed"] is False
+    primary = page.get_by_role("region", name="Completion checklist", exact=True)
+    expect(primary.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
+    )
+    expect(page.get_by_role("button", name="Mark done", exact=True)).to_have_count(0)
+    expect(page.get_by_role("checkbox", name="Review the draft", exact=True)).to_have_count(1)
+    # An ordinary checklist still saves without contributing to effective completion.
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as ordinary:
+        page.get_by_role("checkbox", name="Keep source notes", exact=True).click(timeout=WAIT_MS)
+    assert ordinary.value.ok
+    current = api.get(server, path)
+    assert current["page"]["blocks"][3]["items"][0]["state"] == "done"
+    assert current["completed"] is False
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as completed:
+        primary.get_by_role("checkbox", name="Review the draft", exact=True).click(timeout=WAIT_MS)
+    assert completed.value.ok
+    assert api.get(server, path)["completed"] is True
+    page.reload()
+    expect(primary.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
+    )
+    primary.locator("[data-group-toggle]").click(timeout=WAIT_MS)
+    expect(primary.get_by_role("checkbox", name="Review the draft", exact=True)).to_be_checked(
+        timeout=WAIT_MS
+    )
+    # The approved page keeps the independent active state behind Edit goal.
     page.get_by_role("button", name="Edit goal", exact=True).click(timeout=WAIT_MS)
     page.get_by_label("State", exact=True).select_option(label="Inactive")
     with page.expect_response(
@@ -371,23 +424,41 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert current["completed"] is True and current["active"] is False
     updated_page = current["page"]
     updated_page["blocks"][0]["items"][1]["label"] = "Review the updated draft"
+    updated_page["blocks"][0]["items"][1]["state"] = "open"
     response = httpx.patch(
         server.base + path,
         headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
         json={
             "expected_revision": current["revision"],
             "page": updated_page,
-            "completed": False,
             "active": True,
         },
         timeout=10,
     )
     assert response.is_success, response.text
-    expect(page.get_by_role("button", name="Mark done", exact=True)).to_be_visible(timeout=WAIT_MS)
+    expect(primary.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
+    )
+    assert api.get(server, path)["completed"] is False
     expect(page.locator("[data-goal-page] .goal-state")).to_have_text("Active", timeout=WAIT_MS)
     expect(page.get_by_role("checkbox", name="Review the updated draft", exact=True)).to_be_visible(
         timeout=WAIT_MS
     )
+    # The list response supplies the same saved item counts to cards and the table.
+    page.get_by_role("link", name="Chief of Staff", exact=True).click(timeout=WAIT_MS)
+    card = page.locator(f'[data-goal-card="{goal["id"]}"]')
+    expect(card.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
+    )
+    page.get_by_role("region", name="Active goals", exact=True).get_by_role(
+        "link", name="All goals", exact=True
+    ).click(timeout=WAIT_MS)
+    row = page.get_by_role("row").filter(
+        has=page.get_by_role("link", name="Publish a field guide", exact=True)
+    )
+    expect(row.get_by_role("cell").nth(1)).to_have_text("1 done", timeout=WAIT_MS)
+    expect(row.get_by_role("cell").nth(2)).to_have_text("2 items", timeout=WAIT_MS)
+    row.get_by_role("link", name="Publish a field guide", exact=True).click(timeout=WAIT_MS)
     reading = page.locator('[data-chart-id="reading"] [data-current]')
     expect(reading).to_have_attribute("data-current", "42", timeout=WAIT_MS)
     assert api.get(server, f"/api/measure-source-runs/{first_run}")["run"]["status"] == "succeeded"
@@ -402,8 +473,10 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     reordered = current["page"]
     reordered["blocks"][1]["rows"].reverse()
     with page.expect_response(
-        lambda reply: urlparse(reply.url).path == "/api/resource-body"
-        and parse_qs(urlparse(reply.url).query).get("key") == [path],
+        lambda reply: (
+            urlparse(reply.url).path == "/api/resource-body"
+            and parse_qs(urlparse(reply.url).query).get("key") == [path]
+        ),
         timeout=WAIT_MS,
     ):
         remote = httpx.patch(
@@ -422,7 +495,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         "Second", timeout=WAIT_MS
     )
     assert api.get(server, path)["page"]["blocks"][1]["rows"] == [
-        ["Review", "Second"], ["Outline", "First"]
+        ["Review", "Second"],
+        ["Outline", "First"],
     ]
 
     # The rail must subscribe to another active goal, even while this one is selected.

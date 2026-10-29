@@ -3,18 +3,54 @@
   import { cubicOut } from "svelte/easing";
   import { fly } from "svelte/transition";
   import type { ChecklistBlock } from "../../lib/pageKit";
+  import ChecklistSummary from "./ChecklistSummary.svelte";
 
   import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
-  let saveError = $state<unknown>(null);
-  let pending = $state<Record<string,"done" | "open">>({});
+  let pending = $state<Record<string, { state: "done" | "open"; request: number }>>({});
+  let failed = $state<Record<string, { state: "done" | "open"; error: unknown }>>({});
+  let demoStates = $state<Record<string, "done" | "open">>({});
+  let requestSequence = 0;
+  let disposed = false;
+  let saveError = $derived(Object.values(failed)[0]?.error);
+  let saving = $derived(Object.keys(pending).length > 0);
   async function persist(id: string, state: "done" | "open") {
-    pending = {...pending, [id]:state};
+    const request = ++requestSequence;
+    pending = { ...pending, [id]: { state, request } };
+    const remaining = { ...failed };
+    delete remaining[id];
+    failed = remaining;
+    message = "";
     try {
-      await context?.updateBlock?.(block.id, old => old.type === "checklist" ? {...old, items: old.items.map(item => item.id === id ? {...item, state} : item)} : old);
-      if(pending[id]===state){ const next={...pending};delete next[id];pending=next; }
-      saveError = null;
-    } catch (error) { saveError = error; }
+      if (context?.updateBlock) {
+        await context.updateBlock(block.id, old => old.type === "checklist" ? { ...old, items: old.items.map(item => item.id === id ? { ...item, state } : item) } : old);
+      } else {
+        // The component gallery has no writer. Its interactions accept local state.
+        demoStates = { ...demoStates, [id]: state };
+      }
+      if (disposed || pending[id]?.request !== request) return;
+      if (state === "done") {
+        timers.set(id, window.setTimeout(() => {
+          timers.delete(id);
+          void settle(id);
+        }, reduced ? 0 : settleMs));
+      }
+      const next = { ...pending };
+      delete next[id];
+      pending = next;
+      await tick();
+      if (disposed || pending[id] || failed[id]) return;
+      const step = steps.find((item) => item.id === id);
+      message = state === "done"
+        ? allDone ? `All ${total} items done.` : `${step?.title ?? "Item"} done. ${doneCount} of ${total} complete.`
+        : `${step?.title ?? "Item"} marked as not done. ${doneCount} of ${total} complete.`;
+    } catch (error) {
+      if (disposed || pending[id]?.request !== request) return;
+      const next = { ...pending };
+      delete next[id];
+      pending = next;
+      failed = { ...failed, [id]: { state, error } };
+    }
   }
   let { block }: { block: ChecklistBlock } = $props();
 
@@ -49,18 +85,19 @@
 
   let done = $state<string[]>([]);
   let settled = $state<string[]>([]);
+  let acceptedDone = $derived(block.items.filter(item => (demoStates[item.id] ?? item.state) === "done").map(item => item.id));
   $effect(() => {
-    const ids = block.items.filter(item => (pending[item.id] ?? item.state) === "done").map(item => item.id);
-    untrack(() => { done = ids; settled = ids.filter(id => !timers.has(id)); });
+    const ids = block.items.filter(item => (pending[item.id]?.state ?? demoStates[item.id] ?? item.state) === "done").map(item => item.id);
+    const accepted = acceptedDone.filter(id => !pending[id]);
+    untrack(() => { done = ids; settled = accepted.filter(id => !timers.has(id)); });
   });
   let expanded = $state(untrack(() => readSteps(block).find((step) => !step.filedDone)?.id ?? null));
   let steps = $derived(readSteps(block));
   let title = $derived(block.title ?? "Checklist");
   let doneTitle = $derived(block.doneTitle ?? "All items done");
   let total = $derived(steps.length);
-  let doneCount = $derived(done.length);
+  let doneCount = $derived(acceptedDone.length);
   let allDone = $derived(total > 0 && doneCount === total);
-  let heading = $derived(allDone ? doneTitle : title);
   let openSteps = $derived(steps.filter((step) => !settled.includes(step.id)));
   let completedSteps = $derived(steps.filter((step) => settled.includes(step.id)));
 
@@ -72,6 +109,7 @@
     apply();
     media.addEventListener("change", apply);
     return () => {
+      disposed = true;
       media.removeEventListener("change", apply);
       timers.forEach((timer) => window.clearTimeout(timer));
       timers.clear();
@@ -97,22 +135,10 @@
     const next = order([...done, id]);
     done = next;
     void persist(id, "done");
-    const step = steps.find((item) => item.id === id);
-    message = next.length === total
-      ? `All ${total} items done.`
-      : `${step?.title ?? "Item"} done. ${next.length} of ${total} complete.`;
-    if (timers.has(id)) return;
-    timers.set(
-      id,
-      window.setTimeout(() => {
-        timers.delete(id);
-        void settle(id);
-      }, reduced ? 0 : settleMs)
-    );
   }
 
   async function settle(id: string): Promise<void> {
-    if (!done.includes(id) || settled.includes(id)) return;
+    if (!acceptedDone.includes(id) || pending[id] || !done.includes(id) || settled.includes(id)) return;
     const leavingFocused = root?.querySelector(`[data-step="${id}"]`)?.contains(document.activeElement) ?? false;
     let nextExpanded = expanded;
     if (nextExpanded === id) {
@@ -137,8 +163,6 @@
     done = done.filter((item) => item !== id);
     settled = settled.filter((item) => item !== id);
     expanded = expanded ?? id;
-    const step = steps.find((item) => item.id === id);
-    message = `${step?.title ?? "Item"} marked as not done. ${done.length} of ${total} complete.`;
     if (!fromGroup) return;
     await tick();
     root?.querySelector<HTMLElement>(`[data-step="${id}"] [data-check]`)?.focus();
@@ -167,42 +191,17 @@
 </script>
 
 <section class="card" class:reduced bind:this={root} data-block="checklist" data-complete={allDone ? "true" : undefined} aria-labelledby="{uid}-title">
-  <div class="header">
-    <span class="ring" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={doneCount} aria-valuetext="{doneCount} of {total} done">
-      <svg class="ring-arc" viewBox="0 0 40 40" aria-hidden="true">
-        <circle class="ring-track" cx="20" cy="20" r="16" />
-        <g transform="rotate(-90 20 20)">
-          <circle class="ring-fill" cx="20" cy="20" r="16" pathLength="1" stroke-dasharray="1" stroke-dashoffset={total ? 1 - doneCount / total : 1} />
-        </g>
-      </svg>
-      {#if allDone}
-        <svg class="ring-tick" viewBox="0 0 40 40" aria-hidden="true">
-          <path d="M13.5 20.5 18 25l8.5-9.5" pathLength="1" />
-        </svg>
-      {/if}
-    </span>
-    <div class="heading">
-      <h3 id="{uid}-title">
-        <span class="sr">{heading}</span>
-        <span class="swap" aria-hidden="true">
-          <span class="swap-sizer">{title}</span>
-          <span class="swap-sizer">{doneTitle}</span>
-          {#key heading}
-            <span class="swap-text" in:fly={{ y: reduced ? 0 : 6, duration: reduced ? 150 : 220 }} out:fly={{ y: reduced ? 0 : -6, duration: reduced ? 100 : 150 }}>{heading}</span>
-          {/key}
-        </span>
-      </h3>
-      <p class="count">
-        <span class="sr">{doneCount} of {total} done</span>
-        <span class="count-visual" aria-hidden="true"><span class="roll">{#key doneCount}<span in:fly={{ y: reduced ? 0 : 8, duration: reduced ? 150 : 220 }} out:fly={{ y: reduced ? 0 : -8, duration: reduced ? 100 : 140 }}>{doneCount}</span>{/key}</span>&nbsp;of {total} done</span>
-      </p>
-    </div>
-    <button type="button" class="hide" aria-expanded={!hidden} aria-controls="{uid}-body" onclick={() => { hidden = !hidden; }}>
-      <span class="hide-label">{hidden ? "Show" : "Hide"}</span>
-      <span class="sr">{hidden ? "Show" : "Hide"} checklist</span>
-      <svg class="chevron" class:turned={hidden} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 10.5 8 6l4.5 4.5" /></svg>
-    </button>
-  </div>
+  <ChecklistSummary checked={doneCount} {total} {title} {doneTitle} {reduced} headingId={`${uid}-title`}>
+    {#snippet actions()}
+      <button type="button" class="hide" aria-expanded={!hidden} aria-controls="{uid}-body" onclick={() => { hidden = !hidden; }}>
+        <span class="hide-label">{hidden ? "Show" : "Hide"}</span>
+        <span class="sr">{hidden ? "Show" : "Hide"} checklist</span>
+        <svg class="chevron" class:turned={hidden} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 10.5 8 6l4.5 4.5" /></svg>
+      </button>
+    {/snippet}
+  </ChecklistSummary>
+  {#if saving}<p class="save-feedback" role="status">Saving checklist…</p>{/if}
+  {#if Object.keys(failed).length}<p class="save-feedback" role="alert">Checklist change was not saved. {String(saveError)} <button type="button" onclick={() => { for (const [id, { state }] of Object.entries(failed)) void persist(id, state); }}>Retry save</button></p>{/if}
   {#if !hidden}
     <div id="{uid}-body" class="body" transition:grow>
       <div class="body-inner">
@@ -272,8 +271,6 @@
   <span class="sr" role="status">{message}</span>
 </section>
 
-{#if saveError}<p role="alert">{String(saveError)} <button type="button" onclick={() => { for(const [id,state] of Object.entries(pending)) void persist(id,state); }}>Retry save</button></p>{/if}
-
 <style>
   .card {
     container-type: inline-size;
@@ -283,48 +280,9 @@
     background: var(--surface-recessed);
     color: var(--text-default);
   }
-  .header {
-    display: grid;
-    grid-template-columns: 40px minmax(0, 1fr) auto;
-    align-items: center;
-    column-gap: var(--space-3);
-    padding: var(--space-5);
-  }
-  .heading { display: grid; min-width: 0; gap: 1px; }
-  h3 {
-    margin: 0;
-    color: var(--text-strong);
-    font-size: var(--type-md);
-    font-weight: 500;
-    line-height: 1.4;
-  }
-  .count { margin: 0; color: var(--text-faint); font-size: var(--type-sm); line-height: 1.4; }
-  .count-visual { display: inline-flex; align-items: baseline; }
   .roll { position: relative; display: inline-grid; vertical-align: top; }
   .roll > span { grid-area: 1 / 1; }
-  .swap { position: relative; display: inline-grid; max-width: 100%; vertical-align: top; }
-  .swap-sizer { grid-area: 1 / 1; visibility: hidden; }
-  .swap-text { grid-area: 1 / 1; }
-  .ring { position: relative; display: grid; width: 40px; height: 40px; color: var(--text-strong); }
-  .ring-arc, .ring-tick { grid-area: 1 / 1; width: 40px; height: 40px; }
-  .ring-track { fill: none; stroke: var(--border-color); stroke-width: 3; }
-  .ring-fill {
-    fill: none;
-    stroke: var(--text-strong);
-    stroke-width: 3;
-    stroke-linecap: round;
-    transition: stroke-dashoffset var(--motion-slow) var(--motion-ease);
-  }
-  .ring-tick path {
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 2.25;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-dasharray: 1;
-    stroke-dashoffset: 0;
-    animation: draw 240ms var(--motion-ease) both;
-  }
+  .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--text-faint); font-size: var(--type-sm); }
   .hide {
     display: inline-flex;
     min-height: var(--space-6);
@@ -490,9 +448,6 @@
     .hide { width: var(--space-6); padding: 0; }
     .hide-label { display: none; }
   }
-  @keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-  .reduced .ring-fill,
-  .reduced .ring-tick path,
   .reduced .check-fill,
   .reduced .check-mark path,
   .reduced .title-text,
