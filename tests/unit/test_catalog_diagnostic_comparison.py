@@ -178,7 +178,7 @@ def oversized(kind: str) -> DiagnosticCapture:
 
 
 @pytest.mark.parametrize("bound", [
-    "documents", "candidates", "string", "integer", "environment", "path", "nodes", "depth",
+    "documents", "candidates", "integer", "environment", "path", "nodes", "depth",
 ])
 def test_every_private_input_bound_fails_closed_before_equality(bound: str) -> None:
     status = {"environment": "limit_scalars", "path": "limit_string"}.get(
@@ -584,3 +584,161 @@ def test_malformed_launch_fact_scalars_never_report_measured_results(
     malformed = replace(before, context=context)
     # Equality of the malformed values must never make them valid observations.
     assert compare(malformed, malformed) == unavailable_record()
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("object_key", [False, True])
+def test_oversized_content_marks_every_alias_but_keeps_complete_dependencies(
+    reverse: bool, object_key: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_equal = diagnostics._Budget.equal
+
+    def bounded_equal(self: Any, left: object, right: object) -> bool:
+        for value in (left, right):
+            if isinstance(value, str) and len(value) > 4096:
+                raise AssertionError("Oversized strings must never enter equality")
+        return original_equal(self, left, right)
+
+    monkeypatch.setattr(diagnostics._Budget, "equal", bounded_equal)
+    before = capture()
+    assert before.vector is not None
+    private = SECRET * 300
+    content = (ClaudeJsonValue("object", ((private, DEFAULT_CONTENT),)) if object_key
+               else ClaudeJsonValue("string", private))
+    documents = tuple(replace(doc, content=content) if index in (0, 2) else doc
+                      for index, doc in enumerate(before.vector.documents))
+    after = replace(before, vector=replace(before.vector, documents=documents))
+    result = compare(after, before) if reverse else compare(before, after)
+    expected = compare(before, before)
+    expected["diagnostic_status"] = "limit_string"
+    for role in ("selected_global_state", "managed_settings"):
+        expected["roles"][role]["semantic_content"] = "unavailable"
+    assert result == expected
+    assert private not in json.dumps(result)
+    # The same oversized object in both captures must not become equal.
+    assert compare(after, after) == expected
+
+
+@pytest.mark.parametrize("field", [
+    "executable_identity", "executable_version", "environment", "workspace",
+    "executor", "global_selection", "context_ref", "provider_scope",
+])
+def test_string_failure_dependency_masks_cover_launch_and_selection_facts(field: str) -> None:
+    before = capture()
+    assert before.vector is not None
+    private = SECRET * 300
+    affected = field
+    if field == "environment":
+        after = replace(before, environment=((private, private),))
+        affected = "launch_environment"
+    elif field == "workspace":
+        after = replace(before, context=replace(before.context, workspace=replace(
+            before.context.workspace, workspace_home_relative=private,
+        )))
+    elif field == "executor":
+        assert before.context.executor_identity is not None
+        after = replace(before, context=replace(before.context, executor_identity=replace(
+            before.context.executor_identity, application_revision=private,
+        )))
+        affected = "executor_identity"
+    elif field == "global_selection":
+        after = replace(before, vector=replace(before.vector, global_selection=private))
+        affected = "source_selection"
+    else:
+        changes: dict[str, Any] = {field: private}
+        after = replace(before, context=replace(before.context, **changes))
+    expected = compare(before, before)
+    if field in ("context_ref", "provider_scope"):
+        expected = unavailable_record()
+        expected["provider_source_snapshot"] = "equal"
+    else:
+        expected[affected] = "unavailable"
+    expected["diagnostic_status"] = "limit_string"
+    assert compare(after, after) == expected
+
+
+def test_multiple_local_failures_across_captures_union_their_dependencies() -> None:
+    before = replace(capture(), environment=(("key", SECRET * 300),))
+    after = replace(oversized("string"), context=replace(
+        before.context, executable_identity=SECRET * 300,
+    ))
+    result = compare(before, after)
+    expected = compare(capture(), capture())
+    expected["diagnostic_status"] = "limit_string"
+    expected["launch_environment"] = expected["executable_identity"] = "unavailable"
+    for role in expected["roles"].values():
+        role["semantic_content"] = "unavailable"
+    assert result == expected
+
+
+@pytest.mark.parametrize("tail", [
+    "malformed", "scalars", "work", "path", "integer", "documents", "candidates", "depth",
+    "nodes", "sequence",
+])
+def test_later_global_failures_discard_partial_results_after_string_overflow(tail: str) -> None:
+    before = replace(capture(), context=replace(
+        capture().context, executable_identity=SECRET * 300,
+    ))
+    if tail == "malformed":
+        after = change_content(capture(), ClaudeJsonValue("array", (
+            DEFAULT_CONTENT, ClaudeJsonValue("string", None),
+        )))
+    elif tail == "scalars":
+        # Oversized strings must still charge their complete scalar estimate.
+        after = replace(capture(), environment=(("key", "x" * 262145),))
+    elif tail == "sequence":
+        after = replace(capture(), environment=(("", ""),) * 32769)
+    elif tail == "work":
+        before = replace(before, environment=(("", ""),) * 32768)
+        after = replace(capture(), environment=(("", ""),) * 32768)
+    else:
+        after = oversized(tail)
+    expected = unavailable_record("internal_error" if tail == "malformed" else "limit_string")
+    if tail != "malformed":
+        expected["provider_source_snapshot"] = "equal"
+    assert compare(before, after) == expected
+
+
+@pytest.mark.parametrize("finalization", [False, True])
+def test_time_exhaustion_after_local_overflow_discards_all_outer_results(
+    monkeypatch: pytest.MonkeyPatch, finalization: bool,
+) -> None:
+    now = [0.0]
+    original = diagnostics._Budget.scalar
+
+    def charged(self: Any, value: object, mask: int = 0) -> None:
+        original(self, value, mask)
+        if self.blocked and not finalization:
+            now[0] = 0.026
+
+    original_validate = validate_record
+
+    def delayed(value: object) -> dict[str, Any]:
+        result = original_validate(value)
+        now[0] = 0.026
+        return result
+
+    monkeypatch.setattr(diagnostics._Budget, "scalar", charged)
+    if finalization:
+        monkeypatch.setattr(diagnostics, "validate_record", delayed)
+    sink = DiagnosticSink(clock=lambda: now[0])
+    sink.capture(capture())
+    sink.capture(oversized("string"))
+    sink.provider(True)
+    expected = unavailable_record("limit_string")
+    expected["provider_source_snapshot"] = "equal"
+    assert sink.finish() == expected
+    assert sink._captures == []
+    assert sink._provider is None
+
+
+@pytest.mark.parametrize("path_kind", ["parts", "sum", "render"])
+def test_all_path_string_guards_keep_global_fallback(path_kind: str) -> None:
+    # Render overflow occurs only after the bounded components pass their guards.
+    path = {"parts": Path(*(["x"] * 4097)), "sum": Path("x" * 4097),
+            "render": Path(*(["x"] * 2049))}[path_kind]
+    before = capture()
+    after = replace(before, context=replace(before.context, localized_workspace_folder=path))
+    expected = unavailable_record("limit_string")
+    expected["provider_source_snapshot"] = "equal"
+    assert compare(before, after) == expected

@@ -115,6 +115,37 @@ _OPTIONAL_SHAPES = (
 )
 
 
+# Exactly the eight computed facts and eight role facts. Placeholders have no bit.
+_FACT_MASKS = {key: 1 << index for index, key in enumerate((
+    "executable_identity", "executable_version", "launch_environment", "workspace",
+    "executor_identity", "candidate_directory", "credential_metadata", "source_selection",
+))}
+_ROLE_MASKS = {role: (1 << (8 + 2 * index), 1 << (9 + 2 * index))
+               for index, role in enumerate(_ROLE_NAMES)}
+_ALL_MASK = (1 << 16) - 1
+_DIRECTORY_MASK = _FACT_MASKS["candidate_directory"] | _FACT_MASKS["source_selection"]
+
+
+def _field_mask(value: object, name: str, inherited: int) -> int:
+    """Map borrowed fields to finite outputs, without retaining private paths."""
+    if type(value) is DiagnosticCapture:
+        return _FACT_MASKS["launch_environment"] if name == "environment" else _ALL_MASK
+    if type(value) is LaunchContext:
+        if name in ("workspace", "localized_workspace_folder"):
+            return _FACT_MASKS["workspace"]
+        if name in ("destination", "executor_identity"):
+            return _FACT_MASKS["executor_identity"]
+        return _FACT_MASKS.get(name, _ALL_MASK)
+    if type(value) is ClaudeInputVector:
+        return {"global_selection": _FACT_MASKS["source_selection"],
+                "directories": _DIRECTORY_MASK,
+                "credential": _FACT_MASKS["credential_metadata"]}.get(name, _ALL_MASK)
+    if type(value) is ClaudeInputDocument:
+        source, content = _ROLE_MASKS[value.role]
+        return content if name == "content" else source | content | _FACT_MASKS["source_selection"]
+    return inherited
+
+
 class _Limit(Exception):
     """Only the finite first failing bound may escape private comparison."""
 
@@ -140,6 +171,8 @@ class _Budget:
         self.documents = 0
         self.candidates = 0
         self.scalars = 0
+        self.blocked = 0
+        self.first_limit: DiagnosticStatus | None = None
 
     def step(self) -> None:
         self.units += 1
@@ -153,11 +186,15 @@ class _Budget:
         if self.elapsed + now - self.started > 0.025:
             raise _Limit("limit_time")
 
-    def scalar(self, value: object) -> None:
+    def scalar(self, value: object, mask: int = 0) -> None:
         if isinstance(value, str):
-            if len(value) > 4096:
-                raise _Limit("limit_string")
             self.scalars += 4 * len(value)
+            if len(value) > 4096:
+                if not mask:  # Path rendering retains its global fallback.
+                    raise _Limit("limit_string")
+                self.blocked |= mask
+                if self.first_limit is None:
+                    self.first_limit = "limit_string"
         elif type(value) is int:
             bits = value.bit_length()
             if bits > 4096:
@@ -172,7 +209,9 @@ class _Budget:
         if self.scalars > 1_048_576:
             raise _Limit("limit_scalars")
 
-    def check(self, value: object, depth: int = 0, shape: str | None = None) -> None:
+    def check(
+        self, value: object, depth: int = 0, shape: str | None = None, mask: int = _ALL_MASK,
+    ) -> None:
         """Preflight every input, including unequal tails, before any equality."""
         self.step()
         if shape is not None and not (value is None and shape in _OPTIONAL_SHAPES):
@@ -191,7 +230,7 @@ class _Budget:
             if not valid:
                 raise ValueError("Invalid diagnostic input")
         if isinstance(value, str) or value is None or type(value) in (int, bool, float):
-            self.scalar(value)
+            self.scalar(value, mask)
         elif isinstance(value, Path):
             # Bound the existing path components before constructing its string.
             if len(value.parts) > 4096:
@@ -207,7 +246,7 @@ class _Budget:
             if len(value) > 32768:
                 raise _Limit("limit_sequence")
             for item in value:
-                self.check(item, depth, _ITEM_SHAPES.get(shape or ""))
+                self.check(item, depth, _ITEM_SHAPES.get(shape or ""), mask)
         elif type(value) in _RECORD_TYPES:
             if isinstance(value, ClaudeInputVector):
                 if type(value.documents) is not tuple or type(value.directories) is not tuple:
@@ -258,12 +297,13 @@ class _Budget:
                                 or type(pair[0]) is not str
                                 or type(pair[1]) is not ClaudeJsonValue):
                             raise ValueError("Invalid diagnostic input")
-                self.check(content, depth + 1)
+                self.check(content, depth + 1, mask=mask)
             else:
                 for field in fields(cast(_Record, value)):
                     self.check(
                         getattr(value, field.name), depth,
                         _FIELD_SHAPES.get(type(value), {}).get(field.name),
+                        _field_mask(value, field.name, mask),
                     )
         else:
             raise ValueError("Invalid diagnostic input")
@@ -297,56 +337,74 @@ def _compare(before: DiagnosticCapture, after: DiagnosticCapture, budget: _Budge
     budget.check(after)
     result = unavailable_record("capture_missing")
     left, right = before.context, after.context
+
+    def available(key: str) -> bool:
+        return not budget.blocked & _FACT_MASKS[key]
+
     for key in ("executable_identity", "executable_version"):
         a, b = getattr(left, key), getattr(right, key)
-        if a is not None and b is not None:
+        if available(key) and a is not None and b is not None:
             result[key] = budget.state(a, b)
-    result["launch_environment"] = budget.state(before.environment, after.environment)
-    result["workspace"] = budget.state(
-        (left.workspace, left.localized_workspace_folder),
-        (right.workspace, right.localized_workspace_folder),
-    )
-    result["executor_identity"] = budget.state(
-        (left.destination, left.executor_identity), (right.destination, right.executor_identity)
-    )
+    if available("launch_environment"):
+        result["launch_environment"] = budget.state(before.environment, after.environment)
+    if available("workspace"):
+        result["workspace"] = budget.state(
+            (left.workspace, left.localized_workspace_folder),
+            (right.workspace, right.localized_workspace_folder),
+        )
+    if available("executor_identity"):
+        result["executor_identity"] = budget.state(
+            (left.destination, left.executor_identity), (right.destination, right.executor_identity)
+        )
     a, b = before.vector, after.vector
     if a is None or b is None:
+        result["diagnostic_status"] = budget.first_limit or "capture_missing"
         return result
-    result["candidate_directory"] = budget.state(a.directories, b.directories)
-    result["credential_metadata"] = budget.state(a.credential, b.credential)
-    sources_equal = budget.equal(a.global_selection, b.global_selection)
-    sources_equal = budget.equal(a.directories, b.directories) and sources_equal
+    if available("candidate_directory"):
+        result["candidate_directory"] = budget.state(a.directories, b.directories)
+    if available("credential_metadata"):
+        result["credential_metadata"] = budget.state(a.credential, b.credential)
+    if available("source_selection"):
+        sources_equal = budget.equal(a.global_selection, b.global_selection)
+        sources_equal = budget.equal(a.directories, b.directories) and sources_equal
+        # Selection compares the full ordered source sequence, even across role groups.
+        if len(a.documents) != len(b.documents):
+            sources_equal = False
+        else:
+            for first, second in zip(a.documents, b.documents, strict=True):
+                same = (budget.equal(first.role, second.role)
+                        and budget.equal(first.location, second.location)
+                        and (first.content is None) == (second.content is None))
+                sources_equal = same and sources_equal
+        result["source_selection"] = "equal" if sources_equal else "changed"
     roles: JsonObject = {}
-    # Selection compares the full ordered source sequence, even across role groups.
-    if len(a.documents) != len(b.documents):
-        sources_equal = False
-    else:
-        for first, second in zip(a.documents, b.documents, strict=True):
-            same = (budget.equal(first.role, second.role)
-                    and budget.equal(first.location, second.location)
-                    and (first.content is None) == (second.content is None))
-            sources_equal = same and sources_equal
     for source_role, role in zip(_ROLE_NAMES, _ROLES, strict=True):
-        first_group = tuple(document for document in a.documents if document.role == source_role)
-        second_group = tuple(document for document in b.documents if document.role == source_role)
-        same = len(first_group) == len(second_group)
-        if same:
-            for first, second in zip(first_group, second_group, strict=True):
-                matched = (budget.equal(first.location, second.location)
-                           and (first.content is None) == (second.content is None))
-                same = matched and same
+        source_mask, content_mask = _ROLE_MASKS[source_role]
+        source: DiagnosticState = "unavailable"
         content: DiagnosticState = "unavailable"
-        if same:
-            content_equal = True
-            for first, second in zip(first_group, second_group, strict=True):
-                matched = budget.equal(first.content, second.content)
-                content_equal = matched and content_equal
-            content = "equal" if content_equal else "changed"
-        roles[role] = {"source_validity": "equal" if same else "changed",
-                       "semantic_content": content}
+        if not budget.blocked & source_mask:
+            first_group = tuple(
+                document for document in a.documents if document.role == source_role
+            )
+            second_group = tuple(
+                document for document in b.documents if document.role == source_role
+            )
+            same = len(first_group) == len(second_group)
+            if same:
+                for first, second in zip(first_group, second_group, strict=True):
+                    matched = (budget.equal(first.location, second.location)
+                               and (first.content is None) == (second.content is None))
+                    same = matched and same
+            source = "equal" if same else "changed"
+            if same and not budget.blocked & content_mask:
+                content_equal = True
+                for first, second in zip(first_group, second_group, strict=True):
+                    matched = budget.equal(first.content, second.content)
+                    content_equal = matched and content_equal
+                content = "equal" if content_equal else "changed"
+        roles[role] = {"source_validity": source, "semantic_content": content}
     result["roles"] = roles
-    result["source_selection"] = "equal" if sources_equal else "changed"
-    result["diagnostic_status"] = "compared"
+    result["diagnostic_status"] = budget.first_limit or "compared"
     budget.step()
     return result
 
@@ -433,7 +491,9 @@ class DiagnosticSink:
             except _Limit as limit:
                 # Outer comparisons are incomplete; the independently supplied,
                 # cardinality-checked provider boolean remains an observation.
-                return validate_record(self._with_provider(unavailable_record(limit.status)))
+                return validate_record(self._with_provider(
+                    unavailable_record(budget.first_limit or limit.status),
+                ))
         except Exception:
             return unavailable_record()
         finally:

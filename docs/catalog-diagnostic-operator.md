@@ -67,6 +67,10 @@ An exception ends the operation. The operation receipt marks consumption as cons
 Do not repeat a consumed or uncertain attempt. Do not rearm the runtime.
 A file failure after retrieval does not restore native authority.
 
+The bounded comparison correction retains the same finite schema and status vocabulary. A `limit_string` receipt can contain independently complete comparisons. It can also contain no available outer comparison after a shared failure. Neither result identifies the measured Mac trigger or guarantees a useful result from another attempt.
+
+The operator preserves validated finite states exactly. It must not turn unavailable states into equality, infer the private failing component, or repeat a comparison. Source binding still requires matching reviewed application and operator revisions, even when the operator and validator bytes remain unchanged.
+
 The operator does not convert old evidence. An old receipt lacks `diagnostic_status` and remains unclassified.
 The new validator rejects that old shape and any unexpected top-level or role field.
 The old generic CLI prints the new finite JSON, but its byte compatibility does not qualify mixed application packages.
@@ -97,5 +101,5 @@ No browser host is necessary.
 ## Removal inventory
 
 Remove the temporary operator script, operator module, focused operator tests, and historical compatibility fixtures with the diagnostic follow-up.
-Also remove the shared finite contract and its status field with the existing temporary reservation, native controller, comparator, and hooks.
+Also remove the shared finite contract and its status field with the existing temporary reservation, native controller, comparator and dependency masks, and hooks.
 Retain the reviewed immutable package, binding, recovery sources, and sanitized finite evidence as investigation artifacts.

@@ -40,7 +40,15 @@ Cancellation uses the existing frame on the original writer. It can invalidate a
 
 ## Output and failure
 
-The fixed record contains only `equal`, `changed`, or `unavailable` under approved component and role labels. It contains no private values, hashes, paths, counts, account identifiers, dynamic keys, or exception details. Its serialized size is at most 4 KiB.
+The fixed record contains `diagnostic_status` and only `equal`, `changed`, or `unavailable` under approved component and role labels. It contains no private values, hashes, paths, counts, account identifiers, dynamic keys, or exception details. Its serialized size is at most 4 KiB.
+
+An oversized existing string makes its dependent comparisons unavailable. Independently complete comparisons can survive only after both captures pass complete shape validation within shared resource bounds. The status remains `limit_string`. It does not identify a private field or guarantee that another component is available.
+
+Content strings and object keys affect that role's semantic content. They do not alone invalidate source location or content presence. An oversized executable identity affects its own comparison. Checked context fields without a separate output conservatively invalidate every outer comparison.
+
+Every oversized string contributes its full scalar estimate to the shared budget. The comparator never compares, copies, truncates, or hashes its content. Counters remain cumulative across both captures and repeated references. Path-specific guards, including the rendered-path scalar check, retain global fallback.
+
+The first observed limit determines the finite status. A later shared-budget failure discards every outer comparison even if the status remains `limit_string`. Internal failure suppresses independent provider evidence too. Native invalidation, missing captures, and finalization failure retain their existing conservative behavior. All outer comparisons can legitimately remain unavailable.
 
 The observer contributes only its two existing outer captures. The provider contributes only the result of its existing snapshot comparison. No extra configuration read, provider request, prompt, or comparison occurs.
 
@@ -60,4 +68,4 @@ The ordinary operation retains its 35-second deadline and owned provider cleanup
 
 If the package fails its cold preflight or identity checks, stop before activation. Preserve evidence and use the application Worker's reviewed prior-package recovery procedure. Do not reset configuration, alter caches, change accounts, or repeat provider discovery to repair the diagnostic.
 
-After the investigation, remove the temporary reservation route/header, its request-local context, native arm/result contracts and CLI, diagnostic state controller, observer/provider hooks, comparator, and diagnostic-only tests through a reviewed follow-up. Restore ordinary request allocation through its unchanged no-header path. Retain sanitized evidence and immutable source recovery materials. The diagnostic is not a permanent incident framework.
+After the investigation, remove the temporary reservation route/header, its request-local context, native arm/result contracts and CLI, diagnostic state controller, observer/provider hooks, comparator with its dependency masks, and diagnostic-only tests through a reviewed follow-up. Restore ordinary request allocation through its unchanged no-header path. Retain sanitized evidence and immutable source recovery materials. The diagnostic is not a permanent incident framework.

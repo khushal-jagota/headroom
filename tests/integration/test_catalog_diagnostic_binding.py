@@ -12,6 +12,7 @@ import json
 import os
 import time
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -48,7 +49,10 @@ from planner.conversation.model_resolution.contracts import (
     CatalogRequest,
     CatalogWorkspaceBinding,
 )
-from planner.conversation.model_resolution.diagnostic_contracts import validate_record
+from planner.conversation.model_resolution.diagnostic_contracts import (
+    DiagnosticStatus,
+    validate_record,
+)
 from planner.conversation.model_resolution.logic.claude_configuration import ClaudeConfigurationRole
 from planner.conversation.runtime_composition import ConversationRuntime
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -162,8 +166,53 @@ def _ordinary_facts(value: object) -> object:
     return value
 
 
+def _long_private_string(length: int) -> str:
+    text = "private-before: synthetic policy text and cached feature data. "
+    return (text * (length // len(text) + 1))[:length]
+
+
+def _partial_record(scenario: str) -> JsonObject:
+    """Exact classifications expected after complete shared validation."""
+    result = diagnostics.unavailable_record("limit_string")
+    for key in (
+        "executable_identity", "executable_version", "launch_environment", "workspace",
+        "executor_identity", "source_selection", "candidate_directory", "credential_metadata",
+    ):
+        result[key] = "equal"
+    result["provider_source_snapshot"] = "equal"
+    roles: JsonObject = {
+        role: {"source_validity": "equal", "semantic_content": "equal"}
+        for role in ("selected_global_state", "settings", "managed_settings", "remote_policy_cache")
+    }
+    if scenario == "limit_string":
+        roles["selected_global_state"] = {
+            "source_validity": "equal", "semantic_content": "changed",
+        }
+        for role in ("settings", "managed_settings", "remote_policy_cache"):
+            roles[role] = {"source_validity": "equal", "semantic_content": "unavailable"}
+    elif scenario == "collector_long_global":
+        roles["selected_global_state"] = {
+            "source_validity": "equal", "semantic_content": "unavailable",
+        }
+    elif scenario in {
+        "collector_long_settings", "collector_long_key", "collector_long_settings_realtime",
+    }:
+        roles["settings"] = {"source_validity": "equal", "semantic_content": "unavailable"}
+    else:
+        roles["settings"] = {"source_validity": "equal", "semantic_content": "changed"}
+        key = "launch_environment" if scenario == "collector_long_environment" else (
+            "executable_identity"
+        )
+        result[key] = "unavailable"
+    result["roles"] = roles
+    return result
+
+
 @pytest.mark.parametrize("scenario", [
-    "compared", "collector_compared", "capture_missing", "provider_missing", "provider_changed",
+    "compared", "collector_compared", "collector_long_global", "collector_long_settings",
+    "collector_long_key", "collector_long_environment", "collector_long_identity",
+    "collector_path_rejected", "collector_long_settings_realtime", "capture_missing",
+    "provider_missing", "provider_changed",
     "duplicate_hook", "internal_shape", "finalization_error", "cancelled",
     "limit_documents", "limit_candidates", "limit_nodes", "limit_depth", "limit_string",
     "limit_integer", "limit_scalars", "limit_sequence", "limit_work", "limit_time",
@@ -174,6 +223,13 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
     scenario: str,
 ) -> None:
     started = time.monotonic()
+    collected = scenario.startswith("collector_")
+    partial = scenario == "limit_string" or scenario.startswith("collector_long_")
+    realtime = scenario == "collector_long_settings_realtime"
+    # This fixture never inherits destinations or provider selectors from the live Worker.
+    for key in tuple(os.environ):
+        if key.startswith(("PLAN_", "PANELS_", "HERMES_", "CLAUDE_", "CODEX_", "ANTHROPIC_")):
+            monkeypatch.delenv(key)
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -218,19 +274,57 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
             attempts: list[str] = []
             current = [False]
             launches = launch_fixture(tmp_path, monkeypatch)
+            if scenario == "collector_long_identity":
+                path_limit = os.pathconf(tmp_path, "PC_PATH_MAX")
+                if 0 < path_limit <= 4050:
+                    pytest.skip(
+                        f"Synthetic identity path (4050 bytes) exceeds PATH_MAX={path_limit}"
+                    )
+                executable = tmp_path
+                while len(str(executable)) + 251 < 3950:
+                    executable = executable / ("d" * 250)
+                executable = executable / ("d" * (4050 - len(str(executable)) - 1))
+                executable.parent.mkdir(parents=True)
+                executable.write_text("synthetic executable, never run")
+                executable.chmod(0o700)
+                info = executable.stat()
+                identity = (
+                    f"{executable}:{info.st_dev}:{info.st_ino}:{info.st_size}:"
+                    f"{info.st_mtime_ns}:{info.st_ctime_ns}"
+                )
+                assert len(str(executable)) <= 4096 < len(identity)
+                launches = replace(
+                    launches, claude=replace(launches.claude, claude_executable=executable),
+                )
+            if scenario == "collector_path_rejected":
+                # Separator amplification reaches the Path scalar guard directly, but
+                # the real collector rejects this oversized root before any capture.
+                rejected_root = Path("/" + "/".join(["x" * 250] * 16 + ["x" * 80]))
+                assert sum(map(len, rejected_root.parts)) <= 4096 < len(str(rejected_root))
+                monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(rejected_root))
             environment = ScriptedLaunchEnvironment()
             source_file = tmp_path / ".claude" / "settings.json"
-            source_file.parent.mkdir()
+            if scenario == "collector_long_global":
+                source_file = tmp_path / "claude-home" / ".config.json"
+            source_file.parent.mkdir(exist_ok=True)
             source_before = json.dumps({
                 "env": {"SYNTHETIC_PRIVATE": "private-before"},
                 "permissions": {"allow": ["Read(private-sentinel)"], "deny": []},
                 "nested": {"models": ["opus", {"enabled": True, "budget": 7}]},
             })
+            if scenario == "collector_long_global":
+                source_before = json.dumps({"featureCache": _long_private_string(16384)})
+            elif scenario in {"collector_long_settings", "collector_long_settings_realtime"}:
+                source_before = json.dumps({
+                    "env": {"SYNTHETIC_PRIVATE": _long_private_string(4097)},
+                })
+            elif scenario == "collector_long_key":
+                source_before = json.dumps({_long_private_string(4097): "private-before"})
             source_after = source_before.replace("private-before", "private-after")
             source_file.write_text(source_before)
             original_configuration = observer._configuration_revisions
             opened_sources: list[str] = []
-            if scenario == "collector_compared":
+            if collected:
                 original_open = os.open
 
                 def open_source(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
@@ -245,11 +339,14 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
 
             def vector(*args: Any) -> Any:
                 calls.append("capture-input")
-                if scenario == "collector_compared":
+                if collected:
                     result = original_configuration(*args)
-                    assert isinstance(result, ClaudeInputVector)
-                    assert all(type(document.role) is ClaudeConfigurationRole
-                               for document in result.documents)
+                    if scenario == "collector_path_rejected":
+                        assert result is None
+                    else:
+                        assert isinstance(result, ClaudeInputVector)
+                        assert all(type(document.role) is ClaudeConfigurationRole
+                                   for document in result.documents)
                     return result
                 return _private_vector(tmp_path, current[0], scenario)
 
@@ -284,7 +381,7 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                         for frame in inner.frames
                         if frame.get("type") == "control_request"
                     )
-                if scenario == "collector_compared":
+                if collected:
                     source_file.write_text(source_after)
                 assert claude_scope_registry is not None
                 return ClaudeModelCatalog(
@@ -296,6 +393,8 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
             class SyntheticDestination(observer.ProductionCatalogObserver):
                 def _launch(self, *args: Any, **kwargs: Any) -> Any:
                     executable, launch_environment = super()._launch(*args, **kwargs)
+                    if scenario == "collector_long_environment":
+                        launch_environment["SYNTHETIC_PRIVATE"] = _long_private_string(8192)
                     if scenario == "limit_work":
                         launch_environment.update((f"K{index:04x}", "") for index in range(24000))
                     return executable, launch_environment
@@ -312,7 +411,7 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                 async def observe(self, *args: Any, **kwargs: Any) -> Any:
                     attempts.append(kwargs["attempt_id"])
                     current[0] = False
-                    if scenario == "collector_compared":
+                    if collected:
                         source_file.write_text(source_before)
                     return await super().observe(*args, **kwargs)
 
@@ -335,7 +434,10 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     assert response.status == 200
                     baseline = await response.json()
                 expected_reason = (
-                    "catalog_unavailable" if scenario == "provider_changed" else "context_changed"
+                    "configuration_scope_unknown" if scenario == "collector_path_rejected" else (
+                        "catalog_unavailable" if scenario == "provider_changed" else
+                        "context_changed"
+                    )
                 )
                 assert baseline["validation"]["reason"] == expected_reason
                 baseline_calls = list(calls)
@@ -394,10 +496,24 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                 )
                 assert armed.error is None and armed.result == {"armed": True}
                 completed: list[JsonObject] = []
+                finalization_seconds: list[float] = []
+                observed_limits: list[str] = []
+                if realtime:
+                    limit_init = diagnostics._Limit.__init__
+
+                    def observe_limit(
+                        limit: diagnostics._Limit, status: DiagnosticStatus,
+                    ) -> None:
+                        observed_limits.append(status)
+                        limit_init(limit, status)
+
+                    monkeypatch.setattr(diagnostics._Limit, "__init__", observe_limit)
                 finish = diagnostics.DiagnosticSink.finish
 
                 def diagnostic_finish(sink: diagnostics.DiagnosticSink) -> JsonObject:
+                    finish_started = time.monotonic()
                     record = finish(sink)
+                    finalization_seconds.append(time.monotonic() - finish_started)
                     completed.append(record)
                     if scenario == "finalization_error":
                         raise RuntimeError("private diagnostic failure sentinel")
@@ -413,7 +529,7 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     return clock_ticks[0] * 0.01 if scenario == "limit_time" else 0.0
 
                 sink_type = diagnostics.DiagnosticSink
-                if scenario.startswith("limit_"):
+                if scenario.startswith("limit_") or (partial and not realtime):
                     monkeypatch.setattr(native_diagnostics, "DiagnosticSink",
                                         lambda: sink_type(clock=diagnostic_clock))
                 if scenario == "provider_missing":
@@ -447,7 +563,7 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                 assert observed["validation"]["reason"] == expected_reason
                 assert _ordinary_facts(observed) == _ordinary_facts(baseline)
                 assert calls == baseline_calls
-                assert calls == ([
+                assert calls == (["capture-input"] if scenario == "collector_path_rejected" else [
                         "capture-input",
                         "catalog",
                         "initialize",
@@ -461,8 +577,8 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     ])
                 assert environment.calls == baseline_probes
                 assert opened_sources == baseline_opened_sources
-                if scenario == "collector_compared":
-                    assert opened_sources == [".claude/settings.json"] * 4
+                if collected and scenario != "collector_path_rejected":
+                    assert opened_sources == [str(source_file.relative_to(tmp_path))] * 4
                 assert attempts[-1] == arm["request_id"] and attempts[0] != arm["request_id"]
                 await eventually(
                     lambda: harness.mac._catalog_diagnostics.state == "settled",
@@ -496,15 +612,24 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     "duplicate_hook": "internal_error", "internal_shape": "internal_error",
                     "finalization_error": "internal_error",
                 }.get(scenario, scenario)
-                assert receipt["diagnostic_status"] == expected_status
+                if partial:
+                    expected_status = "limit_string"
+                elif scenario == "collector_path_rejected":
+                    expected_status = "capture_missing"
+                if realtime and "limit_time" in observed_limits:
+                    assert receipt["diagnostic_status"] in {"limit_string", "limit_time"}
+                else:
+                    assert receipt["diagnostic_status"] == expected_status
                 provider = "equal"
-                if scenario in {"provider_missing", "duplicate_hook", "internal_shape",
-                                "finalization_error", "cancelled"}:
+                if scenario in {"collector_path_rejected", "provider_missing", "duplicate_hook",
+                                "internal_shape", "finalization_error", "cancelled"}:
                     provider = "unavailable"
                 elif scenario == "provider_changed":
                     provider = "changed"
                 assert receipt["provider_source_snapshot"] == provider
-                if expected_status != "compared":
+                if partial and not (realtime and "limit_time" in observed_limits):
+                    assert receipt == _partial_record(scenario)
+                elif expected_status != "compared":
                     unavailable = diagnostics.unavailable_record()
                     for key in unavailable:
                         if key not in {"diagnostic_status", "provider_source_snapshot"}:
@@ -539,6 +664,9 @@ def test_authenticated_preview_binds_one_native_diagnostic_and_preserves_refusal
                     assert private not in encoded
                 print("finite diagnostic evidence: " + json.dumps({
                     "scenario": scenario, "receipt": receipt,
+                    "clock": "production" if realtime else "boundary" if partial else "default",
+                    "diagnostic_finish_seconds": finalization_seconds,
+                    "observed_limits": observed_limits,
                 }))
                 repeated = await _owner_ipc(
                     harness.mac.paths.ipc_socket,
