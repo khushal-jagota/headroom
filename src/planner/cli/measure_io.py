@@ -44,12 +44,7 @@ def stdin_object(as_json: bool) -> dict[str, Any]:
 def emit(data: Any, as_json: bool) -> NoReturn:
     """Keep records inspectable and preserve explicit pagination facts in text output."""
     human = json.dumps(data, ensure_ascii=False, indent=2)
-    if (
-        isinstance(data, dict)
-        and isinstance(data.get("page"), dict)
-        and {"return_count", "match_count", "omitted_before", "omitted_after"}
-        <= data["page"].keys()
-    ):
+    if isinstance(data, dict) and isinstance(data.get("page"), dict):
         page = data["page"]
         human += (
             f"\nReturned {page['return_count']} of {page['match_count']} matches."

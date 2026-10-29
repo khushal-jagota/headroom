@@ -491,3 +491,77 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.reload()
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
+
+
+def test_goal_files_open_from_catalog_and_historical_conversation(
+    signal_server: ServerHandle,
+    api: ApiHelper,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """Connect goal catalog and Markdown links to served bytes in the workspace frame.
+
+    The existing server and browser fixtures prove this connection without another host.
+    Pure address tests cannot prove the mounted goal page intercepts both link sources.
+    """
+    server = signal_server
+    project = api.direct_post(server, "/api/projects", {"name": "Goal file browser proof"})
+    goal = api.direct_post(
+        server,
+        "/api/goals",
+        {"project_id": project["id"], "title": "Keep the field guide", "kind": "binary"},
+    )
+    goal_path = f"/api/goals/{goal['id']}"
+    file_path = f"/files/goals/{goal['id']}/artifacts/field%20guide.md"
+    api.direct_put(
+        server, file_path, {"content": "# Durable field guide\n\nSaved supporting material."}
+    )
+    page = open_page(
+        context_factory(), server, f"#/workspace/goal/{goal['id']}", "[data-goal-page]"
+    )
+    page.locator("[data-artifacts-band] summary").click(timeout=WAIT_MS)
+    page.locator('[data-artifact-folder="artifacts"]').click(timeout=WAIT_MS)
+    page.locator('[data-artifact-chip="artifacts/field guide.md"]').click(timeout=WAIT_MS)
+    artifact = page.locator("[data-ticket-artifact]")
+    expect(artifact.get_by_role("heading", name="Durable field guide")).to_be_visible(
+        timeout=WAIT_MS
+    )
+    assert f"/workspace/goal/{goal['id']}?" in page.url
+    assert parse_qs(urlparse(page.url).fragment.split("?", 1)[1])["source"] == ["goal"]
+    page.go_back()
+    expect(artifact).to_have_count(0, timeout=WAIT_MS)
+    expect(page.get_by_role("heading", name="Keep the field guide")).to_be_visible(timeout=WAIT_MS)
+
+    sent = api.direct_post(
+        server,
+        "/api/messages/send",
+        {"target": {"kind": "goal", "id": goal["id"]}, "message": "Keep this guide"},
+    )
+    conversation_id = sent["conversation_id"]
+    api.direct_post(
+        server,
+        f"/api/test/connected/{conversation_id}/message",
+        {"kind": "goal", "id": goal["id"], "text": f"[Field guide]({file_path})"},
+    )
+    api.direct_post(server, f"/api/test/signals/{conversation_id}/finish", {})
+    api.direct_post(server, goal_path + "/conversation/reset", {})
+    page.goto(server.base + f"/#/workspace/goal/{goal['id']}?conversation={conversation_id}")
+    conversation_link = page.get_by_role("link", name="Open field guide.md", exact=True)
+    conversation_link.filter(visible=True).first.click(timeout=WAIT_MS)
+    expect(artifact.get_by_role("heading", name="Durable field guide")).to_be_visible(
+        timeout=WAIT_MS
+    )
+    opened_url = page.url
+    opened_params = parse_qs(urlparse(opened_url).fragment.split("?", 1)[1])
+    assert opened_params["conversation"] == [conversation_id]
+    page.reload()
+    expect(artifact.get_by_role("heading", name="Durable field guide")).to_be_visible(
+        timeout=WAIT_MS
+    )
+    assert page.url == opened_url
+    page.locator("[data-ticket-artifact-close]").click(timeout=WAIT_MS)
+    expect(artifact).to_have_count(0, timeout=WAIT_MS)
+    closed_params = parse_qs(urlparse(page.url).fragment.split("?", 1)[1])
+    assert closed_params == {"conversation": [conversation_id]}
+    page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
+    expect(conversation_link.filter(visible=True).first).to_be_visible(timeout=WAIT_MS)

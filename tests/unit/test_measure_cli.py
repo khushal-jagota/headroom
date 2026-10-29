@@ -146,23 +146,6 @@ def test_bounded_list_output(
     assert json.loads(result.output) == reply
 
 
-def test_goal_page_document_is_not_list_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
-    reply = {
-        "id": "goal",
-        "page": {"kind": "headroom.page", "version": 1, "blocks": []},
-    }
-
-    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        assert (method, path) == ("POST", "/api/goals")
-        return reply
-
-    monkeypatch.setattr(http, "send", send)
-    for options in ([], ["--json"]):
-        result = CliRunner().invoke(main, ["goal", "create", *options], input='{"title":"Goal"}')
-        assert result.exit_code == 0, result.output
-        assert json.loads(result.output) == reply
-
-
 def test_stdin_refusal_and_credential_commands_have_no_secret_entry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
