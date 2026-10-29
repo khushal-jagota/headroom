@@ -71,16 +71,26 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
     for node in _schema_nodes(document):
         if "$ref" in node:
             _reference(document, node["$ref"])
-    contracts = {}
+    contracts: dict[tuple[tuple[str, ...], str], dict[str, Any]] = {}
     for arguments, path, method in (
         (("goal", "schema", "create"), "/api/goals", "post"),
         (("goal", "schema", "edit"), "/api/goals/{goal_id}", "patch"),
         (("measure-source", "schema"), "/api/measure-sources", "post"),
+        (
+            ("measure-source", "schema", "script"),
+            "/api/measure-sources/{source_id}/script",
+            "put",
+        ),
+        (
+            ("measure-source", "schema", "run"),
+            "/api/measure-sources/{source_id}/runs",
+            "post",
+        ),
         (("measure", "schema"), "/api/measures", "post"),
     ):
         published = _guidance(*arguments)
         schema = published["schema"]
-        contracts[arguments[0] + method] = schema
+        contracts[(arguments, method)] = schema
         for node in _schema_nodes(schema):
             if "$ref" in node:
                 _reference(schema, node["$ref"])
@@ -91,14 +101,19 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
         assert {name: entry["value"] for name, entry in media["examples"].items()} == published[
             "examples"
         ]
-    create_schema = _schema_shape(contracts["goalpost"], contracts["goalpost"])
-    edit_schema = _schema_shape(contracts["goalpatch"], contracts["goalpatch"])
+
+    def shape(*arguments: str, method: str) -> dict[str, Any]:
+        schema = contracts[(arguments, method)]
+        return cast(dict[str, Any], _schema_shape(schema, schema))
+
+    create_schema = shape("goal", "schema", "create", method="post")
+    edit_schema = shape("goal", "schema", "edit", method="patch")
     assert set(create_schema["required"]) == {"title", "project_id"}
     assert "expected_revision" in create_schema["properties"]
     assert edit_schema["required"] == ["expected_revision"]
     for field in ("deadline", "primary_chart", "primary_checklist_block_id"):
         assert {"type": "null"} in create_schema["properties"][field]["anyOf"]
-    measure_schema = _schema_shape(contracts["measurepost"], contracts["measurepost"])
+    measure_schema = shape("measure", "schema", method="post")
     assert set(measure_schema["required"]) == {
         "project_id",
         "name",
@@ -109,12 +124,24 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
     }
     for field in ("period", "source_id", "formula"):
         assert {"type": "null"} in measure_schema["properties"][field]["anyOf"]
-    source_schema = _schema_shape(contracts["measure-sourcepost"], contracts["measure-sourcepost"])
+    source_schema = shape("measure-source", "schema", method="post")
     assert set(source_schema["required"]) == {"name", "project_id", "account", "responsible"}
     assert set(source_schema["properties"]["responsible"]["required"]) == {"kind", "id"}
 
     # Author input omits only IDs and placement that the writer actually supplies.
-    schema = contracts["goalpost"]
+    script = shape("measure-source", "schema", "script", method="put")
+    assert set(script["properties"]) == set(script["required"]) == {"expected_revision", "text"}
+    assert script["properties"]["expected_revision"]["type"] == "integer"
+    assert script["properties"]["text"]["type"] == "string"
+    run = shape("measure-source", "schema", "run", method="post")
+    assert set(run["required"]) == {"mode", "expected_script_revision"}
+    assert {"type": "null"} in run["properties"]["history"]["anyOf"]
+    history = next(
+        option for option in run["properties"]["history"]["anyOf"] if option["type"] == "object"
+    )
+    assert set(history["required"]) == {"first_date", "last_date"}
+    assert history["additionalProperties"] is False
+    schema = contracts[(("goal", "schema", "create"), "post")]
     for name in ("ChartBlock", "ChecklistItem", "TextBlock", "SegmentedView"):
         definition = next(node for node in _schema_nodes(schema) if node.get("title") == name)
         assert ("id" in definition["required"]) is (name == "SegmentedView")
@@ -411,6 +438,20 @@ def test_source_http_resources_and_actual_outcome_status(
             now=now,
         )
         assert pending.active_script is not None
+        malformed_history = client.post(
+            f"/api/measure-sources/{source.id}/runs",
+            json={
+                "mode": "test",
+                "expected_script_revision": pending.active_script.revision,
+                "history": {
+                    "first_date": "2026-10-20",
+                    "last_date": "2026-10-27",
+                    "unexpected": "must not be silently accepted",
+                },
+            },
+        )
+        assert malformed_history.status_code == 400, malformed_history.text
+        assert malformed_history.json()["error"]["code"] == "validation"
         response = client.post(
             f"/api/measure-sources/{source.id}/runs",
             json={

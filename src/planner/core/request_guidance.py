@@ -34,12 +34,16 @@ class RequestGuidance:
     optional_fields: Mapping[Any, frozenset[str]] = field(default_factory=dict)
     required_fields: Mapping[Any, tuple[str, ...]] = field(default_factory=dict)
     defaults: Mapping[Any, Mapping[str, Any]] = field(default_factory=dict)
+    closed_objects: frozenset[Any] = field(default_factory=frozenset)
 
     def _schema(self) -> CoreSchema:
         schema = copy.deepcopy(TypeAdapter(self.contract).core_schema)
 
         def visit(node: Any) -> None:
             if isinstance(node, dict):
+                if node.get("cls") in self.closed_objects:
+                    metadata = node.setdefault("metadata", {})
+                    metadata.setdefault("pydantic_js_updates", {})["additionalProperties"] = False
                 if node.get("type") == "typed-dict":
                     contract = node.get("cls")
                     node["extra_behavior"] = "forbid"

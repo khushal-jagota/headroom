@@ -128,6 +128,9 @@ def test_goal_backend_identity_and_reset_preserve_independent_owner_history(
                     "panels goal schema edit",
                     "panels goal schema primary-chart",
                     "panels measure-source schema",
+                    "panels measure-source schema script",
+                    "panels measure-source schema run",
+                    "panels measure-source runtime",
                     "panels measure schema",
                 ):
                     assert discovery in start.role_materials.role_text

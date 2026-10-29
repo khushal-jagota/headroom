@@ -14,6 +14,7 @@ from tests.support.measure_runtime import MemoryCredentials, admission
 
 from planner.measure_sources.configuration import DEFAULT_LIMITS
 from planner.measure_sources.contracts import FailureCode, RunResult, RuntimeBudget
+from planner.measure_sources.guidance import runtime_guide
 from planner.measure_sources.runtime import Runtime
 
 
@@ -165,7 +166,24 @@ def test_dataset_helper_exposes_captured_declarations_and_keeps_scalar_helpers()
         (DatasetField("events", "Events", "events", DatasetFieldKind.count),),
         "2026-10-27",
     )
-    script = """
+    signatures = {name: helper["signature"] for name, helper in runtime_guide()["helpers"].items()}
+    script = (
+        f"expected_signatures = {signatures!r}\n"
+        + """
+import ast, inspect
+for name, documented in expected_signatures.items():
+    actual = inspect.signature(globals()[name])
+    actual = actual.replace(
+        parameters=[
+            p.replace(annotation=inspect.Parameter.empty) for p in actual.parameters.values()
+        ],
+        return_annotation=inspect.Signature.empty,
+    )
+    documented_definition = ast.parse('def ' + documented + ': pass')
+    documented_definition.body[0].returns = None
+    assert ast.dump(ast.parse('def ' + name + str(actual) + ': pass')) == ast.dump(
+        documented_definition
+    )
 output = context['dataset_outputs'][0]
 assert output['definition_revision'] == 3 and output['dimensions'][0]['name'] == 'region'
 previous = latest('m')
@@ -181,6 +199,7 @@ record_dataset(output['dataset_id'], '2026-10-20',
                query_end_at=context['frozen_at'], query_start_at=context['frozen_at'] - 3600,
                labels={'region': {'de': 'Germany'}}, limitation='Provider sample')
 """
+    )
     previous = Observation(
         "m",
         "2026-10-26",

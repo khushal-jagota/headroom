@@ -17,9 +17,11 @@ from pathlib import Path
 from typing import Any, Never
 
 import pytest
+from click.testing import CliRunner
 from fastapi.testclient import TestClient
 from tests.support.model_catalogue import seed_test_model_catalogue
 
+from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
@@ -155,17 +157,24 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
     source_client: tuple[TestClient, Provider, Path],
 ) -> None:
     client, provider, database = source_client
+    guide_result = CliRunner().invoke(main, ["measure-source", "runtime", "--json"])
+    assert guide_result.exit_code == 0, guide_result.output
+    scalar_example = json.loads(guide_result.output)["examples"]["scalar_request"]
 
     def request(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         response = client.request(method, path, json=body)
         assert response.is_success, (path, response.status_code, response.text)
         return dict(response.json())
 
-    def wait_run(source_id: str, run_id: str | None = None) -> dict[str, Any]:
+    def wait_run(
+        source_id: str, run_id: str | None = None, *, mode: str | None = None
+    ) -> dict[str, Any]:
         deadline = time.monotonic() + 10
         while True:
             if run_id is None:
                 rows = request("GET", f"/api/measure-sources/{source_id}/runs")["runs"]
+                if mode is not None:
+                    rows = [row for row in rows if row["mode"] == mode]
                 if rows:
                     run_id = rows[0]["id"]
             if run_id is not None:
@@ -248,12 +257,18 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
             else ""
         )
         field = "['results'][0][0]" if second else "['value']"
-        script = (
+        scalar_script = (
             f"response=request({provider.origin + route!r},"
             f"credential_ref='provider-production'{extra})\n"
             "response.raise_for_status()\noutput=context['required_outputs'][0]\n"
             f"record(output['measure_id'],output['required_date'],response.json(){field})"
-            "\nfor dataset in context['dataset_outputs']:\n"
+            if second
+            else scalar_example.replace(
+                "https://api.example.com/value", provider.origin + route
+            ).replace("example-service", "provider-production")
+        )
+        script = (
+            scalar_script + "\nfor dataset in context['dataset_outputs']:\n"
             " record_dataset(dataset['dataset_id'],dataset['required_date'],"
             "[{'dimensions':{'region':'de','device':'web'},'values':{'events':response.json()['value']}}],"
             "query_end_at=context['frozen_at'],labels={'region':{'de':'Germany'}})"
@@ -308,6 +323,40 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
         )
 
     source, measure_id = configure()
+    # Exercise the published scalar example as a test before collection, using the
+    # existing runtime/provider host. Only the URL and reusable credential name vary.
+    started = time.monotonic()
+    test_request = CliRunner().invoke(main, ["measure-source", "schema", "run", "--json"])
+    assert test_request.exit_code == 0, test_request.output
+    test_body = json.loads(test_request.output)["examples"]["test_run"]
+    test_body["expected_script_revision"] = source["active_script"]["revision"]
+    tested = request("POST", f"/api/measure-sources/{source['id']}/runs", test_body)
+    assert wait_run(source["id"], tested["id"])["status"] == "succeeded"
+    detail = request("GET", f"/api/measure-source-runs/{tested['id']}")
+    assert detail["test_candidates"][0]["value"] == 42
+    assert (
+        request(
+            "POST",
+            "/api/measures/read",
+            {"measure_ids": [measure_id], "first_date": "2026-10-27", "last_date": "2026-10-27"},
+        )["values"][0]["value"]
+        is None
+    )
+    print(f"Published runtime example test execution: {time.monotonic() - started:.3f}s")
+    for path, body in (
+        (
+            f"/api/measure-sources/{source['id']}/script",
+            {"expected_revision": source["source_revision"] - 1, "text": scalar_example},
+        ),
+        (
+            f"/api/measure-sources/{source['id']}/runs",
+            {**test_body, "expected_script_revision": source["active_script"]["revision"] - 1},
+        ),
+    ):
+        method = "PUT" if path.endswith("script") else "POST"
+        stale = client.request(method, path, json=body)
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["error"]["code"] == "stale_claim"
     source = request(
         "PUT",
         f"/api/measure-sources/{source['id']}/schedule",
@@ -317,7 +366,7 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
             "local_time": "12:00",
         },
     )
-    scheduled = wait_run(source["id"])
+    scheduled = wait_run(source["id"], mode="collection")
     assert scheduled["status"] == "succeeded" and scheduled["trigger"] == "scheduled"
     assert scheduled["schedule_date"] == "2026-10-27" and scheduled["schedule_time"] == "12:00"
     assert value(measure_id) == 42
@@ -357,7 +406,7 @@ def test_scheduled_source_api_credential_recovery_and_second_source(
     assert source["scope"]["account"] != second["scope"]["account"]
     assert "scope" not in credential
     assert collect(second)["status"] == "succeeded" and value(second_measure) == 25
-    assert provider.accepted == 3 and provider.refused == 1 and provider.post_queries == 1
+    assert provider.accepted == 4 and provider.refused == 1 and provider.post_queries == 1
     assert len(request("GET", "/api/measure-sources")["sources"]) == 2
     with closing(connect(str(database))) as conn:
         assert conn.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == 0
