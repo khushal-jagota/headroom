@@ -96,9 +96,11 @@ PY
 ```
 
 Check that the resolved commit equals the reviewed full SHA.
-Record the candidate constants: wire protocol 9 and journal format 2.
-Both Mac and VPS peers must match protocol 9 before work. Coordinate the peer
-transition through the Manager and installation Worker before any application.
+Record the constants printed from the exact candidate source; they govern compatibility.
+The current candidate uses wire protocol 11 and journal format 2.
+Both Mac and VPS peers must match the candidate's wire protocol before work, and
+the existing journal must pass the candidate's spool preflight below. Coordinate
+the peer transition through the Manager and installation Worker before any application.
 
 Protocol 9 retains exact canonical database skills before each new native Worker starts.
 It repairs canonical entries in the normal account's Codex skills home and preserves unrelated account skills and credentials.

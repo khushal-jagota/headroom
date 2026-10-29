@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,6 +23,35 @@ def tree(root: Path) -> dict[str, bytes | None]:
         path.relative_to(root).as_posix(): None if path.is_dir() else path.read_bytes()
         for path in root.rglob("*")
     }
+
+
+def cold_inspect(root: Path, *, compatible: bool) -> None:
+    program = """
+import sys
+from pathlib import Path
+from planner.executor.configuration import SPOOL_FORMAT_VERSION
+from planner.executor.preflight import check_spool_compatibility
+
+try:
+    check_spool_compatibility(Path(sys.argv[1]), SPOOL_FORMAT_VERSION)
+except ValueError as error:
+    print(error, file=sys.stderr)
+    sys.exit(2)
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", program, str(root)],
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("PLAN_") and key != "PYTHONPATH"
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == (0 if compatible else 2), result.stderr
+    if not compatible:
+        assert "incompatible spool" in result.stderr
 
 
 def test_absent_and_empty_root_stay_absent_and_empty(tmp_path: Path) -> None:
@@ -45,6 +77,8 @@ def test_compatible_real_journal_inspection_takes_no_lock_or_write(tmp_path: Pat
     )
     before = tree(root)
     # The writer still owns its exclusive lock. Inspection cannot need that lock.
+    cold_inspect(root, compatible=True)
+    assert tree(root) == before
     check_spool_compatibility(root, SPOOL_FORMAT_VERSION)
     assert tree(root) == before
     spool.close()
@@ -92,6 +126,9 @@ def test_refused_existing_state_is_unchanged_by_preflight_and_constructor(
     else:
         (root / "spool" / "entries" / envelope.submission_id / "unknown").write_text("unread")
     before = tree(root)
+    if condition == "incompatible":
+        cold_inspect(root, compatible=False)
+        assert tree(root) == before
     with pytest.raises(ValueError):
         check_spool_compatibility(root, SPOOL_FORMAT_VERSION)
     assert tree(root) == before
@@ -114,7 +151,6 @@ def test_inspection_oserror_propagates_and_preserves_existing_tree(
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
 ) -> None:
-    import os
     from collections.abc import Iterator
 
     root = tmp_path / "executor"
@@ -156,8 +192,6 @@ def test_permission_failure_is_never_absence_with_suppressing_path_probes(
     monkeypatch: pytest.MonkeyPatch,
     target: str,
 ) -> None:
-    import os
-
     root = tmp_path / "executor"
     spool = FilesystemSpool(root / "spool")
     row = spool.mint_envelope(
