@@ -770,6 +770,79 @@ def test_goal_demand_limit_includes_expanded_measure_inputs(
         )
 
 
+def test_goal_demand_budget_includes_legacy_future_values_and_counts_shared_pairs_once(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Future assembled values must not bypass the chart budget through the compatibility pass."""
+    from planner.goals import configuration
+
+    actual = manual_measure(tmp_db)
+    derived = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="prior",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="Europe/Berlin",
+            period=None,
+            source_id=None,
+            formula={"op": "reference", "measure_id": actual.id, "day_offset": -10},
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    goal = create(
+        tmp_db,
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": derived.id,
+            "expectation": {"op": "constant", "value": 100},
+        },
+    )
+    now = datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin"))
+    for maximum in (1, 3):
+        monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", maximum)
+        with pytest.raises(PlannerError, match=rf"{maximum}.*narrower"):
+            views.readings_json(
+                tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29"
+            )
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 4)
+    bounded = views.readings_json(
+        tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29"
+    )
+    assert len(bounded["values"]) == 2
+
+    document = page()
+    document["blocks"].append(
+        {
+            "type": "chart",
+            "id": "shared",
+            "kind": "number",
+            "measure_id": actual.id,
+            "expectation": {"op": "reference", "measure_id": actual.id, "day_offset": -10},
+        }
+    )
+    actions.update_goal(
+        tmp_db,
+        goal.id,
+        {"expected_revision": 1, "page": document},
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 5)
+    with pytest.raises(PlannerError, match="5.*narrower"):
+        views.readings_json(tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29")
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 6)
+    shared = views.readings_json(
+        tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29"
+    )
+    assert len(shared["values"]) == 4 and len(shared["charts"]) == 2
+
+
 def test_future_actual_requires_retained_data_and_expectation_removal_restores_target(
     tmp_db: Connection,
 ) -> None:
@@ -789,14 +862,19 @@ def test_future_actual_requires_retained_data_and_expectation_removal_restores_t
         tmp_db,
         CreateMeasureBody(
             project_id="project_vylo",
-            name="constant",
+            name="dated phase",
             unit="items",
             origin=MeasureOrigin.assembled,
             kind=MeasureKind.reading,
             timezone="Europe/Berlin",
             period=None,
             source_id=None,
-            formula={"op": "constant", "value": 10},
+            formula={
+                "op": "if_before",
+                "date": "2026-10-28",
+                "before": {"op": "constant", "value": 10},
+                "otherwise": {"op": "constant", "value": 20},
+            },
         ),
         principal=OWNER_PRINCIPAL,
         now=NOW,
@@ -808,7 +886,7 @@ def test_future_actual_requires_retained_data_and_expectation_removal_restores_t
             "id": "derived",
             "kind": "number",
             "measure_id": derived.id,
-            "expectation": {"op": "constant", "value": 10},
+            "expectation": {"op": "reference", "measure_id": derived.id, "day_offset": 0},
         }
     )
     goal = create(
@@ -835,7 +913,8 @@ def test_future_actual_requires_retained_data_and_expectation_removal_restores_t
     assert reading["charts"][chart_id]["points"][1]["meets_expectation"] is False
     assert reading["charts"]["derived"]["points"][0]["actual"]["value"] == 10
     assert reading["charts"]["derived"]["points"][1]["actual"]["value"] is None
-    assert reading["charts"]["derived"]["points"][1]["expected"]["value"] == 10
+    assert reading["charts"]["derived"]["points"][1]["expected"]["value"] == 20
+    assert reading["charts"]["derived"]["points"][1]["break_before"] is True
     primary = deepcopy(goal.primary_chart)
     del primary["expectation"]
     actions.update_goal(

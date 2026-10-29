@@ -42,7 +42,7 @@ from planner.measures.contracts import (
     ReadMeasuresBody,
 )
 from planner.measures.data import read_definitions, read_demanded, read_measure, transaction
-from planner.measures.logic.dates import date_range, invalid
+from planner.measures.logic.dates import calendar_date, date_range, invalid
 from planner.measures.logic.evaluation import (
     Evaluation,
     demanded_pairs,
@@ -159,6 +159,7 @@ def _formula_projections(
     now: datetime,
     first_date: str | None,
     last_date: str | None,
+    retained_ranges: list[tuple[str, str, str]],
 ) -> tuple[dict[str, ScalarChartProjection], dict[str, JsonDict]]:
     formula_charts = [
         chart for chart in charts(goal.primary_chart, goal.page) if "expectation" in chart
@@ -196,8 +197,25 @@ def _formula_projections(
             missing_ok=True,
         )
     )
+    # The compatible values pass uses the same response budget, including future
+    # assembled reads whose generated values are absent from chart actuals.
+    definitions.update(read_definitions(conn, tuple(row[0] for row in retained_ranges)))
     instant = int(now.timestamp())
     roots: set[MeasureDate] = set()
+    for identifier, first, last in retained_ranges:
+        length = (calendar_date(last) - calendar_date(first)).days + 1
+        if len(roots) + length > limits.MAX_DEMANDED_MEASURE_DATES:
+            raise invalid(
+                f"goal projection exceeds {limits.MAX_DEMANDED_MEASURE_DATES} demanded "
+                "measure/date pairs; request a narrower date range"
+            )
+        for day in date_range(first, last):
+            roots.add(MeasureDate(identifier, day))
+            if len(roots) > limits.MAX_DEMANDED_MEASURE_DATES:
+                raise invalid(
+                    f"goal projection exceeds {limits.MAX_DEMANDED_MEASURE_DATES} demanded "
+                    "measure/date pairs; request a narrower date range"
+                )
     days_by_chart = {}
     for chart in formula_charts:
         first, last, today = bounds[chart["id"]]
@@ -278,7 +296,7 @@ def _formula_projections(
                     actual,
                     expected,
                     chart.get("direction", "atleast"),
-                    phase_changed(chart["expectation"], day),
+                    phase_changed(chart["expectation"], day, definitions),
                 )
             )
         projections[chart["id"]] = scalar_projection(first, last, today, points)
@@ -317,9 +335,7 @@ def readings_json(
         today, midnight = calendar_projection(now)
         identifiers = measure_ids(goal.primary_chart, goal.page)
         _, midnight = reading_calendar(conn, goal, now)
-        projections, sources = _formula_projections(conn, goal, now, first_date, last_date)
-        values: list[JsonDict] = []
-        primary_observations: list[tuple[str, float | None]] = []
+        retained_ranges = []
         for identifier in identifiers:
             definition = read_measure(conn, identifier)
             last = last_date or now.astimezone(ZoneInfo(definition.timezone)).date().isoformat()
@@ -328,6 +344,13 @@ def readings_json(
             else:
                 earliest = _earliest_date(conn, identifier)
                 first = min(earliest, last) if earliest else last
+            retained_ranges.append((identifier, first, last))
+        projections, sources = _formula_projections(
+            conn, goal, now, first_date, last_date, retained_ranges
+        )
+        values: list[JsonDict] = []
+        primary_observations: list[tuple[str, float | None]] = []
+        for identifier, first, last in retained_ranges:
             reading = read_values(
                 conn,
                 ReadMeasuresBody(
