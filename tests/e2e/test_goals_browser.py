@@ -448,7 +448,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
-    page.get_by_role("link", name="All goals", exact=True).click(timeout=WAIT_MS)
+    page.get_by_role("region", name="Active goals", exact=True).get_by_role(
+        "link", name="All goals", exact=True
+    ).click(timeout=WAIT_MS)
     row = page.get_by_role("row").filter(
         has=page.get_by_role("link", name="Publish a field guide", exact=True)
     )
