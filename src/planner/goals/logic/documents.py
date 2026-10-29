@@ -21,9 +21,15 @@ from typing import (
 )
 
 from planner.goals.contracts import ChartBlock, PageDocument
+from planner.measures.contracts import FormulaExpression
+from planner.measures.logic.formulas import dependencies, parse_formula
 
 
 def validate_shape(value: Any, schema: Any, path: str = "$") -> None:
+    # The measurement parser owns recursive expressions and JSON enum conversion.
+    if schema is FormulaExpression:
+        parse_formula(value)
+        return
     if isinstance(schema, TypeAliasType):
         return validate_shape(value, schema.__value__, path)
     origin, args = get_origin(schema), get_args(schema)
@@ -146,6 +152,19 @@ def prepare_document(value: Any, new_identity: Callable[[], str]) -> PageDocumen
 
 def validate_chart(chart: ChartBlock) -> None:
     validate_shape(chart, ChartBlock)
+    if "expectation" in chart:
+        if (
+            chart["kind"] not in ("line", "number")
+            or not chart.get("measure_id", "").strip()
+            or chart.get("stacked", False)
+            or "aggregate" in chart
+            or "manual" in chart
+        ):
+            raise ValueError(
+                "expectations require a measure-bound, nonstacked line or number readout "
+                "without aggregates or manual controls"
+            )
+        chart["expectation"] = parse_formula(chart["expectation"])
     if "manual" in chart:
         model = chart["manual"]["model"]
         kind = {"daily_quota": "bar", "cumulative_target": "gauge", "individual_readings": "line"}[
@@ -195,7 +214,21 @@ def validate_chart(chart: ChartBlock) -> None:
 
 
 def measure_ids(primary: ChartBlock | None, page: PageDocument) -> list[str]:
-    charts = ([primary] if primary else []) + [
-        item for item in blocks(page) if item["type"] == "chart"
+    return sorted({item["measure_id"] for item in charts(primary, page) if "measure_id" in item})
+
+
+def charts(primary: ChartBlock | None, page: PageDocument) -> list[ChartBlock]:
+    return ([primary] if primary else []) + [
+        cast(ChartBlock, item) for item in blocks(page) if item["type"] == "chart"
     ]
-    return sorted({str(item["measure_id"]) for item in charts if "measure_id" in item})
+
+
+def expectation_measure_ids(primary: ChartBlock | None, page: PageDocument) -> list[str]:
+    return sorted(
+        {
+            identifier
+            for chart in charts(primary, page)
+            if "expectation" in chart
+            for identifier in dependencies(chart["expectation"])
+        }
+    )

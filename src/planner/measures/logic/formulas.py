@@ -8,13 +8,16 @@ from planner.measures.contracts import (
     BinaryExpression,
     ConstantExpression,
     CountPeriod,
+    ElapsedDaysExpression,
     FormulaExpression,
+    IfBeforeExpression,
     Measure,
     MeasureOrigin,
+    ReferenceAtExpression,
     ReferenceExpression,
     SumDailyExpression,
 )
-from planner.measures.logic.dates import invalid, timezone
+from planner.measures.logic.dates import calendar_date, invalid, timezone
 
 
 def number(value: object) -> float:
@@ -36,6 +39,24 @@ def parse_formula(raw: object) -> FormulaExpression:
         op = value.get("op")
         if op == "constant" and set(value) == {"op", "value"}:
             return ConstantExpression(op="constant", value=number(value["value"]))
+        if op == "elapsed_days" and set(value) == {"op", "start"}:
+            calendar_date(value["start"])
+            return ElapsedDaysExpression(op="elapsed_days", start=value["start"])
+        if op == "reference_at" and set(value) == {"op", "measure_id", "date"}:
+            calendar_date(value["date"])
+            if not isinstance(value["measure_id"], str) or not value["measure_id"]:
+                raise invalid("invalid input measure")
+            return ReferenceAtExpression(
+                op="reference_at", measure_id=value["measure_id"], date=value["date"]
+            )
+        if op == "if_before" and set(value) == {"op", "date", "before", "otherwise"}:
+            calendar_date(value["date"])
+            return IfBeforeExpression(
+                op="if_before",
+                date=value["date"],
+                before=parse(value["before"]),
+                otherwise=parse(value["otherwise"]),
+            )
         if op == "reference" and set(value) == {"op", "measure_id", "day_offset"}:
             offset = value["day_offset"]
             if type(offset) is not int:
@@ -53,7 +74,9 @@ def parse_formula(raw: object) -> FormulaExpression:
             if not isinstance(value["measure_id"], str) or not value["measure_id"]:
                 raise invalid("invalid input measure")
             return SumDailyExpression(op="sum_daily", measure_id=value["measure_id"], period=period)
-        if op in ("add", "subtract", "multiply", "divide") and set(value) == {
+        if op in ("add", "subtract", "multiply", "divide", "power", "min", "max") and set(
+            value
+        ) == {
             "op",
             "left",
             "right",
@@ -72,11 +95,12 @@ def dependencies(formula: FormulaExpression) -> set[str]:
     pending = [formula]
     while pending:
         node = pending.pop()
-        if node["op"] in ("reference", "sum_daily"):
+        if node["op"] in ("reference", "reference_at", "sum_daily"):
             found.add(node["measure_id"])
-        elif node["op"] != "constant":
-            binary = cast(BinaryExpression, node)
-            pending.extend((binary["left"], binary["right"]))
+        elif node["op"] == "if_before":
+            pending.extend((node["before"], node["otherwise"]))
+        elif node["op"] in ("add", "subtract", "multiply", "divide", "power", "min", "max"):
+            pending.extend((node["left"], node["right"]))
     return found
 
 

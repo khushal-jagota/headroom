@@ -14,9 +14,18 @@ from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.goals import data
 from planner.goals.contracts import ChartBlock, Goal
-from planner.goals.logic.documents import blocks, measure_ids, prepare_document, validate_chart
+from planner.goals.logic.completion import prepare_completion
+from planner.goals.logic.documents import (
+    blocks,
+    charts,
+    expectation_measure_ids,
+    measure_ids,
+    prepare_document,
+    validate_chart,
+)
 from planner.measures.contracts import MeasureOrigin
-from planner.measures.data import read_measure, transaction
+from planner.measures.data import read_definitions, read_measure, transaction
+from planner.measures.logic.formulas import validate_graph
 from planner.worker_settings.service import read_chief_settings
 
 _EDITABLE = {
@@ -26,6 +35,7 @@ _EDITABLE = {
     "kind",
     "active",
     "completed",
+    "primary_checklist_block_id",
     "deadline",
     "primary_chart",
     "page",
@@ -35,7 +45,9 @@ _EDITABLE = {
 def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> Goal:
     if set(body) - _EDITABLE - {"expected_revision"}:
         raise ValueError("unknown goal field")
-    changes = {key: value for key, value in body.items() if key in _EDITABLE}
+    changes = {key: value for key, value in body.items() if key in _EDITABLE and key != "completed"}
+    if "completed" in body and type(body["completed"]) is not bool:
+        raise ValueError("active and completed must be booleans")
     if "page" in changes:
         changes["page"] = prepare_document(changes["page"], lambda: new_id("block"))
     if changes.get("primary_chart") is not None:
@@ -57,8 +69,14 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
         raise ValueError("why must be text")
     if result.kind not in ("binary", "quantitative"):
         raise ValueError("unknown goal kind")
-    if type(result.active) is not bool or type(result.completed) is not bool:
+    if type(result.active) is not bool:
         raise ValueError("active and completed must be booleans")
+    result = prepare_completion(
+        current,
+        result,
+        selection_explicit="primary_checklist_block_id" in body,
+        completed=body.get("completed"),
+    )
     if result.deadline is not None:
         if (
             not isinstance(result.deadline, str)
@@ -73,10 +91,14 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
         raise ValueError("primary chart ID must be unique")
     for identifier in measure_ids(result.primary_chart, result.page):
         read_measure(conn, identifier)
-    charts = ([result.primary_chart] if result.primary_chart else []) + [
-        cast(ChartBlock, item) for item in blocks(result.page) if item["type"] == "chart"
-    ]
-    for chart in charts:
+    expectation_inputs = tuple(expectation_measure_ids(result.primary_chart, result.page))
+    graph_roots = tuple(
+        set(expectation_inputs) | set(measure_ids(result.primary_chart, result.page))
+    )
+    definitions = read_definitions(conn, graph_roots)
+    for identifier in graph_roots:
+        validate_graph(identifier, definitions)
+    for chart in charts(result.primary_chart, result.page):
         if (
             "manual" in chart
             and read_measure(conn, chart["measure_id"]).origin is not MeasureOrigin.manual
@@ -87,6 +109,7 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
 
 def _values(goal: Goal) -> dict[str, Any]:
     values = asdict(goal)
+    values["completed"] = values.pop("binary_checked")
     values["page"] = json.dumps(goal.page, ensure_ascii=False, separators=(",", ":"))
     values["primary_chart"] = (
         json.dumps(goal.primary_chart, separators=(",", ":")) if goal.primary_chart else None
@@ -108,7 +131,8 @@ def create_goal(
             why="",
             kind="binary",
             active=True,
-            completed=False,
+            binary_checked=False,
+            primary_checklist_block_id=None,
             deadline=None,
             primary_chart=None,
             page={

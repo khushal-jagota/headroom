@@ -29,10 +29,11 @@ def generate() -> str:
 
     def render(value: object) -> str:
         if isinstance(value, TypeAliasType):
-            declarations.setdefault(value.__name__, "")
-            declarations[value.__name__] = (
-                f"export type {value.__name__} = {render(value.__value__)};"
-            )
+            if value.__name__ not in declarations:
+                declarations[value.__name__] = ""
+                declarations[value.__name__] = (
+                    f"export type {value.__name__} = {render(value.__value__)};"
+                )
             return value.__name__
         origin = get_origin(value)
         args = get_args(value)
@@ -42,6 +43,8 @@ def generate() -> str:
             return "[" + ", ".join(render(part) for part in args) + "]"
         if origin in (list, tuple):
             return f"Array<{render(args[0])}>"
+        if origin is dict:
+            return f"Record<{render(args[0])}, {render(args[1])}>"
         if origin in (types.UnionType, Union):
             return " | ".join(render(part) for part in args)
         if origin is Literal:
