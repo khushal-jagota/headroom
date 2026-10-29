@@ -12,12 +12,14 @@ from fastapi.testclient import TestClient
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.files import api
 from planner.files.contracts import ManagerFile
 from planner.files.logic import reuse
-from planner.files.logic.paths import resolve_manager_file
+from planner.files.logic.paths import resolve_goal_file, resolve_manager_file
+from planner.tickets.data import create_ticket
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -89,28 +91,30 @@ def test_manager_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
     assert missing.status_code == 404
 
 
-def test_manager_file_resolution_rejects_root_entity_and_file_symlinks(
-    tmp_path: Path,
+@pytest.mark.parametrize("kind", ["manager", "goal"])
+def test_managed_file_resolution_rejects_root_entity_and_file_symlinks(
+    tmp_path: Path, kind: str,
 ) -> None:
     db_path = tmp_path / "data" / "planning.db"
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "brief.md").write_text("outside", encoding="utf-8")
-    root = _manager_root(db_path)
+    root = db_path.parent / "files" / "goals" if kind == "goal" else _manager_root(db_path)
+    resolve = resolve_goal_file if kind == "goal" else resolve_manager_file
     root.parent.mkdir(parents=True)
     root.symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError):
-        resolve_manager_file(db_path, "si_files", "brief.md")
+        resolve(db_path, "si_files", "brief.md")
     root.unlink()
     root.mkdir()
     (root / "si_files").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError):
-        resolve_manager_file(db_path, "si_files", "brief.md")
+        resolve(db_path, "si_files", "brief.md")
     (root / "si_files").unlink()
     (root / "si_files").mkdir()
     (root / "si_files" / "brief.md").symlink_to(outside / "brief.md")
     with pytest.raises(ValueError):
-        resolve_manager_file(db_path, "si_files", "brief.md")
+        resolve(db_path, "si_files", "brief.md")
 
 
 
@@ -317,3 +321,113 @@ def test_html_navigation_rejects_untrusted_root_descriptors(tmp_path: Path) -> N
             response = client.get(target, headers={"X-Panels-Artifact-Root": root})
             assert response.status_code == 404, root
             assert response.json() == absent.json(), root
+
+
+def _create_goal(client: TestClient) -> str:
+    result = client.post(
+        "/api/goals", json={"title": "Files", "project_id": "project_other"}
+    )
+    assert result.status_code == 200, result.text
+    return str(result.json()["id"])
+
+
+def test_goal_file_and_catalog_authority_precedes_access_and_conditional_responses(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    with TestClient(app) as client:
+        goal_id = _create_goal(client)
+        foreign_id = _create_goal(client)
+        url = f"/files/goals/{goal_id}/artifacts/brief.md"
+        catalog = f"/api/artifact-catalog/goal/{goal_id}"
+        own = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id}
+        allowed = [{}, {"X-Plan-Actor": "chief"}, own]
+        for headers in allowed:
+            assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
+            read = client.get(url, headers=headers)
+            assert read.status_code == 200 and read.content == b"private"
+            assert client.get(catalog, headers=headers).status_code == 200
+            unchanged = client.get(url, headers={**headers, "If-None-Match": read.headers["etag"]})
+            assert unchanged.status_code == 304
+            assert unchanged.headers["cache-control"] == "private, no-cache"
+        manager = client.post(
+            "/api/managers", json={"title": "Another owner", "project_id": "project_other"}
+        )
+        assert manager.status_code == 200, manager.text
+        with connect(str(db_path)) as conn:
+            ticket = create_ticket(
+                conn, title="Another worker", worker_type="coding", principal=OWNER_PRINCIPAL,
+                now=1, title_max_chars=200,
+            )
+        refused = [
+            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": foreign_id},
+            {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.json()["id"]},
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id},
+        ]
+        for headers in refused:
+            conditional = client.get(
+                url, headers={**headers, "If-None-Match": read.headers["etag"]}
+            )
+            assert conditional.status_code == 400
+            assert conditional.json()["error"]["code"] == "agent_forbidden"
+            assert conditional.json()["error"]["detail"]["target_id"] == goal_id
+            assert client.get(catalog, headers=headers).status_code == 400
+            assert client.put(url, json={"content": "stolen"}, headers=headers).status_code == 400
+            assert client.delete(url, headers=headers).status_code == 400
+            assert client.get(url).content == b"private"
+        # Existing bytes under a missing goal never grant access, even to the owner.
+        orphan = db_path.parent / "files" / "goals" / "goal_missing" / "artifacts" / "brief.md"
+        orphan.parent.mkdir(parents=True)
+        orphan.write_text("orphan")
+        missing = "/files/goals/goal_missing/artifacts/brief.md"
+        assert client.get(missing).status_code == 404
+        assert client.get("/api/artifact-catalog/goal/goal_missing").status_code == 404
+        assert client.put(missing, json={"content": "changed"}).status_code == 404
+        assert client.delete(missing).status_code == 404
+        assert orphan.read_text() == "orphan"
+        for headers in allowed:
+            assert client.delete(url, headers=headers).status_code == 200
+            assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
+
+
+def test_goal_files_reject_traversal_and_symlink_escapes_and_confine_html_navigation(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.html").write_text("secret")
+    with TestClient(app) as client:
+        goal_id = _create_goal(client)
+        root = db_path.parent / "files" / "goals" / goal_id
+        site = root / "artifacts" / "site"
+        site.mkdir(parents=True)
+        (site / "index.html").write_text("<p>root</p>")
+        (site / "next.html").write_text("<p>next</p>")
+        (site / "escape.html").symlink_to(outside / "secret.html")
+        (root / "outside.html").write_text("outside site")
+        (root / "escape").symlink_to(outside, target_is_directory=True)
+        prefix = f"/files/goals/{goal_id}/"
+        for path in ("%2e%2e/secret.html", "nested%2fsecret.html", "nested%5csecret.html"):
+            assert client.get(prefix + path).status_code == 404
+            assert client.put(prefix + path, json={"content": "changed"}).status_code == 404
+            assert client.delete(prefix + path).status_code == 404
+        for path in ("escape/secret.html", "artifacts/site/escape.html"):
+            assert client.get(prefix + path).status_code == 404
+        escaped_write = client.put(prefix + "escape/new/secret.html", json={"content": "changed"})
+        assert escaped_write.status_code == 400
+        assert not (outside / "new").exists()
+        assert client.delete(prefix + "escape/secret.html").status_code == 400
+        assert (outside / "secret.html").read_text() == "secret"
+        headers = {"X-Panels-Artifact-Root": prefix + "artifacts/site/index.html"}
+        ordinary = client.get(prefix + "artifacts/site/next.html")
+        confined = client.get(prefix + "artifacts/site/next.html", headers=headers)
+        assert confined.status_code == 200 and confined.content == ordinary.content
+        for key in ("etag", "cache-control", "content-disposition", "x-content-type-options"):
+            assert confined.headers[key] == ordinary.headers[key]
+        for path in ("outside.html", "artifacts/site/escape.html"):
+            assert client.get(prefix + path, headers=headers).status_code == 404
+        other = _create_goal(client)
+        other_url = f"/files/goals/{other}/artifacts/site/next.html"
+        assert client.put(other_url, json={"content": "another goal"}).status_code == 200
+        assert client.get(other_url, headers=headers).status_code == 404

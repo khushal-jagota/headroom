@@ -17,6 +17,7 @@ from planner.files.catalog import links
 from planner.files.catalog.api import _cache
 from planner.files.catalog.api import _read as artifact_page
 from planner.files.catalog.config import PAGE_MAX_BYTES
+from planner.goals.actions import create_goal
 from planner.tickets.data import create_ticket
 
 
@@ -195,3 +196,29 @@ def test_history_pages_keep_selected_position_and_locale_typeahead_without_full_
         ).fetchone()[0]
         == 135
     )
+
+
+def test_goal_catalog_discovers_direct_files_without_a_goal_link_index(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    goal = create_goal(
+        tmp_db, {"title": "Context", "project_id": "project_vylo"},
+        principal=OWNER_PRINCIPAL, now=1,
+    )
+    req = _request(tmp_db)
+    assert artifact_page(req, "goal", goal.id, "", 0, 60)["entries"] == []
+    root = Path(req.app.state.config.db_path).parent / "files" / "goals" / goal.id
+    root.mkdir(parents=True)
+    (root / "direct.md").write_text("outside the API")
+    _cache.clear()
+    page = artifact_page(req, "goal", goal.id, "", 0, 60)
+    assert page["total"] == 1
+    href = f"/files/goals/{goal.id}/direct.md"
+    assert page["entries"][0]["href"] == href
+    assert links.managed_href(href, "http://testserver") == href
+    assert links.managed_href(
+        f"#/preview?source=goal&goal={goal.id}&path=direct.md", "http://testserver"
+    ) == href
+    assert links.managed_href(
+        f"/files/goals/{goal.id}/../outside.md", "http://testserver"
+    ) is None

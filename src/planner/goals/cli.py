@@ -1,10 +1,12 @@
 """Goal agents and owners use the same canonical writer."""
 
+import sys
 from urllib.parse import quote
 
 import click
 
 from planner.cli import http
+from planner.cli.artifact_io import read_artifact_source
 from planner.cli.measure_io import emit, json_option, stdin_object
 
 
@@ -73,3 +75,79 @@ def read_goal(goal_id: str, first_date: str | None, last_date: str | None, as_js
         ),
         as_json,
     )
+
+
+@goal.group("artifact")
+def artifact() -> None:
+    """Read and write supporting files, with paths relative to artifacts/."""
+
+
+@artifact.command("list")
+@click.argument("goal_id")
+@json_option
+def list_artifacts(goal_id: str, as_json: bool) -> None:
+    """List openable paths. Index folders hide their supporting files."""
+    directories = [""]
+    paths: set[str] = set()
+    prefix = "artifacts/"
+    while directories:
+        directory = directories.pop()
+        offset = 0
+        while True:
+            page = http.send(
+                "GET",
+                f"/api/artifact-catalog/goal/{quote(goal_id, safe='')}",
+                params={"directory": directory, "offset": offset},
+                as_json=as_json,
+            )
+            entries = page["entries"]
+            for entry in entries:
+                if entry["href"] and entry["path"].startswith(prefix):
+                    paths.add(entry["path"][len(prefix) :])
+                child = entry["directory"]
+                if child and (child == "artifacts" or child.startswith(prefix)):
+                    directories.append(child)
+            offset += len(entries)
+            if offset >= page["total"] or not entries:
+                break
+    artifacts = sorted(paths)
+    http.emit({"goal_id": goal_id, "artifacts": artifacts}, as_json, "\n".join(artifacts))
+
+
+def _artifact_url(goal_id: str, artifact_path: str) -> str:
+    return f"/files/goals/{quote(goal_id, safe='')}/artifacts/{quote(artifact_path, safe='/')}"
+
+
+@artifact.command("read")
+@click.argument("goal_id")
+@click.argument("artifact_path")
+@json_option
+def read_artifact(goal_id: str, artifact_path: str, as_json: bool) -> None:
+    content = http.send_text("GET", _artifact_url(goal_id, artifact_path), as_json=as_json)
+    if as_json:
+        http.emit({"goal_id": goal_id, "path": artifact_path, "content": content}, True, content)
+    sys.stdout.write(content)
+
+
+@artifact.command("write")
+@click.argument("goal_id")
+@click.argument("artifact_path")
+@click.option("--body-file", required=True)
+@json_option
+def write_artifact(goal_id: str, artifact_path: str, body_file: str, as_json: bool) -> None:
+    data = http.send(
+        "PUT",
+        _artifact_url(goal_id, artifact_path),
+        json_body={"content": read_artifact_source(body_file, as_json)},
+        as_json=as_json,
+    )
+    http.emit(data, as_json, data["url"])
+
+
+@artifact.command("delete")
+@click.argument("goal_id")
+@click.argument("artifact_path")
+@json_option
+def delete_artifact(goal_id: str, artifact_path: str, as_json: bool) -> None:
+    data = http.send("DELETE", _artifact_url(goal_id, artifact_path), as_json=as_json)
+    http.emit(data, as_json, f"{artifact_path} deleted")
