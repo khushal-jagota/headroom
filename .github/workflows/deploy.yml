@@ -82,7 +82,7 @@ jobs:
       - name: Bootstrap disposable hosted runner
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap dbus-user-session ffmpeg
+          sudo apt-get install -y bubblewrap dbus-user-session ffmpeg patchelf binutils libtk8.6
           # Hosted Ubuntu's AppArmor policy otherwise denies unprivileged bwrap.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo loginctl enable-linger "$USER"
@@ -310,6 +310,16 @@ jobs:
       - name: Seal immutable executable archive
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py seal
+      - name: Prepare pinned Debian runtime proof root
+        run: |
+          "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_root.py "$PANELS_GATE_DIR/target-root"
+      - name: Execute sealed archive on Debian target
+        run: |
+          "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_proof.py prove \
+            --archive "$PANELS_GATE_DIR/panels-app.tar.gz" \
+            --requested-sha "$PANELS_REQUESTED_SHA" \
+            --target-root "$PANELS_GATE_DIR/target-root" \
+            --evidence "$PANELS_GATE_DIR/target"
       - name: Smoke exact retained archive
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py smoke
@@ -437,6 +447,8 @@ jobs:
           path: |-
             ${{ env.PANELS_GATE_DIR }}/
             !${{ env.PANELS_GATE_DIR }}/panels-app.tar.gz
+            !${{ env.PANELS_GATE_DIR }}/target-root/**
+            !${{ env.PANELS_GATE_DIR }}/target-root-oci/**
           if-no-files-found: error
           retention-days: 30
       - name: Remove rehearsal temporary state

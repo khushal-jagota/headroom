@@ -216,6 +216,8 @@ class UpdateService:
 
 
 def validate_release(release: PublishedUpdate) -> None:
+    if release.manifest.runtime_contract is None:
+        raise UpdateConflict("This publication lacks a runtime contract. Republish the app.")
     if release.schema_floor != SUPPORTED_UPDATE_SCHEMA_FLOOR:
         raise UpdateConflict("This publication requires an unsupported schema floor.")
     expiry = datetime.fromisoformat(release.expires_at.replace("Z", "+00:00"))

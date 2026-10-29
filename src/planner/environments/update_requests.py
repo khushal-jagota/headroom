@@ -10,6 +10,7 @@ from typing import cast
 from planner.core import change_signal
 from planner.environments.app import AppManifest
 from planner.environments.deployment_lifecycle import _atomic_write, _exclusive_lock
+from planner.environments.runtime_contracts import parse_optional_runtime_contract
 from planner.environments.update_contracts import (
     OwnerUpdateRequest,
     PublishedUpdate,
@@ -30,7 +31,12 @@ def parse_release(payload: dict[str, object]) -> PublishedUpdate:
         publication_run_id=int(str(payload["publication_run_id"])),
         artifact_id=int(str(payload["artifact_id"])),
         proof_artifact_id=int(str(payload["proof_artifact_id"])),
-        manifest=AppManifest(**manifest),
+        manifest=AppManifest(
+            app_sha=manifest["app_sha"],
+            source_digest=manifest["source_digest"],
+            artifact_digest=manifest["artifact_digest"],
+            runtime_contract=parse_optional_runtime_contract(manifest.get("runtime_contract")),
+        ),
         archive_sha256=str(payload["archive_sha256"]),
         schema_floor=str(payload["schema_floor"]),
         expires_at=str(payload["expires_at"]),

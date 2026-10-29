@@ -4,6 +4,9 @@ Panels offers a checked, retained application for the owner to install. A merge 
 `main` publishes that release without changing the running workspace.
 The existing deployment runner installs it only after an owner request.
 [Production deployment](deployment.md) describes the archive checks and service operations.
+[Executable archive runtime](archive-runtime.md) defines the supported host and CPU
+boundary. New candidates require its versioned contract and target execution proof.
+Legacy installed applications remain valid baselines, but legacy candidates require republication.
 
 ```text
 retained release → owner chooses now or idle → durable pinned request
