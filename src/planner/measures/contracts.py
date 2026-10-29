@@ -43,9 +43,27 @@ class ReferenceExpression(TypedDict):
 
 
 class BinaryExpression(TypedDict):
-    op: Literal["add", "subtract", "multiply", "divide"]
+    op: Literal["add", "subtract", "multiply", "divide", "power", "min", "max"]
     left: FormulaExpression
     right: FormulaExpression
+
+
+class ElapsedDaysExpression(TypedDict):
+    op: Literal["elapsed_days"]
+    start: str
+
+
+class ReferenceAtExpression(TypedDict):
+    op: Literal["reference_at"]
+    measure_id: str
+    date: str
+
+
+class IfBeforeExpression(TypedDict):
+    op: Literal["if_before"]
+    date: str
+    before: FormulaExpression
+    otherwise: FormulaExpression
 
 
 class SumDailyExpression(TypedDict):
@@ -57,7 +75,13 @@ class SumDailyExpression(TypedDict):
 
 
 type FormulaExpression = (
-    ConstantExpression | ReferenceExpression | BinaryExpression | SumDailyExpression
+    ConstantExpression
+    | ReferenceExpression
+    | BinaryExpression
+    | SumDailyExpression
+    | ElapsedDaysExpression
+    | ReferenceAtExpression
+    | IfBeforeExpression
 )
 
 
@@ -210,6 +234,16 @@ class MeasureValue:
     measure_id: str
     date: str
     definition_revision: int
+    status: MeasureReadStatus
+    value: float | None
+    inputs: tuple[InputObservation, ...]
+    missing_inputs: tuple[MeasureDate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExpressionValue:
+    """An evaluated expression without an observed-measure identity."""
+
     status: MeasureReadStatus
     value: float | None
     inputs: tuple[InputObservation, ...]

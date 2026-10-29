@@ -197,19 +197,30 @@ def read_demanded(
 
 
 def read_definitions(
-    conn: sqlite3.Connection, roots: tuple[str, ...], *, proposed: Measure | None = None
+    conn: sqlite3.Connection,
+    roots: tuple[str, ...],
+    *,
+    proposed: Measure | None = None,
+    missing_ok: bool = False,
 ) -> dict[str, Measure]:
     result: dict[str, Measure] = {}
+    visited: set[str] = set()
     pending = list(roots)
     while pending:
         identifier = pending.pop()
-        if identifier in result:
+        if identifier in visited:
             continue
-        current = (
-            proposed
-            if proposed is not None and identifier == proposed.id
-            else read_measure(conn, identifier)
-        )
+        visited.add(identifier)
+        try:
+            current = (
+                proposed
+                if proposed is not None and identifier == proposed.id
+                else read_measure(conn, identifier)
+            )
+        except PlannerError as error:
+            if missing_ok and error.code is ErrorCode.not_found:
+                continue
+            raise
         result[identifier] = current
         if current.formula is not None:
             pending.extend(dependencies(current.formula))

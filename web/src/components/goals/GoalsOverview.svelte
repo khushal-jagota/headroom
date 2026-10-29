@@ -17,10 +17,10 @@
  const projects=createQuery(()=>queries.projects());
  const readings=createQueries(()=>({queries:(goals.data?.goals??[]).map(goal=>({...goalQueries.readings(goal.id),enabled:all&&goal.kind==='quantitative'}))}));
  let filters=$state(emptyFilters());
- let summaries=$derived((goals.data?.goals??[]).map((goal,i)=>goal.primary_chart?chartHeadline(goal.primary_chart,chartData(goal.primary_chart,readings[i]?.data?.values??[],'all')):undefined));
+ let summaries=$derived((goals.data?.goals??[]).map((goal,i)=>goal.primary_chart?chartHeadline(goal.primary_chart,chartData(goal.primary_chart,readings[i]?.data?.values??[],'all',readings[i]?.data?.charts?.[goal.primary_chart.id]),null,readings[i]?.data?.charts?.[goal.primary_chart.id]):undefined));
  let filtered=$derived((goals.data?.goals??[]).filter((goal,i)=>goalMatches(goal,summaries[i]?.value,filters,{target:target(goal)})));
- /** The table states the goal's own threshold, not the target path at today's reading. */
- function target(goal:GoalResponse){return goal.primary_chart?selectedTarget(goal.primary_chart,'all'):undefined;}
+ /** Formula targets use the same dated summary as the current reading. */
+ function target(goal:GoalResponse){const index=goals.data?.goals.findIndex(item=>item.id===goal.id)??-1;return goal.primary_chart?.expectation?summaries[index]?.target:goal.primary_chart?selectedTarget(goal.primary_chart,'all'):undefined;}
  function targetText(goal:GoalResponse){
   const value=goal.primary_chart?target(goal):undefined;
   if(value===undefined)return goal.kind==='binary'?'Done':'—';

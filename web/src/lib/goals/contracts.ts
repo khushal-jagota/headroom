@@ -52,6 +52,7 @@ export interface ChartBlock {
   domain?: [number, number];
   direction?: "atleast" | "atmost";
   reference?: Array<ChartReference>;
+  expectation?: FormulaExpression;
   format?: ChartFormat;
   series?: Array<ChartSeries>;
   ranges?: Array<ChartRange>;
@@ -69,6 +70,49 @@ export interface ChartBlock {
   within_limit_label?: "under limit" | "remaining";
   emphasis?: "hero";
   manual?: ManualChartControls;
+}
+
+export type FormulaExpression = ConstantExpression | ReferenceExpression | BinaryExpression | SumDailyExpression | ElapsedDaysExpression | ReferenceAtExpression | IfBeforeExpression;
+
+export interface ConstantExpression {
+  op: "constant";
+  value: number;
+}
+
+export interface ReferenceExpression {
+  op: "reference";
+  measure_id: string;
+  day_offset: number;
+}
+
+export interface BinaryExpression {
+  op: "add" | "subtract" | "multiply" | "divide" | "power" | "min" | "max";
+  left: FormulaExpression;
+  right: FormulaExpression;
+}
+
+export interface SumDailyExpression {
+  op: "sum_daily";
+  measure_id: string;
+  period: "day" | "week" | "month";
+}
+
+export interface ElapsedDaysExpression {
+  op: "elapsed_days";
+  start: string;
+}
+
+export interface ReferenceAtExpression {
+  op: "reference_at";
+  measure_id: string;
+  date: string;
+}
+
+export interface IfBeforeExpression {
+  op: "if_before";
+  date: string;
+  before: FormulaExpression;
+  otherwise: FormulaExpression;
 }
 
 export interface ChecklistItem {
@@ -227,14 +271,13 @@ export interface GoalsResponse {
   next_refresh_at: number;
 }
 
-export interface GoalReadingsResponse {
-  goal_id: string;
-  revision: number;
-  status: "neutral" | "attention" | "bad" | "good";
-  status_date: string;
-  next_refresh_at: number;
-  values: Array<MeasureValue>;
-  sources: Array<SourceHealthSummary>;
+export interface ScalarChartPoint {
+  date: string;
+  actual: MeasureValue;
+  expected: ExpressionValue;
+  difference: number | null;
+  meets_expectation: boolean | null;
+  break_before: boolean;
 }
 
 export interface MeasureValue {
@@ -259,6 +302,36 @@ export interface InputObservation {
 export interface MeasureDate {
   measure_id: string;
   date: string;
+}
+
+export interface ExpressionValue {
+  status: "value" | "missing_input" | "division_by_zero" | "invalid_period" | "arithmetic_limit" | "invalid_value";
+  value: number | null;
+  inputs: Array<InputObservation>;
+  missing_inputs: Array<MeasureDate>;
+}
+
+export interface ScalarChartProjection {
+  kind: "scalar";
+  first_date: string;
+  last_date: string;
+  today: string;
+  expected_source: "expectation";
+  points: Array<ScalarChartPoint>;
+  summary_date: string | null;
+}
+
+export type ChartProjection = ScalarChartProjection;
+
+export interface GoalReadingsResponse {
+  goal_id: string;
+  revision: number;
+  status: "neutral" | "attention" | "bad" | "good";
+  status_date: string;
+  next_refresh_at: number;
+  values: Array<MeasureValue>;
+  sources: Array<SourceHealthSummary>;
+  charts: Record<string, ChartProjection>;
 }
 
 export interface SourceHealthSummary {

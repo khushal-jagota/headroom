@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type PointerEvent, type Ref } from "react";
 import { AnimatePresence, animate, motion, useInView, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring, useTransform, type MotionValue } from "motion/react";
 import { motionTokens } from "../lib/chart-motion";
+import { segmentedCurve, valueAt, morphShape, comparisonAt, type Point } from "../lib/line-geometry";
 import styles from "./line-chart.module.css";
 
 export interface LineChartSeries {
@@ -15,6 +16,10 @@ export interface LineChartSeries {
   /** Draws a dashed stroke, useful for a previous period or a target. */
   dashed?: boolean;
   compareTo?: string;
+  /** Formula samples supply their server comparison, including neutral unavailable values. */
+  datedComparisons?: boolean;
+  neutralColor?: string;
+  curve?: "smooth" | "linear";
   higherIsBetter?: boolean;
   goodColor?: string;
   badColor?: string;
@@ -32,6 +37,8 @@ export interface LineChartDatum {
   axisLabel?: string;
   /** One value per series key. A missing value leaves a gap. */
   values: Record<string, number | undefined>;
+  breakBefore?: Record<string, boolean>;
+  comparisons?: Record<string, boolean | null>;
 }
 
 /** Use a line chart for one or more measures over time, when the shape of the trend matters more than any single value. */
@@ -67,7 +74,6 @@ export interface LineChartProps {
   className?: string;
 }
 
-type Point = [x: number, value: number];
 type Track = { shape: Point[]; presence: number; fade: { stop: () => void } | null };
 
 const { spring, duration, ease } = motionTokens;
@@ -101,53 +107,6 @@ function niceScale(low: number, high: number) {
     }
   }
   return { min: lo, max: hi, ticks: [lo, hi] };
-}
-
-/** The line through every value, sampled densely on x from 0 to 1 in data units. Monotone cubic tangents keep a smooth curve from swinging past the data. */
-function curveFor(values: number[], smooth: boolean): Point[] {
-  if (values.some(value => !Number.isFinite(value))) {
-    const result: Point[] = []; let start = 0;
-    while (start < values.length) {
-      if (!Number.isFinite(values[start])) { result.push([start / Math.max(1, values.length - 1), NaN]); start++; continue; }
-      let end = start + 1;
-      while (end < values.length && Number.isFinite(values[end])) end++;
-      if (end - start === 1) result.push([start / Math.max(1, values.length - 1), values[start]]);
-      else for (const [x, y] of curveFor(values.slice(start, end), smooth)) result.push([(start + x * (end - start - 1)) / (values.length - 1), y]);
-      start = end;
-    }
-    return result;
-  }
-  if (values.length === 0) return [];
-  if (values.length === 1) return [[0, values[0]!], [1, values[0]!]];
-  const last = values.length - 1, step = 1 / last;
-  if (!smooth) return values.map((value, index) => [index * step, value]);
-  const slopes = values.slice(1).map((value, index) => (value - values[index]!) / step);
-  const tangents = values.map((_, index) => index === 0 || index === last ? 0 : (Math.sign(slopes[index - 1]!) + Math.sign(slopes[index]!)) * Math.min(Math.abs(slopes[index - 1]!), Math.abs(slopes[index]!), Math.abs(slopes[index - 1]! + slopes[index]!) / 4) || 0);
-  if (last > 1) { tangents[0] = (3 * slopes[0]! - tangents[1]!) / 2; tangents[last] = (3 * slopes[last - 1]! - tangents[last - 1]!) / 2; }
-  else { tangents[0] = slopes[0]!; tangents[1] = slopes[0]!; }
-  const samples = Math.max(1, Math.min(16, Math.round(192 / last)));
-  const points: Point[] = [];
-  for (let index = 0; index < last; index++) {
-    const low = Math.min(values[index]!, values[index + 1]!), high = Math.max(values[index]!, values[index + 1]!);
-    for (let sample = 0; sample < samples; sample++) {
-      const t = sample / samples, t2 = t * t, t3 = t2 * t;
-      const value = (2 * t3 - 3 * t2 + 1) * values[index]! + (t3 - 2 * t2 + t) * step * tangents[index]! + (3 * t2 - 2 * t3) * values[index + 1]! + (t3 - t2) * step * tangents[index + 1]!;
-      points.push([(index + t) * step, clamp(value, low, high)]);
-    }
-  }
-  points.push([1, values[last]!]);
-  return points;
-}
-
-/** Value of a sampled line at x, straight between samples. */
-function valueAt(shape: Point[], x: number) {
-  if (!shape.length) return 0;
-  let low = 0, high = shape.length - 1;
-  if (x <= shape[low]![0]) return shape[low]![1];
-  if (x >= shape[high]![0]) return shape[high]![1];
-  while (high - low > 1) { const middle = (low + high) >> 1; if (shape[middle]![0] < x) low = middle; else high = middle; }
-  const [x0, y0] = shape[low]!, [x1, y1] = shape[high]!;
-  return x1 === x0 ? y1 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
 }
 
 /** Tracks are mutable animation state read by the painter, never by render. */
@@ -205,7 +164,6 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   const uid = `line${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const last = data.length - 1;
   const positions = data.map((item,i)=>item.position ?? (last>0?i/last:.5));
-  const positionAt = (x:number) => {if(last<1)return x;const index=Math.min(last-1,Math.floor(x*last)),t=x*last-index;return positions[index]+t*(positions[index+1]-positions[index]);};
   const empty = data.length === 0;
 
   // Hidden series stay a caller's decision. The chart carries no series key of its own.
@@ -213,8 +171,8 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   const visible = series.filter(item => !hidden.includes(item.key));
 
   // Each series becomes a dense curve in data units; the scale fits only the series on show.
-  const signature = `${curve}|${series.map(item => item.key).join(",")}|${data.map(item => `${item.key}:${item.position??""}:${series.map(line => item.values[line.key] ?? NaN).join(",")}`).join(";")}`;
-  const targets = useMemo(() => new Map(series.map(line => [line.key, curveFor(data.map(item => item.values[line.key] ?? NaN), curve === "smooth").map(([x,y])=>[positionAt(x),y] as Point)])), [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  const signature = `${curve}|${series.map(item => `${item.key}:${item.curve}`).join(",")}|${data.map(item => `${item.key}:${item.position??""}:${series.map(line => `${item.values[line.key] ?? NaN}:${!!item.breakBefore?.[line.key]}:${item.comparisons?.[line.key]}`).join(",")}`).join(";")}`;
+  const targets = useMemo(() => new Map(series.map(line => [line.key, segmentedCurve(data.map(item => item.values[line.key] ?? NaN), positions, data.map(item => !!item.breakBefore?.[line.key]), (line.curve ?? curve) === "smooth")])), [signature]); // eslint-disable-line react-hooks/exhaustive-deps
   let low = Infinity, high = -Infinity;
   for (const line of visible) for (const item of data) { const value = item.values[line.key] ?? NaN; if (!Number.isFinite(value)) continue; low = Math.min(low, value); high = Math.max(high, value); }
   const range = domain ? {min:domain[0],max:domain[1],ticks:Array.from({length:5},(_,i)=>clean(domain[0]+(domain[1]-domain[0])*i/4))} : Number.isFinite(low) ? niceScale(low, high) : null;
@@ -238,8 +196,8 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   const cursor = useMotionValue(1);
   const tipTargetX = useMotionValue(0), tipTargetY = useMotionValue(0);
   const tipSpringX = useSpring(tipTargetX, follow), tipSpringY = useSpring(tipTargetY, follow);
-  const live = useRef({ series, hidden, single:data.length===1 });
-  useLayoutEffect(() => { live.current = { series, hidden, single:data.length===1 }; });
+  const live = useRef({ series, hidden, data, positions, single:data.length===1 });
+  useLayoutEffect(() => { live.current = { series, hidden, data, positions, single:data.length===1 }; });
 
   // One writer for every drawn attribute: morphs, toggles, the scale, the crosshair, and the measured size all repaint through here.
   const paint = useCallback(() => {
@@ -262,7 +220,18 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
       const element = lines.current.get(line.key);
       element?.setAttribute("d",live.current.single&&!line.dashed?"":path);
       areas.current.get(line.key)?.setAttribute("d", live.current.single?"":runs.map(points=>`${runPath(points)}L${points.at(-1)![0]*w},${height}L${points[0]![0]*w},${height}Z`).join(''));
-      if (line.compareTo) {
+      const comparisonSamples: Array<[number, boolean | null]> = line.datedComparisons ? live.current.data.map((item, index) => [live.current.positions[index], item.comparisons?.[line.key] ?? null]) : [];
+      const datedColor = (x: number) => {
+        const comparison = comparisonAt(comparisonSamples, x);
+        return comparison === null ? line.neutralColor ?? line.color ?? PALETTE[0] : comparison ? line.goodColor ?? '#7fa564' : line.badColor ?? '#d85d5d';
+      };
+      if (line.datedComparisons) {
+        const gradient = figure.current?.querySelector(`[id="${uid}-${line.key}-tone"]`);
+        if (gradient) {
+          gradient.innerHTML = live.current.data.map((_, index) => `<stop offset="${live.current.positions[index] * 100}%" stop-color="${datedColor(live.current.positions[index])}"/>`).join('');
+          if (element) element.style.stroke = `url(#${uid}-${line.key}-tone)`;
+        }
+      } else if (line.compareTo) {
         const comparison = tracks.current.get(line.compareTo);
         const gradient = figure.current?.querySelector(`[id="${uid}-${line.key}-tone"]`);
         if (comparison && gradient) {
@@ -278,7 +247,8 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
         const cy = y(valueAt(track.shape, at));
         dot.style.display = Number.isFinite(cy) ? '' : 'none';
         if (!Number.isFinite(cy)) continue;
-        if (line.compareTo) {
+        if (line.datedComparisons) dot.style.fill = datedColor(at);
+        else if (line.compareTo) {
           const other=tracks.current.get(line.compareTo);const value=valueAt(track.shape,at),target=other?valueAt(other.shape,at):NaN;
           const good=line.higherIsBetter===false?value<=target:value>=target;
           dot.style.fill=good?line.goodColor??'#7fa564':line.badColor??'#d85d5d';
@@ -323,17 +293,17 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
   // New data morphs every line from the shape on screen, sampled on shared x positions so a range that gains or loses points still flows.
   const morph = useRef<{ stop: () => void } | null>(null);
   useEffect(() => {
-    const moves: { track: Track; xs: number[]; from: number[]; to: number[]; target: Point[] }[] = [];
+    const moves: { track: Track; xs: number[]; from: Point[]; target: Point[] }[] = [];
     for (const [key, target] of targets) {
       const track = tracks.current.get(key);
       if (!track) { tracks.current.set(key, { shape: target, presence: live.current.hidden.includes(key) ? 0 : 1, fade: null }); continue; }
       if (!track.shape.length || !target.length || reduced) { update(track, { shape: target }); continue; }
       const xs = [...new Set([...grid, ...target.map(([x]) => x)])].sort((a, b) => a - b);
-      moves.push({ track, xs, from: xs.map(x => valueAt(track.shape, x)), to: xs.map(x => valueAt(target, x)), target });
+      moves.push({ track, xs, from: track.shape, target });
     }
     morph.current?.stop();
     if (!moves.length) { paint(); return; }
-    morph.current = animate(0, 1, { ...settle, restDelta: .0005, onUpdate: progress => { for (const move of moves) update(move.track, { shape: move.xs.map((x, at): Point => [x, Number.isFinite(move.to[at]) ? Number.isFinite(move.from[at]) ? move.from[at]! + (move.to[at]! - move.from[at]!) * progress : move.to[at]! : NaN]) }); paint(); }, onComplete: () => { for (const move of moves) update(move.track, { shape: move.target }); paint(); } });
+    morph.current = animate(0, 1, { ...settle, restDelta: .0005, onUpdate: progress => { for (const move of moves) update(move.track, { shape: morphShape(move.from, move.target, move.xs, progress) }); paint(); }, onComplete: () => { for (const move of moves) update(move.track, { shape: move.target }); paint(); } });
     return () => morph.current?.stop();
   }, [paint, reduced, targets]);
 
@@ -416,7 +386,7 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
         onClick={event => { if (!empty) onSelect?.(pointAt(event.clientX)); }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={event => { if (event.pointerType !== "mouse") setActive(null); }} onPointerCancel={() => setActive(null)} onPointerLeave={event => { if (event.pointerType === "mouse") setActive(null); }} onKeyDown={onKeyDown} onBlur={() => setActive(null)}
         onFocus={event => { if (event.currentTarget.matches(":focus-visible") && !empty) setActive(current => current ?? last); }}>
         <svg className={styles.svg} width="100%" height={height} aria-hidden="true" focusable="false">
-          <defs>{series.filter(line=>line.compareTo).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
+          <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} gradientUnits="userSpaceOnUse" x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
           <AnimatePresence initial={false}>{steady.ticks.slice(1).map(value => <Gridline key={value} value={value} scale={scale} height={height} />)}</AnimatePresence>
           <line className={styles.baseline} x1={0} x2="100%" y1={height - .5} y2={height - .5} />
           <line ref={crosshair} className={styles.crosshair} y1={TOP - 4} y2={height} />
@@ -426,11 +396,11 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
               <path ref={node => { if (node) lines.current.set(line.key, node); else lines.current.delete(line.key); }} data-line={line.key} className={styles.line} data-dashed={line.dashed || undefined} />
             </g>)}
           </g>
-          {series.map((line, at) => <circle key={line.key} ref={node => { if (node) dots.current.set(line.key, node); else dots.current.delete(line.key); }} className={styles.dot} r={4} data-hidden={hidden.includes(line.key) || undefined} style={{ "--series": colorOf(line, at) } as CSSProperties} />)}
+          {series.map((line, at) => <circle key={line.key} ref={node => { if (node) dots.current.set(line.key, node); else dots.current.delete(line.key); }} data-dot={line.key} className={styles.dot} r={4} data-hidden={hidden.includes(line.key) || undefined} style={{ "--series": colorOf(line, at) } as CSSProperties} />)}
         </svg>
-        <motion.div ref={tip} className={styles.tooltip} style={{ x: tipX, y: tipY }} aria-hidden="true">
+        <motion.div ref={tip} data-chart-tooltip className={styles.tooltip} style={{ x: tipX, y: tipY }} aria-hidden="true">
           <p className={styles.tipTitle}>{(reading ?? data[last])?.label ?? ""}</p>
-          {visible.map(line => <p key={line.key} className={styles.tipRow} style={{ "--series": colorOf(line, series.indexOf(line)) } as CSSProperties}>
+          {visible.map(line => <p key={line.key} data-tooltip-series={line.key} className={styles.tipRow} style={{ "--series": colorOf(line, series.indexOf(line)) } as CSSProperties}>
             <span className={styles.tipSwatch} data-dashed={line.dashed || undefined} />
             <span className={styles.tipName}>{line.label}</span>
             <span className={styles.tipValue}>{format((reading ?? data[last])?.values[line.key] ?? NaN, line)}</span>

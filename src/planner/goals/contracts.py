@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict
 
-from planner.measures.contracts import MeasureValue, SourceHealthSummary
+from planner.measures.contracts import (
+    ExpressionValue,
+    FormulaExpression,
+    MeasureValue,
+    SourceHealthSummary,
+)
 
 Tone = Literal["neutral", "attention", "bad", "good"]
 TableCellTone = Literal["neutral", "attention", "bad", "good", "info"]
@@ -67,6 +72,7 @@ class ChartBlock(TypedDict):
     domain: NotRequired[tuple[float, float]]
     direction: NotRequired[Literal["atleast", "atmost"]]
     reference: NotRequired[list[ChartReference]]
+    expectation: NotRequired[FormulaExpression]
     format: NotRequired[ChartFormat]
     series: NotRequired[list[ChartSeries]]
     ranges: NotRequired[list[ChartRange]]
@@ -276,6 +282,28 @@ class GoalsResponse(TypedDict):
     next_refresh_at: int
 
 
+class ScalarChartPoint(TypedDict):
+    date: str
+    actual: MeasureValue
+    expected: ExpressionValue
+    difference: float | None
+    meets_expectation: bool | None
+    break_before: bool
+
+
+class ScalarChartProjection(TypedDict):
+    kind: Literal["scalar"]
+    first_date: str
+    last_date: str
+    today: str
+    expected_source: Literal["expectation"]
+    points: list[ScalarChartPoint]
+    summary_date: str | None
+
+
+type ChartProjection = ScalarChartProjection
+
+
 class GoalReadingsResponse(TypedDict):
     goal_id: str
     revision: int
@@ -284,3 +312,4 @@ class GoalReadingsResponse(TypedDict):
     next_refresh_at: int
     values: list[MeasureValue]
     sources: list[SourceHealthSummary]
+    charts: dict[str, ChartProjection]

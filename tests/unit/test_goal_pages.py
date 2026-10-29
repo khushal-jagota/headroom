@@ -1,6 +1,9 @@
 """New boundary risks: document races, independent state, and live measure projections."""
 
+import json
+import sys
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime
 from sqlite3 import Connection
 from types import SimpleNamespace
@@ -473,3 +476,538 @@ def test_manual_controls_require_matching_models_and_manual_origin(tmp_db: Conne
     ):
         with pytest.raises(ValueError, match=message):
             validate_chart(cast(ChartBlock, invalid))
+
+
+def test_expectation_save_uses_formula_parser_and_validates_all_static_inputs(
+    tmp_db: Connection,
+) -> None:
+    """JSON periods bypass generic enum checks; inactive references still need save validation."""
+    identifier = source(tmp_db)
+    measure = taken(tmp_db, identifier)
+    run(tmp_db, identifier)
+    collect(
+        tmp_db,
+        identifier,
+        tuple(
+            CandidateObservation(measure.id, day, value)
+            for day, value in (
+                ("2026-10-01", 50),
+                ("2026-10-26", 2),
+                ("2026-10-27", 3),
+                ("2026-10-28", 4),
+                ("2026-10-29", 5),
+                ("2026-10-30", 6),
+                ("2026-10-31", 7),
+                ("2026-11-01", 8),
+            )
+        ),
+    )
+    chart = {
+        "type": "chart",
+        "kind": "number",
+        "measure_id": measure.id,
+        "expectation": {"op": "sum_daily", "measure_id": measure.id, "period": "week"},
+    }
+    goal = create(tmp_db, kind="quantitative", primary_chart=chart)
+    assert data.read_goal(tmp_db, goal.id).primary_chart == goal.primary_chart
+    assert goal.primary_chart is not None
+    now = datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin"))
+    weekly = views.readings_json(
+        tmp_db, goal.id, now, first_date="2026-10-27", last_date="2026-10-27"
+    )
+    assert weekly["charts"][goal.primary_chart["id"]]["points"][0]["expected"]["value"] == 35
+    document = page()
+    document["blocks"].append(
+        {
+            **chart,
+            "id": "daily",
+            "expectation": {"op": "sum_daily", "measure_id": measure.id, "period": "day"},
+        }
+    )
+    nested = create(tmp_db, page=document)
+    assert nested.page["blocks"][-1]["type"] == "chart"
+    daily = views.readings_json(
+        tmp_db, nested.id, now, first_date="2026-10-27", last_date="2026-10-27"
+    )
+    assert daily["charts"]["daily"]["points"][0]["expected"]["value"] == 3
+    invalid = {
+        **chart,
+        "expectation": {
+            "op": "if_before",
+            "date": "2026-10-28",
+            "before": {"op": "constant", "value": 1},
+            "otherwise": {"op": "reference", "measure_id": "missing", "day_offset": 0},
+        },
+    }
+    with pytest.raises(PlannerError):
+        create(tmp_db, primary_chart=invalid)
+    for changed in (
+        {"kind": "bar"},
+        {"stacked": True},
+        {"aggregate": "sum"},
+        {"manual": {"model": "individual_readings"}, "kind": "line"},
+        {"measure_id": ""},
+    ):
+        with pytest.raises(PlannerError, match="expectations require"):
+            create(tmp_db, primary_chart={**chart, **changed})
+    with pytest.raises(PlannerError, match="expression"):
+        create(tmp_db, primary_chart={**chart, "expectation": {"op": "calendar_month_growth"}})
+    with pytest.raises(PlannerError, match="date"):
+        create(
+            tmp_db,
+            primary_chart={**chart, "expectation": {"op": "elapsed_days", "start": "2026-02-30"}},
+        )
+
+
+def test_formula_projection_uses_same_date_and_keeps_future_path_out_of_summary(
+    tmp_db: Connection,
+) -> None:
+    """Deadline samples must not replace today's actual or use a legacy target fallback."""
+    identifier = source(tmp_db)
+    measure = taken(tmp_db, identifier)
+    run(tmp_db, identifier)
+    collect(
+        tmp_db,
+        identifier,
+        (
+            CandidateObservation(measure.id, "2026-10-25", 150),
+            CandidateObservation(measure.id, "2026-10-27", 150),
+        ),
+    )
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        deadline="2026-10-31",
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": measure.id,
+            "target": 1,
+            "expectation": {
+                "op": "if_before",
+                "date": "2026-10-28",
+                "before": {
+                    "op": "add",
+                    "left": {"op": "constant", "value": 100},
+                    "right": {
+                        "op": "multiply",
+                        "left": {"op": "constant", "value": 2},
+                        "right": {"op": "elapsed_days", "start": "2026-10-01"},
+                    },
+                },
+                "otherwise": {"op": "constant", "value": 180},
+            },
+        },
+    )
+    assert goal.primary_chart is not None
+    now = datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin"))
+    result = views.readings_json(tmp_db, goal.id, now)
+    projection = result["charts"][goal.primary_chart["id"]]
+    assert (projection["first_date"], projection["last_date"], projection["summary_date"]) == (
+        "2026-09-28",
+        "2026-10-31",
+        "2026-10-27",
+    )
+    samples = {point["date"]: point for point in projection["points"]}
+    assert (samples["2026-10-25"]["difference"], samples["2026-10-27"]["difference"]) == (2, -2)
+    assert samples["2026-10-25"]["meets_expectation"] is True
+    assert samples["2026-10-27"]["meets_expectation"] is False
+    assert samples["2026-10-28"]["break_before"] is True
+    assert samples["2026-10-28"]["expected"]["value"] == 180
+    assert samples["2026-10-28"]["actual"]["value"] is None
+    assert samples["2026-10-28"]["meets_expectation"] is None
+    assert result["status"] == "bad"
+    assert [value["date"] for value in result["values"]] == [
+        "2026-10-25",
+        "2026-10-26",
+        "2026-10-27",
+    ]
+    json.dumps(result, allow_nan=False)
+    future = views.readings_json(
+        tmp_db, goal.id, now, first_date="2026-11-01", last_date="2026-11-02"
+    )
+    assert future["charts"][goal.primary_chart["id"]]["summary_date"] is None
+    assert future["status"] == "neutral"
+    assert future["charts"][goal.primary_chart["id"]]["points"][-1]["expected"]["value"] == 180
+    tomorrow = views.readings_json(tmp_db, goal.id, now.replace(day=28))
+    assert tomorrow["status"] == "neutral"
+    assert data.read_goal(tmp_db, goal.id).completed is False
+
+
+def test_formula_inputs_follow_corrections_and_deleted_inactive_inputs(
+    tmp_db: Connection,
+) -> None:
+    """Expectation-only dependencies need revision/provenance without becoming actual series."""
+    identifier = source(tmp_db)
+    actual = taken(tmp_db, identifier)
+    baseline = taken(tmp_db, identifier)
+    optional = manual_measure(tmp_db, zone="Pacific/Auckland")
+    run(tmp_db, identifier)
+    collect(
+        tmp_db,
+        identifier,
+        (
+            CandidateObservation(actual.id, "2026-10-27", 120),
+            CandidateObservation(baseline.id, "2026-10-01", 100),
+        ),
+    )
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        primary_chart={
+            "type": "chart",
+            "kind": "number",
+            "measure_id": actual.id,
+            "expectation": {
+                "op": "if_before",
+                "date": "2026-10-28",
+                "before": {"op": "reference_at", "measure_id": baseline.id, "date": "2026-10-01"},
+                "otherwise": {"op": "reference", "measure_id": optional.id, "day_offset": 0},
+            },
+        },
+    )
+    assert goal.primary_chart is not None
+    chart_id = goal.primary_chart["id"]
+    clock = FakeClock(datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin")))
+    request = Request({"type": "http", "app": SimpleNamespace(state=SimpleNamespace(clock=clock))})
+    provider = GoalResources()
+    first = provider.capture(tmp_db, request, f"/api/goals/{goal.id}/readings")
+    assert first is not None
+    reading = cast(JsonDict, first.read())
+    assert {value["measure_id"] for value in reading["values"]} == {actual.id}
+    point = reading["charts"][chart_id]["points"][-1]
+    assert point["difference"] == 20
+    assert point["expected"]["inputs"][0]["measure_id"] == baseline.id
+    assert point["expected"]["inputs"][0]["run_id"] == "run"
+    collect(tmp_db, identifier, (CandidateObservation(baseline.id, "2026-10-01", 130),))
+    corrected = provider.capture(tmp_db, request, f"/api/goals/{goal.id}/readings")
+    assert corrected is not None and corrected.revision != first.revision
+    assert cast(JsonDict, corrected.read())["charts"][chart_id]["points"][-1]["difference"] == -10
+    measure_actions.delete_measure(tmp_db, optional.id, principal=OWNER_PRINCIPAL, now=NOW)
+    deleted = provider.capture(tmp_db, request, f"/api/goals/{goal.id}/readings")
+    assert deleted is not None
+    assert (
+        cast(JsonDict, deleted.read())["charts"][chart_id]["points"][-1]["expected"]["value"] == 130
+    )
+    inactive = views.readings_json(
+        tmp_db, goal.id, clock.now(), first_date="2026-10-28", last_date="2026-10-28"
+    )
+    expected = inactive["charts"][chart_id]["points"][0]["expected"]
+    assert expected["status"] == "missing_input" and expected["value"] is None
+    assert expected["missing_inputs"] == ({"measure_id": optional.id, "date": "2026-10-28"},)
+    assert inactive["status"] == "neutral"
+
+
+def test_formula_projection_limits_reject_before_date_allocation(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oversized requests must fail without allocating intervals or returning truncated success."""
+    measure = manual_measure(tmp_db)
+    chart = {
+        "type": "chart",
+        "kind": "line",
+        "measure_id": measure.id,
+        "expectation": {"op": "constant", "value": 100},
+    }
+    goal = create(tmp_db, primary_chart=chart)
+    now = datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    def forbidden(*args: Any) -> Any:
+        pytest.fail("oversized interval was allocated")
+
+    monkeypatch.setattr(views, "date_range", forbidden)
+    with pytest.raises(PlannerError, match="3660.*narrower"):
+        views.readings_json(tmp_db, goal.id, now, first_date="2000-01-01", last_date="2026-10-27")
+    document = page()
+    document["blocks"].extend(deepcopy(chart) for _ in range(14))
+    many = create(tmp_db, page=document)
+    with pytest.raises(PlannerError, match="50000.*narrower"):
+        views.readings_json(tmp_db, many.id, now, first_date="2020-01-01", last_date="2029-12-31")
+
+
+def test_goal_demand_limit_includes_expanded_measure_inputs(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A small visible interval can still demand too many distinct dependency dates."""
+    from planner.goals import configuration
+
+    actual = manual_measure(tmp_db)
+    derived = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="prior",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="Europe/Berlin",
+            period=None,
+            source_id=None,
+            formula={"op": "reference", "measure_id": actual.id, "day_offset": -10},
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    goal = create(
+        tmp_db,
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": actual.id,
+            "expectation": {"op": "reference", "measure_id": derived.id, "day_offset": 0},
+        },
+    )
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 5)
+    with pytest.raises(PlannerError, match="5.*narrower"):
+        views.readings_json(
+            tmp_db,
+            goal.id,
+            datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin")),
+            first_date="2026-10-26",
+            last_date="2026-10-27",
+        )
+
+
+def test_goal_demand_budget_includes_legacy_future_values_and_counts_shared_pairs_once(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Future assembled values must not bypass the chart budget through the compatibility pass."""
+    from planner.goals import configuration
+
+    actual = manual_measure(tmp_db)
+    derived = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="prior",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="Europe/Berlin",
+            period=None,
+            source_id=None,
+            formula={"op": "reference", "measure_id": actual.id, "day_offset": -10},
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    goal = create(
+        tmp_db,
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": derived.id,
+            "expectation": {"op": "constant", "value": 100},
+        },
+    )
+    now = datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin"))
+    for maximum in (1, 3):
+        monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", maximum)
+        with pytest.raises(PlannerError, match=rf"{maximum}.*narrower"):
+            views.readings_json(
+                tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29"
+            )
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 4)
+    bounded = views.readings_json(
+        tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29"
+    )
+    assert len(bounded["values"]) == 2
+
+    document = page()
+    document["blocks"].append(
+        {
+            "type": "chart",
+            "id": "shared",
+            "kind": "number",
+            "measure_id": actual.id,
+            "expectation": {"op": "reference", "measure_id": actual.id, "day_offset": -10},
+        }
+    )
+    actions.update_goal(
+        tmp_db,
+        goal.id,
+        {"expected_revision": 1, "page": document},
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 5)
+    with pytest.raises(PlannerError, match="5.*narrower"):
+        views.readings_json(tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29")
+    monkeypatch.setattr(configuration, "MAX_DEMANDED_MEASURE_DATES", 6)
+    shared = views.readings_json(
+        tmp_db, goal.id, now, first_date="2026-10-28", last_date="2026-10-29"
+    )
+    assert len(shared["values"]) == 4 and len(shared["charts"]) == 2
+
+
+def test_future_actual_requires_retained_data_and_expectation_removal_restores_target(
+    tmp_db: Connection,
+) -> None:
+    """An assembled future value is not an actual, but a real retained future value is."""
+    identifier = source(tmp_db)
+    actual = taken(tmp_db, identifier)
+    run(tmp_db, identifier)
+    collect(
+        tmp_db,
+        identifier,
+        (
+            CandidateObservation(actual.id, "2026-10-27", 12),
+            CandidateObservation(actual.id, "2026-10-28", 15),
+        ),
+    )
+    derived = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="dated phase",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="Europe/Berlin",
+            period=None,
+            source_id=None,
+            formula={
+                "op": "if_before",
+                "date": "2026-10-28",
+                "before": {"op": "constant", "value": 10},
+                "otherwise": {"op": "constant", "value": 20},
+            },
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    document = page()
+    document["blocks"].append(
+        {
+            "type": "chart",
+            "id": "derived",
+            "kind": "number",
+            "measure_id": derived.id,
+            "expectation": {"op": "reference", "measure_id": derived.id, "day_offset": 0},
+        }
+    )
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        page=document,
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": actual.id,
+            "target": 1,
+            "direction": "atmost",
+            "expectation": {"op": "constant", "value": 12},
+        },
+    )
+    assert goal.primary_chart is not None
+    chart_id = goal.primary_chart["id"]
+    now = datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin"))
+    reading = views.readings_json(
+        tmp_db, goal.id, now, first_date="2026-10-27", last_date="2026-10-28"
+    )
+    assert reading["charts"][chart_id]["points"][0]["meets_expectation"] is True
+    assert reading["charts"][chart_id]["points"][1]["actual"]["value"] == 15
+    assert reading["charts"][chart_id]["points"][1]["meets_expectation"] is False
+    assert reading["charts"]["derived"]["points"][0]["actual"]["value"] == 10
+    assert reading["charts"]["derived"]["points"][1]["actual"]["value"] is None
+    assert reading["charts"]["derived"]["points"][1]["expected"]["value"] == 20
+    assert reading["charts"]["derived"]["points"][1]["break_before"] is True
+    primary = deepcopy(goal.primary_chart)
+    del primary["expectation"]
+    actions.update_goal(
+        tmp_db,
+        goal.id,
+        {"expected_revision": 1, "primary_chart": primary},
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    legacy = views.readings_json(tmp_db, goal.id, now)
+    assert chart_id not in legacy["charts"]
+    assert legacy["status"] == "bad"
+
+
+def test_goal_projection_preserves_other_charts_when_dependency_depth_exceeds_interpreter(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Demand discovery must return arithmetic_limit, with other charts still available."""
+    measure = manual_measure(tmp_db)
+    deep = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="deep",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="Europe/Berlin",
+            period=None,
+            source_id=None,
+            formula={"op": "constant", "value": 1},
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    document = page()
+    document["blocks"].append(
+        {
+            "id": "unaffected",
+            "type": "chart",
+            "kind": "number",
+            "measure_id": measure.id,
+            "expectation": {"op": "constant", "value": 7},
+        }
+    )
+    goal = create(
+        tmp_db,
+        page=document,
+        primary_chart={
+            "type": "chart",
+            "kind": "number",
+            "measure_id": measure.id,
+            "expectation": {"op": "reference", "measure_id": deep.id, "day_offset": 0},
+        },
+    )
+    assert goal.primary_chart is not None
+    # Model a long current definition graph without hundreds of SQLite writes.
+    definitions = {measure.id: measure}
+    for index in range(300):
+        identifier = deep.id if index == 0 else f"deep-{index}"
+        formula = (
+            {"op": "reference", "measure_id": f"deep-{index + 1}", "day_offset": 0}
+            if index < 299
+            else {"op": "constant", "value": 1}
+        )
+        definitions[identifier] = replace(deep, id=identifier, formula=cast(Any, formula))
+    monkeypatch.setattr(views, "read_definitions", lambda *args, **kwargs: definitions)
+    previous_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(200)
+        reading = views.readings_json(
+            tmp_db,
+            goal.id,
+            datetime(2026, 10, 27, 12, tzinfo=ZoneInfo("Europe/Berlin")),
+            first_date="2026-10-27",
+            last_date="2026-10-27",
+        )
+    finally:
+        sys.setrecursionlimit(previous_limit)
+    assert (
+        reading["charts"][goal.primary_chart["id"]]["points"][0]["expected"]["status"]
+        == "arithmetic_limit"
+    )
+    assert reading["charts"]["unaffected"]["points"][0]["expected"]["value"] == 7
+
+
+def test_projection_explicit_minimum_date_does_not_underflow_default_window() -> None:
+    """Valid explicit bounds near year one must not evaluate an unused rolling window."""
+    from planner.goals.logic.projection import projection_bounds
+
+    assert projection_bounds("0001-01-01", None, None, "0001-01-01", "0001-01-02") == (
+        "0001-01-01",
+        "0001-01-02",
+        2,
+    )
