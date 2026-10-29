@@ -1,0 +1,61 @@
+name: Development dependency safety
+
+on:
+  pull_request:
+    branches: [staging, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-safety:
+    name: dependency safety (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Record hosted environment and source
+        env:
+          PANELS_MERGED_SHA: ${{ github.sha }}
+          PANELS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$PANELS_MERGED_SHA"
+          printf 'Merged revision: %s\nHead revision: %s\n' "$PANELS_MERGED_SHA" "$PANELS_HEAD_SHA"
+          git rev-parse 'HEAD^{tree}'
+          cat /etc/os-release
+          uname -a
+          id
+          python3 --version
+          /usr/bin/python3 --version
+          node --version
+          npm --version
+          findmnt -T "$GITHUB_WORKSPACE" -o TARGET,SOURCE,FSTYPE,OPTIONS
+          sysctl kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns
+      - name: Admit disposable mount namespace
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --mount true
+      - name: Set up independent pinned dependencies through guard
+        run: scripts/dev setup
+      - name: Admit safe npm commands
+        run: |
+          scripts/dev npm --prefix web run check
+          scripts/dev npm --prefix web run test:vitest
+      - name: Check aliases, startup refusal, and Python backstops
+        run: scripts/dev pytest tests/unit/test_development_*.py tests/unit/test_tree_environment_hooks.py tests/unit/test_instrument.py
+      - name: Admit safe Python module and console commands
+        run: |
+          scripts/dev python -m pytest tests/unit/test_instrument.py
+          scripts/dev .venv/bin/mypy scripts/tree_environment.py scripts/development_safety
