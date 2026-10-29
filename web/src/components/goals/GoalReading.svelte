@@ -11,11 +11,21 @@
  $effect(()=>{if(readings.data)return refreshAtBoundary(readings.data.next_refresh_at,()=>void readings.refetch());});
  let current=$derived(goal.primary_chart?chartHeadline(goal.primary_chart,chartData(goal.primary_chart,readings.data?.values??[],'all',readings.data?.charts?.[goal.primary_chart.id]),null,readings.data?.charts?.[goal.primary_chart.id]):undefined);
  let value=$derived(current?.value),target=$derived(current?.target);
+ let category=$derived(goal.primary_chart?.binding?current?.categorySummary:undefined);
+ let partial=$derived(!!category&&(category.actual.partial||!!category.comparison?.partial));
  let checklist=$derived(goal.kind==='binary'?selectedChecklist(goal.page,goal.primary_checklist_block_id):null);
  let counts=$derived(checklist?checklistCounts(checklist):null);
- let good=$derived(goal.primary_chart?.expectation?current?.point?.meets_expectation===true:value!==undefined&&target!==undefined&&((goal.primary_chart?.direction??(goal.primary_chart?.kind==='time-budget'?'atmost':'atleast'))==='atmost'?value<=target:value>=target));
- let tone=$derived(goal.kind==='binary'?goal.status:goal.primary_chart?chartTone(goal.primary_chart,value,target,current?.point):'neutral');
- let status=$derived(goal.kind==='binary'?goalStatusText(goal):value===undefined?'No current reading':target===undefined?(goal.primary_chart?.expectation?'Expected reading unavailable':'No target'):good?((goal.primary_chart?.direction??(goal.primary_chart?.kind==='time-budget'?'atmost':'atleast'))==='atmost'?'Within limit':'On target'):((goal.primary_chart?.direction??(goal.primary_chart?.kind==='time-budget'?'atmost':'atleast'))==='atmost'?'Above limit':'Below target'));
+ let good=$derived(goal.primary_chart?.binding?category?.meets_expectation===true:goal.primary_chart?.expectation?current?.point?.meets_expectation===true:value!==undefined&&target!==undefined&&((goal.primary_chart?.direction??(goal.primary_chart?.kind==='time-budget'?'atmost':'atleast'))==='atmost'?value<=target:value>=target));
+ let tone=$derived(goal.kind==='binary'?goal.status:goal.primary_chart?chartTone(goal.primary_chart,value,target,current?.point,category):'neutral');
+ let status=$derived.by(()=>{
+  if(goal.kind==='binary')return goalStatusText(goal);
+  if(value===undefined)return 'No current reading';
+  if(partial)return 'Partial reading';
+  if(goal.primary_chart?.binding&&(target===undefined||category?.meets_expectation==null))return category?.comparison?'Comparison unavailable':'No target';
+  if(target===undefined)return goal.primary_chart?.expectation?'Expected reading unavailable':'No target';
+  const within=(goal.primary_chart?.direction??(goal.primary_chart?.kind==='time-budget'?'atmost':'atleast'))==='atmost';
+  return good?(within?'Within limit':'On target'):(within?'Above limit':'Below target');
+ });
 </script>
-<span data-tone={tone}>{reading&&counts?`${counts.checked} done`:reading&&goal.kind==='quantitative'?(value===undefined?'—':formatReading(goal.primary_chart!,value)):status}</span>
+<span data-tone={tone}>{reading&&counts?`${counts.checked} done`:reading&&goal.kind==='quantitative'?(value===undefined?'—':`${formatReading(goal.primary_chart!,value)}${partial?' (partial)':''}`):status}</span>
 <style>span{color:var(--text-muted)}span[data-tone=good]{color:var(--accent-done)}span[data-tone=bad]{color:var(--accent-error)}span[data-tone=attention]{color:var(--accent-attention,#d4ab6c)}</style>

@@ -2,16 +2,16 @@
 import React, { useEffect, useRef } from 'react';
 import { useReducedMotion } from 'motion/react';
 import { Chart, registerables, type ChartDataset } from 'chart.js';
-import type { ChartBlock, ChartSeries } from '../../goals/contracts';
+import type { ChartBlock, ChartSeries, ChartProjection } from '../../goals/contracts';
 import type { LineChartDatum } from './line-chart-integrated';
-import { chartHeadline, chartTone, formatReading, formatAxisTick } from '../presentation';
+import { chartHeadline, chartTone, formatReading, formatAxisTick, categoryRange, seriesKey } from '../presentation';
 import { motionTokens } from '../lib/chart-motion';
 import { seriesColor } from './goal-indicators';
 
 Chart.register(...registerables);
 
-export function Bars({ block, data, series, compact, activeKey, onActive }: {
-  block: ChartBlock; data: LineChartDatum[]; series: ChartSeries[]; compact: boolean; activeKey: string | null; onActive: (d: LineChartDatum | null) => void;
+export function Bars({ block, data, series, compact, activeKey, onActive, projection, range = 'all' }: {
+  block: ChartBlock; data: LineChartDatum[]; series: ChartSeries[]; compact: boolean; activeKey: string | null; onActive: (d: LineChartDatum | null) => void; projection?: ChartProjection; range?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null), chart = useRef<Chart<'bar' | 'line'> | null>(null);
   const callback = useRef(onActive); callback.current = onActive;
@@ -20,10 +20,14 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
   const reduce = useReducedMotion();
   const plotted = series.length ? series : [{ name: block.title ?? 'Current', points: [] }];
   const latest = data.at(-1)?.values;
-  const currentTone = chartTone(block, latest?.actual, latest?.target);
-  const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
+  const selectedRange = categoryRange(projection, range);
+  const summaries = new Map(selectedRange?.point_summaries.map(item => [item.key, item.summary]));
+  const currentTone = chartTone(block, latest?.actual, latest?.target, undefined, summaries.get(data.at(-1)?.key ?? ''));
+  const latestSummary = summaries.get(data.at(-1)?.key ?? '');
+  const unknownVerdict = (summary: typeof latestSummary) => !!block.binding && !!summary && (summary.actual.partial || summary.comparison?.partial || summary.comparison !== null && summary.meets_expectation === null);
+  const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : unknownVerdict(latestSummary) ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
     : { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--chart-muted)' }[currentTone];
-  const entries = plotted.map((item, i) => ({ key: i === 0 ? 'actual' : item.name, label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? currentColor : seriesColor(item, i, 'composition') }));
+  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? currentColor : seriesColor(item, i, 'composition') }));
   const topStackKey = entries.at(-1)?.key;
   if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--chart-reference)' });
 
@@ -36,8 +40,12 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
       borderColor: color('--chart-reference'), borderDash: [4, 5], borderWidth: 1.5, pointRadius: 0,
     } : {
       type: 'bar', label: entry.label, data: data.map(d => d.values[entry.key] ?? null),
-      backgroundColor: block.stacked || entry.key !== 'actual' ? resolve(entry.color) : data.map(d => d.values.target === undefined ? color('--accent-bright') :
-        color(chartTone(block, d.values.actual, d.values.target) === 'good' ? '--accent-done' : block.below_target_tone === 'attention' ? '--accent-attention' : '--accent-error')),
+      backgroundColor: block.stacked || entry.key !== 'actual' ? resolve(entry.color) : data.map(d => {
+        if (unknownVerdict(summaries.get(d.key))) return color('--chart-muted');
+        if (d.values.target === undefined) return color('--accent-bright');
+        const tone = chartTone(block, d.values.actual, d.values.target, undefined, summaries.get(d.key));
+        return color(tone === 'good' ? '--accent-done' : tone === 'neutral' ? '--chart-muted' : tone === 'attention' ? '--accent-attention' : '--accent-error');
+      }),
       borderRadius: block.stacked ? (entry.key === topStackKey ? { topLeft: 4, topRight: 4 } : 0) : 4,
       maxBarThickness: 40, ...(block.stacked ? { stack: 'composition' } : {}),
     });
@@ -64,7 +72,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
       chart.current.options = configuration.options;
       chart.current.update();
     } else chart.current = new Chart<'bar' | 'line'>(ref.current, configuration);
-  }, [data, block, series, reduce]);
+  }, [data, block, series, reduce, projection, range]);
 
   useEffect(() => () => { chart.current?.destroy(); chart.current = null; }, []);
 
@@ -79,13 +87,14 @@ export function Bars({ block, data, series, compact, activeKey, onActive }: {
     c.tooltip?.setActiveElements(elements, point ? { x: point.x, y: point.y } : { x: 0, y: 0 });
     c.update('none');
   }
-  const selected = data[index ?? data.length - 1];
-  const reading = chartHeadline(block, data, selected?.key ?? null).value;
+  const selected = index === null ? undefined : data[index];
+  const reading = chartHeadline(block, data, selected?.key ?? null, projection, range).value;
+  const readingLabel = selected?.label ?? (block.binding ? categoryRange(projection, range)?.label : data.at(-1)?.label) ?? 'No readings';
   return <>
     <div className="bar-plot" style={{ height: block.plot_height ?? (compact ? 176 : 242) }}>
       <canvas ref={ref} role="slider" tabIndex={data.length ? 0 : -1} aria-label={`${block.title ?? 'Chart'}, explore observations`}
         aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={Math.max(1, (index ?? data.length - 1) + 1)}
-        aria-valuetext={`${selected?.label ?? 'No readings'}: ${reading === undefined ? 'No reading' : formatReading(block, reading)}`}
+        aria-valuetext={`${readingLabel}: ${reading === undefined ? 'No reading' : formatReading(block, reading)}`}
         onMouseLeave={() => inspect(null)} onBlur={() => inspect(null)} onKeyDown={event => {
           if (!data.length || !['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(event.key)) return;
           event.preventDefault();
