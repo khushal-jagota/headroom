@@ -76,6 +76,7 @@ def _measure(row: sqlite3.Row) -> Measure:
         int(row["definition_revision"]),
         int(row["created_at"]),
         int(row["updated_at"]),
+        int(row["write_revision"]),
     )
 
 
@@ -143,6 +144,7 @@ def _observation(row: sqlite3.Row) -> Observation:
         int(row["observed_at"]),
         int(row["definition_revision"]),
         interval,
+        row["manual_write_id"],
     )
 
 
@@ -178,7 +180,7 @@ def read_demanded(
 ) -> dict[MeasureDate, Observation]:
     result: dict[MeasureDate, Observation] = {}
     for identifier, measure in definitions.items():
-        if measure.origin is not MeasureOrigin.taken:
+        if measure.origin is MeasureOrigin.assembled:
             continue
         days = sorted(pair.date for pair in pairs if pair.measure_id == identifier)
         for start in range(0, len(days), limits.SQL_IN_CHUNK):
@@ -311,7 +313,7 @@ def commit_observations(
             "INSERT INTO measure_observations(measure_id,date,value,run_id,observed_at,"
             "definition_revision,period_start_date,period_end_date_exclusive) VALUES(?,?,"
             "?,?,?,?,?,?) ON CONFLICT(measure_id,date) DO UPDATE SET value=excluded.value,"
-            "run_id=excluded.run_id,observed_at=excluded.observed_at,"
+            "run_id=excluded.run_id,manual_write_id=NULL,observed_at=excluded.observed_at,"
             "definition_revision=excluded.definition_revision,"
             "period_start_date=excluded.period_start_date,"
             "period_end_date_exclusive=excluded.period_end_date_exclusive",

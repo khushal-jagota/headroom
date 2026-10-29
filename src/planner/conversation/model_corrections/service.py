@@ -29,6 +29,8 @@ from planner.worker_types.store import read_definition
 def _authorize(conn: sqlite3.Connection, principal: Principal, target: CorrectionTarget) -> None:
     if target.kind == "ticket":
         scope = authority.ticket(target.id)
+    elif target.kind == "goal":
+        scope = authority.goal(target.id)
     elif target.kind == "manager":
         scope = authority.manager(target.id)
     else:
@@ -50,6 +52,11 @@ def _read(conn: sqlite3.Connection, target: CorrectionTarget) -> SavedLaunch:
         "ticket": (
             "SELECT employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort FROM tickets WHERE id=?",
+            target.id,
+        ),
+        "goal": (
+            "SELECT employee_backend,employee_launch_model,employee_launch_reasoning_effort "
+            "FROM goals WHERE id=?",
             target.id,
         ),
         "manager": (
@@ -128,6 +135,21 @@ def _write(conn: sqlite3.Connection, correction: ModelCorrection, now: int) -> b
     )
     if correction.target.kind == "ticket":
         return correct_ticket_model(conn, correction.target.id, now=now, **kwargs)
+    if correction.target.kind == "goal":
+        return (
+            conn.execute(
+                "UPDATE goals SET employee_launch_model=? WHERE id=? AND employee_backend=? "
+                "AND employee_launch_model=? AND employee_launch_reasoning_effort IS ?",
+                (
+                    correction.proposed_model,
+                    correction.target.id,
+                    expected.backend.value,
+                    expected.model,
+                    expected.reasoning_effort,
+                ),
+            ).rowcount
+            == 1
+        )
     if correction.target.kind == "manager":
         return correct_manager_model(conn, correction.target.id, now=now, **kwargs)
     if correction.target.kind == "chief":

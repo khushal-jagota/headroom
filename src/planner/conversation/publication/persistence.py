@@ -109,15 +109,19 @@ def _association_capture(
     if table == "agents":
         key = f"{alias}.agent_key"
         manager_kind = "manager" if current else "orchestrator"
-        kind = f"CASE WHEN {key}='chief_of_staff' THEN 'chief' ELSE '{manager_kind}' END"
+        kind = (
+            f"CASE WHEN {key}='chief_of_staff' THEN 'chief' "
+            f"WHEN substr({key},1,5)='goal_' THEN 'goal' ELSE '{manager_kind}' END"
+        )
         owner = (
             f"CASE WHEN {key}='chief_of_staff' THEN 'chief' "
+            f"WHEN substr({key},1,5)='goal_' THEN substr({key},6) "
             f"WHEN substr({key},1,8)='manager_' THEN substr({key},9) "
             f"ELSE substr({key},24) END"
         )
         condition += (
             f" AND ({key}='chief_of_staff' OR substr({key},1,8)='manager_' "
-            f"OR substr({key},1,23)='sprint_item_supervisor_')"
+            f"OR substr({key},1,5)='goal_' OR substr({key},1,23)='sprint_item_supervisor_')"
         )
     else:
         kind = "'ticket'"

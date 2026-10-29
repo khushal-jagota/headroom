@@ -10,10 +10,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, NotRequired, TypedDict
 
+from planner.core.contracts import Principal
+
 
 class MeasureOrigin(StrEnum):
     taken = "taken"
     assembled = "assembled"
+    manual = "manual"
 
 
 class MeasureKind(StrEnum):
@@ -73,6 +76,7 @@ class Measure:
     definition_revision: int
     created_at: int
     updated_at: int
+    write_revision: int = 0
 
 
 class CreateMeasureBody(TypedDict):
@@ -114,10 +118,11 @@ class Observation:
     measure_id: str
     date: str
     value: float
-    run_id: str
+    run_id: str | None
     observed_at: int
     definition_revision: int
     period_interval: PeriodInterval | None
+    manual_write_id: str | None = None
 
 
 class HistoricalUnavailableReason(StrEnum):
@@ -197,6 +202,7 @@ class InputObservation:
     definition_revision: int
     value: float | None
     run_id: str | None
+    manual_write_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,3 +229,55 @@ class MeasuresRead:
 
     values: tuple[MeasureValue, ...]
     sources: tuple[SourceHealthSummary, ...]
+
+
+class ManualWriteCommon(TypedDict):
+    request_id: str
+    date: str
+    expected_definition_revision: int
+    basis: Literal["date", "latest"]
+
+
+class ManualReplaceBody(ManualWriteCommon):
+    operation: Literal["replace"]
+    value: float
+    expected_write_revision: int
+
+
+class ManualIncrementBody(ManualWriteCommon):
+    operation: Literal["increment"]
+    delta: float
+
+
+type ManualWriteBody = ManualReplaceBody | ManualIncrementBody
+
+
+@dataclass(frozen=True, slots=True)
+class ManualMeasureState:
+    measure_id: str
+    definition_revision: int
+    write_revision: int
+    timezone: str
+    current_date: str
+    date: str
+    observation: Observation | None
+    latest_observation: Observation | None
+
+
+@dataclass(frozen=True, slots=True)
+class ManualWriteReceipt:
+    request_id: str
+    measure_id: str
+    actor: Principal
+    payload_fingerprint: str
+    date: str
+    value: float
+    write_revision: int
+    accepted_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class ManualWriteResult:
+    receipt: ManualWriteReceipt
+    state: ManualMeasureState
+    replayed: bool

@@ -36,6 +36,7 @@ from planner.core.config import Config, load_config
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.measure_sources.runtime import Runtime
 from planner.server_lifecycle.application import ChangeStreamClosingServer
 
 
@@ -152,6 +153,7 @@ def build_app(config: Config) -> FastAPI:
         build_clock(config),
         lambda: connect(config.db_path),
         backend_child_factories_for_test={key: make_child for key in ConversationBackendKey},
+        source_runtime_for_test=Runtime(),
     )
     install_connected_controls(app, config.db_path)
 

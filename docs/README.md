@@ -92,6 +92,7 @@ path. The Manager reads canonical Item and Ticket state before it acts on a noti
   owner-controlled settlement, and stable identities.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — committed work and remembered possibilities.
 - **Feedback** (`feedback.md`) — loose notes captured from any page and their handled history.
+- **Goals** (`goals.md`) — Chief goal pages, saved Approach documents, independent active and completion states, and per-goal agents.
 - **Projects** (`projects.md`) — the data-backed project catalog.
 
 **The two interfaces**

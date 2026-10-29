@@ -17,6 +17,10 @@
     "@tanstack/db": "0.15.0",
     "@tanstack/svelte-db": "0.5.10",
     "@tanstack/svelte-query": "6.1.38",
+    "chart.js": "^4.5.1",
+    "motion": "^12.23.24",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "rehype-remark": "10.0.1",
     "rehype-sanitize": "6.0.0",
     "remark-gfm": "4.0.1",
@@ -31,6 +35,8 @@
     "zustand": "5.0.13"
   },
   "devDependencies": {
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
     "svelte-check": "^4.1.4",
     "typescript": "^5.7.3",
     "vitest": "4.1.10"

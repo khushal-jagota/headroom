@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from planner.core.contracts import JsonDict
-from planner.measures import actions, data
+from planner.measures import actions, data, manual
 from planner.measures import configuration as limits
 from planner.measures.contracts import (
     CountPeriod,
@@ -18,6 +18,7 @@ from planner.measures.contracts import (
 )
 from planner.measures.logic.dates import invalid
 from planner.measures.logic.formulas import parse_formula
+from planner.measures.logic.manual import parse_write
 from planner.tickets.api import Clk, Ctx, DbConn
 
 router = APIRouter()
@@ -150,3 +151,21 @@ async def update_measure(
 async def delete_measure(measure_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     actions.delete_measure(conn, measure_id, principal=ctx.principal, now=clk.now_unix())
     return {"deleted": True}
+
+
+@router.get("/measures/{measure_id}/manual-state")
+async def manual_state(
+    measure_id: str, conn: DbConn, clk: Clk, date: str | None = None
+) -> JsonDict:
+    return asdict(manual.read_state(conn, measure_id, date, now=clk.now_unix()))
+
+
+@router.post("/measures/{measure_id}/manual-writes")
+async def manual_write(
+    measure_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    return asdict(
+        manual.write_value(
+            conn, measure_id, parse_write(body), principal=ctx.principal, now=clk.now_unix()
+        )
+    )

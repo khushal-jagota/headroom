@@ -13,10 +13,12 @@ from typing import Any, Final
 
 from planner.core.authctx import (
     PLAN_ACTOR_SCOPE_KEY,
+    PLAN_GOAL_ID_SCOPE_KEY,
     PLAN_MANAGER_ID_SCOPE_KEY,
     PLAN_SPRINT_ITEM_ID_SCOPE_KEY,
     PLAN_TICKET_ID_SCOPE_KEY,
     X_PLAN_ACTOR,
+    X_PLAN_GOAL_ID,
     X_PLAN_MANAGER_ID,
     X_PLAN_SPRINT_ITEM_ID,
     X_PLAN_TICKET_ID,
@@ -82,6 +84,8 @@ class TrustedIngressMiddleware:
                     await self._reject(scope, send, "Tailscale user is not allowed")
                     return
                 scope = _without_header(scope, X_PLAN_ACTOR)
+                scope = _without_header(scope, X_PLAN_GOAL_ID)
+                scope[PLAN_GOAL_ID_SCOPE_KEY] = None
                 scope = _without_header(scope, X_PLAN_TICKET_ID)
                 scope = _without_header(scope, X_PLAN_MANAGER_ID)
                 scope = _without_header(scope, X_PLAN_SPRINT_ITEM_ID)

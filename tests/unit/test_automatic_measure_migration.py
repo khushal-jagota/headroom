@@ -87,3 +87,81 @@ def test_automatic_measures_upgrade_preserves_existing_notice_rows(
         }
         assert {item.name for item in SOURCE_TRIGGERS} <= triggers
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_manual_measure_upgrade_preserves_sources_values_gaps_and_references(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shipped = db.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "goal_conversations")
+    with closing(db.connect(str(tmp_path / "before-manual.db"))) as conn:
+        db.create_schema(conn)
+        conn.execute("""INSERT INTO measure_sources(id,name,project_id,account,responsible_kind,
+            responsibility_revision,source_revision,created_at,updated_at)
+            VALUES('source','Retained','project_vylo','fixture','chief',1,1,1,1)""")
+        conn.execute("""INSERT INTO measures(id,project_id,name,unit,origin,kind,timezone,
+            source_id,definition_revision,created_at,updated_at)
+            VALUES('taken','project_vylo','Retained','items','taken','reading','UTC','source',1,1,1)""")
+        conn.execute("""INSERT INTO measures(id,project_id,name,unit,origin,kind,timezone,
+            formula,definition_revision,created_at,updated_at)
+            VALUES('assembled','project_other','Derived','items','assembled','reading','UTC',
+            '{"op":"reference","measure_id":"taken","day_offset":0}',1,1,1)""")
+        conn.execute("INSERT INTO measure_dependencies VALUES('assembled','taken')")
+        conn.execute("""INSERT INTO measure_source_runs(id,source_id,mode,trigger,status,
+            source_revision,script_revision,script_sha256,frozen_at,required_outputs,created_at)
+            VALUES('real-run','source','collection','manual','succeeded',1,1,'script',1,'[]',1)""")
+        conn.execute("""INSERT INTO measure_observations(measure_id,date,value,run_id,observed_at,
+            definition_revision) VALUES('taken','2026-10-27',-2.5,'real-run',1,1)""")
+        conn.execute(
+            "INSERT INTO measure_history_gaps "
+            "VALUES('taken','2026-10-26','real-run','provider_has_no_value')"
+        )
+        conn.execute("CREATE INDEX fixture_measure_name ON measures(name)")
+        conn.execute(
+            "CREATE TRIGGER fixture_measure_observation AFTER UPDATE ON measure_observations "
+            "BEGIN SELECT 1; END"
+        )
+        table_names = (
+            "measures",
+            "measure_observations",
+            "measure_dependencies",
+            "measure_source_runs",
+            "measure_history_gaps",
+        )
+        before = {
+            table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            for table in table_names
+        }
+        objects = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE tbl_name IN ('measures','measure_observations')"
+            )
+        }
+        conn.commit()
+        shutil.copy(shipped / "versions/manual_measures.py", tree / "versions/manual_measures.py")
+        db.create_schema(conn)
+        for table, rows in before.items():
+            current = [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            assert len(current) == len(rows)
+            for old, new in zip(rows, current, strict=True):
+                assert old == {key: new[key] for key in old}
+        assert objects <= {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert {row[0] for row in conn.execute("SELECT write_revision FROM measures")} == {0}
+        observation = conn.execute("SELECT * FROM measure_observations").fetchone()
+        assert observation["manual_write_id"] is None and observation["run_id"] == "real-run"
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        # The restored original resource trigger still records source collection.
+        before_version = conn.execute(
+            "SELECT revision FROM resource_source_versions WHERE source_kind='automatic-measures'"
+        ).fetchone()[0]
+        conn.execute("UPDATE measure_observations SET value=-3.25 WHERE measure_id='taken'")
+        assert (
+            conn.execute(
+                "SELECT revision FROM resource_source_versions "
+                "WHERE source_kind='automatic-measures'"
+            ).fetchone()[0]
+            > before_version
+        )

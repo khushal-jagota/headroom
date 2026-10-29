@@ -35,6 +35,7 @@ from planner.cli.record_projection import (
 from planner.core.authctx import normalize_manager_identity
 from planner.credentials.cli import credential as credential_group
 from planner.environments.cli import environment as environment_group
+from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.maintenance.cli import maintenance as maintenance_group
 from planner.measure_sources.cli import measure_source as measure_source_group
@@ -71,6 +72,8 @@ def caller_principal() -> dict[str, str]:
     manager_id = normalize_manager_identity(
         os.environ.get(_MANAGER_ID_ENV), os.environ.get("PLAN_SPRINT_ITEM_ID")
     )
+    if actor == "goal" and os.environ.get("PLAN_GOAL_ID", "").strip():
+        return {"kind": "goal", "id": os.environ["PLAN_GOAL_ID"].strip()}
     if actor == "chief":
         return {"kind": "chief", "id": "chief"}
     if actor == "worker" and ticket_id:
@@ -446,6 +449,7 @@ def main() -> None:
 main.add_command(environment_group)
 main.add_command(maintenance_group)
 main.add_command(credential_group)
+main.add_command(goal_group)
 main.add_command(measure_group)
 main.add_command(measure_source_group)
 environment_group.hidden = True
@@ -494,6 +498,7 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @main.command("send-message")
 @click.option("--owner", is_flag=True, help="Send to Khushal.")
 @click.option("--chief", is_flag=True, help="Send to the Chief of Staff.")
+@click.option("--goal", "goal_id", default=None, help="Send to a goal agent.")
 @click.option("--ticket", "ticket_id", default=None, help="Send to a Ticket worker.")
 @click.option(
     "--manager",
@@ -522,6 +527,7 @@ def send_message(
     chief: bool,
     ticket_id: str | None,
     manager_id: str | None,
+    goal_id: str | None,
     mode: str,
     message: str | None,
     body_file: str | None,
@@ -538,12 +544,13 @@ def send_message(
             chief,
             ticket_id is not None,
             manager_id is not None,
+            goal_id is not None,
         )
         if selected
     )
     if targets != 1:
         http.fail_validation(
-            "send-message requires exactly one of --owner, --chief, --ticket, or --manager",
+            "send-message requires exactly one of --owner, --chief, --ticket, --manager, or --goal",
             as_json,
         )
     if (message is None) == (body_file is None):
@@ -560,6 +567,8 @@ def send_message(
         recipient = {"kind": "chief", "id": "chief"}
     elif ticket_id is not None:
         recipient = {"kind": "ticket", "id": ticket_id}
+    elif goal_id is not None:
+        recipient = {"kind": "goal", "id": goal_id}
     else:
         assert manager_id is not None
         recipient = {"kind": "manager", "id": manager_id}

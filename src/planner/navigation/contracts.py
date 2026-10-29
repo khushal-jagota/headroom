@@ -8,7 +8,7 @@ PREPARED_SCHEMA_VERSION = 7
 SCHEMA_VERSION = 9
 SUPPORTED_SEMANTICS = "attention-knowledge-v9-review-messages"
 RecordKind = Literal[
-    "ticket", "manager", "chief", "conversation", "address", "totals", "project"
+    "ticket", "manager", "chief", "goal", "conversation", "address", "totals", "project"
 ]
 
 
@@ -59,6 +59,21 @@ class ManagerValue(TypedDict):
     project_id: str
     settled: bool
     conversation_id: str | None
+
+
+class GoalValue(TypedDict):
+    title: str
+    conversation_id: str | None
+    active: bool
+    completed: bool
+    created_at: int
+    updated_at: int
+
+
+class GoalRecord(TypedDict):
+    kind: Literal["goal"]
+    id: str
+    value: GoalValue
 
 
 class ChiefValue(TypedDict):
@@ -135,7 +150,7 @@ class ConversationValue(TypedDict):
 
 
 class AddressValue(TypedDict):
-    owner_kind: Literal["ticket", "manager", "chief"]
+    owner_kind: Literal["ticket", "manager", "chief", "goal"]
     owner_id: str
     conversation_id: str
     current: bool
@@ -198,6 +213,7 @@ type NavigationRecord = (
     TicketRecord
     | ManagerRecord
     | ChiefRecord
+    | GoalRecord
     | ConversationRecord
     | AddressRecord
     | TotalsRecord

@@ -58,6 +58,8 @@ from planner.environments.vps_status import (
 from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
+from planner.goals.api import router as goals_router
+from planner.goals.conversation_api import router as goal_conversation_router
 from planner.ideas.api import router as ideas_router
 from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
@@ -371,6 +373,8 @@ def create_app(
         scheduled_tickets_router,
         measure_sources_router,
         measures_router,
+        goals_router,
+        goal_conversation_router,
         credentials_router,
         notifications_router,
         feedback_router,

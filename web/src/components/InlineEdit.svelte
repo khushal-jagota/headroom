@@ -25,6 +25,7 @@
     dataAttr = "",
     dataEdit = false,
     draft,
+    onStart,
     onCancel,
     onSave
   }: {
@@ -37,6 +38,7 @@
     dataAttr?: "day-focus" | "day-take-body" | "day-watch-body" | "day-lands-body" | "day-midday-body" | "";
     dataEdit?: boolean;
     draft?: InlineEditDraft;
+    onStart?: () => void;
     onCancel?: () => unknown;
     onSave: (raw: string) => Promise<unknown>;
   } = $props();
@@ -88,6 +90,7 @@
   function enterEdit(): void {
     if (editing || inFlight || draft?.saving) return;
     if (!el) return;
+    onStart?.();
     editing = true;
     error = null;
     if (!markdown) editSnapshot = editableMarkupSnapshot(el);

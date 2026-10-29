@@ -86,6 +86,10 @@ def validate_definition(measure: Measure, definitions: Mapping[str, Measure]) ->
         if measure.source_id is None or measure.formula is not None:
             raise invalid("taken measure requires a source and no formula")
         return
+    if measure.origin is MeasureOrigin.manual:
+        if measure.source_id is not None or measure.formula is not None:
+            raise invalid("manual measure requires no source or formula")
+        return
     if measure.source_id is not None or measure.formula is None:
         raise invalid("assembled measure requires a formula and no source")
     formula = parse_formula(measure.formula)

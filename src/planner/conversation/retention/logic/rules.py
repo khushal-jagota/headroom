@@ -50,6 +50,7 @@ def identity_values(identity_json: str) -> dict[str, str]:
         if key in values or key not in {
             "PLAN_ACTOR",
             "PLAN_TICKET_ID",
+            "PLAN_GOAL_ID",
             "PLAN_MANAGER_ID",
             "PLAN_SPRINT_ITEM_ID",
         }:

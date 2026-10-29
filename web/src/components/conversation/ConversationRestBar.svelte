@@ -3,7 +3,7 @@
    * Delivery and request feedback remains independent of the control that opens it. */
   let { preview = null, roleLabel = "Worker", activityKnown = true, connectionTrouble = false,
     running = false, feedback = null, onOpen }: { preview?: string | null;
-    roleLabel?: "Worker" | "Manager" | "Chief"; activityKnown?: boolean; connectionTrouble?: boolean;
+    roleLabel?: "Worker" | "Manager" | "Chief" | "Goal"; activityKnown?: boolean; connectionTrouble?: boolean;
     running?: boolean; feedback?: string | null; onOpen: () => void } = $props();
   let activity = $derived(running ? "Working" : activityKnown ? `${roleLabel} idle` : null);
 </script>

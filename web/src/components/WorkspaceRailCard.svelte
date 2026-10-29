@@ -4,6 +4,7 @@
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
   import type { ViewWindow } from "../lib/navigation/contracts";
   import type { ScrollWindowCoordinator } from "../lib/navigation/views/scrollWindowRestoration";
+  import type { Snippet } from "svelte";
   import { onDestroy } from "svelte";
   import { createRailPreviewInput } from "../lib/workspaceRailInteraction";
   import type { WorkspaceTicketGroup } from "../lib/workspaceRail";
@@ -13,7 +14,8 @@
   import WorkerRow from "./WorkerRow.svelte";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
   import chiefProfile from "../assets/chief-of-staff-profile.webp";
-  let { scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+  let { beforeGroups, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+    beforeGroups?: Snippet;
     scrollCoordinator?:ScrollWindowCoordinator;scrollPublicationId?:number|null;
     navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;onVisibility?:(id:string,visible:boolean)=>void;
     id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; conversationId?: string | null; selected: boolean;
@@ -41,7 +43,7 @@
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
 <div class="manager-card-slot">
-<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
+<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button, a")) onSelect(); }} data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-manager={chief ? undefined : id}>
   <div class="identity">
     {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={onLeave}>
@@ -50,6 +52,7 @@
       <ConversationSignalMark {signal} {conversationId} />
     </button>
   </div>
+  {#if beforeGroups}{@render beforeGroups()}{/if}
   {#each groups as group (group.key)}
     <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
       <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>

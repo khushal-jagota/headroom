@@ -177,7 +177,7 @@
   </div>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
-  <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
+  {#if item.owner_kind !== "goal"}<div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>{/if}
   {/if}
   {#if embedded}<div class="review-ticket-decision-line"><a data-open-conversation href={reviewMessageHref(item)}>Open conversation &rsaquo;</a></div>{/if}
   <SkeletonRegion shape="block" loading={!loaded && !error} loadingText="Loading messages...">

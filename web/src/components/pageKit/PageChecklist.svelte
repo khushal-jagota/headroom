@@ -1,0 +1,503 @@
+<script lang="ts">
+  import { tick, untrack, getContext } from "svelte";
+  import { cubicOut } from "svelte/easing";
+  import { fly } from "svelte/transition";
+  import type { ChecklistBlock } from "../../lib/pageKit";
+
+  import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
+  const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
+  let saveError = $state<unknown>(null);
+  let pending = $state<Record<string,"done" | "open">>({});
+  async function persist(id: string, state: "done" | "open") {
+    pending = {...pending, [id]:state};
+    try {
+      await context?.updateBlock?.(block.id, old => old.type === "checklist" ? {...old, items: old.items.map(item => item.id === id ? {...item, state} : item)} : old);
+      if(pending[id]===state){ const next={...pending};delete next[id];pending=next; }
+      saveError = null;
+    } catch (error) { saveError = error; }
+  }
+  let { block }: { block: ChecklistBlock } = $props();
+
+  type Step = {
+    id: string;
+    title: string;
+    detail?: string;
+    action?: string;
+    blocked: boolean;
+    filedDone: boolean;
+  };
+
+  const settleMs = 720;
+  const uid = `cl-${Math.random().toString(36).slice(2, 8)}`;
+  let reduced = $state(false);
+  let hidden = $state(false);
+  let groupOpen = $state(false);
+  let message = $state("");
+  let root = $state<HTMLElement | null>(null);
+  const timers = new Map<string, number>();
+
+  function readSteps(source: ChecklistBlock): Step[] {
+    return source.items.map((item, index) => ({
+      id: item.id ?? `item-${index}`,
+      title: item.label,
+      detail: item.detail,
+      action: item.action,
+      blocked: item.state === "blocked",
+      filedDone: item.state === "done"
+    }));
+  }
+
+  let done = $state<string[]>([]);
+  let settled = $state<string[]>([]);
+  $effect(() => {
+    const ids = block.items.filter(item => (pending[item.id] ?? item.state) === "done").map(item => item.id);
+    untrack(() => { done = ids; settled = ids.filter(id => !timers.has(id)); });
+  });
+  let expanded = $state(untrack(() => readSteps(block).find((step) => !step.filedDone)?.id ?? null));
+  let steps = $derived(readSteps(block));
+  let title = $derived(block.title ?? "Checklist");
+  let doneTitle = $derived(block.doneTitle ?? "All items done");
+  let total = $derived(steps.length);
+  let doneCount = $derived(done.length);
+  let allDone = $derived(total > 0 && doneCount === total);
+  let heading = $derived(allDone ? doneTitle : title);
+  let openSteps = $derived(steps.filter((step) => !settled.includes(step.id)));
+  let completedSteps = $derived(steps.filter((step) => settled.includes(step.id)));
+
+  $effect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => {
+      reduced = media.matches;
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => {
+      media.removeEventListener("change", apply);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      timers.clear();
+    };
+  });
+
+  function order(ids: string[]): string[] {
+    return steps.map((step) => step.id).filter((id) => ids.includes(id));
+  }
+
+  function grow(node: HTMLElement, { duration = 320 }: { duration?: number } = {}) {
+    const height = node.scrollHeight;
+    const quiet = reduced;
+    return {
+      duration: quiet ? 150 : duration,
+      easing: cubicOut,
+      css: (t: number) => (quiet ? `opacity:${t}` : `height:${t * height}px;opacity:${t};overflow:hidden`)
+    };
+  }
+
+  function check(id: string): void {
+    if (done.includes(id)) return;
+    const next = order([...done, id]);
+    done = next;
+    void persist(id, "done");
+    const step = steps.find((item) => item.id === id);
+    message = next.length === total
+      ? `All ${total} items done.`
+      : `${step?.title ?? "Item"} done. ${next.length} of ${total} complete.`;
+    if (timers.has(id)) return;
+    timers.set(
+      id,
+      window.setTimeout(() => {
+        timers.delete(id);
+        void settle(id);
+      }, reduced ? 0 : settleMs)
+    );
+  }
+
+  async function settle(id: string): Promise<void> {
+    if (!done.includes(id) || settled.includes(id)) return;
+    const leavingFocused = root?.querySelector(`[data-step="${id}"]`)?.contains(document.activeElement) ?? false;
+    let nextExpanded = expanded;
+    if (nextExpanded === id) {
+      const orderIds = steps.map((step) => step.id);
+      const start = orderIds.indexOf(id);
+      nextExpanded = orderIds.map((_, offset) => orderIds[(start + offset + 1) % orderIds.length]!).find((item) => !done.includes(item)) ?? null;
+    }
+    settled = order([...settled, id]);
+    expanded = nextExpanded;
+    if (!leavingFocused) return;
+    await tick();
+    const next = nextExpanded ? root?.querySelector<HTMLElement>(`[data-step="${nextExpanded}"]`) : null;
+    (next?.querySelector<HTMLElement>("[data-action]") ?? next?.querySelector<HTMLElement>("[data-title]") ?? root?.querySelector<HTMLElement>("[data-group-toggle]"))?.focus();
+  }
+
+  async function uncheck(id: string, fromGroup: boolean): Promise<void> {
+    void persist(id, "open");
+    const timer = timers.get(id);
+    if (timer) window.clearTimeout(timer);
+    timers.delete(id);
+    if (!done.includes(id)) return;
+    done = done.filter((item) => item !== id);
+    settled = settled.filter((item) => item !== id);
+    expanded = expanded ?? id;
+    const step = steps.find((item) => item.id === id);
+    message = `${step?.title ?? "Item"} marked as not done. ${done.length} of ${total} complete.`;
+    if (!fromGroup) return;
+    await tick();
+    root?.querySelector<HTMLElement>(`[data-step="${id}"] [data-check]`)?.focus();
+  }
+
+  function toggleStep(id: string): void {
+    expanded = expanded === id ? null : id;
+  }
+
+  function keys(node: HTMLElement): { destroy: () => void } {
+    const onKey = (event: KeyboardEvent) => navigate(event, node);
+    node.addEventListener("keydown", onKey);
+    return { destroy: () => node.removeEventListener("keydown", onKey) };
+  }
+
+  function navigate(event: KeyboardEvent, node: HTMLElement): void {
+    const target = event.target as HTMLElement;
+    if (!target.matches("[data-title]") || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const titles = Array.from(node.querySelectorAll<HTMLElement>("li:not([data-leaving]) [data-title]"));
+    const index = titles.indexOf(target);
+    if (index < 0) return;
+    const next = event.key === "Home" ? 0 : event.key === "End" ? titles.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + titles.length) % titles.length;
+    event.preventDefault();
+    titles[next]?.focus();
+  }
+</script>
+
+<section class="card" class:reduced bind:this={root} data-block="checklist" data-complete={allDone ? "true" : undefined} aria-labelledby="{uid}-title">
+  <div class="header">
+    <span class="ring" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={doneCount} aria-valuetext="{doneCount} of {total} done">
+      <svg class="ring-arc" viewBox="0 0 40 40" aria-hidden="true">
+        <circle class="ring-track" cx="20" cy="20" r="16" />
+        <g transform="rotate(-90 20 20)">
+          <circle class="ring-fill" cx="20" cy="20" r="16" pathLength="1" stroke-dasharray="1" stroke-dashoffset={total ? 1 - doneCount / total : 1} />
+        </g>
+      </svg>
+      {#if allDone}
+        <svg class="ring-tick" viewBox="0 0 40 40" aria-hidden="true">
+          <path d="M13.5 20.5 18 25l8.5-9.5" pathLength="1" />
+        </svg>
+      {/if}
+    </span>
+    <div class="heading">
+      <h3 id="{uid}-title">
+        <span class="sr">{heading}</span>
+        <span class="swap" aria-hidden="true">
+          <span class="swap-sizer">{title}</span>
+          <span class="swap-sizer">{doneTitle}</span>
+          {#key heading}
+            <span class="swap-text" in:fly={{ y: reduced ? 0 : 6, duration: reduced ? 150 : 220 }} out:fly={{ y: reduced ? 0 : -6, duration: reduced ? 100 : 150 }}>{heading}</span>
+          {/key}
+        </span>
+      </h3>
+      <p class="count">
+        <span class="sr">{doneCount} of {total} done</span>
+        <span class="count-visual" aria-hidden="true"><span class="roll">{#key doneCount}<span in:fly={{ y: reduced ? 0 : 8, duration: reduced ? 150 : 220 }} out:fly={{ y: reduced ? 0 : -8, duration: reduced ? 100 : 140 }}>{doneCount}</span>{/key}</span>&nbsp;of {total} done</span>
+      </p>
+    </div>
+    <button type="button" class="hide" aria-expanded={!hidden} aria-controls="{uid}-body" onclick={() => { hidden = !hidden; }}>
+      <span class="hide-label">{hidden ? "Show" : "Hide"}</span>
+      <span class="sr">{hidden ? "Show" : "Hide"} checklist</span>
+      <svg class="chevron" class:turned={hidden} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 10.5 8 6l4.5 4.5" /></svg>
+    </button>
+  </div>
+  {#if !hidden}
+    <div id="{uid}-body" class="body" transition:grow>
+      <div class="body-inner">
+        <ul class="list" aria-label="Open items" use:keys>
+          {#each openSteps as step (step.id)}
+            <li class="step" class:current={expanded === step.id} class:struck={done.includes(step.id)} data-step={step.id} transition:grow={{ duration: 280 }}>
+              <div class="step-inner">
+                <button type="button" class="check" data-check role="checkbox" aria-checked={done.includes(step.id)} aria-labelledby="{uid}-{step.id}-title" onclick={() => done.includes(step.id) ? uncheck(step.id, false) : check(step.id)}>
+                  <span class="check-visual" aria-hidden="true">
+                    <span class="check-fill"></span>
+                    <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
+                  </span>
+                </button>
+                <div class="step-main">
+                  <!-- The item's wording is written once, and it is the disclosure control. -->
+                  <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
+                    <span id="{uid}-{step.id}-title" class="title-text">{step.title}</span>
+                  </button>
+                  {#if expanded === step.id}
+                    <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
+                      <div class="step-panel-inner">
+                    {#if step.detail}<p class="detail">{step.detail}</p>{/if}
+                        {#if step.blocked && !done.includes(step.id)}<p class="blocked">Blocked</p>{/if}
+                        {#if step.action}
+                          <button type="button" class="action" data-action onclick={() => check(step.id)}>
+                            {step.action}
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            </li>
+          {/each}
+        </ul>
+        {#if completedSteps.length}
+          <div class="group" transition:grow>
+            <button type="button" class="group-toggle" data-group-toggle aria-expanded={groupOpen} aria-controls="{uid}-completed" onclick={() => { groupOpen = !groupOpen; }}>
+              <span class="sr">{completedSteps.length} completed</span>
+              <span aria-hidden="true"><span class="roll">{#key completedSteps.length}<span in:fly={{ y: reduced ? 0 : 8, duration: reduced ? 150 : 220 }} out:fly={{ y: reduced ? 0 : -8, duration: reduced ? 100 : 140 }}>{completedSteps.length}</span>{/key}</span>&nbsp;completed</span>
+              <svg class="chevron" class:turned={!groupOpen} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 10.5 8 6l4.5 4.5" /></svg>
+            </button>
+            {#if groupOpen}
+              <ul id="{uid}-completed" class="list" aria-label="Completed items" transition:grow={{ duration: 260 }}>
+                {#each completedSteps as step (step.id)}
+                  <li class="step struck" transition:grow={{ duration: 240 }}>
+                    <div class="step-inner">
+                      <button type="button" class="check" data-check role="checkbox" aria-checked="true" aria-labelledby="{uid}-{step.id}-done" onclick={() => uncheck(step.id, true)}>
+                        <span class="check-visual" aria-hidden="true">
+                          <span class="check-fill"></span>
+                          <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
+                        </span>
+                      </button>
+                      <span class="completed-title"><span id="{uid}-{step.id}-done" class="title-text">{step.title}</span></span>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+  <span class="sr" role="status">{message}</span>
+</section>
+
+{#if saveError}<p role="alert">{String(saveError)} <button type="button" onclick={() => { for(const [id,state] of Object.entries(pending)) void persist(id,state); }}>Retry save</button></p>{/if}
+
+<style>
+  .card {
+    container-type: inline-size;
+    width: 100%;
+    min-width: 0;
+    border-radius: var(--space-5);
+    background: var(--surface-recessed);
+    color: var(--text-default);
+  }
+  .header {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-3);
+    padding: var(--space-5);
+  }
+  .heading { display: grid; min-width: 0; gap: 1px; }
+  h3 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: var(--type-md);
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  .count { margin: 0; color: var(--text-faint); font-size: var(--type-sm); line-height: 1.4; }
+  .count-visual { display: inline-flex; align-items: baseline; }
+  .roll { position: relative; display: inline-grid; vertical-align: top; }
+  .roll > span { grid-area: 1 / 1; }
+  .swap { position: relative; display: inline-grid; max-width: 100%; vertical-align: top; }
+  .swap-sizer { grid-area: 1 / 1; visibility: hidden; }
+  .swap-text { grid-area: 1 / 1; }
+  .ring { position: relative; display: grid; width: 40px; height: 40px; color: var(--text-strong); }
+  .ring-arc, .ring-tick { grid-area: 1 / 1; width: 40px; height: 40px; }
+  .ring-track { fill: none; stroke: var(--border-color); stroke-width: 3; }
+  .ring-fill {
+    fill: none;
+    stroke: var(--text-strong);
+    stroke-width: 3;
+    stroke-linecap: round;
+    transition: stroke-dashoffset var(--motion-slow) var(--motion-ease);
+  }
+  .ring-tick path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+    animation: draw 240ms var(--motion-ease) both;
+  }
+  .hide {
+    display: inline-flex;
+    min-height: var(--space-6);
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-2) 0 var(--space-3);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-faint);
+    font: inherit;
+    font-size: var(--type-sm);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .hide:hover { background: var(--surface-2); color: var(--text-strong); }
+  .hide:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
+    outline: var(--border-strong) solid var(--accent-bright);
+    outline-offset: 2px;
+  }
+  .chevron { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
+  .chevron.turned { transform: rotate(180deg); }
+  .body { overflow: hidden; }
+  .body-inner { padding: var(--space-2); border-top: var(--border-hairline) solid var(--border-color); }
+  .list { margin: 0; padding: 0; list-style: none; }
+  .step { overflow: hidden; }
+  .step-inner {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    column-gap: var(--space-3);
+    align-items: start;
+    padding: var(--space-1) var(--space-3);
+    border-radius: calc(var(--space-5) - var(--space-2));
+  }
+  .step.current .step-inner { background: var(--surface-2); }
+  .check {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    cursor: pointer;
+  }
+  .check-visual {
+    position: relative;
+    display: block;
+    width: 22px;
+    height: 22px;
+    border: 1.5px solid var(--text-faint);
+    border-radius: var(--radius-pill);
+    background: var(--surface-recessed);
+    transition: transform 110ms var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
+  }
+  .check:active .check-visual { transform: scale(0.92); }
+  .check[aria-checked="true"] .check-visual { border-color: var(--text-strong); }
+  .check-fill {
+    position: absolute;
+    inset: -1.5px;
+    border-radius: inherit;
+    background: var(--text-strong);
+    opacity: 0;
+    transform: scale(0.6);
+    transition: transform var(--motion-slow) var(--motion-ease), opacity var(--motion-fast) linear;
+  }
+  .check[aria-checked="true"] .check-fill { opacity: 1; transform: scale(1); }
+  .check-mark { position: absolute; inset: -1.5px; width: 22px; height: 22px; }
+  .check-mark path {
+    fill: none;
+    stroke: var(--surface-recessed);
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    opacity: 0;
+    transition: stroke-dashoffset var(--motion-base) var(--motion-ease) 50ms, opacity var(--motion-fast) linear 50ms;
+  }
+  .check[aria-checked="true"] .check-mark path { stroke-dashoffset: 0; opacity: 1; }
+  .step-main { display: grid; min-width: 0; }
+  .step-title, .completed-title {
+    display: flex;
+    width: 100%;
+    min-height: 40px;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-strong);
+    font: inherit;
+    font-size: var(--type-sm);
+    font-weight: 500;
+    line-height: 1.4;
+    text-align: left;
+  }
+  .step-title { cursor: pointer; border-radius: var(--radius-md); }
+  .title-text {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-position: 0 60%;
+    background-repeat: no-repeat;
+    background-size: 0% 1px;
+    transition: background-size var(--motion-slow) var(--motion-ease), color var(--motion-base) var(--motion-ease);
+  }
+  .step.struck .title-text { background-size: 100% 1px; color: var(--text-faint); }
+  /* Named for this disclosure, so the application-wide .panel card cannot style it. */
+  .step-panel { overflow: hidden; }
+  .step-panel-inner { padding: 0 0 var(--space-3); }
+  .detail { max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 400; line-height: 1.45; }
+  .blocked { margin: var(--space-2) 0 0; color: var(--accent-error); font-size: var(--type-sm); }
+  .action {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--space-6);
+    margin-top: var(--space-3);
+    padding: 0 var(--space-3) 0 var(--space-4);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--text-strong);
+    color: var(--surface-recessed);
+    font: inherit;
+    font-size: var(--type-sm);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .action:active { transform: scale(0.97); }
+  .group-toggle {
+    display: grid;
+    width: 100%;
+    min-height: 44px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-3);
+    margin-top: 2px;
+    padding: 0 var(--space-3) 0 64px;
+    border: 0;
+    border-radius: var(--radius-lg);
+    background: transparent;
+    color: var(--text-faint);
+    font: inherit;
+    font-size: var(--type-sm);
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+  }
+  .group-toggle:hover { background: var(--surface-2); color: var(--text-strong); }
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    border: 0;
+  }
+  @container (max-width: 380px) {
+    .hide { width: var(--space-6); padding: 0; }
+    .hide-label { display: none; }
+  }
+  @keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+  .reduced .ring-fill,
+  .reduced .ring-tick path,
+  .reduced .check-fill,
+  .reduced .check-mark path,
+  .reduced .title-text,
+  .reduced .chevron,
+  .reduced .check-visual { transition: none; animation: none; }
+  .reduced .check:active .check-visual,
+  .reduced .action:active { transform: none; }
+</style>

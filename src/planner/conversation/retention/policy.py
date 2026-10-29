@@ -16,6 +16,12 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "review_work_cards",
         "owner_message_preview",
         "automatic_project_measures",
+        # Goal storage/history adds no changes to diagnostic event or view schemas.
+        # Goal identities remain ineligible under the existing owner classifier.
+        "goal_pages",
+        "goal_conversations",
+        # Manual measure provenance leaves diagnostic events and views unchanged.
+        "manual_measures",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(
