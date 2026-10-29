@@ -157,6 +157,86 @@ jobs:
       - name: Check prepared source and selection
         id: selection
         run: python3 scripts/publication_checks.py accept-selection --download "$RUNNER_TEMP/publication-selection"
+      - name: Establish authenticated E2E user manager
+        if: ${{ matrix.suite == 'e2e' }}
+        run: |
+          exec > >(tee -a "$PANELS_REPORT_DIR/e2e.log") 2>&1
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import subprocess
+          import time
+          from pathlib import Path
+
+          if (os.environ.get("PANELS_REHEARSAL") != "true"
+                  or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"):
+              raise RuntimeError("E2E user manager setup requires a disposable hosted runner")
+          uid = os.getuid()
+          unit = f"user@{uid}.service"
+          expected_pid = int(subprocess.check_output(
+              ["systemctl", "show", unit, "--property=MainPID", "--value"], text=True).strip())
+          if expected_pid <= 1:
+              raise RuntimeError("system user unit has no live manager PID")
+          print(json.dumps({"expected_manager_pid": expected_pid, "expected_uid": uid}), flush=True)
+          try:
+              executable = Path(f"/proc/{expected_pid}/exe")
+              metadata = executable.stat()
+              print(json.dumps({"manager_exe": os.readlink(executable),
+                                "device": metadata.st_dev, "inode": metadata.st_ino}), flush=True)
+          except OSError as error:
+              print(json.dumps({"manager_exe_error": str(error)}), flush=True)
+          command = [
+              "/usr/bin/busctl", f"--address=unix:path=/run/user/{uid}/bus", "--json=short",
+              "call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+              "GetConnectionCredentials", "s", "org.freedesktop.systemd1",
+          ]
+          started = time.monotonic()
+
+          def query(label):
+              attempt = time.monotonic()
+              try:
+                  result = subprocess.run(command, capture_output=True, text=True, timeout=1.0)
+                  print(json.dumps({"query": label, "elapsed_seconds": time.monotonic() - started,
+                                    "duration_seconds": time.monotonic() - attempt,
+                                    "exit": result.returncode, "stdout": result.stdout,
+                                    "stderr": result.stderr}), flush=True)
+                  if result.returncode:
+                      return False
+                  value = json.loads(result.stdout)
+                  credentials = value["data"][0]
+                  return (value["type"] == "a{sv}"
+                          and credentials["ProcessID"] == {"type": "u", "data": expected_pid}
+                          and credentials["UnixUserID"] == {"type": "u", "data": uid})
+              except subprocess.TimeoutExpired as error:
+                  print(json.dumps({"query": label, "elapsed_seconds": time.monotonic() - started,
+                                    "duration_seconds": time.monotonic() - attempt,
+                                    "exit": None, "timeout": True, "stdout": str(error.stdout),
+                                    "stderr": str(error.stderr)}), flush=True)
+              except (ValueError, KeyError, TypeError, IndexError) as error:
+                  print(json.dumps({"query": label, "credentials_error": str(error)}), flush=True)
+              return False
+
+          query("before-start")
+          subprocess.run(["systemctl", "--user", "start", "dbus.service"],
+                         check=True, timeout=10)
+          deadline = time.monotonic() + 20
+          attempt = 0
+          while time.monotonic() < deadline:
+              attempt += 1
+              if query(f"readiness-{attempt}"):
+                  current_pid = int(subprocess.check_output(
+                      ["systemctl", "show", unit, "--property=MainPID", "--value"],
+                      text=True).strip())
+                  if current_pid != expected_pid:
+                      raise RuntimeError("system user manager changed during readiness")
+                  print(json.dumps({"authenticated_manager_ready": True, "attempts": attempt,
+                                    "elapsed_seconds": time.monotonic() - started}), flush=True)
+                  break
+              time.sleep(0.25)
+          else:
+              raise RuntimeError("E2E user manager did not acquire authenticated DBus credentials")
+          PYTHON
+
 
       - name: Provision offline Hermes integration prerequisite
         if: ${{ matrix.suite == 'integration' }}

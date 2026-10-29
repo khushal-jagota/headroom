@@ -163,6 +163,18 @@ def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_bo
     bootstrap = steps["Bootstrap disposable hosted runner"]["run"]
     assert "ffmpeg" in bootstrap and "bubblewrap" in bootstrap
     assert 'sudo systemctl start "user@$(id -u).service"' in bootstrap
+    readiness = steps["Establish authenticated E2E user manager"]
+    assert readiness["if"] == "${{ matrix.suite == 'e2e' }}"
+    names = list(steps)
+    assert names.index("Initialize suite reports") < names.index(
+        "Check prepared source and selection"
+    ) < names.index("Establish authenticated E2E user manager") < names.index(
+        "Prepare requested-source check environment"
+    )
+    assert names.index("Establish authenticated E2E user manager") < names.index(
+        "pytest E2E at requested source"
+    )
+    assert 'tee -a "$PANELS_REPORT_DIR/e2e.log"' in readiness["run"]
     hermes = steps["Provision offline Hermes integration prerequisite"]
     assert hermes["if"] == "${{ matrix.suite == 'integration' }}"
     assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]

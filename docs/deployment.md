@@ -129,7 +129,10 @@ Unit, integration, E2E, and browser suites run on four separate hosted runners.
 The matrix lets every suite finish when another fails. Each runner checks the same
 requested SHA and selection, creates its own dependencies, and uses the same sandbox
 mounts. Integration provisions the pinned offline Hermes core and ACP prerequisite;
-E2E uses a real systemd user manager. No service or candidate moves between runners.
+E2E uses a real systemd user manager. Its runner explicitly starts the user DBus
+service and waits for manager credentials to match the system user unit's PID and UID.
+The bounded check records the initial executable lookup and DBus response in `e2e.log`;
+a readiness timeout fails the suite. No service or candidate moves between runners.
 Nested test directories participate. Documentation-only changes use the same checks.
 The requested checkout supplies its dependencies, test configuration, and source.
 The trusted workflow checkout supplies the orchestration and report validators.
