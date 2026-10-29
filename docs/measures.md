@@ -22,17 +22,18 @@ The migration preserves existing ciphertext, identities, names, and revisions wi
 
 Saved, Replaced, and Rejected describe request resolution. Delivery has a separate result. A queued result waits in the conversation. Confirmed refusal permits metadata-only delivery retry. Unknown backend writes and lost queues remain uncertain and receive no automatic retry. A saved value does not prove that the provider accepts the key.
 
-Create a source through `panels measure-source create`, with JSON on stdin:
+Before a source or measure write, inspect the accepted request through these read-only commands:
 
-```json
-{"name":"Daily subscriptions","project_id":"PROJECT_ID","account":"Production","responsible":{"kind":"chief","id":"chief"}}
+```sh
+panels measure-source schema --json
+panels measure schema --json
 ```
 
-Create its measure through `panels measure create`:
+Each command returns `schema`, `examples`, and `notes` without stdin or a server request. Examples include goal responsibility and a taken daily count measure. Replace example identifiers with saved record IDs. CLI help and goal agent startup guidance point to these commands. OpenAPI describes the same create requests from the shared contract reference. [Goals](goals.md) describes chart discovery.
 
-```json
-{"project_id":"PROJECT_ID","name":"Active subscriptions","unit":"subscriptions","origin":"taken","kind":"reading","timezone":"Europe/Berlin","source_id":"SOURCE_ID"}
-```
+Create the source through `panels measure-source create` and its measure through `panels measure create`. Both commands accept JSON on stdin.
+
+_Code paths:_ `src/planner/measure_sources/`, `src/planner/measures/`, and `src/planner/core/request_guidance.py`.
 
 Save the script through `panels measure-source submit-script SOURCE_ID`. Its body contains `expected_revision` and `text`. The save immediately replaces the current script. Revision checks prevent an older editor from overwriting a newer change.
 
@@ -138,3 +139,5 @@ Daily increments use the selected date. Cumulative increments use the latest sna
 Each accepted request stores its authenticated actor, payload fingerprint, accepted date/value/revision, and timestamp. The record supports attribution and safe replay after a lost response. The same request ID and payload return the original acknowledgement, even after later edits. A reused ID with another payload or actor returns a conflict. No history browser, prior-value stream, undo, or automatic retry system exists.
 
 Each numeric observation references exactly one real source run or manual receipt. Formula inputs retain that provenance. Manual writes do not fabricate source runs or change provider gaps. HTTP 409 responses for stale definition or value edits include the current snapshot in `error.detail.state`.
+
+_Last verified: October 29, 2026._

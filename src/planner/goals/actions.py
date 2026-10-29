@@ -7,14 +7,14 @@ import json
 import sqlite3
 from dataclasses import asdict, replace
 from datetime import date
-from typing import Any, cast
+from typing import Any, cast, get_type_hints
 
 from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
 from planner.goals import data
-from planner.goals.contracts import ChartBlock, Goal
+from planner.goals.contracts import GOAL_CREATE_REQUIRED, ChartBlock, Goal, GoalWriteFields
 from planner.goals.logic.categories import validate_category_references
 from planner.goals.logic.completion import prepare_completion
 from planner.goals.logic.documents import (
@@ -31,18 +31,7 @@ from planner.measures.data import read_definitions, read_measure, transaction
 from planner.measures.logic.formulas import validate_graph
 from planner.worker_settings.service import read_chief_settings
 
-_EDITABLE = {
-    "project_id",
-    "title",
-    "why",
-    "kind",
-    "active",
-    "completed",
-    "primary_checklist_block_id",
-    "deadline",
-    "primary_chart",
-    "page",
-}
+_EDITABLE = set(get_type_hints(GoalWriteFields, include_extras=True))
 
 
 def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> Goal:
@@ -59,12 +48,12 @@ def _accepted(conn: sqlite3.Connection, current: Goal, body: dict[str, Any]) -> 
             raise ValueError("primary chart must be an object")
         chart.setdefault("id", new_id("chart"))
         chart.setdefault("placement", "primary")
-        validate_chart(cast(ChartBlock, chart))
+        validate_chart(cast(ChartBlock, chart), "$.primary_chart")
         if chart["placement"] != "primary":
             raise ValueError("primary chart must have primary placement")
         changes["primary_chart"] = chart
     result = replace(current, **changes)
-    for key in ("title", "project_id"):
+    for key in GOAL_CREATE_REQUIRED:
         value = getattr(result, key)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{key} must be nonempty")

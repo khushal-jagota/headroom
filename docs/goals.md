@@ -16,6 +16,18 @@ The goal agent uses the same conversation system as Tickets. The first message s
 
 `panels goal list` and `show` read saved goals. `create` and `edit` accept JSON on stdin. `edit` needs `expected_revision`. `read` returns the existing bound measure values, with optional `--first-date` and `--last-date`. The HTTP routes are `/api/goals`, `/api/goals/{id}`, and `/api/goals/{id}/readings`.
 
+Before a write, inspect the accepted request through these read-only commands:
+
+```sh
+panels goal schema create --json
+panels goal schema edit --json
+panels goal schema primary-chart --json
+```
+
+Each command returns `schema`, `examples`, and `notes` without stdin or a server request. Replace example identifiers with saved record IDs. CLI help and goal agent startup guidance point to these commands. OpenAPI describes the same create and edit requests from the shared contract reference. [Project measures](measures.md) describes the source and measure discovery route.
+
+_Code paths:_ `src/planner/goals/`, `src/planner/core/request_guidance.py`, and `src/planner/runtime/logic/conversation_start_resolution.py`.
+
 ## Completion displays
 
 Effective completion comes from the selected display's saved input. Panels derives it when it reads a goal. It does not save another completion flag. A binary display uses its saved checked input. A quantitative goal keeps its chart and uses that binary input for completion.

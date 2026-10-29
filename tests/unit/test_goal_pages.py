@@ -18,7 +18,7 @@ from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
 from planner.goals import actions, data, views
-from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse
+from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse, SegmentedBlock
 from planner.goals.logic.status import (
     calendar_projection,
     chart_target,
@@ -201,7 +201,12 @@ def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Con
             ],
         }
     )
-    goal = create(tmp_db, page=document)
+    goal = create(tmp_db, page=document, primary_chart={"type": "chart", "kind": "line"})
+    assert goal.primary_chart is not None
+    assert goal.primary_chart["id"] and goal.primary_chart["placement"] == "primary"
+    assert all(block["id"] for block in goal.page["blocks"])
+    assert cast(ChecklistBlock, goal.page["blocks"][1])["items"][0]["id"]
+    assert cast(ChartBlock, goal.page["blocks"][-1])["placement"] == "supporting"
     accepted = deepcopy(goal.page)
     accepted["blocks"][1]["id"] = accepted["blocks"][0]["id"]
     with pytest.raises(PlannerError, match="unique"):
@@ -213,6 +218,16 @@ def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Con
             now=NOW + 1,
         )
     assert data.read_goal(tmp_db, goal.id).revision == 1
+    segmented = deepcopy(document)
+    segmented["blocks"].append(
+        {"type": "segmented", "views": [{"label": "Overview", "blocks": []}]}
+    )
+    with pytest.raises(PlannerError, match=r"\$\.blocks\[3\]\.views\[0\]\.id: required"):
+        create(tmp_db, page=segmented)
+    segmented["blocks"][-1]["views"][0]["id"] = "overview"
+    accepted_segmented = create(tmp_db, page=segmented)
+    saved_segmented = cast(SegmentedBlock, accepted_segmented.page["blocks"][-1])
+    assert saved_segmented["views"][0]["id"] == "overview"
 
 
 def test_goal_list_revision_tracks_conversation_links_without_document_edits(

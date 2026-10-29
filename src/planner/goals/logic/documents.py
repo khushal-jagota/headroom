@@ -11,6 +11,7 @@ from typing import (
     Any,
     Literal,
     NotRequired,
+    Required,
     TypeAliasType,
     Union,
     cast,
@@ -34,19 +35,33 @@ def validate_shape(value: Any, schema: Any, path: str = "$") -> None:
     if isinstance(schema, TypeAliasType):
         return validate_shape(value, schema.__value__, path)
     origin, args = get_origin(schema), get_args(schema)
-    if origin is NotRequired:
+    if origin in (NotRequired, Required):
         return validate_shape(value, args[0], path)
     if origin in (types.UnionType, Union):
+        matching_error: ValueError | None = None
         for option in args:
             try:
                 validate_shape(value, option, path)
                 return
-            except ValueError:
-                pass
+            except ValueError as exc:
+                # Preserve union acceptance and branch order. After all options
+                # reject, report the branch named by a canonical discriminator.
+                if isinstance(value, dict) and is_typeddict(option):
+                    fields = get_type_hints(option, include_extras=True)
+                    if any(
+                        key in ("type", "kind")
+                        and get_origin(kind) is Literal
+                        and value.get(key) in get_args(kind)
+                        for key, kind in fields.items()
+                    ):
+                        matching_error = exc
+        if matching_error is not None:
+            raise matching_error
         raise ValueError(f"{path}: invalid value or block shape")
     if origin is Literal:
         if not any(type(value) is type(option) and value == option for option in args):
-            raise ValueError(f"{path}: unsupported value")
+            supported = ", ".join(repr(option) for option in args)
+            raise ValueError(f"{path}: unsupported value; supported values: {supported}")
     elif origin is tuple:
         if not isinstance(value, (list, tuple)) or len(value) != len(args):
             raise ValueError(f"{path}: expected a pair of numbers")
@@ -61,7 +76,12 @@ def validate_shape(value: Any, schema: Any, path: str = "$") -> None:
         if not isinstance(value, dict):
             raise ValueError(f"{path}: expected an object")
         fields = get_type_hints(schema, include_extras=True)
-        if set(value) - set(fields):
+        unknown = set(value) - set(fields)
+        if unknown:
+            name = min(unknown)
+            # Never echo arbitrary submitted names, which can contain credentials.
+            if isinstance(name, str) and name.isascii() and len(name) <= 64 and name.isidentifier():
+                raise ValueError(f"{path}.{name}: unknown field")
             raise ValueError(f"{path}: unknown field")
         for key, kind in fields.items():
             optional = get_origin(kind) is NotRequired or key in schema.__optional_keys__
@@ -151,8 +171,8 @@ def prepare_document(value: Any, new_identity: Callable[[], str]) -> PageDocumen
     return accepted
 
 
-def validate_chart(chart: ChartBlock) -> None:
-    validate_shape(chart, ChartBlock)
+def validate_chart(chart: ChartBlock, path: str = "$") -> None:
+    validate_shape(chart, ChartBlock, path)
     if "binding" in chart:
         validate_category_chart(chart)
     if "expectation" in chart:

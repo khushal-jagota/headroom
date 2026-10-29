@@ -103,13 +103,26 @@ class Measure:
     write_revision: int = 0
 
 
-class CreateMeasureBody(TypedDict):
+class MeasureDefinitionFields(TypedDict):
     project_id: str
     name: str
     unit: str
     origin: MeasureOrigin
     kind: MeasureKind
     timezone: str
+
+
+class CreateMeasureRequest(MeasureDefinitionFields):
+    """Wire input: omitted nullable fields retain the parser's None defaults."""
+
+    period: NotRequired[CountPeriod | None]
+    source_id: NotRequired[str | None]
+    formula: NotRequired[FormulaExpression | None]
+
+
+class CreateMeasureBody(MeasureDefinitionFields):
+    """Normalized action input with every nullable field present."""
+
     period: CountPeriod | None
     source_id: str | None
     formula: FormulaExpression | None
