@@ -53,7 +53,7 @@ from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
 
 IDENTITY = ExecutorIdentity(
-    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "11111111-1111-4111-8111-111111111111", 1
+    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "ca27d941-1e77-4ac9-a102-e0ac14b51626", 1
 )
 
 
