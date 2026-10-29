@@ -20,7 +20,7 @@ from planner.measure_sources.contracts import (
     SourceScope,
     SourceScriptBody,
 )
-from planner.measure_sources.guidance import CREATE
+from planner.measure_sources.guidance import CREATE, RUN, SCRIPT
 from planner.measure_sources.settings import DEFAULT_PAGE_LIMIT
 from planner.measures.contracts import HistoryWindow
 from planner.measures.data import transaction as read_transaction
@@ -170,7 +170,11 @@ async def set_responsible(
 @router.put("/measure-sources/{source_id}/script")
 async def submit_script(
     source_id: str,
-    body: dict[str, Any],
+    body: Annotated[
+        dict[str, Any],
+        SCRIPT,
+        Body(description=SCRIPT.description, openapi_examples=SCRIPT.openapi_examples()),
+    ],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
@@ -199,7 +203,11 @@ async def list_runs(
 @router.post("/measure-sources/{source_id}/runs")
 async def request_run(
     source_id: str,
-    body: dict[str, Any],
+    body: Annotated[
+        dict[str, Any],
+        RUN,
+        Body(description=RUN.description, openapi_examples=RUN.openapi_examples()),
+    ],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,

@@ -185,6 +185,8 @@ def test_contract_guidance_is_discoverable_without_transport_or_stdin(
         ("goal", "create"),
         ("goal", "edit"),
         ("measure-source", "create"),
+        ("measure-source", "submit-script"),
+        ("measure-source", "request-run"),
         ("measure", "create"),
     ):
         for arguments in ([group, "--help"], [group, command, "--help"]):
@@ -196,6 +198,9 @@ def test_contract_guidance_is_discoverable_without_transport_or_stdin(
         (["goal", "schema", "edit"], "primary_line_chart"),
         (["goal", "schema", "primary-chart"], "primary_line_chart"),
         (["measure-source", "schema"], "goal_source"),
+        (["measure-source", "schema", "create"], "goal_source"),
+        (["measure-source", "schema", "script"], "scalar_script"),
+        (["measure-source", "schema", "run"], "test_run"),
         (["measure", "schema"], "taken_daily_count"),
     ):
         result = runner.invoke(main, [*arguments, "--json"], input="not JSON")
@@ -204,3 +209,32 @@ def test_contract_guidance_is_discoverable_without_transport_or_stdin(
         assert set(guidance) == {"schema", "examples", "notes"}
         assert guidance["schema"] and guidance["notes"]
         assert isinstance(guidance["examples"][example], dict)
+    default = runner.invoke(main, ["measure-source", "schema", "--json"])
+    explicit = runner.invoke(main, ["measure-source", "schema", "create", "--json"])
+    assert json.loads(default.output) == json.loads(explicit.output)
+    runtime = runner.invoke(main, ["measure-source", "runtime", "--json"], input="not JSON")
+    assert runtime.exit_code == 0, runtime.output
+    guide = json.loads(runtime.output)
+    assert set(guide) == {"helpers", "context", "examples", "notes"}
+    assert set(guide["helpers"]) == {"request", "record", "latest", "record_dataset"}
+    assert set(guide["context"]) == {
+        "run_id",
+        "frozen_at",
+        "required_outputs",
+        "dataset_outputs",
+        "history",
+    }
+    assert isinstance(guide["examples"]["scalar_request"], str)
+    script = runner.invoke(main, ["measure-source", "schema", "script", "--json"])
+    assert (
+        json.loads(script.output)["examples"]["scalar_script"]["text"]
+        == guide["examples"]["scalar_request"]
+    )
+    for arguments in (
+        ["measure-source", "--help"],
+        ["measure-source", "submit-script", "--help"],
+        ["measure-source", "request-run", "--help"],
+    ):
+        result = runner.invoke(main, arguments)
+        assert result.exit_code == 0, result.output
+        assert "runtime" in result.output
