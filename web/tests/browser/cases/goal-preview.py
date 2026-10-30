@@ -913,6 +913,8 @@ def manual_unit_spacing(browser, url):
                     target_tip = chart.locator('[data-tooltip-series="target"] > span').last
                     expect(actual_tip).to_have_text("22 minutes")
                     expect(target_tip).to_have_text("20 minutes")
+                    target_label = chart.locator('[data-tooltip-series="target"] > span').nth(1)
+                    assert target_label.evaluate("node => node.clientWidth >= node.scrollWidth")
                     missing = chart.get_by_role("button", name=re.compile("^27 Oct, no reading"))
                     expect(missing.locator(".bar")).to_have_class("bar missing")
                     expect(missing.locator(".bar")).to_have_css(

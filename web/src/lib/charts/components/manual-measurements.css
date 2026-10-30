@@ -26,7 +26,7 @@
 .inline-value[data-counter-visible] input{color:transparent;caret-color:transparent}
 .inline-value:not([data-counter-visible]) .counter-display{opacity:0}
 
-.bar-inspection{opacity:1;scale:1;top:var(--space-2);max-width:min(260px,calc(100% - 32px));--foreground:var(--text-strong);--text-secondary:var(--text-default);--surface-raised:var(--surface-2);--border:var(--border-color)}
+.bar-inspection{opacity:1;scale:1;top:var(--space-2);width:max-content;max-width:min(260px,calc(100% - 32px));--foreground:var(--text-strong);--text-secondary:var(--text-default);--surface-raised:var(--surface-2);--border:var(--border-color)}
 .bar-space{position:relative}
 .manual-write-error{margin-top:var(--space-3)}
 .manual-write-error button,.manual-retry{margin-left:var(--space-2);border:0;background:none;color:inherit;text-decoration:underline;padding:0}
