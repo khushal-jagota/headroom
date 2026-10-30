@@ -3,13 +3,15 @@
 from contextlib import closing
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from tests.unit.test_current_model_resolution import ScopedCatalogue, context, observation, row
 
 from planner.conversation.backend_state import BackendStateStore
-from planner.conversation.contracts import ConversationBackendKey as Backend, WorkspacePathPolicy
+from planner.conversation.contracts import ConversationBackendKey as Backend
+from planner.conversation.contracts import WorkspacePathPolicy
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding
+from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, LaunchContext
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -18,7 +20,9 @@ from planner.core.server import create_app
 from planner.tickets.data import create_ticket
 
 
-def test_http_scoped_read_exact_write_and_retired_corrections(tmp_path: Path, monkeypatch) -> None:
+def test_http_scoped_read_exact_write_and_retired_corrections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from planner.runtime import conversation_start
 
     monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda: tmp_path)
@@ -44,7 +48,9 @@ def test_http_scoped_read_exact_write_and_retired_corrections(tmp_path: Path, mo
         runtime.system.configure_destination_validation(source)
         # Read every provider through the same existing observer fixture.
         original = source.capture_context
-        async def capture(backend, *, workspace):
+        async def capture(
+            backend: Backend, *, workspace: CatalogWorkspaceBinding
+        ) -> LaunchContext:
             from dataclasses import replace
             captured = await original(backend, workspace=workspace)
             source.current_context = replace(captured, backend_key=backend, workspace=workspace,
@@ -53,12 +59,14 @@ def test_http_scoped_read_exact_write_and_retired_corrections(tmp_path: Path, mo
                 source.value.evidence, context=source.current_context,
             ))
             return source.current_context
-        source.capture_context = capture
+        monkeypatch.setattr(source, "capture_context", capture)
         start = client.get(f"/api/tickets/{worker.id}/conversation/start-values")
         assert start.status_code == 200, start.text
         assert start.json()["workspace_folder"] == str(tmp_path)
         assert start.json()["workspace_path_policy"] == "legacy_home_mapping"
-        refreshed = client.post("/api/conversation/backends?refresh=true", json={"ticket_id": worker.id})
+        refreshed = client.post(
+            "/api/conversation/backends?refresh=true", json={"ticket_id": worker.id}
+        )
         assert refreshed.status_code == 200, refreshed.text
         assert source.calls
         assert "backends" in refreshed.json() and "rows" not in refreshed.json()
@@ -88,5 +96,8 @@ def test_http_scoped_read_exact_write_and_retired_corrections(tmp_path: Path, mo
             assert tuple(saved) == ("provider-next-token", "future-effort")
         disabled = BackendStateStore(db_path)
         disabled.write_model_enablement(Backend.codex, "provider-next-token", False)
-        assert client.put("/api/workers/chief-of-staff/launch-defaults", json=defaults).status_code == 400
+        assert (
+            client.put("/api/workers/chief-of-staff/launch-defaults", json=defaults).status_code
+            == 400
+        )
         assert source.calls == []

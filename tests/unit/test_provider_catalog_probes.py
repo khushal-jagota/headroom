@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from planner.conversation.backends import claude_model_catalog as claude
@@ -107,7 +108,7 @@ def test_claude_probe_uses_only_destination_local_version(
         assert kwargs == {"env": {"PROVIDER_FIXTURE": "selected"}, "cwd": tmp_path}
         return CompletedProcess(argv, 0, b"2.1.280 (Claude Code)", b"")
 
-    monkeypatch.setattr(claude.anyio, "run_process", run_process)
+    monkeypatch.setattr(anyio, "run_process", run_process)
     result = asyncio.run(claude.probe_claude_model_catalog(
         "/selected/claude", environment={"PROVIDER_FIXTURE": "selected"},
         working_directory=tmp_path,
@@ -128,7 +129,7 @@ def test_claude_optional_version_failure_preserves_unbounded_suggestions(
     async def unavailable(*args: Any, **kwargs: Any) -> None:
         raise FileNotFoundError("fixture")
 
-    monkeypatch.setattr(claude.anyio, "run_process", unavailable)
+    monkeypatch.setattr(anyio, "run_process", unavailable)
     result = asyncio.run(claude.probe_claude_model_catalog("/missing/claude"))
     assert {row.model_id for row in result.models} == {
         "claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-5",

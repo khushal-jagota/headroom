@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -117,6 +118,7 @@ def test_ambiguous_manager_executable_never_becomes_dogfood(
 ) -> None:
     import planner.server_lifecycle.process_identity as identities
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(identities, "read_authenticated_manager_identity", lambda _pid: None)
 
     monkeypatch.setattr("planner.server_lifecycle.process_identity.os.getppid", lambda: 1168)
@@ -131,6 +133,7 @@ def test_reparent_during_capture_and_unverified_pid_one_fail_closed(
 ) -> None:
     import planner.server_lifecycle.process_identity as identities
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(identities, "read_authenticated_manager_identity", lambda _pid: None)
 
     parents = iter([1168, 1])
@@ -235,6 +238,10 @@ def test_dbus_credentials_preserve_manager_identity_without_fabricated_executabl
             ),
         )
 
+    monkeypatch.setattr(
+        Path, "read_text",
+        lambda _path: "0 (manager) " + " ".join(["S"] + ["0"] * 18 + ["123"]),
+    )
     monkeypatch.setattr("planner.server_lifecycle.process_identity.subprocess.run", busctl)
     manager = identities.read_authenticated_manager_identity(os.getpid())
     assert manager is not None
@@ -278,11 +285,10 @@ def test_dbus_unavailable_or_changed_identity_fails_closed(
         return subprocess.CompletedProcess(command, 0, "{}" if failure == "malformed" else data)
 
     monkeypatch.setattr("planner.server_lifecycle.process_identity.subprocess.run", busctl)
-    if failure == "replacement":
-        start_times = iter([123, 124])
+    start_times = iter([123, 124] if failure == "replacement" else [123, 123])
 
-        def stat(_path: Path) -> str:
-            return "0 (manager) " + " ".join(["S"] + ["0"] * 18 + [str(next(start_times))])
+    def stat(_path: Path) -> str:
+        return "0 (manager) " + " ".join(["S"] + ["0"] * 18 + [str(next(start_times))])
 
-        monkeypatch.setattr(Path, "read_text", stat)
+    monkeypatch.setattr(Path, "read_text", stat)
     assert identities.read_authenticated_manager_identity(os.getpid()) is None

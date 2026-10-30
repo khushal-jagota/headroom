@@ -71,14 +71,16 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
     assert explicit["PLAN_EXECUTOR_ID"] == "owner-mac"
     assert explicit["PLAN_EXECUTOR_MODE"] == "remote"
     assert "PLAN_EXECUTOR_VPS_SOCKET" not in explicit
-    with pytest.raises(ExecutorLaunchConfigurationError, match="version-2"):
+    with pytest.raises(
+        ExecutorLaunchConfigurationError,
+        match="unsupported VPS executor launch configuration version",
+    ):
         build_app_launch_env(
             app,
             ambient={},
             executor_launch=VpsExecutorLaunchConfiguration(
                 "remote",
                 version=1,
-                socket_path=Path("/legacy/executor.sock"),
             ),
         )
 

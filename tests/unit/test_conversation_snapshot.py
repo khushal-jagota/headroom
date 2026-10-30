@@ -405,6 +405,7 @@ def test_destination_snapshot_retains_complete_choices_and_rejects_late_owner() 
 
     from tests.unit.test_current_model_resolution import context, observation, row
 
+    from planner.conversation.model_resolution.contracts import CatalogObservation
     from planner.conversation.snapshot import BackendSnapshotScope, BackendSnapshotService
 
     async def exercise() -> None:
@@ -422,12 +423,12 @@ def test_destination_snapshot_retains_complete_choices_and_rejects_late_owner() 
         async def is_current() -> bool:
             return current
 
-        async def observe():
+        async def observe() -> CatalogObservation:
             nonlocal calls
             calls += 1
             return result
 
-        async def slow():
+        async def slow() -> CatalogObservation:
             nonlocal calls
             calls += 1
             entered.set()

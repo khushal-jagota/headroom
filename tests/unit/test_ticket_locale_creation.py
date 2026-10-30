@@ -262,14 +262,17 @@ def test_creation_effort_presence_and_exact_configuration_intent() -> None:
         normalize_employee_launch_configuration,
     )
 
-    defaults = dict(
-        default_backend="codex", default_model="gpt-6.1-terra",
-        default_reasoning_effort="medium", employee_backend="codex",
-        employee_launch_model="gpt-6.1-terra",
-    )
-    inherited = launch_configuration_for_a_new_ticket(**defaults)
+    def launch(*, reasoning_effort_is_set: bool = False) -> EmployeeLaunchConfiguration:
+        return launch_configuration_for_a_new_ticket(
+            default_backend="codex", default_model="gpt-6.1-terra",
+            default_reasoning_effort="medium", employee_backend="codex",
+            employee_launch_model="gpt-6.1-terra",
+            reasoning_effort_is_set=reasoning_effort_is_set,
+        )
+
+    inherited = launch()
     assert inherited.employee_launch_reasoning_effort == "medium"
-    reset = launch_configuration_for_a_new_ticket(**defaults, reasoning_effort_is_set=True)
+    reset = launch(reasoning_effort_is_set=True)
     assert reset.employee_launch_reasoning_effort is None
     exact = EmployeeLaunchConfiguration(
         employee_backend="codex", employee_launch_model="gpt-6.1-terra",

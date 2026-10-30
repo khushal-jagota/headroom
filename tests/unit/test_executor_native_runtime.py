@@ -1287,14 +1287,14 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
     asyncio.run(run())
 
 
-def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
+def test_real_daemon_controlled_quiesce_exits_zero(executor_transport_home: Path) -> None:
     import socket
     import subprocess
     import sys
 
     from planner.executor.protocol import IpcResponse, encode_frame
 
-    root = tmp_path / "daemon"
+    root = executor_transport_home / "daemon"
     script = (
         "import asyncio; from pathlib import Path; "
         "from planner.executor.mac_service import MacService; "

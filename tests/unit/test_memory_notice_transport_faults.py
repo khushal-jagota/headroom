@@ -31,8 +31,6 @@ from planner.conversation.contracts import (
     HeldPromptPromotionMode,
     PromptDeliveryFate,
     PromptDeliveryMode,
-    PromptDeliveryRefusalReason,
-    PromptDeliveryRefused,
     PromptDeliveryUncertain,
     ResolvedConversationStart,
 )
@@ -178,9 +176,17 @@ async def _notice_bench(
 
     with closing(connect(str(db_path))) as conn:
         create_schema(conn)
+        conn.execute(
+            "INSERT INTO projects(id,name,folder_path,created_at,updated_at) "
+            "VALUES ('notice-project','Synthetic notice workspace',?,0,0)", (str(workspace),)
+        )
+        conn.commit()
         ticket = tickets_data.create_ticket(
             conn,
             worker_type="coding",
+            project_id="notice-project",
+            employee_backend="codex",
+            employee_launch_model="gpt-5.4-mini",
             title="Synthetic memory notice evidence",
             brief="Isolated evidence only",
             principal=OWNER_PRINCIPAL,
@@ -273,7 +279,7 @@ def test_malformed_start_ack_suppresses_automatic_second_attempt(
         async with _notice_bench(
             tmp_path, script={"turns": [{}, invalid_turn, invalid_turn]}
         ) as bench:
-            assert await bench.tell() is False
+            assert await bench.tell() is True
             assert await bench.tell() is False
             notice_sends = [
                 (message_id, mode, fate)
@@ -284,16 +290,19 @@ def test_malformed_start_ack_suppresses_automatic_second_attempt(
             assert len({message_id for message_id, _, _ in notice_sends}) == 1
             assert all(mode is PromptDeliveryMode.queue for _, mode, _ in notice_sends)
             assert all(
-                fate == PromptDeliveryRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
+                fate == PromptDeliveryUncertain()
                 for _, _, fate in notice_sends
             )
-            assert await bench.notice_events() == ()
+            events = await bench.notice_events()
+            assert len(events) == 1
+            assert isinstance(events[0].payload, PromptDeliveryUncertainEventPayload)
             assert len(bench.requests("turn/start")) == 2
             assert await bench.system.held_prompts("c") == ()
             with bench.connect() as conn:
                 inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
                 assert len(inspection.reservations) == 1
-                assert inspection.evidence == ()
+                assert len(inspection.evidence) == 1
+                assert inspection.evidence[0].kind == "prompt_delivery_uncertain"
                 assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
             # One scripted notice request proves no provider admission or model delivery.
 
@@ -377,12 +386,15 @@ def test_discarded_held_notice_retains_consumption_and_unanswered_boundary(tmp_p
     asyncio.run(asyncio.wait_for(exercise(), 15))
 
 
-def test_process_restart_does_not_restore_refused_notice_permission(tmp_path: Path) -> None:
+def test_process_restart_does_not_restore_uncertain_notice_permission(tmp_path: Path) -> None:
     async def exercise() -> None:
         async with _notice_bench(
             tmp_path, script={"turns": [{}, {"turn_id": None, "actions": []}]}
         ) as bench:
-            assert await bench.tell() is False
+            assert await bench.tell() is True
+            events = await bench.notice_events()
+            assert len(events) == 1
+            assert isinstance(events[0].payload, PromptDeliveryUncertainEventPayload)
             await bench.system.shutdown()
 
             def refuse_child_launch(**kwargs: Any) -> CodexAppServerBackendChild:
@@ -401,11 +413,12 @@ def test_process_restart_does_not_restore_refused_notice_permission(tmp_path: Pa
                 assert restarted.observed_sends == []
                 assert not await restarted.is_running("c")
                 assert len(bench.requests("turn/start")) == 2
-                assert await bench.notice_events() == ()
+                assert await bench.notice_events() == events
                 with bench.connect() as conn:
                     inspection = worker_memory.inspect_memory_notices(conn, bench.ticket_id)
                     assert len(inspection.reservations) == 1
-                    assert inspection.evidence == ()
+                    assert len(inspection.evidence) == 1
+                    assert inspection.evidence[0].kind == "prompt_delivery_uncertain"
                     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
             finally:
                 await restarted.shutdown()

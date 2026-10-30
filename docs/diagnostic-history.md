@@ -2,7 +2,7 @@
 
 Panels keeps diagnostic history until an owner explicitly runs the offline maintenance command. Installation, deployment, startup, restart, background loops, and shutdown do not activate expiry. The code registers no expiry task.
 
-The first policy selects diagnostic events older than fourteen days. It keeps current work, control records, unfamiliar records, and ambiguous tool pairs. All conversations linked to unfinished Tickets remain intact, including old conversations and backlogged work. Chief conversations and unsettled managers remain intact. A report freezes its UTC cutoff and binds its candidates to the database contents and identity. Any change invalidates that report.
+The first policy selects diagnostic events older than fourteen days. It keeps current work, control records, unfamiliar records, and ambiguous tool pairs. All conversations linked to unfinished Tickets remain intact, including old conversations and backlogged work. Chief conversations and unsettled managers remain intact. A Mac conversation also stays intact until its child assignment is closed and its retained run proves the source stopped. A local turn ending or VPS restart alone does not prove that. A report freezes its UTC cutoff and binds its candidates to the database contents and identity. Any change invalidates that report.
 
 Expiry permanently removes selected event payloads. Compaction removes no logical records. These are separate owner decisions. The Ticket authorizes experiments on private copies, never expiry from the live archive. Chief receives the report before the owner decides.
 
