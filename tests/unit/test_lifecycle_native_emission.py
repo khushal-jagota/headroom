@@ -291,7 +291,7 @@ def test_legacy_and_admission_command_journals_survive_disk_reopen_and_replay(
                 parse_identity(
                     encode_value(replace(executor.identity, connection_generation=1))
                 ).protocol_version
-                == 13
+                == 14
             )
         finally:
             executor.spool.close()

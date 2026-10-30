@@ -1651,6 +1651,8 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.message_content import MessageFile, MessageText
+    from planner.conversation.admission.contracts import AdmissionExpectation
+    from planner.executor.contracts import ChildCommand
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
@@ -1680,6 +1682,14 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
                     kept.stored_file_id, "application/octet-stream", "input.bin", len(contents)
                 ),
             )
+            commands: list[ChildCommand] = []
+            send_command = harness.endpoint.send_command
+
+            async def observe_command(command: ChildCommand) -> CommandOutcome:
+                commands.append(command)
+                return await send_command(command)
+
+            monkeypatch.setattr(harness.endpoint, "send_command", observe_command)
             generation = harness.mac.identity.connection_generation
             harness.endpoint.cut_input = True
             fate = await asyncio.wait_for(
@@ -1688,8 +1698,12 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
             assert isinstance(fate, PromptDeliveryRefused), repr(fate)
             assert fate.model_validation is not None
             assert fate.model_validation["reason"] == "context_changed"
-            refused_evidence = fate.model_validation["evidence"]
-            assert isinstance(refused_evidence, dict)
+            assert fate.model_validation["evidence"] is None
+            refused = TypeAdapter(AdmissionExpectation).validate_python(
+                commands[0].arguments["admission_expectation"]
+            )
+            assert refused.executor_identity is not None
+            assert refused.executor_identity.connection_generation == generation
             assert harness.endpoint.input_cut_count == 1
             assert harness.mac.identity.connection_generation > generation
             assert harness.native.prompt_count == 1
@@ -1702,9 +1716,12 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
             state = await harness.system._conversation_state("c_scripted")
             assert state is not None and state.running_turn is not None
             fresh = state.running_turn.launch_validation
-            assert fresh is not None and fresh.evidence is not None
-            assert fresh.evidence.context.executor_identity == harness.mac.identity
-            assert fresh.evidence.attempt_id != refused_evidence["attempt_id"]
+            assert fresh is not None and fresh.evidence is None
+            admitted = TypeAdapter(AdmissionExpectation).validate_python(
+                commands[-1].arguments["admission_expectation"]
+            )
+            assert admitted.executor_identity == harness.mac.identity
+            assert admitted.attempt_id != refused.attempt_id
             assert harness.native.prompt_count == 2
             assert native_path.read_bytes() == contents
         finally:
@@ -2721,6 +2738,7 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
     from uuid import uuid4
 
     from planner.conversation.admission.service import expectation_from_validation
+    from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding
     from planner.conversation.model_resolution.contracts import ValidationState
     from planner.executor.codec import encode_value
     from planner.executor.contracts import ChildCommand, ChildOperation
@@ -2741,11 +2759,14 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
                 state = await harness.system._conversation_state("c_scripted")
                 assert state is not None and state.running_turn is not None
                 accepted = state.running_turn.launch_validation
-                assert accepted is not None and accepted.evidence is not None
+                assert accepted is not None and accepted.evidence is None
+                workspace = CatalogWorkspaceBinding(
+                    state.record.workspace_folder, state.record.workspace_path_policy, None
+                )
                 attempt_id = str(uuid4())
                 validation = await harness.system.validate_launch_selection(
                     accepted.selection,
-                    accepted.evidence.context.workspace,
+                    workspace,
                     attempt_id=attempt_id,
                 )
                 assert validation.state is ValidationState.compatible, validation
@@ -2759,6 +2780,7 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
                     child=harness.ask.child,
                     turn=harness.native.turn,
                     executor_identity=harness.endpoint.identity,
+                    workspace=workspace,
                 )
             if operation == "user_input_answer":
                 await harness.native.raise_user_input()

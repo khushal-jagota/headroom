@@ -1185,6 +1185,7 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
         endpoint = ExecutorEndpoint(path, RealClock())
         identity = replace(IDENTITY, executor_incarnation=registry.incarnation)
         endpoint.identity = identity
+        endpoint.ready = True
         endpoint.writer = Mock()
         endpoint.writer.drain = AsyncMock()
         endpoint.store.begin_connection(identity, 1)
@@ -1195,6 +1196,9 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
             reference = ChildReference(registry.incarnation, str(uuid4()), start.conversation_id)
             endpoint.store.register_child(reference, "ticket", "synthetic", 1)
             endpoint.sinks[reference.child_id] = sink
+            endpoint.children[reference.child_id] = endpoint.recover_child(
+                reference, initial_history_complete=True
+            )
             return reference
 
         async def replay() -> None:
@@ -1220,6 +1224,7 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
             backend_child_factories={key: factory for key in ConversationBackendKey},
             message_files=ConversationMessageFiles(path),
         )
+        system._catalog_endpoint = endpoint
         endpoint.runtime = SimpleNamespace(system=system)
         conversation = "retirement-handler"
 

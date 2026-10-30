@@ -576,7 +576,7 @@ The deployment transaction validates the requested configuration before downtime
 It saves the previous bytes or absence before disruption. After service stop, it applies the requested settings.
 On failure, recovery restores the prior configuration before the fallback service starts.
 The Mac launch names the intended HTTPS origin and the same logical executor ID.
-Version-1 descriptors remain readable for exact backup and restoration. A remote version-1 descriptor refuses candidate launch until an explicit compatible application replaces it. No automatic conversion occurs.
+Version-2 descriptors retain exact backup and restoration. Version-1 descriptors refuse without mutation. Preserve their historical bytes for a compatible historical executable and an explicit recovery procedure. No automatic conversion occurs.
 
 The combined Mac and VPS release requires peer protocol 14 and journal format 2. Update both peers from the reviewed combined source. A VPS restart adopts surviving native children without a new bootstrap.
 
