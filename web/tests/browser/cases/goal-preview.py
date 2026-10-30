@@ -2091,6 +2091,14 @@ def native_goal_edits(browser, url):
                     marginTop:parseFloat(getComputedStyle(label).marginTop)};
             }""")
             print(f"{mode} native header geometry: {heading_geometry}", flush=True)
+            assert abs(heading_geometry["wrapperHeight"] - heading_geometry["editorHeight"]) <= 1, (
+                mode,
+                heading_geometry,
+            )
+            assert abs(heading_geometry["gap"] - heading_geometry["marginTop"]) <= 1, (
+                mode,
+                heading_geometry,
+            )
             if output:
                 page.screenshot(path=str(output / f"{mode}.png"), full_page=True)
             if phone:
