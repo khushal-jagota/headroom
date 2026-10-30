@@ -1162,6 +1162,7 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
         ConversationBackendKey,
         ConversationStartRequest,
         PromptDeliveryStarted,
+        WorkspacePathPolicy,
     )
     from planner.conversation.events import ConversationTurnEnding
     from planner.conversation.message_content import text_message_content
@@ -1169,6 +1170,7 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
     from planner.conversation.storage import ConversationStore
     from planner.conversation.system import SqliteProcessConversationSystem
     from planner.core.clock import RealClock
+    from planner.core.contracts import OWNER_PRINCIPAL
     from planner.executor.contracts import (
         ChildOperation,
         CommandOutcome,
@@ -1178,6 +1180,9 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
     from planner.executor.mac import as_object
     from planner.executor.remote import RemoteBackendChildFactory
     from planner.executor.vps import ExecutorEndpoint
+    from planner.projects.data import create_project
+    from planner.tickets import data as ticket_data
+    from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
     async def run() -> None:
         registry, spool, native, _ = cast(Any, native_registry)
@@ -1208,6 +1213,7 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
         async def dispatch(command: ChildCommand) -> CommandOutcome:
             commands.append(command)
             outcome = await registry.execute_command(command)
+            assert outcome.disposition is not CommandDisposition.refused, repr(outcome)
             await replay()
             return cast(CommandOutcome, outcome)
 
@@ -1266,7 +1272,30 @@ def test_inventory_handler_rechecks_assignment_after_retirement_wins_core_lock(
 
         try:
             await system.start_conversation(
-                ConversationStartRequest(conversation, "scripted", workspace_folder=tmp_path)
+                ConversationStartRequest(
+                    conversation, "scripted", workspace_folder=tmp_path,
+                    workspace_path_policy=WorkspacePathPolicy.native_absolute,
+                )
+            )
+            # Canonical native destination precedes first admission and survives
+            # child retirement; a non-Ticket conversation initially selects VPS.
+            project = create_project(tmp_db, name="Retirement fixture", folder_path=tmp_path, now=1)
+            ticket = ticket_data.create_ticket(
+                tmp_db,
+                title="Retirement race",
+                worker_type="coding",
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=TITLE_MAX_CHARS,
+                locale=TicketLocale.macos,
+                project_id=project.id,
+                employee_backend="codex",
+                employee_launch_model="scripted",
+                selection_kind="concrete",
+            )
+            ticket_data.write_ticket_conversation_start(
+                tmp_db, ticket.id, conversation_id=conversation,
+                backend="codex", model="scripted", reasoning_effort=None, now=2,
             )
             first_delivery = await system.send(
                 conversation, text_message_content("first"), sender_label="Test"

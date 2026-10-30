@@ -2739,7 +2739,10 @@ def test_reconnect_acknowledges_settled_registry_outcomes_after_ack_loss(
     from uuid import uuid4
 
     from planner.conversation.admission.service import expectation_from_validation
-    from planner.conversation.model_resolution.contracts import CatalogWorkspaceBinding, ValidationState
+    from planner.conversation.model_resolution.contracts import (
+        CatalogWorkspaceBinding,
+        ValidationState,
+    )
     from planner.executor.codec import encode_value
     from planner.executor.contracts import ChildCommand, ChildOperation
 
